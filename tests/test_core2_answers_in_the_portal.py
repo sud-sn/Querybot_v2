@@ -93,13 +93,18 @@ def test_compare_mode_shows_the_new_cores_answer_after_todays(tenant):
     assert preview["engine"] == "core2" and preview["result_scope"]["badge"] == "New core (preview)"
 
 
-def test_core2_mode_answers_alone_and_hands_on_what_it_cannot_express(tenant):
+def test_core2_mode_answers_alone_even_what_it_cannot_express(tenant):
+    """New-core mode is the new core alone: what it cannot answer is its own reply, never today's pipeline's guess."""
     turn = _ask(tenant, "core2", lambda *a, **k: json.loads(json.dumps(CANNED)))
     assert [a["engine"] for a in _answers(turn)] == ["core2"] and not turn["executed"]
-    unsupported = {**CANNED, "unsupported": True}
-    turn = _ask(tenant, "core2", lambda *a, **k: unsupported)
-    answers = _answers(turn)
-    assert answers and all(a.get("engine") != "core2" for a in answers) and turn["executed"]
+    unsupported = {**CANNED, "data": None, "unsupported": True,
+                   "answer": {**CANNED["answer"], "headline": "I cannot answer that from this data: no measure "
+                                                              "counts returns."}}
+    turn = _ask(tenant, "core2", lambda *a, **k: json.loads(json.dumps(unsupported)))
+    (answer,) = _answers(turn)
+    assert answer["engine"] == "core2" and "no measure counts returns" in answer["answer"]["headline"]
+    assert not turn["executed"]
+    assert "Today's pipeline" not in json.dumps(turn["frames"])
 
 
 def test_a_new_core_failure_never_costs_the_reader_todays_answer_and_is_said(tenant):
@@ -120,8 +125,11 @@ def test_a_new_core_failure_never_costs_the_reader_todays_answer_and_is_said(ten
     assert logged and logged[0]["status"] == "failed"
     assert logged[0]["question_id"] == card["trust"]["question_id"]     # the reader's thumbs reach the row
 
-    turn = _ask(tenant, "core2", broken)      # answering alone, today's pipeline answers instead
-    assert [a.get("engine") != "core2" for a in _answers(turn)] == [True] and turn["executed"]
+    turn = _ask(tenant, "core2", broken)      # answering alone: the new core says it could not, and nothing else does
+    (card,) = _answers(turn)
+    assert card["engine"] == "core2" and card["kind"] == "could_not" and not turn["executed"]
+    assert card["answer"]["headline"] == ("The new core stopped with an error on this question; the service log "
+                                          "has the details. Ask again in a moment, or ask it another way.")
 
 
 def test_side_by_side_a_new_core_that_takes_too_long_says_so(learned, monkeypatch):
@@ -195,24 +203,23 @@ def test_in_core2_mode_a_why_about_the_answer_on_screen_is_the_new_cores(tenant)
     new_core = _NewCore({WHY: EXPLAINED})
     stack, conversation = _conversation(tenant, "core2", new_core)
     with stack:
-        first = conversation.ask("stock on hand by warehouse")    # the new core cannot: today's answer, on screen
+        first = conversation.ask("stock on hand by warehouse")    # the new core cannot: its own reply, on screen
         why = conversation.ask(WHY)
-    assert _answers(first) and all(a.get("engine") != "core2" for a in _answers(first))
+    assert _answers(first) and all(a.get("engine") == "core2" for a in _answers(first))
     assert new_core.asked == ["stock on hand by warehouse", WHY]
     assert [a["answer"]["headline"] for a in _answers(why)] == ["The new core explains it."]
     assert not _analyses(why)                                     # today's analysis did not run first
 
 
-def test_in_core2_mode_what_the_new_core_cannot_explain_is_todays_analysis(tenant):
+def test_in_core2_mode_what_the_new_core_cannot_explain_is_its_own_reply(tenant):
+    """Never today's analysis of some other answer: in new-core mode only the new core answers."""
     new_core = _NewCore({})
     stack, conversation = _conversation(tenant, "core2", new_core)
     with stack:
         conversation.ask("stock on hand by warehouse")
         why = conversation.ask(WHY)
     assert new_core.asked == ["stock on hand by warehouse", WHY]
-    # Today's analysis of the answer on screen: no new answer of its own first (today's pipeline would ask
-    # the warehouse again and analyse that).
-    assert _analyses(why) == ["Why this pattern?"] and not _answers(why)
+    assert not _analyses(why) and [a["engine"] for a in _answers(why)] == ["core2"]
 
 
 def test_side_by_side_a_why_is_todays_analysis_then_the_new_cores_preview(tenant):

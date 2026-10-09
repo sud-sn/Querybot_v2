@@ -88,17 +88,6 @@ def test_one_record_still_says_what_it_comes_to():
     assert said == "1 record — Net Sls Amount totals $125.00."
 
 
-def test_when_the_new_core_cannot_answer_the_reader_is_told_who_does():
-    from gateway.core2_bridge import _handed_back
-
-    assert _handed_back("timeout", None) == ("The new core did not answer this within 120 seconds. "
-                                             "Today's pipeline answers it instead.")
-    said = _handed_back("unsupported", {"answer": {"headline": "I cannot answer that from this data: no measure "
-                                                                "counts returns."}})
-    assert said == ("The new core cannot answer this from the data (no measure counts returns). "
-                    "Today's pipeline answers it instead.")
-
-
 # ── charts: whole hundreds beside thousands, and room for the bars on a phone ─
 
 def _drawn(payload: dict, expression: str, layout: dict | None = None):

@@ -83,10 +83,6 @@ router = APIRouter()
 # since moved, and the follow-up commands that compute from them would present
 # that as current.
 _RESTORE_MAX_AGE_HOURS = 12
-# Result commands the new core answers as follow-ups of its own answers. Those that carry a value of
-# the data ("exclude X", "keep only X", "where region is X") are not among them: they fail closed.
-_NEW_CORE_FOLLOW_UPS = frozenset({"format", "presentation", "keep_top", "sort", "aggregate", "contribution",
-                                  "profit_percentage", "ratio"})
 
 
 def _trace_age_hours(trace: dict) -> float | None:
@@ -1360,15 +1356,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             agent_context.__exit__(None, None, None)
             async with adapter.send_lock:
                 await websocket.send_json({"type": "typing", "active": False})
-
-    def _a_result_on_screen() -> bool:
-        """Is a result of today's pipeline current, for a command to act on (restored when it can be)?"""
-        session_id = getattr(adapter, "session_id", "") or ""
-        result_id = getattr(adapter, "last_result_id", None)
-        if result_cache.has_result(session_id, result_id=result_id):
-            return True
-        return bool(_restore_durable_thread_result(account_id, int(portal_user["id"]), adapter,
-                                                   result_id=result_id))
 
     async def _run_local_result_command(
         text: str, command, table_hint: str = "", schema_hint: str = "",
@@ -5172,6 +5159,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                 await websocket.send_json({"type": "typing", "active": False})
                 continue
 
+            if await core2_bridge.engine(account_id) == "core2":
+                # New-core mode: every question goes to the new core, which keeps the conversation (its
+                # follow-ups, "show that as a pie", "the first one", a metric the reader defines). None of
+                # today's routes reads it first -- their commands acted on today's results, which a new-core
+                # answer sets aside, and refused ("That result is no longer available") -- and today's
+                # pipeline never answers in its place.
+                if current_query_task and not current_query_task.done():
+                    current_query_task.cancel()
+                current_query_task = asyncio.create_task(_guarded_turn(
+                    _run_main_question(text, table_hint, schema_hint)
+                ))
+                continue
+
             # Opt-in "explain your plan first" preview -- checked before
             # every other intent so a pending preview's confirm/correct
             # reply is never swallowed by the report-builder or
@@ -5306,14 +5306,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             # route. Recognised commands fail closed: a sensitive value in an
             # exclusion command can never fall through into a model prompt.
             result_command = parse_result_command(text)
-            if result_command is not None and result_command.action in _NEW_CORE_FOLLOW_UPS \
-                    and await core2_bridge.engine(account_id) == "core2" and not _a_result_on_screen():
-                # Nothing of today's pipeline is on screen to act on: a new-core answer set it aside,
-                # or nothing has been asked yet. "Show that as a pie" and "just the top 3" are the new
-                # core's follow-ups, and it has the conversation; a first question that only reads like
-                # a command is a question. Refused here, each was "That result is no longer available".
-                # Commands that carry a value of the data (exclude, keep, filter) stay closed.
-                result_command = None
             if result_command is not None:
                 if current_query_task and not current_query_task.done():
                     current_query_task.cancel()

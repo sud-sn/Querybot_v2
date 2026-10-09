@@ -108,11 +108,31 @@ def test_in_new_core_mode_a_follow_up_with_nothing_on_screen_goes_to_the_new_cor
     assert reached == [follow_up] and not _refused(frames)
 
 
-def test_a_command_carrying_a_value_of_the_data_still_fails_closed(tenant):
+def test_in_new_core_mode_every_command_is_the_new_cores_to_answer(tenant):
+    """New-core mode reads no command of today's pipeline first: "exclude North" is a follow-up of the new core's,
+    planned under its own rules for member values (put in placeholders where values are kept from the AI)."""
     frames, reached = _conversation(tenant, "core2", "exclude North from this result")
-    assert reached == [] and _refused(frames)
+    assert reached == ["exclude North from this result"] and not _refused(frames)
 
 
 def test_outside_new_core_mode_a_command_with_nothing_on_screen_is_still_refused(tenant):
     frames, reached = _conversation(tenant, "legacy", "just the top 3")
     assert reached == [] and _refused(frames)
+
+
+@pytest.mark.parametrize("question", [
+    "create a dashboard for stock by warehouse",
+    "explain your plan for net sales by region",
+    "investigate why returns rose in March",
+    "find outliers in this result",
+])
+def test_in_new_core_mode_no_route_of_todays_pipeline_reads_a_question_first(tenant, question):
+    frames, reached = _conversation(tenant, "core2", question)
+    assert reached == [question], [f.get("type") for f in frames]
+
+
+def test_in_new_core_mode_a_workspace_at_its_monthly_limit_is_told_so_and_nothing_runs(tenant):
+    with patch("core.pipeline_context.check_query_limit", return_value=(False, 500, 500)):
+        frames, reached = _conversation(tenant, "core2", ASKED)
+    assert reached == []
+    assert any("Monthly query limit reached (500/500)" in str(f.get("content")) for f in frames), frames

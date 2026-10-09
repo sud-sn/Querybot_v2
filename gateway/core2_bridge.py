@@ -57,11 +57,18 @@ def new_question_id() -> str:
     return f"c2-{uuid.uuid4().hex[:24]}"
 
 
-def _within_limits(account_id: str) -> bool:
-    """The workspace's monthly question and token limits, as today's pipeline checks them."""
+def _over_limit(account_id: str, lang: str = "en") -> str:
+    """The workspace's monthly question or token limit, as today's pipeline words it, when it is reached ("" if not)."""
+    from core.i18n import t
     from core.pipeline_context import check_query_limit, check_token_limit
 
-    return check_query_limit(account_id)[0] and check_token_limit(account_id)[0]
+    within, used, limit = check_query_limit(account_id)
+    if not within:
+        return t("terminal.query_limit_reached", lang=lang, used=used, limit=limit)
+    within, used, limit = check_token_limit(account_id)
+    if not within:
+        return t("terminal.token_limit_reached", lang=lang, used=used, limit=limit)
+    return ""
 
 
 async def _answer(account_id: str, question: str, portal_user: dict | None, session_key: str,
@@ -269,29 +276,32 @@ async def _send(adapter: Any, websocket: Any, payload: dict[str, Any]) -> bool:
 
 async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: str, question: str,
                          portal_user: dict | None) -> bool:
-    """``core2`` mode: answer with the new core; False hands the question to today's pipeline.
+    """``core2`` mode: the new core answers, and only the new core; False only for another engine.
 
     Any other engine is False at once: today's pipeline answers, and in ``compare``
-    mode :func:`answer_beside` follows it. A workspace at its monthly limit is
-    handed over too: today's pipeline answers that with its own message.
+    mode :func:`answer_beside` follows it. In ``core2`` mode nothing is handed to
+    today's pipeline: a question the new core cannot answer gets its own reason (what
+    it considered, under "How it was counted"), a failure or a timeout says so, and a
+    workspace at its monthly limit is told the limit. Today's answers in its place were
+    another engine's guesses ("Due Date is not a date of Month-end stock on hand").
     """
     if engine != "core2":
         return False
-    try:
-        if not await asyncio.to_thread(_within_limits, account_id):
-            return False
-    except Exception as exc:     # noqa: BLE001 - an unreadable limit is today's pipeline's to report
-        log.warning("core2 could not read the limits of %s: %s", account_id, exc)
-        return False
     question_id = new_question_id()
+    try:
+        over = await asyncio.to_thread(_over_limit, account_id, str((portal_user or {}).get("lang") or "en"))
+    except Exception as exc:     # noqa: BLE001 - an unreadable limit does not stop the question
+        log.warning("core2 could not read the limits of %s: %s", account_id, exc)
+        over = ""
+    if over:
+        await _send(adapter, websocket, {"type": "message", "role": "assistant", "content": over})
+        return True
     start = time.perf_counter()
     status, payload = await _answer(account_id, question, portal_user,
                                     _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id)
-    if payload is None or payload.get("unsupported"):
-        # Today's pipeline answers instead: the reader is told so, and why, above its answer -- a number that
-        # comes from the other pipeline is never passed off as the new core's.
-        await _send(adapter, websocket, {"type": "system", "content": _handed_back(status, payload)})
-        return False
+    if payload is None:
+        await _send(adapter, websocket, _could_not(question, status, question_id, beside=False))
+        return True
     rows = payload.pop("export_rows", None)
     try:
         payload["trace_id"] = await asyncio.to_thread(
@@ -369,23 +379,12 @@ _COULD_NOT = {
 }
 
 
-def _handed_back(status: str, payload: dict[str, Any] | None) -> str:
-    """Why today's pipeline answers a question in new-core-only mode, in one line."""
-    if status in _COULD_NOT:
-        why = _COULD_NOT[status].format(seconds=TIMEOUT_SECONDS).rstrip(".")
-    else:
-        said = " ".join(str(((payload or {}).get("answer") or {}).get("headline") or "").split())
-        said = said.removeprefix("I cannot answer that from this data: ").rstrip(".")
-        why = f"The new core cannot answer this from the data ({said[:160]})" if said else \
-            "The new core cannot answer this from the data"
-    return f"{why}. Today's pipeline answers it instead."
-
-
-def _could_not(question: str, status: str, question_id: str) -> dict[str, Any]:
-    """A preview card saying the new core gave no answer, and why."""
+def _could_not(question: str, status: str, question_id: str, *, beside: bool = True) -> dict[str, Any]:
+    """A card saying the new core gave no answer, and why: beside today's answer, or alone in ``core2`` mode."""
     text = _COULD_NOT.get(status, _COULD_NOT["failed"]).format(seconds=TIMEOUT_SECONDS)
+    after = "Today's answer above stands." if beside else "Ask again in a moment, or ask it another way."
     return {"type": "assistant_response", "engine": "core2", "question": question, "kind": "could_not",
-            "answer": {"headline": f"{text} Today's answer above stands.", "short_value": "", "comparison": "",
+            "answer": {"headline": f"{text} {after}", "short_value": "", "comparison": "",
                        "scope_badge": "", "scope_note": ""},
             "chart": None, "kpi": None, "data": None, "confidence": {}, "insight_summary": "",
             "anomaly_callouts": [], "coverage_caveats": [], "follow_up_suggestions": [],
