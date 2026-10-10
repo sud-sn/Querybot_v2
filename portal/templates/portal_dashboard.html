@@ -115,7 +115,7 @@
     </form>
     {% else %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" class="dash-follow">
-      <select name="cadence" aria-label="{{ t('ui.dash.cadence_label') }}"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
+      <select name="cadence" class="form-input" aria-label="{{ t('ui.dash.cadence_label') }}"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
       <input type="hidden" name="channel" value="in_app">
       <button class="btn btn-secondary" type="submit">{{ ic("bell", 14) }}<span>{{ t('ui.dash.subscribe') }}</span></button>
     </form>
@@ -172,7 +172,7 @@
                {% if _can_edit %}onclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
                id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
           {% if _can_edit %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only" title="{{ t('ui.dash.rename') }}" aria-label="{{ t('ui.dash.rename') }}"
-            onclick="startRenameChart(document.getElementById('chart-title-{{ chart.id }}'), {{ chart.id|int }})">{{ ic("pencil", 14) }}</button>{% endif %}
+            onclick="startRenameChart(document.getElementById('chart-title-{{ chart.id|int }}'), {{ chart.id|int }})">{{ ic("pencil", 14) }}</button>{% endif %}
         </div>
         {# The period the tile counts; a table says how much of it shows; a tile kept from its last refresh says when. #}
         {% set _sub = chart.subtitle or (t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) if chart.table_truncated else '') %}
@@ -637,7 +637,7 @@ function startRenameChart(el, chartId) {
   const before = el.textContent.trim();
   const input = document.createElement('input');
   input.type = 'text';
-  input.className = 'chart-title-input';
+  input.className = 'form-input form-input-sm chart-title-input';
   input.value = before;
   input.maxLength = 120;
   input.setAttribute('aria-label', t('ui.dash.rename'));

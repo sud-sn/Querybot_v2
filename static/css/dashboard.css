@@ -46,8 +46,8 @@
 .dash-header-actions .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; }
 /* How often, and Subscribe, read as one control. */
 .dash-follow { display: flex; margin: 0; }
-.dash-follow select { height: 36px; min-width: 92px; padding: 0 .55rem; border: 1px solid var(--line-control);
-  border-right: 0; border-radius: var(--radius) 0 0 var(--radius); background: var(--surface); color: var(--text); }
+.dash-follow select { width: auto; min-width: 100px; min-height: 36px; height: 36px; padding-top: 0; padding-bottom: 0;
+  border-right-width: 0; border-radius: var(--radius) 0 0 var(--radius); }
 .dash-follow .btn { border-radius: 0 var(--radius) var(--radius) 0; }
 .dash-edit-hint { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
 .dash-status {
@@ -117,9 +117,9 @@
 .chart-card-actions { display: flex; gap: 2px; flex-shrink: 0; align-items: center; margin: -4px -6px 0 0; }
 /* A tile's own controls: quiet icon buttons (the shared ghost button), above the grid's resize strip. */
 .dash-tile-action { flex-shrink: 0; position: relative; z-index: 101; }
-.chart-title-input { flex: 1; min-width: 0; font: inherit; font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text);
-  padding: 2px 6px; margin: -3px 0 -3px -7px; border: 1px solid var(--primary); border-radius: var(--radius); background: var(--surface); }
-.chart-title-input:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); outline-offset: 0; }
+/* The shared field, sized to sit where the name was. */
+.chart-title-input { flex: 1; min-width: 0; min-height: 0; font-size: var(--font-md); font-weight: var(--weight-semibold);
+  padding: 2px 6px; margin: -3px 0 -3px -7px; }
 .chart-card-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .chart-card-title { font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text); line-height: 1.4;
   /* A title that names its conditions can run long: two lines at most, so the chart keeps its room. */
@@ -143,7 +143,6 @@
 
 .chart-canvas { height: clamp(280px, 34vh, 460px); width: 100%; border-radius: var(--radius); flex: 1; min-height: 280px; }
 .chart-grid.is-gridstack .chart-canvas { height: 100%; min-height: 180px; }
-.chart-meta { font-size: var(--font-xs); color: var(--text-muted); margin-top: var(--space-2); display: flex; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; align-items: center; }
 .chart-error { padding: var(--space-8) var(--space-6); text-align: center; color: var(--text-muted); font-size: var(--font-sm); background: var(--surface-2); border-radius: var(--radius); border: 1px dashed var(--border); }
 .chart-warnings { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .chart-warning { font-size: var(--font-xs); color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent); border-radius: var(--radius); padding: var(--space-2); line-height: 1.35; }

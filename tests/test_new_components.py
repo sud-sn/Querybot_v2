@@ -923,7 +923,7 @@ class TestDashboardMaximizeModal(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "tests"))
         from dashboard_render import CHART, render, visible
 
-        self.assertIn("⤢ Expand", visible(render(charts=[CHART])))
+        self.assertIn('aria-label="Expand chart"', visible(render(charts=[CHART])))
 
     def test_open_modal_function(self):
         self.assertIn("function openChartModal", _src(DASH_TMPL))

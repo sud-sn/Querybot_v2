@@ -500,7 +500,7 @@ class TestDashboardMaximize(unittest.TestCase):
         from dashboard_render import CHART, render, visible
 
         markup = visible(render(charts=[CHART]))
-        self.assertIn("⤢ Expand", markup)
+        self.assertIn('aria-label="Expand chart"', markup)
         self.assertIn("openChartModal(this.closest('.chart-card'))", markup)
 
     def test_openChartModal_function_present(self):
