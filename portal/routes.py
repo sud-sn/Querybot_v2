@@ -1993,6 +1993,11 @@ def _pin_display_config(pin_data: dict) -> dict:
     return config if isinstance(config, dict) else {}
 
 
+def _own_title(pin_data: dict) -> str:
+    """The answer's own name for its tile (a new-core chart's or number's title): "" when it had none."""
+    return str(_pin_display_config(pin_data).get("title") or "").strip()[:120]
+
+
 @router.get("/pin-confirm", response_class=HTMLResponse)
 async def pin_confirm_page(request: Request, token: str = ""):
     user = _get_portal_user(request)
@@ -2019,6 +2024,8 @@ async def pin_confirm_page(request: Request, token: str = ""):
         "uid":      pin_data["user_id"],
         "aid":      pin_data["account_id"],
         "question": pin_data["question"],
+        # The tile's name to start from: the answer's own, or the question for an answer that named none.
+        "name":     _own_title(pin_data) or pin_data["question"][:60],
         "sql":      pin_data["sql_query"],
         "ct":       pin_data["chart_type"],
         "dbid":     pin_data["db_config_id"],
@@ -2061,11 +2068,13 @@ async def pin_confirm_submit(
         return _resp(request, "portal_pin_confirm.html", {
             "user": user, "error": "Choose a dashboard or enter a new dashboard name.",
             "token": token, "question": pin_data["question"], "sql": pin_data["sql_query"],
+            "name": title.strip() or _own_title(pin_data) or pin_data["question"][:60],
             "dashboards": store.list_editable_dashboards(user["account_id"], user["id"]),
         })
     if not _consume_pin_token(token):
         return RedirectResponse("/portal/dashboard?error=expired", status_code=303)
-    item_title = title.strip() or pin_data["question"][:50]
+    own = _own_title(pin_data)
+    item_title = title.strip()[:120] or own or pin_data["question"][:50]
     source = store.create_data_source(
         target["id"], user["id"], user["account_id"], name=item_title,
         question=pin_data["question"], sql_query=pin_data["sql_query"],
@@ -2081,6 +2090,7 @@ async def pin_confirm_submit(
         db_config_id=pin_data["db_config_id"],
         dashboard_id=int(target["id"]),
         display_config=_pin_display_config(pin_data),
+        title_set=bool(title.strip()) and title.strip()[:120] != own,
     )
     store.add_chart_to_dashboard(
         target["id"], chart_id, user["id"], user["account_id"],
@@ -2212,7 +2222,7 @@ async def pin_chart_api(request: Request):
         return JSONResponse(
             {"ok": False, "code": "expired_token",
              "error": "This result has expired. Run it again."}, status_code=400)
-    item_title = title or pin_data["question"][:50]
+    item_title = title or _own_title(pin_data) or pin_data["question"][:50]
     source = store.create_data_source(
         dashboard_id,
         user["id"],

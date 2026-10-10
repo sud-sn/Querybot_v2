@@ -224,7 +224,10 @@ def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict
     return _create_pin_token(int(portal_user["id"]), account_id, scrub(question) if scrub else question, sql,
                              chart_type, db_config_id,
                              display_config={"core2_plan": plan,
-                                             "column_formats": chart.get("column_formats") or {}})
+                                             "column_formats": chart.get("column_formats") or {},
+                                             # The tile's name until the reader gives it another, never the question.
+                                             "title": str(chart.get("title")
+                                                          or (payload.get("kpi") or {}).get("title") or "")})
 
 
 async def _with_pin(account_id: str, portal_user: dict | None, question: str, payload: dict[str, Any]) -> None:

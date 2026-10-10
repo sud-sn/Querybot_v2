@@ -192,3 +192,42 @@ def test_tiles_keep_the_grids_gap_on_every_side():
     edge into the gap below it, and rows of tiles touched (seen in the browser, not testable without one)."""
     css = (ROOT / "static" / "css" / "dashboard.css").read_text(encoding="utf-8")
     assert ".chart-grid.is-gridstack .chart-card-content { height: auto; }" in css
+
+
+# ── the pin link's own page ─────────────────────────────────────────────────
+
+
+def _token(fresh_store, retail):  # noqa: F811
+    from gateway import core2_bridge
+
+    user = _reader(fresh_store)
+    return core2_bridge._pin(user["account_id"], user, "net amount by store in april", _ask(retail, BY_STORE)), user
+
+
+def test_the_pin_page_starts_from_the_charts_own_name_never_the_question(fresh_store, retail):  # noqa: F811
+    from portal import routes
+
+    token, user = _token(fresh_store, retail)
+    with patch.object(routes, "_get_portal_user", return_value=user), \
+            patch.object(routes, "_resp", lambda request, name, context: context):
+        context = asyncio.run(routes.pin_confirm_page(MagicMock(), token=token))
+    assert context["name"] == "Net amount by store"
+    from tests.portal_render import render, visible
+
+    markup = visible(render("portal_pin_confirm.html", lang="en", path="/portal/pin-confirm", user=None, token=token,
+                            question=context["question"], name=context["name"], sql="", dashboards=[], error=""))
+    assert 'value="Net amount by store"' in markup
+
+
+@pytest.mark.parametrize("typed, kept", [("Net amount by store", 0), ("Net amount", 1)])
+def test_the_pin_page_keeps_a_name_of_the_readers_own(fresh_store, retail, typed, kept):  # noqa: F811
+    from portal import routes
+
+    token, user = _token(fresh_store, retail)
+    with patch.object(routes, "_get_portal_user", return_value=user):
+        response = asyncio.run(routes.pin_confirm_submit(MagicMock(), token=token, title=typed, dashboard_id="",
+                                                         new_dashboard_name="Mine"))
+    assert response.status_code == 303
+    chart = next(c for c in fresh_store.list_pinned_charts(user["id"]) if c["title"] == typed)
+    assert chart["title_set"] == kept
+    assert _drawn(fresh_store, retail, chart["id"], user)["title"] == "Net amount by store" if not kept else typed
