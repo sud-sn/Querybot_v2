@@ -89,6 +89,12 @@ def text_and_number(a: str, b: str) -> bool:
     return {a, b} == {"text", "integer"}
 
 
+def code_to_number(a: str, b: str) -> bool:
+    """A code kept as text ('0007') pointing at a whole-number key (7): the one way round Learn looks for by names.
+    A number pointing at a table's text code (CUS_DMS_KEY beside CUS_CD) is its own number key's."""
+    return a == "text" and b == "integer"
+
+
 _HIERARCHY = {"parent", "prnt", "par", "mgr", "manager", "reports", "rpt", "supervisor", "head", "rollup",
               "roll", "up", "sup", "lead", "owner", "uplink", "upln", "upstream", "upstrm"}
 # Words that make a column a figure about the thing it names, not a pointer at it: QTY_PRESCRIBED,
@@ -326,7 +332,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 if (key, column.name, to_table, to_column) in candidates:
                     continue          # declared, and already a candidate
                 to_type = inventory.tables[to_table].type_of(to_column)
-                mixed = text_and_number(column.data_type, to_type)
+                mixed = code_to_number(column.data_type, to_type)
                 if not (_compatible(column.data_type, to_type) or mixed):
                     continue
                 ident = (key, column.name, to_table, to_column)

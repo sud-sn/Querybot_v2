@@ -127,14 +127,20 @@ def test_a_moved_default_date_counts_against_both_dates(retail):
 
 
 def test_a_two_column_link_is_right_whichever_order_its_columns_are_in():
-    # Where the key is declared Learn finds it; in the warehouse style no key is declared.
+    # In the warehouse style no link is declared; Learn finds this one by its names. Taken out, then put back
+    # with its columns the other way round.
     built = materialize(domains.build("compounding_pharmacy"), "warehouse")
     model = benchmark.learn(built)
-    before = _graded(built, model)["joins"]
-    assert any("claims.fill_number+rx_number -> fills: not found" in m for m in before.misses)
     t_of, c_of = _maps(model, built)
     table = {logical: k for k, logical in t_of.items()}
     column = {ref: k for k, ref in c_of.items()}
+    learned = [k for k, j in model.joins.items()
+               if (j.from_table, j.to_table) == (table["claims"], table["fills"]) and len(j.from_columns) == 2]
+    assert learned, "Learn finds a document and its line named alike in another table"
+    for key in learned:
+        del model.joins[key]
+    before = _graded(built, model)["joins"]
+    assert any("claims.fill_number+rx_number -> fills: not found" in m for m in before.misses)
     model.joins["claim_fill"] = Join(
         key="claim_fill", from_table=table["claims"], to_table=table["fills"],
         from_columns=[column["claims.fill_number"], column["claims.rx_number"]],
