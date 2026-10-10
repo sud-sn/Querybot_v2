@@ -677,6 +677,14 @@ words:
   is, the chart says what the rest add up to instead. A line per member
   keeps 6, or 5 and "Other" on the same rule. The rest is drawn in a
   neutral ink and opens nothing; the table keeps every row;
+* a measure by two groupings and no time: a bar per member of the grouping
+  with more members, its parts the other's (stacked when the measure adds
+  up, side by side when it does not), a grid past six parts; the sentence
+  names the member with the most in all and its largest part, never one
+  pair as the leader; three groupings are a table;
+* two measures over more than 12 members, or 8 or more in two different
+  units, are a dot per member, the three furthest out named; bars stay on
+  offer. The reader may ask for "stacked", "as a heatmap", "as a scatter";
 * a number tile for a bounded window carries its change against the period
   before (▲/▼ and a sign, never a colour: up is good for sales, bad for
   costs; a percentage moves by points) and a trend line of the periods up to

@@ -472,7 +472,14 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
             chart["chart_warnings"] = [*chart["chart_warnings"], f"Only {units.main} is drawn: the other "
                                        f"{units.count - 1} units are in the table."]
     if units.mixed and (cols.of("attribute") or cols.of("time") or cols.of("period")):
-        caveats.append(f"{cols.of('measure')[0].label} is counted in {units.count} units; the sentence and the "
+        # The measure kept apart by unit: the one whose unit is the grouping added (quantity by unit of measure),
+        # never the first asked for (net amount has a currency, not the units).
+        split_by = next((g.column for part in logical.parts for g in part.groups if g.name == logical.unit_group),
+                        None)
+        counted = next((c.label for c in cols.of("measure") for o in logical.measures
+                        if o.name == c.name and o.measure is not None and split_by is not None
+                        and o.measure.unit_column == split_by), cols.of("measure")[0].label)
+        caveats.append(f"{counted} is counted in {units.count} units; the sentence and the "
                        f"chart use {units.main}, the unit of most rows. Every unit is in the table.")
     notes = list(logical.notes)
     if chart is not None and chart_type == "table":
@@ -613,6 +620,37 @@ def _sums(logical: Logical, m: OutColumn) -> bool:
     """Is ``m`` a sum or a count, whose groups add up to a total (never an average or a ratio)?"""
     o = next((o for o in logical.measures if o.name == m.name), None)
     return o is not None and adds_up(o)
+
+
+def _two_groupings(lead: str, members: list[OutColumn], m: OutColumn, raw: list[dict], shown: list[dict],
+                   adds: bool, value: Callable[..., str]) -> str:
+    """The sentence of a measure by two groupings, read as its chart draws it. Adding up: the member of the
+    grouping with more members that has the most in all, and its largest part ("Old Town Store leads with
+    $124,495.93 (12% of the total) across 12 stores; its largest segment is Retail, at $84,634.05"), never one
+    pair called the leader. Not adding up: the highest pair, named as a pair."""
+    def name(r: dict, c: OutColumn) -> str:
+        return str(_said(c, r[c.name]))
+    real = [i for i in range(len(raw)) if all(shown[i][c.name] not in (None, "", "Unknown") for c in members)]
+    if not real:
+        return ""
+    across, down = sorted(members, key=lambda c: -len({str(raw[i][c.name]) for i in real}))
+    if not adds:
+        best = max(real, key=lambda i: _number(raw[i][m.name]) or float("-inf"))
+        return (f"{lead}: {name(shown[best], across)} and {name(shown[best], down)} are highest, at "
+                f"{value(raw[best])}, of {len(real):,} pairs of {_noun(across.label)} and {_noun(down.label)}.")
+    totals: dict[str, float] = {}
+    for i in range(len(raw)):             # a store's total takes in its rows with no segment
+        if shown[i][across.name] not in (None, "", "Unknown"):
+            key = name(shown[i], across)
+            totals[key] = totals.get(key, 0.0) + (_number(raw[i][m.name]) or 0.0)
+    leader = max(totals, key=lambda k: totals[k])
+    whole = sum(_number(r[m.name]) or 0.0 for r in raw)
+    share = f" ({totals[leader] / whole:.0%} of the total)" if whole > 0 and 0 < totals[leader] < whole else ""
+    part = max((i for i in real if name(shown[i], across) == leader), key=lambda i: _number(raw[i][m.name]) or 0.0)
+    # Days of the week are always the same seven: counting them says nothing.
+    among = f" across {len(totals):,} {_noun(across.label)}" if across.role != "time" else ""
+    return (f"{lead}: {leader} leads with {fmt(totals[leader], m.format)}{share}{among}; its largest "
+            f"{_thing(down.label)} is {name(shown[part], down)}, at {value(raw[part])}.")
 
 
 def _ranked_periods(logical: Logical, cols: _Columns) -> bool:
@@ -757,6 +795,10 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             elif peak is not first:
                 text += f"; highest {value(peak)} in {name(peak)}"
         return text + "."
+    if len(members) == 2 and not periods and not logical.limit and not logical.sort_asked and not units.mixed:
+        said = _two_groupings(lead, members, m, raw, shown, _sums(logical, m), value)
+        if said:
+            return said
     if members and not periods:
         g = members[0]
         shown = [{**r, g.name: _said(g, r[g.name])} for r in shown]      # "fill number 0", never a bare "0"
@@ -1080,6 +1122,22 @@ def _binned(rows: list[dict], x: str, ys: list[str], share: str | None = None,
     return out, said
 
 
+_CALENDAR = {name: i for names_ in (_DAYS, _MONTHS, ["Q1", "Q2", "Q3", "Q4"], ["Weekday", "Weekend"])
+             for i, name in enumerate(names_)}
+
+
+def _calendar_key(value: Any) -> tuple[int, float]:
+    """Days, months and quarters in the calendar's order (Monday first), never largest first; other parts of
+    a date (a day of the month, an hour) by their number."""
+    text = str(value)
+    if text in _CALENDAR:
+        return 0, float(_CALENDAR[text])
+    try:
+        return 0, float(text)
+    except ValueError:
+        return 1, 0.0
+
+
 def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None, *, format_: str,
           things: str) -> tuple[list[dict], dict | None, str]:
     """The ``keep`` largest rows (by the first measure, in the order they came in), and the rest added up: one
@@ -1140,12 +1198,22 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         x, ys, kind = periods[0], [c.name for c in measures], "line"
         if members:   # one line per member
             return _pivot(logical, periods[0], members[0], m, records, formats, labels, display, unit=unit)
+    elif len(members) == 2 and len(measures) == 1:
+        # Two groupings and no time: a bar per member of one, split by the other, or a grid of both.
+        return _cross(logical, members[0], members[1], m, records, formats, labels, unit=unit)
+    elif len(members) > 2:
+        return None                       # three groupings read as a table
     elif members:
         # Every measure asked for is drawn: one of a unit shares a plot, another unit gets a panel.
         x, ys = members[0], [c.name for c in measures]
         # A pie is the whole: not the top 5 of many, whose slices would not add up to it.
         kind = "pie" if logical.share and len(records) <= 6 and len(ys) == 1 and not logical.limit \
             and not logical.having else "bar"
+        # Two measures over many members: how one goes with the other, a dot per member. Also for a dozen or
+        # so in two different units, where two panels of bars would be read side by side.
+        if len(ys) == 2 and not logical.share and (len(records) > MOST_BARS or (
+                len(records) >= 8 and formats.get(ys[0]) != formats.get(ys[1]))):
+            kind = "scatter"
     else:
         return None
     temporal = x.role == "period" and not ranked
@@ -1177,6 +1245,9 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     warnings: list[str] = []
     in_order = kind == "bar" and not temporal and not ranked and x.ordinal and not logical.limit \
         and not logical.sort_asked
+    in_calendar = kind == "bar" and x.role == "time" and not ranked and not logical.limit and not logical.sort_asked
+    if in_calendar:
+        rows.sort(key=lambda r: _calendar_key(r[x.name]))     # Monday to Sunday, January to December
     if in_order:
         rows = _in_number_order(rows, x.name)       # 0, 1, 2 ... days: the shape of the spread, not a ranking
         binned = _binned(rows, x.name, ys, share.name if share is not None else None) \
@@ -1203,7 +1274,10 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     whole = len(ys) == 1 and compare is None and not ranked and not logical.limit and not logical.having
     parts = whole and share is not None and 2 <= len(rows) <= MAX_SLICES \
         and all((r[ys[0]] or 0) >= 0 for r in rows)
-    if kind == "dumbbell":
+    pairs = len(ys) == 2 and compare is None and not temporal and not ranked and len(rows) >= 5
+    if kind == "scatter":
+        renderable, allowed = ["scatter", "bar"], ["scatter", "bar"]
+    elif kind == "dumbbell":
         renderable, allowed = ["dumbbell", "bar"], ["dumbbell", "bar"]
     elif kind == "pie":
         renderable, allowed = ["pie", "donut", "bar"], ["pie", "donut", "bar"]
@@ -1212,6 +1286,8 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     else:
         renderable = ["bar", "pie", "donut"] if parts else ["bar"]
         allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked else ["bar"]
+        if pairs:                         # two measures by member: also as a dot per member
+            renderable, allowed = [*renderable, "scatter"], [*allowed, "scatter"]
     measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and")
     return {"title": chart_title(logical, measure, [_by_words(c, labels) for c in [*members, *periods]], unit),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,
@@ -1220,7 +1296,79 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             "renderable_types": renderable, "allowed_types": allowed, "recommended_type": kind,
             "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
-            "x_order": "number" if in_order else "", "intent": logical.intent, "grouped_by": None,
+            "x_order": "number" if in_order or in_calendar else "", "intent": logical.intent, "grouped_by": None,
+            "forecast_meta": None, "chart_warnings": warnings}
+
+
+MOST_SERIES = 6     # members of a second grouping drawn as a colour each; past it, the two are a grid
+GRID_ROWS, GRID_COLUMNS = 15, 12
+
+
+def _cross(logical: Logical, first: OutColumn, second: OutColumn, m: OutColumn, records: list[dict],
+           formats: dict[str, str], labels: dict[str, str], *, unit: str = "") -> dict:
+    """A measure by two groupings and no time ("net amount by store and segment").
+
+    The grouping with fewer members gives the colours, the other the bars: stacked when the measure adds up
+    (a store's segments make its total), side by side when it does not (an average per segment). Past six
+    colours it is a grid, a cell for each pair, darker for more. The largest bars or rows are drawn, said so;
+    the table keeps every row."""
+    def key(r: dict, c: OutColumn) -> str:
+        return "Unknown" if r[c.name] in (None, "") else str(r[c.name])
+    totals: dict[str, dict[str, float]] = {first.name: {}, second.name: {}}
+    for r in records:
+        value = abs(_number(r[m.name]) or 0.0)
+        for c in (first, second):
+            totals[c.name][key(r, c)] = totals[c.name].get(key(r, c), 0.0) + value
+    across, down = (first, second) if len(totals[first.name]) >= len(totals[second.name]) else (second, first)
+
+    def ranked(c: OutColumn) -> list[str]:
+        names_ = sorted(totals[c.name], key=lambda k: -totals[c.name][k])
+        if c.role == "time":              # Monday to Sunday, January to December
+            return sorted(names_, key=_calendar_key)
+        if c.ordinal:                     # amounts in their own order (0, 1, 2 ... days)
+            return [k for _, k in sorted(((float(k), k) if re.fullmatch(r"-?\d+(?:\.\d+)?", k) else
+                                          (math.inf, k)) for k in names_)]
+        return names_
+    adds = _adds(logical, m.name)
+    grid = len(totals[down.name]) > MOST_SERIES
+    bars = ranked(across)
+    series = ranked(down)
+    warnings: list[str] = []
+    most = GRID_ROWS if grid else MOST_BARS
+    if len(bars) > most:
+        keep = sorted(totals[across.name], key=lambda k: -totals[across.name][k])[:GRID_ROWS if grid else TOP_BARS]
+        bars = [b for b in bars if b in keep]
+        warnings.append(f"Showing the {len(bars)} largest of {len(totals[across.name])} "
+                        f"{names.plural(_thing(labels[across.name]))}: every one is in the table.")
+    if grid and len(series) > GRID_COLUMNS:
+        keep = sorted(totals[down.name], key=lambda k: -totals[down.name][k])[:GRID_COLUMNS]
+        series = [c for c in series if c in keep]
+        warnings.append(f"Showing the {len(series)} largest of {len(totals[down.name])} "
+                        f"{names.plural(_thing(labels[down.name]))}: every one is in the table.")
+    cells: dict[str, dict] = {b: {across.name: b} for b in bars}
+    for r in records:
+        b, c = key(r, across), key(r, down)
+        if b in cells and c in series:
+            cells[b][c] = _number(r[m.name])
+    # A pair with no row: nothing of it, a zero, when the measure adds up; not known otherwise.
+    rows = [{**{c: 0.0 if adds else None for c in series}, **cells[b]} for b in bars]
+    roles: dict[str, dict] = {across.name: {"column": across.name, "label": labels[across.name], "role": "dimension",
+                                            "format": "text"},
+                              m.name: {"column": m.name, "label": labels[m.name], "role": "measure",
+                                       "format": formats[m.name]}}
+    for c in series:
+        roles[c] = {"column": c, "label": c, "role": "measure", "format": formats[m.name]}
+    kind = "heatmap" if grid else ("stacked" if adds else "bar")
+    shapes = ["heatmap"] if grid else (["stacked", "bar", "heatmap"] if adds else ["bar", "heatmap"])
+    return {"title": chart_title(logical, labels[m.name], [_by_words(first, labels), _by_words(second, labels)],
+                                 unit),
+            "chart_type": kind, "x_key": across.name, "y_keys": series, "rows": rows, "other": None,
+            "x_style": "", "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
+            "renderable_types": shapes, "allowed_types": shapes, "recommended_type": kind,
+            "chart_spec": {"x": {"column": across.name, "role": "dimension"}, "column_roles": roles},
+            "x_order": "number" if across.ordinal or across.role == "time" else "", "intent": logical.intent,
+            "grouped_by": down.name,
+            "grouped_measure": m.name, "compare": None, "facets": [], "share_key": None,
             "forecast_meta": None, "chart_warnings": warnings}
 
 

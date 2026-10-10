@@ -2169,7 +2169,7 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   const ct   = stored().chart_type || 'bar';
 
   // Type toggle
-  const TYPES = ['dumbbell', 'bar', 'line', 'area', 'pie', 'donut', 'scatter']
+  const TYPES = ['dumbbell', 'bar', 'stacked', 'line', 'area', 'pie', 'donut', 'scatter', 'heatmap']
     .map(k => ({k, label: enumLabel('charttype', k)}));
   // `x`, not `t`: t is the translator in this scope, and shadowing it inside a
   // callback is how a lookup silently becomes whatever the callback iterates.
@@ -3147,7 +3147,7 @@ function _answerChartHeight(chart) {
   return Math.max(200, Math.min(460, n * 28 + 56));
 }
 
-const ANSWER_CHART_TYPES = ['line', 'area', 'bar', 'pie', 'donut', 'dumbbell'];
+const ANSWER_CHART_TYPES = ['line', 'area', 'bar', 'stacked', 'pie', 'donut', 'dumbbell', 'scatter', 'heatmap'];
 function _answerChartTypes(chart) {
   if (!chart || !Array.isArray(chart.renderable_types)) return [];
   return ANSWER_CHART_TYPES.filter(k => chart.renderable_types.includes(k));

@@ -400,7 +400,9 @@
     const req = String((payload && payload.chart_type) || 'bar').toLowerCase();
     const known = ['pie', 'donut', 'scatter', 'area', 'line', 'waterfall', 'heatmap', 'funnel',
                    'forecast', 'histogram', 'boxplot', 'treemap', 'dumbbell', 'bar'];
-    const type = known.includes(req) ? req : (temporal ? 'line' : 'bar');
+    // Stacked bars are bars: one bar per member, its parts piled to its total.
+    const stacked = req === 'stacked';
+    const type = stacked ? 'bar' : (known.includes(req) ? req : (temporal ? 'line' : 'bar'));
 
     // ── Density ────────────────────────────────────────────────────────────
     // Past a readable count a categorical chart shows the largest values and
@@ -951,6 +953,8 @@
     if (type === 'scatter') {
       const y2 = yKeys[1];
       const pointLabel = r => String(xKey ? (r && r[xKey] != null ? r[xKey] : '') : '');
+      const named = new Set(rows.map((r, i) => [Math.abs(num(r && r[yKey]) || 0), i])
+        .sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i));
       const valueAxis = (col, withName) => ({
         type: 'value', name: withName ? columnLabel(payload, col) : undefined,
         nameLocation: 'middle', nameGap: 28,
@@ -960,7 +964,8 @@
       });
       return Object.assign(base, {
         title: capTitle(0),
-        grid: {left: 16, right: 16, top: 12 + capReserve, bottom: 28, containLabel: true},
+        // Room above the plot for the upright axis's name, which sits at its top end.
+        grid: {left: 16, right: 16, top: 28 + capReserve, bottom: 28, containLabel: true},
         tooltip: Object.assign(tooltipBase(c), {
           trigger: 'item',
           formatter: p => tipHeader(`${xLabel}: ${p.value && p.value[2] !== '' ? p.value[2] : t('ui.chart.unspecified')}`, c)
@@ -972,8 +977,15 @@
                                                    nameTextStyle: {color: c.ink2, fontSize: 12, align: 'left'}}),
         series: [{
           type: 'scatter', symbolSize: 9,
-          data: rows.map(r => [num(r && r[yKey]), num(r && r[y2]), pointLabel(r)]),
+          // The three furthest out on the first measure are named beside their dot; the rest in the tooltip.
+          data: rows.map((r, i) => ({
+            value: [num(r && r[yKey]), num(r && r[y2]), pointLabel(r)],
+            label: named.has(i) ? {show: true, position: 'right', distance: 6, color: c.ink2, fontSize: 12,
+                                   fontFamily: c.font, formatter: p => labelFmt(p.value[2])} : undefined,
+          })),
           itemStyle: {color: colors[0], opacity: 0.9, borderColor: c.surface, borderWidth: 2},
+          // Two named dots side by side would print their names over each other: the later one gives way.
+          labelLayout: {hideOverlap: true},
           emphasis: {scale: 1.4},
         }],
       });
@@ -1285,9 +1297,27 @@
     // The members past the largest, added up as one "Other (n)" bar: a neutral ink, so it reads as the rest.
     const otherLabel = payload && payload.other && payload.other.label ? String(payload.other.label) : '';
     const otherAt = !multi && otherLabel ? labels.indexOf(otherLabel) : -1;
+    // Stacked: each bar's parts piled up, a 2px surface gap between them, its total said at its end.
+    const totalOf = i => yKeys.reduce((s, k) => s + (num(rows[i] && rows[i][k]) || 0), 0);
+    const totals = stacked && rows.length <= (horizontal ? 20 : 12);
+    if (totals) (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, '8%'];
     option.series = yKeys.map((k, i) => {
       const color = colors[i % colors.length];
       const values = rows.map(r => num(r && r[k]));
+      const last = i === yKeys.length - 1;
+      if (stacked) {
+        return {
+          name: k, type: 'bar', stack: 'total', barMaxWidth: 24, data: values,
+          itemStyle: {color, borderColor: c.surface, borderWidth: 1,
+                      borderRadius: last ? (horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]) : 0},
+          label: last && totals ? {
+            show: true, position: horizontal ? 'right' : 'top', color: c.ink2, fontSize: 12,
+            fontFamily: c.font, distance: 4, formatter: p => valueFmt(totalOf(p.dataIndex), k, true),
+          } : undefined,
+          emphasis: {focus: 'series'},
+          animationDelay: stagger,
+        };
+      }
       // The 4px rounded end is the DATA end: for a bar below zero that is its
       // bottom (or its left), not the baseline it grows from.
       const end = v => (horizontal

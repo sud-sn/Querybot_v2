@@ -191,6 +191,13 @@ PLANS = {
                                                         "group_by": ["customer.name"], "time": {"window": H1}},
     "net sales by store by month in 2026": {"intent": "trend", "measures": ["net_amount"], "group_by": ["store"],
                                             "time": {"grain": "month", "window": H1}},
+    # two groupings: stacked bars, or a grid past six parts; two measures over many members: a dot each
+    "net sales by store and segment": {"intent": "breakdown", "measures": ["net_amount"],
+                                       "group_by": ["store", "customer.segment"], "time": {"window": H1}},
+    "net sales by store and category": {"intent": "breakdown", "measures": ["net_amount"],
+                                        "group_by": ["store", "category.name"], "time": {"window": H1}},
+    "net sales and quantity by product": {"intent": "breakdown", "measures": ["net_amount", "quantity"],
+                                          "group_by": ["product.name"], "time": {"window": H1}},
     # members that are amounts, in equal ranges
     "order lines by list price": {"intent": "breakdown", "measures": ["number_of_order_lines"],
                                   "group_by": ["product.list_price"]},

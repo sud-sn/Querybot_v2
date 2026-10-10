@@ -56,6 +56,18 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
         found = _series(logical, rows, m, periods[0], unit)
     elif periods and members and logical.compare is None:
         found = _members_over_time(logical, rows, m, periods[0], members[0], unit)
+    elif len(members) + len(cols.of("time")) > 1 and not periods and logical.compare is None:
+        # Two groupings: what each member of the larger one adds up to, when the measure adds up; nothing
+        # said otherwise (each row is a pair, and "the top 3 of the 36 stores" counted pairs as stores).
+        if len(measures) == 1 and out.get(m.name) is not None and adds_up(out[m.name]):
+            g = max([*members, *cols.of("time")], key=lambda c: len({r[c.name] for r in rows}))
+            keys = [m.name, *(c.name for c in cols.of("share") if c.measure == m.measure)]
+            summed: dict = {}
+            for r in rows:
+                into = summed.setdefault(r[g.name], {g.name: r[g.name], **{k: 0.0 for k in keys}})
+                for k in keys:
+                    into[k] += _number(r.get(k)) or 0.0
+            found = _breakdown(logical, cols, list(summed.values()), measures, out, g, unit, truncated=truncated)
     elif members and not periods and logical.compare is None:
         found = _breakdown(logical, cols, rows, measures, out, members[0], unit, truncated=truncated)
     return found[:MAX_FINDINGS]

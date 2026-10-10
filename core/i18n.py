@@ -540,6 +540,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.enum.charttype.donut": {"en": "Donut", "fr": "Anneau"},
     "ui.enum.charttype.scatter": {"en": "Scatter", "fr": "Nuage de points"},
     "ui.enum.charttype.dumbbell": {"en": "Change", "fr": "Variation"},
+    "ui.enum.charttype.stacked": {"en": "Stacked", "fr": "Empilé"},
+    "ui.enum.charttype.heatmap": {"en": "Grid", "fr": "Grille"},
     "ui.enum.role.admin": {"en": "Admin", "fr": "Administrateur"},
     "ui.enum.role.analyst": {"en": "Analyst", "fr": "Analyste"},
     "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
