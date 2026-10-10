@@ -368,7 +368,10 @@ def _sample(t: InvTable, dialect: str) -> str:
 
 
 def _business(c: DateCandidate) -> bool:
-    """A date a table may be dated by: its events, its snapshot's period, or the start of a term."""
+    """A date a table may be dated by: its events, its snapshot's period, or the start of a term. Never a
+    date in a person's life (a birth): a table whose only date is one has no default."""
+    if any(e.kind in ("personal_name", "old_dates") for e in c.evidence):
+        return False
     return c.kind in ("event", "snapshot") or c.kind == "validity" and bool(set(names.tokens(c.column)) & _STARTS)
 
 

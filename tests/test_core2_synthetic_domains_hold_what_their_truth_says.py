@@ -130,6 +130,10 @@ def test_dates_measures_and_labels_point_at_real_columns(name):
     for table, label in truth.labels.items():
         key = truth.primary_keys[table]
         assert len(key) == 1
+        if "+" in label:
+            # A person named in two parts: two people can share a name, so only the parts must exist.
+            assert all(_column_exists(domain, f"{table}.{part}") for part in label.split("+")), label
+            continue
         per_key = built.con.execute(
             f'SELECT MAX(n) FROM (SELECT COUNT(DISTINCT "{label}") n FROM "{table}" GROUP BY "{key[0]}")').fetchone()[0]
         distinct = built.con.execute(f'SELECT COUNT(DISTINCT "{label}") = COUNT(1) FROM "{table}"').fetchone()[0]

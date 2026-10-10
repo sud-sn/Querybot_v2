@@ -9,7 +9,7 @@ from evals.core2.framework import Domain
 DOMAINS = ("retail", "inventory", "finance", "purchasing", "hr", "subscriptions")
 # Benchmark-only domains (evals/core2/benchmark.py): they plant what today's learning is known to miss, so they
 # are measured, never gated; a domain moves to DOMAINS once the learner passes it.
-BENCHMARK = ("compounding_pharmacy", "networking")
+BENCHMARK = ("compounding_pharmacy", "networking", "home_services")
 
 
 def available() -> list[str]:

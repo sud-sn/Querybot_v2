@@ -11,6 +11,8 @@ values out of prompts or the column is sensitive.
 
 from __future__ import annotations
 
+import re
+
 from sqlglot import exp
 
 from core2.model import formula
@@ -67,11 +69,15 @@ def left_out_words(model: SemanticModel, f, values: bool = True) -> str:
     """A rule a table leaves rows out by, as the rows it leaves out: "Status code is C"."""
     kept_as = {"ne": "is", "not_in": "is", "eq": "is not", "in": "is not", "not_null": "is empty",
                "is_null": "is filled", "gt": "is at most", "gte": "is below", "lt": "is at least", "lte": "is above"}
-    shown = ", ".join(map(str, f.values)) if values else "(a value)"
+    named = list(getattr(f, "shown", None) or [])
+    shown = (", ".join(named) if named else ", ".join(map(str, f.values))) if values else "(a value)"
+    name = model.columns[f.column].business_name
+    if named:   # a status kept by number: "Order status is Closed - Cancelled", not "Order status id is 8"
+        name = re.sub(r"\s+(?:id|key|code|no|number|nbr|num)$", "", name, flags=re.IGNORECASE)
     word = kept_as.get(f.op)
     if word is None:
-        return f"{model.columns[f.column].business_name} not {f.op.replace('_', ' ')} {shown}"
-    return f"{model.columns[f.column].business_name} {word}" + (f" {shown}" if f.op not in ("is_null", "not_null") else "")
+        return f"{name} not {f.op.replace('_', ' ')} {shown}"
+    return f"{name} {word}" + (f" {shown}" if f.op not in ("is_null", "not_null") else "")
 
 
 def left_out_note(model: SemanticModel, table_key: str, f) -> str:

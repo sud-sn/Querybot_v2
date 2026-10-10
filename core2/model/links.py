@@ -230,8 +230,10 @@ def _table(model: SemanticModel, key: str, alias: str, dialect: str) -> exp.Tabl
     return D.table_expr(t.database, t.schema_name, t.name, dialect, alias)
 
 
-def _col(model: SemanticModel, alias: str, key: str, dialect: str) -> exp.Column:
-    return exp.column(D.ident(model.columns[key].name, dialect), table=exp.to_identifier(alias))
+def _col(model: SemanticModel, alias: str, key: str, dialect: str) -> exp.Expression:
+    from core2.compile.compiler import column_sql
+
+    return column_sql(model, key, exp.to_identifier(alias), dialect)
 
 
 def _count_when(condition: exp.Expr) -> exp.Expression:

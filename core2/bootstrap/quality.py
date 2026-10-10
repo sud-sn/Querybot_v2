@@ -8,10 +8,12 @@ answers that touch the flagged object.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
 import datetime as dt
+import re
 import statistics
 
 from sqlglot import exp
@@ -35,6 +37,27 @@ _HIGH = dt.date(8999, 12, 31)
 # and V are left out: D is as often "delivered" as "deleted".
 _CANCEL_VALUES = {"c", "x", "v", "cnl", "can", "cxl", "cancel", "cancelled", "canceled", "void", "voided", "rev",
                   "reversed", "credit", "returned", "rejected", "deleted"}
+# Words a status says in full when its rows do not count: left out of totals by default (an admin can undo it).
+CLEAR_CANCEL = {"cancel", "cancelled", "canceled", "cancellation", "cnl", "cxl", "void", "voided", "reversed",
+                "reversal", "duplicate", "duplicated"}
+# Rows that may or may not count, depending on the business: only asked about.
+_ASK_CANCEL = {"returned", "rejected", "refunded", "deleted", "credit", "credited", "abandoned", "declined"}
+_NEGATION = {"not", "non", "no", "un", "never", "without"}
+# Words a status says ("Open - Requested", "Done - Invoiced"): a short lookup whose names mostly hold them is a status,
+# whatever it is called. A product called "Void Fill" is not.
+_STATE_WORDS = CLEAR_CANCEL | _ASK_CANCEL | {
+    "open", "closed", "pending", "completed", "complete", "done", "shipped", "delivered", "active", "inactive",
+    "approved", "booked", "scheduled", "requested", "new", "draft", "posted", "paid", "unpaid", "failed", "processing",
+    "fulfilled", "invoiced", "hold", "expired", "ready", "verified", "received", "ordered", "submitted", "awaiting",
+    "progress", "confirmed", "dispatched", "billed", "settled", "suspended", "terminated", "closing", "opened"}
+_LOOKUP_ROWS = 100       # a status lookup is a short list
+_LOOKUP_LABEL_LEN = 40   # its names, not its descriptions: "Closed - Cancelled", never "will be cancelled if unpaid"
+
+
+def _status_words(value: object, words: set[str]) -> bool:
+    """Does a status value say one of ``words`` in full ("Closed - Cancelled"), and not its negation?"""
+    tokens = set(names.tokens(str(value or "")))
+    return bool(tokens & words) and not tokens & _NEGATION
 
 
 def _flag(object_key: str, kind: str, message: str, severity: str = "info", **data: object) -> QualityFlag:
@@ -45,7 +68,10 @@ def _flag(object_key: str, kind: str, message: str, severity: str = "info", **da
 def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                  calendars: dict[str, CalendarFinding], joins: list[JoinFinding],
                  dates: dict[str, list[DateCandidate]], measures: list[MeasureFinding],
-                 kinds: dict[str, str], *, outliers: bool = True) -> list[QualityFlag]:
+                 kinds: dict[str, str], *, outliers: bool = True,
+                 values_allowed: Callable[[str, str], bool] | None = None) -> list[QualityFlag]:
+    """``values_allowed(table key, column)``: may that column's values be read (False where the workspace
+    keeps them out); a status lookup's names are read only where they may be."""
     flags: list[QualityFlag] = []
     col_key = {}
     for key, table in inventory.tables.items():
@@ -104,13 +130,22 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
             values = {(t.value or "").strip().lower() for t in p.top}
             # A value on most rows is the normal state (C for closed), never a cancellation.
             counted = sum(t.count for t in p.top) or 1
-            cancels = sorted({(t.value or "").strip() for t in p.top
-                              if (t.value or "").strip().lower() in _CANCEL_VALUES and t.count <= counted / 2})
+            minority = [t for t in p.top if t.count <= counted / 2]
+            cancels = sorted({(t.value or "").strip() for t in minority
+                              if (t.value or "").strip().lower() in _CANCEL_VALUES
+                              or _status_words(t.value, CLEAR_CANCEL | _ASK_CANCEL)})
+            clear = sorted({(t.value or "").strip() for t in minority if _status_words(t.value, CLEAR_CANCEL)})
+            stated = sum(1 for t in p.top if set(names.tokens(t.value or "")) & _STATE_WORDS)
+            if not (words & _STATUS_WORDS and not names.opaque(column.name)) and stated < 0.5 * len(p.top):
+                clear = []       # "Void Fill" among packaging types is no status: never left out by default
             if (words & _STATUS_WORDS and not names.opaque(column.name)) or (cancels and len(values) <= 6):
                 flags.append(_flag(col_key[(key, column.name)], "status_column",
                                    f"{names.readable(column.name)} has codes {', '.join(sorted(v.value or '' for v in p.top))}: "
                                    "should some rows (cancelled, void, reversed) be left out of totals?",
-                                   values=[t.value for t in p.top], cancel_like=cancels))
+                                   values=[t.value for t in p.top], cancel_like=cancels,
+                                   leave_out=clear, leave_out_shown=clear))
+    flags += _lookup_statuses(warehouse, inventory, profiles, joins, kinds, col_key,
+                              values_allowed or (lambda table, column: True))
 
     # Members listed in a dimension but never used by the facts that point at it.
     for j in joins:
@@ -130,6 +165,81 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
     for f in flags:
         unique.setdefault(f.key, f)
     return list(unique.values())
+
+
+def _rows(warehouse: Warehouse, sql: str) -> list[tuple[Any, ...]]:
+    return warehouse.query(sql, max_rows=_LOOKUP_ROWS + 1).rows
+
+
+def _lookup_statuses(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
+                     joins: list[JoinFinding], kinds: dict[str, str], col_key: dict[tuple[str, str], str],
+                     values_allowed: Callable[[str, str], bool]) -> list[QualityFlag]:
+    """A status kept in a short lookup table the facts point at by number ("order status 8" is
+    "Closed - Cancelled"): read in the lookup's own words. Members whose names say cancelled, void,
+    reversed or duplicate are left out of the facts' totals by default, through the fact's own column
+    (no join added to any query); returned, rejected and the like are only asked about."""
+    d = warehouse.dialect
+    out: list[QualityFlag] = []
+    members: dict[str, list[tuple[object, list[str]]]] = {}
+    for j in joins:
+        if j.to_calendar or j.also or j.trust == "rejected" or kinds.get(j.from_table) not in ("fact", "snapshot") \
+                or kinds.get(j.to_table) not in ("dimension", "other") or not 2 <= profiles[j.to_table].rows <= _LOOKUP_ROWS:
+            continue
+        lookup = inventory.tables[j.to_table]
+        if j.to_table not in members:
+            texts = [c.name for c in lookup.columns if c.data_type == "text" and c.name != j.to_column
+                     and (profiles[j.to_table].columns[c.name].avg_len or 0) <= _LOOKUP_LABEL_LEN
+                     and values_allowed(j.to_table, c.name)]
+            members[j.to_table] = []
+            if texts:
+                query = exp.select(exp.column(D.ident(j.to_column, d)),
+                                   *[exp.column(D.ident(t, d)) for t in texts]).from_(
+                    D.table_expr(lookup.database, lookup.schema, lookup.name, d))
+                rows = attempt(warehouse, f"the status check on {lookup.name}",
+                               partial(_rows, warehouse, query.sql(dialect=d)), [])
+                members[j.to_table] = [(r[0], [str(v) for v in r[1:] if v is not None]) for r in rows]
+        listed = members[j.to_table]
+        if not listed:
+            continue
+        clear = [(k, next(v for v in vs if _status_words(v, CLEAR_CANCEL))) for k, vs in listed
+                 if any(_status_words(v, CLEAR_CANCEL) for v in vs)]
+        ask = [(k, next(v for v in vs if _status_words(v, _ASK_CANCEL))) for k, vs in listed
+               if not any(k == c for c, _ in clear) and any(_status_words(v, _ASK_CANCEL) for v in vs)]
+        words = set(names.tokens(lookup.name)) | set(names.tokens(j.from_column))
+        stated = sum(1 for _, vs in listed if any(set(names.tokens(v)) & _STATE_WORDS for v in vs))
+        if not (words & _STATUS_WORDS and not names.opaque(lookup.name)) and stated < 0.5 * len(listed):
+            continue      # items, regions, products: a name that happens to say "void" is no status
+        if not clear and not ask and not (words & _STATUS_WORDS):
+            continue
+        fact = inventory.tables[j.from_table]
+        if clear:
+            # Left out by default only while they are the exception: a table of cancellations counts them all.
+            column = exp.column(D.ident(j.from_column, d))
+            share_sql = exp.select(exp.Count(this=exp.Star()), exp.Sum(this=exp.Case().when(
+                exp.In(this=column, expressions=[_literal(k) for k, _ in clear]), exp.Literal.number(1)).else_(
+                exp.Literal.number(0)))).from_(
+                D.table_expr(fact.database, fact.schema, fact.name, d))
+            counts = attempt(warehouse, f"the cancelled-rows check on {fact.name}",
+                             partial(_rows, warehouse, share_sql.sql(dialect=d)), [])
+            total, hit = (int(counts[0][0] or 0), int(counts[0][1] or 0)) if counts else (0, 0)
+            if not total or hit > total / 2:
+                ask, clear = ask + clear, []
+        shown = [v for _, vs in listed for v in vs[:1]]
+        status = re.sub(r"\s+(?:id|key|code|no|number|nbr|num)$", "", names.readable(j.from_column), flags=re.IGNORECASE)
+        named = [v for _, v in clear + ask]
+        said = (f"{status} includes {', '.join(named)} (of {len(listed)} in {names.readable(lookup.name)})" if named
+                else f"{status} has {', '.join(shown[:8])}{', ...' if len(shown) > 8 else ''}")
+        out.append(_flag(col_key[(j.from_table, j.from_column)], "status_column",
+                         f"{said}: should some rows (cancelled, void, reversed) be left out of totals?",
+                         values=shown, cancel_like=[v for _, v in clear + ask], lookup=j.to_table,
+                         leave_out=[k for k, _ in clear], leave_out_shown=[v for _, v in clear],
+                         ask=[k for k, _ in ask], ask_shown=[v for _, v in ask]))
+    return out
+
+
+def _literal(value: object) -> exp.Expression:
+    return exp.Literal.number(value) if isinstance(value, (int, float)) and not isinstance(value, bool) \
+        else exp.Literal.string(str(value))
 
 
 def _month_rows(warehouse: Warehouse, sql: str) -> list[tuple[Any, ...]]:

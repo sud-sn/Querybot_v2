@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from sqlglot import exp
 
+from core2.bootstrap import names
 from core2.bootstrap.inventory import InvTable
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import Evidence
@@ -51,22 +52,42 @@ def _count_duplicates(warehouse: Warehouse, table: InvTable, columns: list[str])
     return int(warehouse.query(sql).rows[0][0] or 0)
 
 
-def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool:
-    """Does ``seq`` start again at 1 in (nearly) every ``doc``, as a line number does in each order?
+# A number that runs within a document, named so (a fill number seen from the fifth fill on starts at 5).
+_SEQUENCE_WORDS = {"no", "nbr", "num", "number", "seq", "sequence", "line", "ln", "version", "ver", "renewal",
+                   "rnwl", "fill", "installment", "instalment", "revision", "rev", "step"}
 
-    A department number beside a nearly unique name is unique with it by chance, and starts at 1
-    only for the names that happen to be in department 1.
+
+def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool:
+    """Is ``seq`` a running number within each ``doc``, as a line number is in each order or a fill number
+    in each prescription? It starts again at 1 in (nearly) every doc, or it runs without a gap in (nearly)
+    every doc of several rows, wherever it starts (a prescription's fills seen from its fifth on).
+
+    A department number beside a nearly unique name is unique with it by chance: it starts at 1
+    only for the names in department 1, and the names with several rows are too few to say it runs.
     """
     d = warehouse.dialect
-    first = exp.Min(this=exp.column(D.ident(seq, d)))
-    inner = exp.select(first.as_("m")).from_(exp.to_table("__SRC__")).group_by(exp.column(D.ident(doc, d)))
-    starts = exp.Sum(this=exp.Case(ifs=[exp.If(this=exp.EQ(this=exp.column("m"), expression=exp.Literal.number(1)),
-                                                true=exp.Literal.number(1))], default=exp.Literal.number(0)))
-    query = exp.select(starts, exp.Count(this=exp.Literal.number(1))).from_(inner.subquery("x"))
+    s = exp.column(D.ident(seq, d))
+    inner = exp.select(exp.Min(this=s.copy()).as_("m"), exp.Max(this=s.copy()).as_("x"),
+                       exp.Count(this=exp.Literal.number(1)).as_("n")).from_(exp.to_table("__SRC__")).group_by(
+        exp.column(D.ident(doc, d)))
+
+    def when(condition: exp.Expr, value: exp.Expression) -> exp.Expression:
+        return exp.Sum(this=exp.Case(ifs=[exp.If(this=condition, true=value)], default=exp.Literal.number(0)))
+
+    several = exp.GT(this=exp.column("n"), expression=exp.Literal.number(1))
+    runs = exp.and_(several.copy(), exp.EQ(this=D.add(D.sub(exp.column("x"), exp.column("m")), 1),
+                                          expression=exp.column("n")))
+    one = exp.Literal.number(1)
+    query = exp.select(when(exp.EQ(this=exp.column("m"), expression=one.copy()), one.copy()),
+                       exp.Count(this=one.copy()), when(several, one.copy()), when(runs, one.copy()),
+                       when(several.copy(), exp.column("n")), exp.Sum(this=exp.column("n"))).from_(inner.subquery("g"))
     sql = query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d))
-    started, groups = attempt(warehouse, f"the line-number check on {table.name} ({doc}, {seq})",
-                              lambda: warehouse.query(sql).rows[0], (0, 0))
-    return bool(groups) and int(started or 0) >= 0.9 * int(groups)
+    got = attempt(warehouse, f"the line-number check on {table.name} ({doc}, {seq})",
+                  lambda: warehouse.query(sql).rows[0], (0, 0, 0, 0, 0, 0))
+    started, groups, multi, running, multi_rows, rows = (int(v or 0) for v in got)
+    if groups and started >= 0.9 * groups:
+        return True
+    return multi > 0 and running >= 0.9 * multi and multi_rows >= 0.3 * max(rows, 1)
 
 
 def _key_like(table: InvTable, profile: TableProfile) -> list[str]:
@@ -131,7 +152,8 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
                 and table.type_of(c.name) in ("text", "integer")]
         seqs = [c.name for c in table.columns if c.name not in unique
                 and table.type_of(c.name) == "integer"
-                and profile.columns[c.name].min_num == 1 and 1 < profile.columns[c.name].distinct <= 1000
+                and (profile.columns[c.name].min_num in (0, 1) or set(names.tokens(c.name)) & _SEQUENCE_WORDS)
+                and 1 < profile.columns[c.name].distinct <= 1000
                 and (profile.columns[c.name].max_num or 0) <= 10000]
         found: list[list[str]] = []
         for doc, seq in itertools.product(docs, seqs):

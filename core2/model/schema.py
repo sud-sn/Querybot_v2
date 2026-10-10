@@ -133,6 +133,9 @@ class Column(Belief):
     profile: ColumnProfile | None = None
     hidden: bool = False            # an admin hid it from questions
     value_names: dict[str, str] = Field(default_factory=dict)   # stored value -> what readers see ("C" -> "Cancelled")
+    # A name the row holds in parts ("first name" and "last name"): column keys of the same table, read joined by
+    # a space. Such a column is not in the warehouse; it is never in its table's column list.
+    parts: list[str] = Field(default_factory=list)
 
 
 class ColumnFilter(_Data):
@@ -141,6 +144,7 @@ class ColumnFilter(_Data):
     column: str
     op: FilterOp
     values: list[Scalar] = Field(default_factory=list)
+    shown: list[str] = Field(default_factory=list)      # what readers see for the values (status 8: "Cancelled")
 
 
 class Table(Belief):

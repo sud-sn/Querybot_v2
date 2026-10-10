@@ -47,7 +47,11 @@ def _maps(model: SemanticModel, built: Built) -> tuple[dict[str, str], dict[str,
     tables = {k: physical_to_logical.get(t.name.casefold(), "?") for k, t in model.tables.items()}
     of = built.logical_of()
     columns = {k: of.get((model.tables[c.table].name.casefold(), c.name.casefold()), "?")
-               for k, c in model.columns.items()}
+               for k, c in model.columns.items() if not c.parts}
+    for k, c in model.columns.items():
+        if c.parts:   # a name read from two columns: "customers.first_name+last_name"
+            refs = [columns.get(p, "?") for p in c.parts]
+            columns[k] = refs[0].split(".", 1)[0] + "." + "+".join(r.split(".", 1)[-1] for r in refs)
     return tables, columns
 
 

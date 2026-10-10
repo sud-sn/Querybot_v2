@@ -190,6 +190,106 @@ def _stats(column: InvColumn, dialect: str, exact: bool) -> list[tuple[str, exp.
     return out
 
 
+SHAPED = 0.8      # share of a column's values that must have a shape for the column to be read as it
+_DIGITS = "0123456789"
+_PHONE_MARKS = "()-+. "
+# Street words, as they end a street's name or start the rest of an address: "12 Oak St", "8 Elm Road Suite 3".
+_STREET_SHORT = ("ST", "AVE", "RD", "DR", "LN", "BLVD", "CT", "PL", "PKWY", "HWY", "WAY", "APT", "STE")
+_STREET_LONG = ("STREET", "AVENUE", "ROAD", "DRIVE", "LANE", "BOULEVARD", "COURT", "PLACE", "PARKWAY",
+                "HIGHWAY", "SUITE", "TERRACE", "CIRCLE", "APARTMENT")
+
+
+def _replace_all(value: exp.Expression, chars: str) -> exp.Expression:
+    for ch in chars:
+        value = exp.Anonymous(this="REPLACE", expressions=[value, exp.Literal.string(ch), exp.Literal.string("")])
+    return value
+
+
+def _length(value: exp.Expression, dialect: str) -> exp.Expression:
+    # Oracle reads '' as NULL: an emptied value is then a length of 0, not unknown.
+    return exp.Coalesce(this=D.text_length(value, dialect), expressions=[exp.Literal.number(0)])
+
+
+def _shape_counts(column: InvColumn, dialect: str) -> list[tuple[str, exp.Expression]]:
+    c = _readable(column, dialect)
+    no_digits = _replace_all(c.copy(), _DIGITS)
+    digits = D.sub(_length(c.copy(), dialect), _length(no_digits.copy(), dialect))
+    marks_only = exp.EQ(this=_length(_replace_all(no_digits.copy(), _PHONE_MARKS), dialect),
+                        expression=exp.Literal.number(0))
+    first = exp.Substring(this=c.copy(), start=exp.Literal.number(1), length=exp.Literal.number(1))
+    return [
+        ("email", _count_if(exp.and_(c.copy().like(exp.Literal.string("%_@_%._%")),
+                                     exp.not_(c.copy().like(exp.Literal.string("% %")))))),
+        # 7 to 15 digits, written with at least one of ( ) - + . or a space: "(305) 555-4148", "+44 20 7946 0958".
+        # A run of digits alone is an ID (an NPI, a tracking number), never read as a phone.
+        ("phone", _count_if(exp.and_(marks_only, _between(digits.copy(), 7, 15),
+                                     exp.GT(this=_length(no_digits.copy(), dialect), expression=exp.Literal.number(0))))),
+        ("national_id", _count_if(exp.and_(c.copy().like(exp.Literal.string("___-__-____")),
+                                           exp.EQ(this=digits.copy(), expression=exp.Literal.number(9))))),
+        ("digit_first", _count_if(exp.In(this=first, expressions=[exp.Literal.string(ch) for ch in _DIGITS]))),
+    ]
+
+
+def _street_count(column: InvColumn, dialect: str) -> exp.Expression:
+    upper = exp.Upper(this=_readable(column, dialect))
+    likes = [upper.copy().like(exp.Literal.string(f"% {w}%")) for w in _STREET_LONG]
+    for w in _STREET_SHORT:
+        likes += [upper.copy().like(exp.Literal.string(f"% {w} %")), upper.copy().like(exp.Literal.string(f"% {w}")),
+                  upper.copy().like(exp.Literal.string(f"% {w}.%")), upper.copy().like(exp.Literal.string(f"% {w},%"))]
+    return _count_if(exp.or_(*likes))
+
+
+def _personal_shapes(warehouse: Warehouse, table: InvTable, profiles: dict[str, ColumnProfile], source: str,
+                     dialect: str) -> None:
+    """Text whose values are emails, phone numbers, street addresses or national ID numbers, whatever the
+    column is called: its pattern says so, and Learn treats it as personal data."""
+    texts = [c for c in table.columns if c.data_type == "text" and profiles[c.name].non_null
+             and 5 <= (profiles[c.name].avg_len or 0) <= 80 and profiles[c.name].pattern is None]
+    if not texts:
+        return
+    # Each shape is a share of the values counted in the same query (the sample, when the table is sampled).
+    shaped = [(c.name, stat, e) for c in texts
+              for stat, e in [("seen", exp.Count(this=_readable(c, dialect))), *_shape_counts(c, dialect)]]
+    ignored: dict[str, str] = {}
+    try:
+        values = _select(warehouse, shaped, source, dialect, ignored, table.name)
+    except Exception as error:  # noqa: BLE001 - the shapes are a help: without them, names still say what is personal
+        if not answers(warehouse):
+            raise
+        log.warning("core2: %s refused the personal-data shapes: %s", table.name, reason(error))
+        return
+    counts: dict[str, dict[str, int]] = {}
+    for (name, stat, _), value in zip(shaped, values):
+        if value is not _UNREAD:
+            counts.setdefault(name, {})[stat] = int(value or 0)
+    streets: list[tuple[InvColumn, int]] = []
+    for column in texts:
+        got = counts.get(column.name, {})
+        seen = got.get("seen", 0)
+        if not seen:
+            continue
+        # An ID number (123-45-6789) is digits with dashes too: read before a phone number.
+        shape = next((k for k in ("email", "national_id", "phone") if got.get(k, 0) >= SHAPED * seen), None)
+        if shape:
+            profiles[column.name].pattern = shape
+        elif got.get("digit_first", 0) >= 0.9 * seen:
+            streets.append((column, seen))
+    if not streets:
+        return
+    items = [(c.name, "street", _street_count(c, dialect)) for c, _ in streets]
+    try:
+        values = _select(warehouse, items, source, dialect, ignored, table.name)
+    except Exception as error:  # noqa: BLE001 - as above
+        if not answers(warehouse):
+            raise
+        log.warning("core2: %s refused the street-address shape: %s", table.name, reason(error))
+        return
+    for (column, seen), value in zip(streets, values):
+        # A house number first, and a street word in a good share of them (many streets have neither St nor Rd).
+        if value is not _UNREAD and int(value or 0) >= 0.3 * seen:
+            profiles[column.name].pattern = "street"
+
+
 def _between(value: exp.Expression, low: int, high: int) -> exp.Expr:
     return exp.Between(this=value, low=exp.Literal.number(low), high=exp.Literal.number(high))
 
@@ -357,6 +457,10 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
                 p.placeholder_rows = int(round(count * rows / sample_rows)) if sampled and sample_rows else count
             else:
                 setattr(p, "date_min" if stat == "min_valid" else "date_max", _text(value))
+
+    # 2c. personal shapes of text: emails, phone numbers, street addresses, national ID numbers. Counted in
+    # the warehouse, like everything above: no value leaves it. A refusal here loses only the shape.
+    _personal_shapes(warehouse, table, profiles, source, dialect)
 
     # 3. common values
     low = [c for c in table.columns

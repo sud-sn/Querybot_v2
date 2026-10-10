@@ -213,7 +213,6 @@ TRUTH = {
         "dates": [
             DateTruth("invoice", "invoice_date", "Invoice date", "event", False, default=True),
             DateTruth("employee", "hire_date", "Hire date", "event", False, default=True),
-            DateTruth("employee", "birth_date", "Birth date", "event", False),
         ],
         "measures": [
             _count("invoice", "Invoices"),
@@ -247,7 +246,6 @@ TRUTH = {
             DateTruth("orders", "required_date", "Required date", "due", False),
             DateTruth("orders", "shipped_date", "Shipped date", "event", False),
             DateTruth("employees", "hire_date", "Hire date", "event", False, default=True),
-            DateTruth("employees", "birth_date", "Birth date", "event", False),
         ],
         "measures": [
             _count("orders", "Orders"),

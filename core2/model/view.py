@@ -146,20 +146,35 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
 
 def _leave_out(model: SemanticModel, key: str, column: str) -> dict[str, Any]:
     """For a status column with cancel-like codes: the decision that leaves those rows out of the table's
-    totals (a default filter, undone like any decision), or what was already decided."""
+    totals (a default filter, undone like any decision), or what was already decided. Rows Learn left out
+    itself (cancelled, void, reversed, duplicate) are shown as its choice, with the way to count them again."""
     if not key.startswith("default_filter:") or column not in model.columns:
         return {}
     flag = next((q for q in model.quality if q.kind == "status_column" and q.object == column), None)
-    codes = [str(c) for c in (flag.data.get("cancel_like") or [])] if flag else []
+    data = flag.data if flag else {}
+    if data.get("lookup"):     # a status kept by number: the rows are left out by the numbers, said by name
+        codes = [*(data.get("leave_out") or []), *(data.get("ask") or [])]
+        shown = [str(v) for v in [*(data.get("leave_out_shown") or []), *(data.get("ask_shown") or [])]]
+    else:
+        codes = list(data.get("cancel_like") or [])
+        shown = [str(c) for c in codes]
     table = model.tables[model.columns[column].table]
-    if any(f.column == column for f in table.default_filters):
-        decided = next(f for f in table.default_filters if f.column == column)
-        return {"decided": f"Left out: {', '.join(map(str, decided.values))}"}
+    rest = [f.model_dump(mode="json") for f in table.default_filters if f.column != column]
+    decided = next((f for f in table.default_filters if f.column == column), None)
+    if decided is not None:
+        said = ", ".join(decided.shown or [str(v) for v in decided.values])
+        undo = {"action": {"target": target("table", table.key), "field": "default_filters",
+                           "value": json.dumps(rest), "label": "Count all rows",
+                           "note": f"{table.business_name}: every {model.columns[column].business_name.lower()} "
+                                   "is counted again"}}
+        if list(decided.values) == list(data.get("leave_out") or []):
+            return undo                 # Learn's own choice, shown as "Using: left out ..."
+        return {"decided": f"Left out: {said}", **undo}
+    counted = {"choice": "all rows are counted", "alternatives": [f"leave out {v}" for v in shown]}
     if not codes:
-        return {}
-    filters = [f.model_dump(mode="json") for f in table.default_filters]
-    filters.append({"column": column, "op": "not_in", "values": codes})
-    return {"action": {"target": target("table", table.key), "field": "default_filters",
-                       "value": json.dumps(filters), "label": f"Leave out {', '.join(codes)}",
+        return counted
+    filters = [*rest, {"column": column, "op": "not_in", "values": codes, "shown": shown}]
+    return {**counted, "action": {"target": target("table", table.key), "field": "default_filters",
+                       "value": json.dumps(filters), "label": f"Leave out {', '.join(shown)}",
                        "note": f"{table.business_name}: rows whose {model.columns[column].business_name.lower()} "
-                               f"is {' or '.join(codes)} are left out of totals"}}
+                               f"is {' or '.join(shown)} are left out of totals"}}

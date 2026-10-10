@@ -1165,8 +1165,11 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                     and not model.tables[part.table].default_filters \
                     and any(flag.object not in _own_conditions(o) for o in part.measures):
                 cancel_like = [str(v) for v in flag.data.get("cancel_like", [])]
+                status = model.columns[flag.object].business_name.lower()
+                if flag.data.get("lookup"):   # kept by number, said by name: "order status", not "order status id"
+                    status = re.sub(r"\s+(?:id|key|code|no|number|nbr|num)$", "", status)
                 if cancel_like:
-                    notes.append(f"Includes rows whose {model.columns[flag.object].business_name.lower()} is "
+                    notes.append(f"Includes rows whose {status} is "
                                  f"{' or '.join(cancel_like)}; an admin can leave them out by default.")
 
     # Partial periods of a series, and the periods it should hold (between the first and last data).

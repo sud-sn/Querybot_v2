@@ -1,0 +1,76 @@
+# Follow-up or new question, home services (see evals/core2/followup_eval.py for the labels).
+domain: home_services
+today: 2026-06-15
+threads:
+  - id: h01
+    turns:
+      - {q: "Line amount by service type last month"}
+      - {q: "only Plumbing repair", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by technician instead", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "show that as a bar chart", label: refine, kind: chart, keeps: [measures, group_by, filters, window]}
+      - {q: "which technician was lowest?", label: refine, kind: sort, keeps: [measures, filters, window]}
+      - {q: "How many bookings were made in each city this year?", label: new, kind: switch, drops: [filters]}
+  - id: h02
+    turns:
+      - {q: "Monthly line amount trend for 2025"}
+      - {q: "by week instead", label: refine, kind: grain, keeps: [measures, window]}
+      - {q: "just for Riverton", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "compare with the year before", label: refine, kind: compare, keeps: [measures, filters]}
+      - {q: "why did it drop in March?", label: refine, kind: why, keeps: [measures, filters]}
+      - {q: "What were plan fees by state last quarter?", label: new, kind: switch, drops: [filters]}
+  - id: h03
+    turns:
+      - {q: "Top 10 customers by line amount this year"}
+      - {q: "just the top 5", label: refine, kind: topn, keeps: [measures, group_by, window]}
+      - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
+      - {q: "what about hours?", label: refine, kind: measure, keeps: [group_by, filters, window]}
+      - {q: "Line amount by service type for 2025", label: new, kind: restate, drops: [filters]}
+      - {q: "How many visits?", label: unclear, kind: bare}
+  - id: h04
+    turns:
+      - {q: "Travel fees by partner in Q1 2026"}
+      - {q: "exclude Bluefin Realty", label: refine, kind: exclude, keeps: [measures, group_by, window]}
+      - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
+      - {q: "and the number of bookings next to it", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "What is the average visit duration by team?", label: new, kind: switch, drops: [filters]}
+      - {q: "lowest first", label: refine, kind: sort, keeps: [measures, group_by]}
+  - id: h05
+    turns:
+      - {q: "Parts used by part name this year"}
+      - {q: "and travel km", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "only Copper pipe", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "break that down by technician", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "sort lowest first", label: refine, kind: sort, keeps: [measures, group_by, filters, window]}
+      - {q: "What's the plan fee for each state in 2026?", label: new, kind: switch, drops: [filters]}
+  - id: h06
+    turns:
+      - {q: "Line amount in Lakemont in March 2026"}
+      - {q: "and in April?", label: refine, kind: period, keeps: [measures, filters]}
+      - {q: "what about Pinecrest?", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by service type", label: refine, kind: drill, keeps: [measures, filters, window]}
+      - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
+      - {q: "How many bookings?", label: unclear, kind: bare}
+  - id: h07
+    turns:
+      - {q: "Hours by team last year"}
+      - {q: "vs line amount", label: refine, kind: add_measure, keeps: [measures, group_by, window]}
+      - {q: "as a pie", label: refine, kind: chart, keeps: [group_by, window]}
+      - {q: "Which partners sent the most bookings in May?", label: new, kind: switch}
+      - {q: "and the least?", label: refine, kind: sort, keeps: [measures, filters, window]}
+      - {q: "the third one, how did they do each month this year?", label: refine, kind: reference, keeps: [measures]}
+  - id: h08
+    turns:
+      - {q: "Plan fees by month in 2025"}
+      - {q: "by renewal date", label: refine, kind: date_role, keeps: [measures, window]}
+      - {q: "only Harborview", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "What data do you have about visits?", label: new, kind: describe}
+      - {q: "Visits by technician last week", label: new, kind: switch, drops: [filters]}
+      - {q: "top 3", label: refine, kind: topn, keeps: [measures, group_by, window]}
+  - id: h09
+    turns:
+      - {q: "Number of bookings by status this month"}
+      - {q: "only Done - Invoiced", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "by city", label: refine, kind: regroup, keeps: [measures, filters, window]}
+      - {q: "compared to last month", label: refine, kind: compare, keeps: [measures, group_by, filters]}
+      - {q: "Average hours per booking line by service type in 2025", label: new, kind: switch, drops: [filters]}
+      - {q: "Travel km by technician this quarter", label: new, kind: switch, drops: [filters]}

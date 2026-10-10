@@ -108,6 +108,8 @@ def plural(phrase: str) -> str:
     lower = word.lower()
     if not word or lower.endswith(("rows", "data", "staff", "people")):
         out = word
+    elif lower.endswith("sis") and len(lower) > 4:      # diagnosis -> diagnoses, analysis -> analyses
+        out = word[:-2] + "es"
     elif lower.endswith("y") and len(lower) > 1 and lower[-2] not in "aeiou":
         out = word[:-1] + "ies"
     elif lower.endswith(("s", "x", "z", "ch", "sh")):

@@ -37,6 +37,12 @@ _MONEY = {"amount", "amt", "value", "val", "cost", "cst", "price", "prc", "reven
 _QUANTITY = {"qty", "quantity", "units", "count", "cnt", "volume", "weight", "hours", "days", "seats", "fte",
              "headcount", "hc", "number", "items", "pieces"}
 _LEVEL = names.LEVEL_WORDS
+_OWN_UNITS = {"day", "days", "hour", "hours", "hrs", "hr", "minute", "minutes", "mins", "min", "second", "seconds",
+              "secs", "week", "weeks", "month", "months", "year", "years", "oz", "lb", "lbs", "kg", "kgs", "gram",
+              "grams", "mg", "ml", "km", "miles", "pct", "percent", "mbps", "gbps", "gb", "mb", "tb", "kwh", "sqft"}
+# Nouns that name an amount, not a thing counted: a table of them is counted in rows ("revenue rows").
+_AMOUNT_NOUNS = {"revenue", "income", "cost", "costs", "spend", "expense", "expenses", "billing", "inventory",
+                 "stock", "usage", "shipping", "payroll", "budget", "finance", "consumption", "demand", "supply"}
 _FLOW = names.FLOW_WORDS
 _COST_ONLY = {"cost", "cst"}
 _CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line", "ln", "lin", "type", "typ", "ind", "indicator",
@@ -46,6 +52,10 @@ _UNIT_WORDS = {"uom", "unit", "units", "unt", "um", "measure"}
 # What a thing can do (a port's speed, a circuit's bandwidth), not an amount of anything: never added up.
 _CAPACITY = {"speed", "bandwidth", "capacity", "mbps", "gbps", "kbps", "bps", "threshold", "limit", "lmt", "rpm",
              "ghz", "mhz"}
+# What a row allows or is allowed, not what it did: "refills authorized", "days allowed".
+_ALLOWANCE = {"authorized", "authorised", "authd", "authzd", "allowed", "allw", "alwd", "allwd", "permitted",
+              "entitled", "allowance", "quota"}
+_CURRENCY_CODES = {"usd", "cad", "eur"}
 _UNIT_VALUES = {"ea", "each", "pc", "pcs", "piece", "kg", "g", "lb", "lbs", "oz", "ft", "m", "cm", "mm", "l", "ml",
                 "box", "bx", "cs", "case", "pk", "pack", "pallet", "unk", "units", "unit", "dz", "doz", "gal", "ton"}
 _CURRENCIES = {"usd", "cad", "eur", "gbp", "jpy", "aud", "chf", "cny", "inr", "mxn", "brl", "sek", "nok", "dkk",
@@ -191,8 +201,8 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE) \
                 and not _counted(column.name):
             continue
-        if words & _CAPACITY and not words & (_MONEY | _QUANTITY):
-            continue   # a port's speed, a circuit's bandwidth: what a thing can do, not an amount of it
+        if words & (_CAPACITY | _ALLOWANCE) and not words & (_MONEY | _QUANTITY):
+            continue   # a port's speed, the refills a prescription allows: what may be, not an amount of it
         if "per" in words and not dates.get(key):
             continue   # a recipe's grams per capsule: a ratio of the link, with no date to add it up over
         if column.data_type == "integer" and names.opaque(column.name) and p.distinct <= 10:
@@ -235,8 +245,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             elif in_unit_range and words & {"rate", "ratio", "share"}:
                 m.agg, m.additivity, m.format = "avg", "non_additive", "percent"
             else:
-                if words & _MONEY:
-                    m.format = "currency"
+                if words & _MONEY and not (words & _QUANTITY and words & _MONEY <= _CURRENCY_CODES):
+                    m.format = "currency"     # PRTS_USD_QTY: parts used, a quantity, never US dollars
                 elif words & _QUANTITY or column_is_whole(p):
                     m.format = "integer" if column_is_whole(p) else "number"
                 if periodic:
@@ -257,7 +267,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                     else:
                         m.evidence.append(Evidence(kind="flow", weight=1,
                                                    detail=f"{label} is an amount for each period: added up over time"))
-            if m.format in ("number", "integer") and words & _QUANTITY or m.format in ("number", "integer") and opaque:
+            # A number named by its own unit ("days supply", "weight oz") is in that unit, whatever else the row holds.
+            if m.format in ("number", "integer") and not words & _OWN_UNITS and (words & _QUANTITY or opaque):
                 unit = _unit_column(inventory, profiles, key, reachable, kind="unit")
                 if unit:
                     m.unit_column, m.unit_values = unit
@@ -269,7 +280,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
 
         # Counting rows and documents.
         noun = names.readable(" ".join(names.core_table(table.name))) if not names.opaque(table.name) else table.name
-        counted = f"{noun.lower()} rows" if periodic else names.plural(noun.lower())
+        counted = f"{noun.lower()} rows" if periodic or noun.lower().split()[-1:] and \
+            noun.lower().split()[-1] in _AMOUNT_NOUNS else names.plural(noun.lower())
         out.append(MeasureFinding(table=key, column=None, agg="count", additivity="additive", format="count",
                                   name=f"Number of {counted}",
                                   evidence=[Evidence(kind="row_count", weight=1, detail="counts rows")]))
@@ -277,6 +289,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             p = profile.columns[column.name]
             if column.data_type not in ("text", "integer") or column.name in keys[key].unique_columns:
                 continue
+            if any(column.name in k[1:] for k in [keys[key].primary_key, *keys[key].alternate_keys] if len(k) > 1):
+                continue   # a line or renewal number runs within its document: it counts nothing on its own
             if any(j.from_table == key and column.name in j.from_columns and j.trust != "rejected" for j in joins):
                 continue
             if not profile.rows or not (profile.rows / 1000 < p.distinct < profile.rows):
@@ -293,8 +307,11 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             if not is_document or column.name in {c.column for c in dates.get(key, [])}:
                 continue
             thing = [w for w in names.core_column(column.name)]
-            while len(thing) > 1 and thing[-1] in ("number", "no", "nbr", "num", "id", "ref", "code"):
+            while len(thing) > 1 and thing[-1] in ("number", "no", "nbr", "num", "id", "ref", "code") \
+                    and not (len(thing) == 2 and len(thing[0]) <= 3):   # "Rx number": a short word keeps its "number"
                 thing.pop()
+            if len(thing) == 2 and len(thing[0]) <= 3 and thing[-1] in ("no", "nbr", "num"):
+                thing[-1] = "number"
             label = names.readable("_".join(thing)) if thing and not names.opaque(column.name) else column.name
             out.append(MeasureFinding(table=key, column=column.name, agg="count_distinct", additivity="non_additive",
                                       format="count", name=f"Number of {names.plural(label.lower())}",

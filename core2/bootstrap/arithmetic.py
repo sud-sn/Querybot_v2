@@ -308,3 +308,48 @@ def find_counters(warehouse: Warehouse, inventory: Inventory, profiles: dict[str
                     f"{label} never falls between readings of the same {names.readable(about[0]).lower()} on "
                     f"{up / n:.0%} of them: a running counter, read at its highest, never added up")))
     return found
+
+
+def find_parent_figures(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
+                        documents: dict[str, tuple[str, str]], measures: list[MeasureFinding]) -> list[tuple[str, str]]:
+    """A document's figure written again on each of its lines: an order's freight on every line of the order.
+    It belongs to the document, so adding it up over the lines counts it once per line. ``documents`` holds,
+    for each table with a document-and-line key, its document column and the date its rows are dated by.
+
+    Only lines of one document dated the same day are read so: the fills of a prescription come months
+    apart, and a refill that dispenses what the last one did is an amount of its own, added up.
+    Returns the (table, column) figures found, each averaged."""
+    found: list[tuple[str, str]] = []
+    for table, (doc_column, date_column) in documents.items():
+        summed = [m for m in measures if m.table == table and m.column and m.agg == "sum" and m.additivity == "additive"
+                  and (profiles[table].columns[m.column].distinct or 0) > 1]
+        if not summed:
+            continue
+        t = inventory.tables[table]
+        d = warehouse.dialect
+        doc, day = D.quote(doc_column, d), D.quote(date_column, d)
+        source = D.aliased(D.first_rows(D.table_sql(t.database, t.schema, t.name, d), d, rows=SAMPLE * 4), "s", d)
+        inner = ", ".join(f"COUNT(DISTINCT {D.quote(m.column or '', d)}) AS d{i}" for i, m in enumerate(summed))
+        outer = ", ".join(f"SUM(CASE WHEN d{i} <= 1 THEN 1 ELSE 0 END)" for i in range(len(summed)))
+        sql = (f"SELECT COUNT(1), SUM(CASE WHEN days <= 1 THEN 1 ELSE 0 END), {outer} FROM (SELECT {doc}, "
+               f"COUNT(DISTINCT {day}) AS days, {inner} FROM {source} GROUP BY {doc} HAVING COUNT(1) > 1) g")
+        result = attempt(warehouse, f"the per-document check on {t.name}", lambda sql=sql: warehouse.query(sql).rows[0],
+                         None)
+        if not result or int(result[0] or 0) < 20:
+            continue
+        groups, one_day = int(result[0]), int(result[1] or 0)
+        if one_day < 0.95 * groups:
+            continue      # rows of the same number on different days: events of their own, not a document's lines
+        for m, same in zip(summed, result[2:]):
+            if int(same or 0) < 0.98 * groups:
+                continue
+            found.append((table, m.column or ""))
+            label, owner = m.name, names.readable(doc_column).lower()
+            m.agg, m.additivity = "avg", "non_additive"
+            m.evidence.append(Evidence(kind="per_document", weight=1,
+                                       detail=f"{label} is the same on every line of the same {owner} "
+                                              f"({int(same):,} of {groups:,}): a figure of the {owner}, averaged, "
+                                              "never added up over its lines"))
+            m.review = (f"{label} repeats on every line of the same {owner}. Is it a figure of the {owner} "
+                        f"(averaged), or does each line hold its own (added up)?")
+    return found

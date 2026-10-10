@@ -676,9 +676,11 @@ def _read_members(key: tuple[str, int], model: SemanticModel, db_config: dict[st
     from core2.warehouse.querybot import QueryBotWarehouse
 
     def fetch(slug: str) -> list[object]:
+        from core2.compile.compiler import column_sql
+
         column = model.columns[model.attributes[slug].column]
         table = model.tables[column.table]
-        c = exp.column(D.ident(column.name, warehouse.dialect))
+        c = column_sql(model, column.key, None, warehouse.dialect)
         sql = exp.select(c).distinct().from_(D.table_expr(table.database, table.schema_name, table.name,
                                                           warehouse.dialect)).where(
             exp.not_(exp.Is(this=c.copy(), expression=exp.Null()))).sql(dialect=warehouse.dialect)

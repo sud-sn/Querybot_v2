@@ -14,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from core2 import ids
-from core2.bootstrap import names
-from core2.bootstrap.arithmetic import check_arithmetic, find_counters
+from core2.bootstrap import names, personal
+from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
@@ -31,6 +31,8 @@ from core2.model.schema import (
     Attribute,
     Calendar,
     Column,
+    ColumnFilter,
+    ColumnProfile,
     DateRole,
     Entity,
     Evidence,
@@ -142,6 +144,16 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
             about.setdefault(j.from_table, []).append(j.from_column)
     find_counters(warehouse, inventory, profiles, {k: v.primary_key for k, v in keys.items()}, about, stamped,
                   measures)
+    # A document's figure written on each of its lines (refills per prescription, freight per order): averaged.
+    documents = {}
+    for k, v in keys.items():
+        dated = next((c.column for c in dates.get(k, []) if c.is_default), None)
+        doc = next((alt[0] for alt in v.alternate_keys if len(alt) == 2), None) or (
+            v.primary_key[0] if len(v.primary_key) == 2 and inventory.tables[k].type_of(v.primary_key[1]) == "integer"
+            else None)
+        if doc and dated:
+            documents[k] = (doc, dated)
+    find_parent_figures(warehouse, inventory, profiles, documents, measures)
     for key, kind in list(kinds.items()):
         # A periodic table whose numbers are all amounts for the period (targets,
         # budgets) adds up over time like any fact, and its period dates events, not balances.
@@ -167,7 +179,7 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
     f = findings or learn(warehouse, inventory, options)
     journal.step("Checking the data for things worth a look")
     flags = find_quality(warehouse, f.inventory, f.profiles, f.calendars, f.joins, f.dates, f.measures, f.kinds,
-                         outliers=options.outliers)
+                         outliers=options.outliers, values_allowed=options.profile.values_allowed)
     model = assemble(f, flags=flags, client_id=client_id, db_id=db_id, db_type=db_type or warehouse.db_type,
                      built_at=options.today())
     model.notes += inventory.notes
@@ -259,11 +271,16 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         if cal.fiscal_year_start_month and not model.settings.fiscal_year_start_month:
             model.settings.fiscal_year_start_month = cal.fiscal_year_start_month
 
+    # People's data: names never sent to the AI; contact details, birth dates and ID numbers never shown.
+    people = {key: personal.read_table(table, f.profiles[key]) for key, table in inv.tables.items()}
+
     # Date roles.
     date_slugs: set[str] = set()
     for key, roles in f.dates.items():
         table_name = inv.tables[key].name
         for c in roles:
+            if people[key].get(c.column) == personal.PII:
+                continue     # a birth date is never a date questions count by
             if c.via_calendar and c.via_calendar.role:
                 name = c.via_calendar.role
             elif c.via_calendar and not names.opaque(c.column):
@@ -310,7 +327,8 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         kind = f.kinds[key]
         tkeys = f.keys[key]
         business = _table_name(table.name)
-        default_role = next((ck[(key, c.column)] for c in f.dates.get(key, []) if c.is_default), None)
+        default_role = next((ck[(key, c.column)] for c in f.dates.get(key, []) if c.is_default
+                             and ck[(key, c.column)] in model.date_roles), None)
         model.tables[key] = Table(
             key=key, database=table.database, schema_name=table.schema, name=table.name, business_name=business,
             kind=kind,  # type: ignore[arg-type]
@@ -346,13 +364,17 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 fmt = "datetime"
             elif column.data_type == "text":
                 fmt = "text"
+            held = people[key].get(column.name)
             model.columns[k] = Column(
                 key=k, table=key, name=column.name, data_type=column.data_type,  # type: ignore[arg-type]
                 raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
                 role=role,  # type: ignore[arg-type]
                 business_name=names.readable(column.name, column.data_type), format=fmt,  # type: ignore[arg-type]
-                values_allowed=f.values_allowed(key, column.name),
-                profile=p, provenance="profile", status="verified", confidence=1.0)
+                values_allowed=f.values_allowed(key, column.name) and held is None,
+                sensitivity="pii" if held == personal.PII else "none",
+                # People's values are not kept in the model: the catalog and the member list never see them.
+                profile=p.model_copy(update={"top": None}) if held and p is not None else p,
+                provenance="profile", status="verified", confidence=1.0)
 
     # Measures.
     for m in f.measures:
@@ -380,11 +402,13 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             evidence=m.evidence, provenance="profile", status="needs_review" if m.review else "verified",
             confidence=0.6 if m.review else 0.9)
         if m.review:
+            level = m.additivity == "semi_additive"
             model.review.append(ReviewItem(key=f"additivity:{key_m}", object=key_m, question=m.review,
-                                           choice_made="taken at the end of each period",
-                                           alternatives=["added up over time"], evidence=m.evidence))
+                                           choice_made="taken at the end of each period" if level else "averaged",
+                                           alternatives=["added up over time" if level else "added up"],
+                                           evidence=m.evidence))
 
-    _entities_and_attributes(model, f, ck, taken)
+    _entities_and_attributes(model, f, ck, taken, people)
 
     model.quality = flags
     for table, a, b, share in f.same_values:
@@ -401,11 +425,35 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                                        question=f"{name_a} equals {name_b} on {share:.0%} of rows. Are both defined "
                                                 "right?", choice_made="both kept as they are",
                                        alternatives=[f"{name_a} reads the wrong column", f"{name_b} reads the wrong column"]))
+    for key, held in people.items():
+        if not held or key not in model.tables:
+            continue
+        said = {kind: [names.readable(c) for c, k in held.items() if k == kind] for kind in (personal.NAME, personal.PII)}
+        parts = []
+        if said[personal.NAME]:
+            parts.append(f"{', '.join(said[personal.NAME])}: people's names, shown in answers but never sent to the AI")
+        if said[personal.PII]:
+            parts.append(f"{', '.join(said[personal.PII])}: personal details, never shown, listed or filtered on")
+        model.review.append(ReviewItem(
+            key=f"personal:{key}", object=key,
+            question=f"{model.tables[key].business_name} holds people's data. " + "; ".join(parts) + ".",
+            choice_made="kept from the AI", alternatives=["release a column on the Knowledge base page"]))
     for fl in flags:
         if fl.kind == "status_column":
-            model.review.append(ReviewItem(key=f"default_filter:{fl.object}", object=fl.object,
-                                           question=fl.message, choice_made="all rows are counted",
-                                           alternatives=[f"leave out {v}" for v in fl.data.get("cancel_like", [])]))
+            leave_out, shown = list(fl.data.get("leave_out") or []), list(fl.data.get("leave_out_shown") or [])
+            if leave_out and fl.object in model.columns:
+                # Rows a status says in full were cancelled, voided, reversed or duplicated are left out by
+                # default: every answer says so, and the admin can count them again.
+                table = model.tables[model.columns[fl.object].table]
+                table.default_filters.append(ColumnFilter(column=fl.object, op="not_in", values=leave_out,
+                                                          shown=[str(v) for v in shown]))
+            others = [v for v in fl.data.get("cancel_like", []) if v not in shown]
+            owner = model.tables[model.columns[fl.object].table] if fl.object in model.columns else None
+            asked = f"{owner.business_name}: {fl.message}" if owner is not None and fl.data.get("lookup") else fl.message
+            model.review.append(ReviewItem(
+                key=f"default_filter:{fl.object}", object=fl.object, question=asked,
+                choice_made=f"left out: {', '.join(map(str, shown))}" if leave_out else "all rows are counted",
+                alternatives=(["count all rows"] if leave_out else []) + [f"leave out {v}" for v in others]))
     for j in f.joins:
         if j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence):
             model.review.append(ReviewItem(
@@ -439,7 +487,7 @@ def _grain_text(name: str, kind: str, keys: TableKeys) -> str:
 
 
 def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[str, str], str],
-                             taken: set[str]) -> None:
+                             taken: set[str], people: dict[str, dict[str, str]]) -> None:
     inv = f.inventory
     entity_of: dict[str, str] = {}
     for key, table in inv.tables.items():
@@ -450,16 +498,20 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         business = _table_name(table.name)
         slug = ids.unique_slug(ids.slug(business), taken)
         entity_of[key] = slug
-        texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key]
-        label = _label_column(table, profile, tkeys)
-        codes = [c for c in texts if c != label and (profile.columns[c].max_len or 99) <= 16]
+        held = people.get(key, {})
+        texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key
+                 and held.get(c) != personal.PII]
+        found = _label_column(table, profile, tkeys, held)
+        label_key = _two_part_name(model, key, business, found, profile) if isinstance(found, tuple) else (
+            ck[(key, found)] if found else None)
+        codes = [c for c in texts if c != found and (profile.columns[c].max_len or 99) <= 16]
         model.entities[slug] = Entity(
             slug=slug, business_name=business, table=key, key_columns=[ck[(key, c)] for c in tkeys.primary_key],
-            label_column=ck[(key, label)] if label else None, code_column=ck[(key, codes[0])] if codes else None,
+            label_column=label_key, code_column=ck[(key, codes[0])] if codes else None,
             members=profile.rows, provenance="profile", status="verified", confidence=0.9)
-        if label:
-            model.columns[ck[(key, label)]].role = "label"
-            model.columns[ck[(key, label)]].label_of = model.tables[key].primary_key[0] if model.tables[key].primary_key else None
+        if label_key:
+            model.columns[label_key].role = "label"
+            model.columns[label_key].label_of = model.tables[key].primary_key[0] if model.tables[key].primary_key else None
         if codes:
             model.columns[ck[(key, codes[0])]].role = "code"
         if len(tkeys.primary_key) == 1:
@@ -508,26 +560,42 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 slug=slug, column=col.key, entity=owner if key in entity_of else None,
                 business_name=col.business_name, members=p.distinct if p else 0,
                 provenance="profile", status="verified", confidence=0.8)
+        # A name read from two columns (first and last) is grouped and filtered by like any other.
+        entity = model.entities.get(owner) if key in entity_of else None
+        label = model.columns.get(entity.label_column or "") if entity is not None else None
+        if label is not None and label.parts and not any(a.column == label.key for a in model.attributes.values()):
+            slug = ids.unique_slug(f"{owner}.name", set(model.attributes))
+            model.attributes[slug] = Attribute(
+                slug=slug, column=label.key, entity=owner, business_name=label.business_name,
+                members=label.profile.distinct if label.profile else 0, provenance="profile", status="verified",
+                confidence=0.8)
 
 
 _NAME_WORDS = {"name", "nm", "title", "label"}
 _DESCRIPTION_WORDS = {"desc", "dsc", "description", "descr"}
 
 
-def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys) -> str | None:
-    """The column that names each member: a name, else a short description, else the longest unique text.
+def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
+                  people: dict[str, str] | None = None) -> str | tuple[str, str] | None:
+    """The column that names each member: its own name ("doctor name" in a doctor table, a full name), else a
+    name, else a person's first and last name together, else a short description, else the longest unique text.
+    Never a contact detail (an address, a phone number, an email), whatever it is called.
 
     Names need not be unique (two customers can both be "J. Smith"): a name-like
     column filled on nine rows in ten with nine distinct values in ten is a name.
     Grouping by it is made safe by also grouping by the member's code or key.
     """
     rows = profile.rows or 0
+    people = people or {}
+    subject = [w for w in names.core_table(table.name) if len(w) > 2] if not names.opaque(table.name) else []
     best: list[tuple[int, float, str]] = []
     for column in table.columns:
         name = column.name
         p = profile.columns[name]
-        if column.data_type != "text" or name in keys.primary_key or not rows:
+        if column.data_type != "text" or name in keys.primary_key or not rows or people.get(name) == personal.PII:
             continue
+        if personal.is_first_name(name) or personal.is_last_name(name):
+            continue     # half a person's name, however unique: both together name them (below)
         words = set(names.tokens(name))
         unique = name in keys.unique_columns
         named = bool(words & _NAME_WORDS)
@@ -535,9 +603,39 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys) -> st
         near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * p.non_null
         if not (unique or (near_unique and (named or described))):
             continue
-        rank = 0 if named else 1 if described else 2
+        own = named and ("full" in words or any(names.same_word(w, t) for w in words for t in subject))
+        rank = -1 if own else 0 if named else 2 if described else 3
         best.append((rank, -(p.avg_len or 0), name))
-    return min(best)[2] if best else None
+    found = min(best) if best else None
+    if found is not None and found[0] <= 0:
+        return found[2]
+    # A person named in two parts: both together, before a description or an id-like text.
+    texts = [c.name for c in table.columns if c.data_type == "text"]
+    first = next((c for c in texts if personal.is_first_name(c)), None)
+    last = next((c for c in texts if personal.is_last_name(c)), None)
+    if first and last and profile.columns[first].non_null >= 0.9 * rows and profile.columns[last].non_null >= 0.9 * rows:
+        return first, last
+    return found[2] if found else None
+
+
+def _two_part_name(model: SemanticModel, key: str, business: str, parts: tuple[str, str],
+                   profile: TableProfile) -> str:
+    """A name the table holds as a first and a last name: one column of the model, read as both joined (never a
+    column of the warehouse). A person's name: shown in answers, never sent to the AI."""
+    first, last = parts
+    k = f"{key}.{first.casefold()}+{last.casefold()}"
+    a, b = profile.columns[first], profile.columns[last]
+    model.columns[k] = Column(
+        key=k, table=key, name=f"{first}+{last}", data_type="text", role="label",
+        business_name=f"{business} name", format="text", values_allowed=False,
+        parts=[f"{key}.{first.casefold()}", f"{key}.{last.casefold()}"],
+        # Two people can share a name: never read as unique, so a grouping keeps them apart by their key.
+        profile=ColumnProfile(rows=a.rows, non_null=min(a.non_null, b.non_null),
+                              distinct=min(max(a.distinct, b.distinct), max(0, (profile.rows or 0) - 1)),
+                              distinct_is_approx=True, avg_len=(a.avg_len or 0) + (b.avg_len or 0) + 1,
+                              pattern="name"),
+        provenance="profile", status="verified", confidence=0.8)
+    return k
 
 
 # Columns that describe the load, not the business: never offered as groupings.

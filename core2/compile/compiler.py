@@ -76,6 +76,21 @@ def _double(value: exp.Expression) -> exp.Expression:
     return exp.Cast(this=value, to=exp.DataType.build("DOUBLE"))
 
 
+def column_sql(model: SemanticModel, key: str, table: exp.Identifier | str | None, dialect: str) -> exp.Expression:
+    """A column of the model as the warehouse reads it; a name held in parts ("first" and "last") as the parts
+    joined by a space, an empty part left out."""
+    column = model.columns[key]
+    if not column.parts:
+        return exp.column(D.ident(column.name, dialect), table=table)
+    joined: exp.Expression | None = None
+    for part in column.parts:
+        piece = exp.Coalesce(this=exp.column(D.ident(model.columns[part].name, dialect), table=table),
+                             expressions=[exp.Literal.string("")])
+        joined = piece if joined is None else exp.DPipe(this=exp.DPipe(this=joined, expression=exp.Literal.string(" ")),
+                                                        expression=piece)
+    return exp.Trim(this=joined)
+
+
 class _Compiler:
     def __init__(self, logical: Logical, model: SemanticModel, dialect: str):
         self.q = logical
@@ -92,8 +107,8 @@ class _Compiler:
         """
         return exp.to_identifier(text, quoted=text.upper() in D.RESERVED or not _GENERATED.fullmatch(text))
 
-    def col(self, alias: str, column_key: str) -> exp.Column:
-        return exp.column(D.ident(self.model.columns[column_key].name, self.d), table=self.name(alias))
+    def col(self, alias: str, column_key: str) -> exp.Expression:
+        return column_sql(self.model, column_key, self.name(alias), self.d)
 
     def out(self, alias: str, name: str) -> exp.Column:
         return exp.column(self.name(name), table=self.name(alias))
