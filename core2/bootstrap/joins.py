@@ -27,6 +27,7 @@ from sqlglot import exp
 
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
+from core2.bootstrap.history import MIN_QUERIES
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
@@ -64,6 +65,7 @@ class JoinFinding:
     evidence: list[Evidence] = field(default_factory=list)
     also: list[tuple[str, str]] = field(default_factory=list)   # a multi-column key's other (from, to) pairs
     to_alternate: bool = False        # the target is another unique column of its table, not its key
+    history: int = 0                  # queries in the warehouse's own history that join it this way
 
     @property
     def ident(self) -> tuple[str, str, str, str]:
@@ -237,7 +239,9 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
 
 def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                    keys: dict[str, TableKeys], calendars: dict[str, CalendarFinding], *,
-                   max_tests: int = 400, workers: int = 4) -> list[JoinFinding]:
+                   max_tests: int = 400, workers: int = 4,
+                   seen: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], int] | None = None) -> list[JoinFinding]:
+    """``seen``: how many of the warehouse's own queries join each pair of columns (core2/bootstrap/history.py)."""
     declared = {(fk.table, names_norm(fk.columns[0]), fk.ref_table, names_norm(fk.ref_columns[0]))
                 for fk in inventory.foreign_keys if len(fk.columns) == 1}
 
@@ -402,7 +406,29 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     key, first, to_key, to_first, name_score=1.0, to_alternate=True,
                     coverage=min(1.0, a.distinct / k.distinct) if k.distinct else 0.0, also=rest)  # type: ignore[arg-type]
 
-    ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.name_score, -f.coverage, f.ident))
+    # The joins the warehouse's own queries write, two queries or more: tested like any other, whatever the
+    # names say (a support rep who is an employee, a manager who reports to one).
+    for (key, froms, to_key, tos), count in (seen or {}).items():
+        if count < MIN_QUERIES or to_key in copies or key not in inventory.tables or to_key not in inventory.tables:
+            continue
+        src, tgt = inventory.tables[key], inventory.tables[to_key]
+        if not all(_compatible(src.type_of(f), tgt.type_of(t)) or text_and_number(src.type_of(f), tgt.type_of(t))
+                   for f, t in zip(froms, tos)):
+            continue
+        ident = (key, froms[0], to_key, tos[0]) if len(froms) == 1 else (key, "+".join(froms), to_key, "+".join(tos))
+        found = candidates.get(ident) or next(
+            (f for f in candidates.values() if (f.from_table, tuple(f.from_columns), f.to_table,
+                                                tuple(t for _, t in f.pairs)) == (key, froms, to_key, tos)), None)
+        if found is None:
+            a, k = profiles[key].columns[froms[0]], profiles[to_key].columns[tos[0]]
+            score, role = name_score(froms[0], tgt.name, tos[0]) if len(froms) == 1 else (0.0, [])
+            found = candidates[ident] = JoinFinding(
+                key, froms[0], to_key, tos[0], name_score=score, role_tokens=role, to_calendar=to_key in calendars,
+                coverage=min(1.0, a.distinct / k.distinct) if k.distinct else 0.0,
+                from_unique=len(froms) == 1 and froms[0] in keys[key].unique_columns, also=list(zip(froms[1:], tos[1:])))
+        found.history = count
+
+    ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.history, -f.name_score, -f.coverage, f.ident))
     tested = ranked[:max_tests]
     placeholder_of = {key: cal.placeholders for key, cal in calendars.items()}
     journal_of(warehouse).step(f"Testing {len(tested)} possible joins between tables against the data")
@@ -429,8 +455,13 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if f.name_score:
             f.evidence.append(Evidence(kind="name_match", weight=f.name_score,
                                        detail=f"the names match ({f.from_column} -> {f.to_column})"))
+        if f.history:
+            f.evidence.append(Evidence(kind="query_history", weight=min(1.0, f.history / 10), detail=(
+                f"{f.history:,} of the warehouse's own queries join it this way")))
         distinct = profiles[f.from_table].columns[f.from_column].distinct
         members = profiles[f.to_table].columns[f.to_column].distinct
+        # Query history adds a link to test and settles a tie; it never excuses data that fails the test: on
+        # a warehouse that does not say who ran a query, some of them are QueryBot's own answers.
         value_only = not (f.declared or f.name_score)
         if value_only and f.unmatched_values > 0.2 * distinct:
             # Values alone, and a fifth of them found nowhere (seats 10, 15, 20 and 25 against six plans):
@@ -481,9 +512,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     kept: list[JoinFinding] = []
     for group in by_column.values():
         order = {"verified": 0, "declared": 1, "proposed": 2}
-        group.sort(key=lambda f: (order[f.trust], -f.declared, -f.name_score, -f.coverage, -f.match_rate, f.ident))
+        group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score, -f.coverage,
+                                  -f.match_rate, f.ident))
         best = group[0]
-        if len(group) > 1 and not best.declared and best.name_score == 0:
+        if len(group) > 1 and not best.declared and not best.history and best.name_score == 0:
             rival = group[1]
             if rival.trust == best.trust and rival.name_score == 0 and abs(rival.coverage - best.coverage) < 0.05:
                 for f in (best, rival):

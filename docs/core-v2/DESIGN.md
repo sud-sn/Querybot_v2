@@ -344,8 +344,22 @@ no fact rows), audit timestamps, mixed units.
    same-named columns where one side is unique.
 3. Value containment: column A's distinct values mostly found in column B,
    where B is unique, types compatible and A's range within B's. Pre-filtered
-   from profiles so only plausible pairs are tested.
-4. AI-proposed (labels step), tested like the rest.
+   from profiles so only plausible pairs are tested. Values alone must use most
+   of a small table (under 30 members), a run of every number in a stretch
+   (minutes, line numbers) must reach the target's newest key, and a partial
+   match must use nearly all of its members; a line number in a document's
+   two-column key, and a backup copy of a table, are never candidates.
+4. The warehouse's own query history (Snowflake QUERY_HISTORY, Azure SQL Query
+   Store, Oracle V$SQL, where the sign-in may read it): only which columns two
+   tables are compared on is kept, never a query's text or values. A pair
+   written in two queries or more is a candidate whatever its names say, and wins
+   a tie between two that test alike; it never excuses a link the data does not
+   bear out (Azure's Query Store does not say who ran a query, so QueryBot's own
+   answers are in it). Joins to subqueries (Learn's own tests) are not counted.
+5. A code kept as text against a whole-number key ('0007' and 7, names agreeing),
+   compared without leading zeros on every warehouse; a document and its line
+   named alike in another table, as one link of two columns.
+6. AI-proposed (labels step), tested like the rest.
 
 ### 6.2 Test-run
 For each candidate one query: rows, non-null rows, matched rows, distinct

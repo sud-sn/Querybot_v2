@@ -18,6 +18,7 @@ from core2.bootstrap import names, personal
 from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
+from core2.bootstrap.history import MIN_QUERIES, links_in, read_query_log
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
@@ -55,6 +56,8 @@ class BuildOptions:
     today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
     labeler: Callable[[str, str], str] | None = None   # the AI that names things; None keeps names' readings
     progress: Callable[[str], None] | None = None      # each step as it happens, for the learned page
+    # The SELECT statements the warehouse keeps (core2/bootstrap/history.py); only the columns they join are read.
+    query_history: Callable[[Warehouse], list[str]] | None = read_query_log
 
 
 @dataclass
@@ -122,8 +125,14 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     keys = {key: infer_keys(warehouse, table, profiles[key]) for key, table in tables}
     journal.step("Looking for calendar and period tables")
     calendars = find_calendars(warehouse, inventory, profiles, keys)
+    texts = attempt(warehouse, "the warehouse's query history", lambda: options.query_history(warehouse), []) \
+        if options.query_history else []
+    seen = links_in(texts, inventory, keys, warehouse.dialect) if texts else {}
+    if texts:
+        journal.step(f"Read {len(texts):,} of the warehouse's own queries: {sum(n >= MIN_QUERIES for n in seen.values())}"
+                     f" joins between tables written in {MIN_QUERIES} or more")
     joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,
-                           workers=options.workers)
+                           workers=options.workers, seen=seen)
     journal.step("Finding the dates each table is about")
     dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
     for key, candidates in dates.items():
