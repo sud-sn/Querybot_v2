@@ -73,16 +73,18 @@ def test_a_personal_dashboard_says_who_sees_it_and_when_it_was_drawn():
         "can_edit": 1, "refresh_schedule": "manual", "thread_id": "t"})
     start = html.index('<header class="dash-header">')
     header = html[start:html.index("</header>", start)]
-    assert "Personal" in header
-    assert "dash-status" not in header, "draft or published matters only to a team dashboard"
+    assert "Only you" in header                       # who sees it: no one else yet
+    assert "dash-status" not in header, "a shared dashboard is always live: no draft or published status"
     assert "Version" not in header and "manual" not in header.lower()
     assert "Dashboard artifact" not in header
 
 
-def test_a_team_dashboard_says_whether_it_is_published():
+def test_a_team_dashboard_says_it_is_shared_with_the_workspace():
+    """Always live: a dashboard shared with the workspace shows its current version, so its header says who
+    sees it, never "Draft" or "Published"."""
     page = _page()
-    header = page[page.index('<header class="dash-header">'):]
-    assert 'class="dash-status is-published"' in header.split("</header>", 1)[0]
+    header = page[page.index('<header class="dash-header">'):].split("</header>", 1)[0]
+    assert "Shared with the workspace" in header and "dash-status" not in header
 
 
 def test_the_dashboards_page_lists_the_dashboards_first():
