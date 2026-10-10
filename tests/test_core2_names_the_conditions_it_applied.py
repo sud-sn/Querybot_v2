@@ -116,7 +116,7 @@ def test_why_and_forecast_name_the_condition(retail):
     forecast = _ask(retail, {"intent": "forecast", "measures": ["net_amount"], "filters": member,
                              "time": {"grain": "month"}, "forecast": {"periods": 3}})
     assert forecast["answer"]["headline"].startswith("Net amount for segment Retail was "), forecast["answer"]
-    assert all("for segment Retail" in c["question"] for c in forecast["follow_up_suggestions"])
+    assert all('for segment "Retail"' in c["question"] for c in forecast["follow_up_suggestions"])
 
 
 def test_a_stock_says_it_is_its_last_snapshot():

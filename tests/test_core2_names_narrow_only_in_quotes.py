@@ -169,3 +169,33 @@ def test_the_questions_the_product_writes_put_their_members_in_quotes(retail):
     for s in payload.get("follow_up_suggestions") or []:
         if CUSTOMER in s["question"]:
             assert f'"{CUSTOMER}"' in s["question"], s
+
+
+def test_the_questions_after_a_why_or_a_forecast_keep_their_members_in_quotes(retail):
+    """A chip under a "why" or a forecast answer repeats the answer's conditions: sent as it is, it must still
+    narrow to the same customer, and to the member the why-answer found."""
+    _, _, _, slug = retail
+    customer = [{"field": slug, "op": "eq", "values": [CUSTOMER]}]
+    why = {"intent": "drivers", "measures": ["net_amount"], "filters": customer,
+           "time": {"window": {"kind": "between", "start": "2025-07-01", "end": "2025-12-31"},
+                    "compare": {"kind": "window", "window": {"kind": "between", "start": "2025-01-01",
+                                                             "end": "2025-06-30"}}}}
+    payload = _ask(retail, Recorded(why), f'why did net sales change for "{CUSTOMER}" in the second half of 2025?')[0]
+    chips = [s["question"] for s in payload["follow_up_suggestions"]]
+    assert chips and all(f'"{CUSTOMER}"' in q for q in chips), chips
+    monthly = next(q for q in chips if q.startswith("Monthly"))
+    grouping = payload["drivers"]["groupings"][0]
+    leader = next(x["member"] for x in grouping["leaders"] if x["member"] != "Unknown")
+    assert f'for "{leader}"' in monthly, monthly
+
+    again = {"intent": "trend", "measures": ["net_amount"], "time": {"grain": "month"},
+             "filters": [{"field": grouping["slug"], "op": "eq", "values": [leader]}, *customer]}
+    sent = _ask(retail, Recorded(again), monthly)[0]
+    assert {f["field"]: f["values"] for f in sent["plan"]["filters"]} == {grouping["slug"]: [leader], slug: [CUSTOMER]}
+    assert not any("Not narrowed" in n for n in sent["trust"]["date_context"])
+
+    ahead = {"intent": "forecast", "measures": ["net_amount"], "time": {"grain": "month"}, "filters": customer,
+             "forecast": {"periods": 3}}
+    payload = _ask(retail, Recorded(ahead), f'forecast net sales for "{CUSTOMER}"')[0]
+    chips = [s["question"] for s in payload.get("follow_up_suggestions") or []]
+    assert chips and all(f'"{CUSTOMER}"' in q for q in chips), chips

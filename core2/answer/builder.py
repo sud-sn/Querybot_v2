@@ -198,8 +198,9 @@ def scoped_label(logical: Logical, label: str) -> str:
 
 
 def conditions_tail(logical: Logical) -> str:
-    """The conditions to repeat in a next question about the same answer: ", for customer type Wholesale"."""
-    words = [w for w in (condition_words(c) for c in logical.conditions) if w]
+    """The conditions to repeat in a next question about the same answer: ', for customer type "Wholesale"'
+    (its members in quotes: a name narrows the question only when it is quoted)."""
+    words = [w for w in (condition_words(c, quoted=True) for c in logical.conditions) if w]
     return f", {', '.join(words)}" if words else ""
 
 

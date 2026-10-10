@@ -502,7 +502,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
         suggestions.append(f"{m.label} by {top.word} by month{tail}")
         leader = next((x.member for x in top.leaders if x.member != "Unknown"), None)
         if leader:
-            suggestions.append(f"Monthly {m.label.lower()} for {leader}{tail}")
+            suggestions.append(f'Monthly {m.label.lower()} for "{leader}"{tail}')
     payload = frame(question, headline=headline, short_value=short_value, comparison=comparison,
                     caveats=[n for n in notes if n.startswith("The data runs to")][:1], chart=chart, kpi=None,
                     badges=answer_badges(total_logical),
