@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import importlib
 import json
 import types
 import unittest
@@ -135,11 +136,12 @@ class ScopedReleaseTests(unittest.TestCase):
 def test_the_new_core_releases_people_only_within_scope(monkeypatch):
     from core2.warehouse import governed
 
-    monkeypatch.setattr(store, "user_attestation_scope", lambda a, u: {"PCI"})
+    current = importlib.import_module("store")      # what governed resolves: other modules re-import the store
+    monkeypatch.setattr(current, "user_attestation_scope", lambda a, u: {"PCI"})
     assert not governed._covers_people("acct", "7")
-    monkeypatch.setattr(store, "user_attestation_scope", lambda a, u: {"PII"})
+    monkeypatch.setattr(current, "user_attestation_scope", lambda a, u: {"PII"})
     assert governed._covers_people("acct", "7")
-    monkeypatch.setattr(store, "user_attestation_scope", lambda a, u: (_ for _ in ()).throw(RuntimeError("down")))
+    monkeypatch.setattr(current, "user_attestation_scope", lambda a, u: (_ for _ in ()).throw(RuntimeError("down")))
     assert not governed._covers_people("acct", "7")
 
 
@@ -226,7 +228,8 @@ def test_an_attestation_that_ends_between_the_checks_releases_nothing(monkeypatc
     from core.compliance import governed_query
     from core2.warehouse import governed
 
-    monkeypatch.setattr(store, "user_attestation_scope", lambda a, u: None)
+    for held in {governed_query.store, importlib.import_module("store")}:   # each module's own reference
+        monkeypatch.setattr(held, "user_attestation_scope", lambda a, u: None)
     assert governed_query._attested_scope("acct", "7") == set()
     assert not governed._covers_people("acct", "7")
 

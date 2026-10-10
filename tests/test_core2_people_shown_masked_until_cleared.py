@@ -16,13 +16,13 @@ Invented people only.
 from __future__ import annotations
 
 import datetime as dt
+import importlib
 import json
 import types
 
 import duckdb
 import pytest
 
-import store
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import from_duckdb
 from core2.compile.compiler import compile_query
@@ -34,6 +34,12 @@ from core2.warehouse.runner import DuckDBWarehouse
 
 TODAY = dt.date(2026, 6, 15)
 
+
+
+def _store():
+    """The store module the code under test resolves now: other test modules delete it from sys.modules and
+    import it again, so the one this module imported may no longer be it."""
+    return importlib.import_module("store")
 
 def _warehouse() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
@@ -131,9 +137,9 @@ def governed(learned, monkeypatch):
                         lambda *a, **k: state["fake"](*a, **k))
     monkeypatch.setattr("core.compliance.policy_engine.resolve_context", lambda *a, **k: types.SimpleNamespace(
         user_id="7", purpose_id="", channel="portal", policy_version=1))
-    monkeypatch.setattr(store, "user_attestation_valid", lambda account, user: state["signed"])
-    monkeypatch.setattr(store, "user_attestation_scope", lambda account, user: {"*"} if state["signed"] else None)
-    monkeypatch.setattr(store, "log_policy_decision", log)
+    monkeypatch.setattr(_store(), "user_attestation_valid", lambda account, user: state["signed"])
+    monkeypatch.setattr(_store(), "user_attestation_scope", lambda account, user: {"*"} if state["signed"] else None)
+    monkeypatch.setattr(_store(), "log_policy_decision", log)
     warehouse = GovernedWarehouse("acct-people", {"id": 7}, {"db_type": "duckdb", "credentials": {}},
                                   known_tables=set(), personal=personal_columns(model))
 
@@ -251,9 +257,9 @@ def test_learn_proposes_what_it_found_on_the_compliance_page(learned, monkeypatc
     existing = {"MEMORY.MAIN.PATIENTS.LAST_NAME": {"reviewed": 1, "tags": []},          # an admin's word stands
                 "MEMORY.MAIN.PATIENTS.FIRST_NAME": {"reviewed": 0, "tags": ["PII"]}}    # already known
     monkeypatch.setattr("core2.service.question_scrubber", lambda account: (lambda text: text))
-    monkeypatch.setattr(store, "get_compliance_profile", lambda account: {"industry": "healthcare_pharmacy"})
-    monkeypatch.setattr(store, "get_classification_map", lambda account: existing)
-    monkeypatch.setattr(store, "save_classification", lambda account, fqn, column, **kw: saved.append(
+    monkeypatch.setattr(_store(), "get_compliance_profile", lambda account: {"industry": "healthcare_pharmacy"})
+    monkeypatch.setattr(_store(), "get_classification_map", lambda account: existing)
+    monkeypatch.setattr(_store(), "save_classification", lambda account, fqn, column, **kw: saved.append(
         {"table": fqn, "column": column, **kw}) or len(saved))
     assert bootstrap.propose_classifications("acct-people", model) == 2
     by_column = {s["column"]: s for s in saved}
