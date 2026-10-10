@@ -27,6 +27,7 @@ from core2.bootstrap.keys import TableKeys, infer_keys, series_key
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
 from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
 from core2.bootstrap.quality import find_quality
+from core2.bootstrap.versions import VersionsFinding, find_versions
 from core2.model.schema import (
     AggExpr,
     Attribute,
@@ -43,6 +44,7 @@ from core2.model.schema import (
     ReviewItem,
     SemanticModel,
     Table,
+    Versions,
 )
 from core2.warehouse.runner import Warehouse
 
@@ -76,6 +78,8 @@ class Findings:
     values_allowed: Callable[[str, str], bool] = field(default=lambda table_key, column: True)
     # Pairs of measure columns holding the same values: (table, column, other column, share of rows).
     same_values: list[tuple[str, str, str, float]] = field(default_factory=list)
+    # Tables keeping each member once per version, with what marks the current one.
+    versions: dict[str, VersionsFinding] = field(default_factory=dict)
 
 
 _PERIOD_NAMES = {"period", "month", "year", "week", "quarter", "fiscal period", "fiscal month"}
@@ -131,8 +135,10 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     if texts:
         journal.step(f"Read {len(texts):,} of the warehouse's own queries: {sum(n >= MIN_QUERIES for n in seen.values())}"
                      f" joins between tables written in {MIN_QUERIES} or more")
+    journal.step("Looking for tables that keep each member once per version")
+    versions = find_versions(warehouse, inventory, profiles, keys, calendars)
     joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,
-                           workers=options.workers, seen=seen)
+                           workers=options.workers, seen=seen, versions=versions)
     journal.step("Finding the dates each table is about")
     dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
     for key, candidates in dates.items():
@@ -186,7 +192,7 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
                     c.add("flows", 0.0, "its numbers are amounts for each period, added up over time: the period "
                           "dates what happened in it, not a balance")
     return Findings(inventory, profiles, keys, calendars, joins, dates, kinds, measures,
-                    values_allowed=options.profile.values_allowed, same_values=same)
+                    values_allowed=options.profile.values_allowed, same_values=same, versions=versions)
 
 
 def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = "", db_id: int | None = None,
@@ -274,6 +280,8 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             else ("one_to_many" if j.from_unique else "many_to_many"), match_rate=j.match_rate,
             null_rate=j.null_rate, orphan_rows=j.unmatched, to_unique=j.to_unique, max_fanout=j.max_fanout,
             target_checked=j.target_checked, role=j.role,
+            conditions=[ColumnFilter(column=ck[(j.to_table, c)], op=op, values=list(v))  # type: ignore[arg-type]
+                        for c, op, v in j.conditions],
             trust="verified" if j.trust == "verified" else ("declared" if j.trust == "declared" else "proposed"),
             to_calendar=j.to_calendar, evidence=j.evidence, confidence=j.match_rate,
             provenance="declared" if j.declared else "profile",
@@ -359,7 +367,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             row_count=f.profiles[key].rows, primary_key=[ck[(key, c)] for c in tkeys.primary_key],
             default_date=default_role, columns=[ck[(key, c.name)] for c in table.columns],
             slug=ids.unique_slug(ids.slug(business), taken), evidence=tkeys.evidence, confidence=1.0,
-            provenance="profile", status="verified")
+            provenance="profile", status="verified", versions=_versions(f.versions.get(key), ck))
         by_column = {c.column: c for c in f.dates.get(key, [])}
         for column in table.columns:
             p = f.profiles[key].columns[column.name]
@@ -512,6 +520,17 @@ def _grain_text(name: str, kind: str, keys: TableKeys) -> str:
     return f"one row per {noun}"
 
 
+def _versions(found: VersionsFinding | None, ck: dict[tuple[str, str], str]) -> Versions | None:
+    if found is None:
+        return None
+    t = found.table
+    return Versions(business_key=ck[(t, found.business_key)],
+                    current=[ColumnFilter(column=ck[(t, c)], op=op, values=list(v))  # type: ignore[arg-type]
+                             for c, op, v in found.current],
+                    valid_from=ck[(t, found.valid_from)] if found.valid_from else None,
+                    valid_to=ck[(t, found.valid_to)] if found.valid_to else None, members=found.members)
+
+
 def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[str, str], str],
                              taken: set[str], people: dict[str, dict[str, str]]) -> None:
     inv = f.inventory
@@ -528,27 +547,33 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         # A code shown beside each member's name is never a person's data: a unique last name or email is not one.
         texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key
                  and c not in held]
-        found = _label_column(table, profile, tkeys, held)
+        versions = f.versions.get(key)
+        found = _label_column(table, profile, tkeys, held, members=versions.members if versions else None)
         label_key = _two_part_name(model, key, business, found, profile) if isinstance(found, tuple) else (
             ck[(key, found)] if found else None)
         codes = [c for c in texts if c != found and (profile.columns[c].max_len or 99) <= 16]
+        if versions is not None:
+            # One member, whatever its version: told apart and counted by its own number.
+            codes = [versions.business_key]
         model.entities[slug] = Entity(
             slug=slug, business_name=business, table=key, key_columns=[ck[(key, c)] for c in tkeys.primary_key],
             label_column=label_key, code_column=ck[(key, codes[0])] if codes else None,
-            members=profile.rows, provenance="profile", status="verified", confidence=0.9)
+            members=versions.members if versions else profile.rows, provenance="profile", status="verified",
+            confidence=0.9)
         if label_key:
             model.columns[label_key].role = "label"
             model.columns[label_key].label_of = model.tables[key].primary_key[0] if model.tables[key].primary_key else None
         if codes:
             model.columns[ck[(key, codes[0])]].role = "code"
-        if len(tkeys.primary_key) == 1:
-            # "How many customers do we have?": the members listed, each counted once.
-            key_m = f"m:{key}.{tkeys.primary_key[0].casefold()}.distinct"
+        counted_by = versions.business_key if versions else (tkeys.primary_key[0] if len(tkeys.primary_key) == 1 else None)
+        if counted_by:
+            # "How many customers do we have?": the members listed, each counted once (once, whatever its versions).
+            key_m = f"m:{key}.{counted_by.casefold()}.distinct"
             counted = names.plural(business.lower())
             model.measures[key_m] = Measure(
                 key=key_m, slug=ids.unique_slug(ids.slug(f"number of {counted}"), taken),
                 business_name=f"Number of {counted}", table=key,
-                expr=AggExpr(agg="count_distinct", column=ck[(key, tkeys.primary_key[0])]),
+                expr=AggExpr(agg="count_distinct", column=ck[(key, counted_by)]),
                 additivity="non_additive", format="count", kind="count",
                 default_date=model.tables[key].default_date,
                 evidence=[Evidence(kind="entity_count", weight=1,
@@ -603,7 +628,7 @@ _DESCRIPTION_WORDS = {"desc", "dsc", "description", "descr"}
 
 
 def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
-                  people: dict[str, str] | None = None) -> str | tuple[str, str] | None:
+                  people: dict[str, str] | None = None, *, members: int | None = None) -> str | tuple[str, str] | None:
     """The column that names each member: its own name ("doctor name" in a doctor table, a full name), else a
     name, else a person's first and last name together, else a short description, else the longest unique text.
     Never a contact detail (an address, a phone number, an email), whatever it is called.
@@ -611,6 +636,7 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
     Names need not be unique (two customers can both be "J. Smith"): a name-like
     column filled on nine rows in ten with nine distinct values in ten is a name.
     Grouping by it is made safe by also grouping by the member's code or key.
+    A table keeping each member once per version names ``members`` of them: its names repeat once per version.
     """
     rows = profile.rows or 0
     people = people or {}
@@ -627,7 +653,7 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
         unique = name in keys.unique_columns
         named = bool(words & _NAME_WORDS)
         described = bool(words & _DESCRIPTION_WORDS) and (p.avg_len or 0) <= 60
-        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * p.non_null
+        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * min(p.non_null, members or p.non_null)
         if not (unique or (near_unique and (named or described))):
             continue
         own = named and ("full" in words or any(names.same_word(w, t) for w in words for t in subject))

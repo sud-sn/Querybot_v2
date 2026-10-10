@@ -1186,6 +1186,12 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if j.kind == "inner" and j.table in model.tables and model.tables[j.table].kind != "calendar":
                 notes.append(f"{model.tables[builder.part.table].business_name} rows with no "
                              f"{j.what.lower()} are left out (the join keeps matched rows only).")
+            held = model.tables[j.table].versions if j.table in model.tables else None
+            if held is not None and j.conds and sorted(map(str, j.conds)) == sorted(
+                    str((c.column, c.op, list(c.values))) for c in held.current):
+                # A member's current version: what the link keeps, said as the reader thinks of it.
+                notes.append(f"{j.what}: as each is now (its current version; the table keeps every version).")
+                continue
             for column, op, values in j.conds:
                 notes.append(f"{j.what}: only rows where {model.columns[column].business_name} "
                              f"{_op_words(ColumnFilter(column=column, op=op, values=values))} are matched (a condition "

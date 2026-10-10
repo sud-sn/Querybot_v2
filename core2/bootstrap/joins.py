@@ -31,6 +31,7 @@ from core2.bootstrap.history import MIN_QUERIES
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
+from core2.bootstrap.versions import VersionsFinding, condition_sql
 from core2.model.schema import ColumnProfile, Evidence
 from core2.bootstrap.journal import attempt, journal_of
 from core2.warehouse import dialect as D
@@ -71,6 +72,8 @@ class JoinFinding:
     to_unique: bool = True
     max_fanout: float = 1.0           # the most target rows one key finds
     target_checked: bool = True       # False: the warehouse refused the check; a question checks it again
+    # The target's rows the link keeps, as (column, op, values): a member's current version.
+    conditions: list[tuple[str, str, list]] = field(default_factory=list)
 
     @property
     def ident(self) -> tuple[str, str, str, str]:
@@ -245,8 +248,11 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
 def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                    keys: dict[str, TableKeys], calendars: dict[str, CalendarFinding], *,
                    max_tests: int = 400, workers: int = 4,
-                   seen: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], int] | None = None) -> list[JoinFinding]:
-    """``seen``: how many of the warehouse's own queries join each pair of columns (core2/bootstrap/history.py)."""
+                   seen: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], int] | None = None,
+                   versions: dict[str, VersionsFinding] | None = None) -> list[JoinFinding]:
+    """``seen``: how many of the warehouse's own queries join each pair of columns (core2/bootstrap/history.py);
+    ``versions``: the tables keeping each member once per version, pointed at by their members' numbers."""
+    versions = versions or {}
     declared = {(fk.table, names_norm(fk.columns[0]), fk.ref_table, names_norm(fk.ref_columns[0]))
                 for fk in inventory.foreign_keys if len(fk.columns) == 1}
 
@@ -264,6 +270,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if key in copies:
             continue    # links point at the table itself, not at its copy; a declared one still stands
         primary = keys[key].primary_key
+        if key in versions:
+            # A member's number on a table of its versions: what a fact holding the member (not one version
+            # of it) points at, at the member's current row.
+            targets.append((key, versions[key].business_key))
         for unique in keys[key].unique_columns:
             kind = table.type_of(unique)
             p = profiles[key].columns[unique]
@@ -532,15 +542,27 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         kept.append(best)
 
     for f in kept:
-        _measure_target(warehouse, inventory, keys, calendars, f)
+        _measure_target(warehouse, inventory, keys, calendars, f, versions)
     _name_roles(kept, inventory)
     return sorted(kept, key=lambda f: f.ident)
 
 
 def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, TableKeys],
-                    calendars: dict[str, CalendarFinding], f: JoinFinding) -> None:
-    """Does each key find one target row? From the target's keys when they say so, from the data otherwise."""
+                    calendars: dict[str, CalendarFinding], f: JoinFinding,
+                    versions: dict[str, VersionsFinding] | None = None) -> None:
+    """Does each key find one target row? From the target's keys when they say so, from the data otherwise.
+    A member's number on a table of its versions finds one row: its current version, which the link keeps."""
     columns = [t for _, t in f.pairs]
+    held = (versions or {}).get(f.to_table)
+    if held is not None and columns == [held.business_key]:
+        target = inventory.tables[f.to_table]
+        most = attempt(warehouse, f"the link check {target.name} ({held.business_key}, current rows)",
+                       lambda: _most_per_key(warehouse, target, columns, held.current), None)
+        if most is not None and most <= 1:
+            f.conditions = list(held.current)
+            f.evidence.append(Evidence(kind="current_version", weight=0.5, detail=(
+                f"{target.name} keeps each {held.business_key} once per version: the link keeps its current one")))
+            return
     tkeys = keys[f.to_table]
     known = (len(columns) == 1 and columns[0] in tkeys.unique_columns) or (
         sorted(columns) == sorted(tkeys.primary_key) and bool(tkeys.primary_key)) or any(
@@ -561,12 +583,16 @@ def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, 
         "row once for each")))
 
 
-def _most_per_key(warehouse: Warehouse, table: InvTable, columns: list[str]) -> int:
-    """The most rows one value of ``columns`` holds in ``table`` (keys with no value left out)."""
+def _most_per_key(warehouse: Warehouse, table: InvTable, columns: list[str],
+                  kept: list[tuple[str, str, list]] | None = None) -> int:
+    """The most rows one value of ``columns`` holds in ``table`` (keys with no value left out), among the
+    rows ``kept`` keeps (a member's current version)."""
     d = warehouse.dialect
     cols = [exp.column(D.ident(c, d)) for c in dict.fromkeys(columns)]
+    where = [exp.not_(exp.Is(this=c.copy(), expression=exp.Null())) for c in cols] + [
+        condition_sql(name, op, values, d) for name, op, values in kept or []]
     inner = (exp.select(exp.Count(this=exp.Star()).as_("n")).from_(exp.to_table("__TGT__"))
-             .where(exp.and_(*[exp.not_(exp.Is(this=c.copy(), expression=exp.Null())) for c in cols]))
+             .where(exp.and_(*where))
              .group_by(*[c.copy() for c in cols]))
     query = exp.select(exp.Max(this=exp.column("n"))).from_(inner.subquery("x"))
     sql = query.sql(dialect=d).replace("__TGT__", D.table_sql(table.database, table.schema, table.name, d), 1)

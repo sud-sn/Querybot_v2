@@ -1,17 +1,18 @@
 """A link that would count a row more than once is never followed, and the answer says why.
 
 Questions follow links from a table to one row of another (an order to its store). A link whose target holds
-more than one row for some key -- a customer number kept once per version of the customer, which the database
-declares as a foreign key all the same -- counts each order once per version, and its totals come out too
-high with nothing said. Learn never measured it: every link it found was written as pointing at one row.
+more than one row for some key -- a customer number kept once for each segment the customer belongs to, which
+the database declares as a foreign key all the same -- counts each order once per segment, and its totals come
+out too high with nothing said. Learn never measured it: every link it found was written as pointing at one row.
 
 Now Learn measures each link's target (one row per key, or up to how many), and a link that repeats is never
 followed: a question that needs it is refused, saying which rows would be counted more than once. So is a
 figure of a header split by its lines (an order total by the products on its lines). A link no one measured --
 declared, or brought over from today's setup, in a model learned before this -- is checked against the data
-the first time a question follows it, once. An admin's condition that keeps one row per key (the current
-version) makes it safe again, and a link from today's setup written from the "one" side is turned the way a
-question follows it.
+the first time a question follows it, once. An admin's condition that keeps one row per key (each customer's
+primary segment) makes it safe again, and a link from today's setup written from the "one" side is turned the
+way a question follows it. (A table keeping each customer once per version, with its current row marked, is
+another matter: tests/test_a_history_table_is_read_as_its_members.py.)
 
 A small warehouse in DuckDB, invented data; totals are checked against hand-written SQL.
 """
@@ -40,7 +41,7 @@ def _fk(parent: str, column: str, ref: str, ref_column: str) -> dict:
             "parent_col": column, "ref_schema": "main", "ref_table": ref, "ref_col": ref_column, "ordinal": 1}
 
 
-DECLARED = [_fk("orders", "customer_id", "customer_versions", "customer_id"),
+DECLARED = [_fk("orders", "customer_id", "customer_segments", "customer_id"),
             _fk("orders", "store_id", "stores", "store_id"),
             _fk("stores", "region_id", "regions", "region_id"),
             _fk("order_lines", "order_id", "orders", "order_id")]
@@ -52,15 +53,15 @@ def _warehouse() -> duckdb.DuckDBPyConnection:
     con.execute("INSERT INTO regions VALUES (1, 'North'), (2, 'South'), (3, 'West')")
     con.execute("CREATE TABLE stores (store_id INTEGER PRIMARY KEY, store_name VARCHAR, region_id INTEGER)")
     con.execute("INSERT INTO stores VALUES " + ", ".join(f"({i}, 'Store {i:02d}', {1 + i % 3})" for i in range(1, 13)))
-    con.execute("CREATE TABLE customer_versions (customer_id INTEGER, version_no INTEGER, segment VARCHAR, "
-                "is_current INTEGER, PRIMARY KEY (customer_id, version_no))")
+    con.execute("CREATE TABLE customer_segments (customer_id INTEGER, segment_no INTEGER, segment VARCHAR, "
+                "is_primary INTEGER, PRIMARY KEY (customer_id, segment_no))")
     rows = []
     for c in range(1, 41):
-        versions = 1 + c % 3          # one to three versions of each customer
-        for v in range(1, versions + 1):
+        belongs = 1 + c % 3          # each customer in one to three segments
+        for v in range(1, belongs + 1):
             segment = ("Retail", "Trade", "Online")[(c + v) % 3]
-            rows.append(f"({c}, {v}, '{segment}', {int(v == versions)})")
-    con.execute("INSERT INTO customer_versions VALUES " + ", ".join(rows))
+            rows.append(f"({c}, {v}, '{segment}', {int(v == belongs)})")
+    con.execute("INSERT INTO customer_segments VALUES " + ", ".join(rows))
     con.execute("CREATE TABLE orders (order_id INTEGER PRIMARY KEY, order_date DATE, customer_id INTEGER, "
                 "store_id INTEGER, order_total DECIMAL(12, 2))")
     con.execute("INSERT INTO orders SELECT i, DATE '2026-01-01' + CAST(i % 180 AS INTEGER), 1 + i % 40, 1 + i % 12, "
@@ -134,7 +135,7 @@ def _rows(payload) -> dict:
 
 def test_learn_measures_a_declared_link_whose_target_repeats(learned):
     _, model = learned
-    to_versions = _join(model, "orders", "customer_versions")
+    to_versions = _join(model, "orders", "customer_segments")
     assert (to_versions.to_unique, to_versions.max_fanout, to_versions.cardinality, to_versions.target_checked) == (
         False, 3.0, "many_to_many", True)
     assert any(e.kind == "fanout" for e in to_versions.evidence)
@@ -165,10 +166,10 @@ def test_a_link_whose_target_repeats_is_refused_and_says_why(learned):
     con, model = learned
     total = _measure(model, "orders")
     payload = _ask(con, model, {"intent": "breakdown", "measures": [total],
-                                "group_by": [_slug(model, "customer_versions", "segment")], "time": {"window": YEAR}})
+                                "group_by": [_slug(model, "customer_segments", "segment")], "time": {"window": YEAR}})
     stopped = payload["trust"]["stopped"]
     assert payload.get("data") is None, "a total through a repeating link was answered"
-    assert stopped == ("Segment cannot split orders: some orders match more than one customer version, so they "
+    assert stopped == ("Segment cannot split orders: some orders match more than one customer segment, so they "
                        "would be counted more than once."), stopped
 
 
@@ -211,7 +212,7 @@ def test_an_unmeasured_link_is_checked_against_the_data_and_refused_when_it_repe
     old = _as_before(model)
     total = _measure(old, "orders")
     plan = {"intent": "breakdown", "measures": [total],
-            "group_by": [_slug(old, "customer_versions", "segment")], "time": {"window": YEAR}}
+            "group_by": [_slug(old, "customer_segments", "segment")], "time": {"window": YEAR}}
     unchecked = _ask(con, old, plan, check=False)
     wrong = sum(_rows(unchecked).values())
     right = float(con.execute("SELECT SUM(order_total) FROM orders").fetchone()[0])
@@ -268,22 +269,22 @@ def test_a_check_the_warehouse_refuses_leaves_the_link_followed_and_is_logged(le
 # ── an admin's condition, and today's setup ───────────────────────────────
 
 
-def test_a_condition_that_keeps_the_current_row_makes_the_link_safe(learned):
+def test_a_condition_that_keeps_one_row_per_key_makes_the_link_safe(learned):
     con, model = learned
     fixed = model.model_copy(deep=True)
-    j = _join(fixed, "orders", "customer_versions")
-    current = next(c.key for c in fixed.columns.values()
-                   if fixed.tables[c.table].name == "customer_versions" and c.name == "is_current")
-    j.conditions = [ColumnFilter(column=current, op="eq", values=[1])]
+    j = _join(fixed, "orders", "customer_segments")
+    primary = next(c.key for c in fixed.columns.values()
+                   if fixed.tables[c.table].name == "customer_segments" and c.name == "is_primary")
+    j.conditions = [ColumnFilter(column=primary, op="eq", values=[1])]
     j.cardinality, j.to_unique, j.max_fanout, j.target_checked, j.provenance = (
         "many_to_one", True, 1.0, False, "admin")
     total = _measure(fixed, "orders")
     payload = _ask(con, fixed, {"intent": "breakdown", "measures": [total],
-                                "group_by": [_slug(fixed, "customer_versions", "segment")],
+                                "group_by": [_slug(fixed, "customer_segments", "segment")],
                                 "time": {"window": YEAR}})
     want = {(s,): float(v) for s, v in con.execute(
-        "SELECT c.segment, SUM(o.order_total) FROM orders o JOIN customer_versions c "
-        "ON c.customer_id = o.customer_id AND c.is_current = 1 GROUP BY 1").fetchall()}
+        "SELECT c.segment, SUM(o.order_total) FROM orders o JOIN customer_segments c "
+        "ON c.customer_id = o.customer_id AND c.is_primary = 1 GROUP BY 1").fetchall()}
     assert _rows(payload) == pytest.approx(want)
 
 
@@ -307,11 +308,11 @@ def test_a_question_never_follows_an_admin_link_saved_over_the_warning(learned):
     """An admin's link keeps "many to one" and records what its check found: up to three rows per key."""
     con, model = learned
     saved = model.model_copy(deep=True)
-    j = _join(saved, "orders", "customer_versions")
+    j = _join(saved, "orders", "customer_segments")
     j.cardinality, j.to_unique, j.max_fanout, j.target_checked, j.provenance, j.trust = (
         "many_to_one", False, 3.0, True, "admin", "admin")
     payload = _ask(con, saved, {"intent": "breakdown", "measures": [_measure(saved, "orders")],
-                                "group_by": [_slug(saved, "customer_versions", "segment")],
+                                "group_by": [_slug(saved, "customer_segments", "segment")],
                                 "time": {"window": YEAR}})
     assert payload.get("data") is None and "would be counted more than once" in payload["trust"]["stopped"]
 

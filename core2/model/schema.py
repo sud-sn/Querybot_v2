@@ -182,6 +182,17 @@ class ColumnFilter(_Data):
     shown: list[str] = Field(default_factory=list)      # what readers see for the values (status 8: "Cancelled")
 
 
+class Versions(_Data):
+    """A table keeping each member once per version (a customer's segment, as it changed): the column naming
+    the member whatever its version, and what marks each member's current row."""
+
+    business_key: str                   # column key
+    current: list[ColumnFilter] = Field(default_factory=list)
+    valid_from: str | None = None       # column keys of its validity period, when it has one
+    valid_to: str | None = None
+    members: int = 0
+
+
 class Table(Belief):
     key: str
     database: str = ""
@@ -201,6 +212,7 @@ class Table(Belief):
     slug: str = ""
     profiled_at: datetime | None = None
     hidden: bool = False
+    versions: Versions | None = None    # each member kept once per version (core2/bootstrap/versions.py)
 
 
 class Join(Belief):
