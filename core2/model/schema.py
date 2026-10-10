@@ -336,6 +336,11 @@ class Attribute(Belief):
     synonyms: dict[str, list[str]] = Field(default_factory=dict)
     members: int = 0
     indexed: bool = False           # member values are in the lookup index
+    # How a question reads it: "group" (a category to group and filter by), "number" (an amount each member
+    # or row has: a price, a weight, days in transit; compared, sorted and shown), "identifier" (names or
+    # numbers each member or row by itself: an invoice number, an NPI; looked up, listed and ranked by,
+    # shown as written) or "text" (free text: searched, never grouped).
+    kind: Literal["group", "number", "identifier", "text"] = "group"
 
 
 class QualityFlag(_Data):

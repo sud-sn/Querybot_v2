@@ -16,8 +16,8 @@ import re
 from sqlglot import exp
 
 from core2.model import formula
-from core2.model.schema import (AggExpr, Attribute, Measure, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr,
-                                 value_names)
+from core2.model.schema import (AggExpr, Attribute, ColumnProfile, Measure, MeasureExpr, OpExpr, RefExpr,
+                                 SemanticModel, SqlExpr, value_names)
 from core2.plan.ir import TIME_ATTRIBUTES
 from core2.resolve import paths as P
 
@@ -112,12 +112,33 @@ def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, l
         return "sensitive: never shown or filtered on"
     if column.personal != "none":
         return f"{count:,} people: their names are never listed" if count else "people's names: never listed"
-    if not values_allowed or not column.values_allowed or not p or not p.top \
-            or count > limit:
+    if attribute.kind == "text":
+        return "free text: search it with contains; never grouped by"
+    allowed = values_allowed and column.values_allowed
+    listed = allowed and p is not None and bool(p.top) and count <= limit
+    if attribute.kind == "number":
+        how = "a number: compare, sort or show it"
+        if listed:
+            return f"{count} values: {', '.join(_listed(p, limit))} ({how}; group by it)"
+        if allowed and p is not None and p.min_num is not None and p.max_num is not None:
+            return f"{how}, from {p.min_num:g} to {p.max_num:g}; too many values to group by"
+        return f"{how}; too many values to group by"
+    if attribute.kind == "identifier":
+        how = "an identifier, shown as written: filter by the one the reader writes, list or rank by it"
+        return f"{count} values: {', '.join(_listed(p, limit))} ({how})" if listed else f"{count:,} values ({how})"
+    if not listed:
         return f"{count:,} values" if count else ""
-    shown = sorted(str(t.value) for t in p.top if t.value is not None)[:limit]
     names = value_names(column)
-    return f"{count} values: {', '.join(f'{names[v]} ({v})' if v in names else v for v in shown)}"
+    return f"{count} values: {', '.join(f'{names[v]} ({v})' if v in names else v for v in _listed(p, limit))}"
+
+
+def _listed(p: ColumnProfile, limit: int) -> list[str]:
+    """A column's common values, in order: numbers by size (2 before 10), anything else as text."""
+    values = [str(t.value) for t in p.top or [] if t.value is not None]
+    try:
+        return sorted(values, key=float)[:limit]
+    except ValueError:
+        return sorted(values)[:limit]
 
 
 def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_values_up_to: int = 12,

@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
+import re
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable
@@ -169,6 +170,10 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         return "at the last snapshot"
     if c.kind == "date":
         return f"with {c.label} {span_words(c.dates)}" if c.dates is not None else ""
+    if c.kind == "days_total":
+        # Each group's figure: an average is rarely whole, so "3 days" is about 3 (from 2.5 to under 3.5).
+        about = "about " if c.op == "eq" else ""
+        return f"where {c.label} is {about}{_compared(c.op, [fmt(v, 'number') for v in c.values])} days"
     if c.kind == "days":
         return f"where {c.label} is {_compared(c.op, [fmt(v, 'number') for v in c.values])} days"
     if c.kind == "total":
@@ -176,6 +181,9 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         amounts = [f"${float(v):,.0f}" if c.format == "currency" and _number(v) is not None
                    and float(v).is_integer() else fmt(v, c.format or "number") for v in c.values]
         return f"with {c.label} {_compared(c.op, amounts)}"
+    if c.kind == "number":
+        # A value compared, never a name: "where typical transit days is 3", "where list price is above 20".
+        return f"where {c.label} is {_compared(c.op, [str(v) for v in c.values])}"
     if c.kind == "flag":
         # A yes/no flag by its word: "for cancelled", never "for cancelled flag Cancelled" (or 1).
         words = [f'"{v}"' if quoted else str(v)[:1].lower() + str(v)[1:] if not str(v).split()[0].isupper() else str(v)
@@ -585,6 +593,14 @@ def _thing(label: str) -> str:
     return " ".join(words)
 
 
+def _said(g: OutColumn, value: object) -> object:
+    """A member of a grouping of numbers or codes as a sentence names it: "fill number 0", "GL account code 4000";
+    any other member as it is."""
+    if not g.numbered or value in (None, "", "Unknown") or not re.fullmatch(r"-?[\d.,]+", str(value)):
+        return value
+    return f"{_thing(g.label)} {value}"
+
+
 def _noun(label: str) -> str:
     """What a grouping counts, in the plural: "Warehouse name" -> "warehouses", "Day of week" -> "days of week"."""
     words = _thing(label).split()
@@ -632,9 +648,21 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         groups = cols.of("attribute")
         if not groups:
             return f"{len(raw):,} rows{(' ' + span) if span else ''}."
-        listed = [str(r[groups[0].name]) for r in shown[:8] if r[groups[0].name] not in (None, "")]
+        first, beside = groups[0], groups[1:3]
+
+        def details(r: dict) -> list[str]:      # what else the list shows of it: "base rate 5.9", "carrier FedEx"
+            return [f"{_thing(c.label)} {r[c.name]}" for c in beside if r.get(c.name) not in (None, "")]
+
+        looked_up = re.search(rf"(?<![\w-]){re.escape(str(shown[0][first.name]))}(?![\w-])", span) if raw else None
+        if len(raw) == 1 and beside and details(shown[0]) and looked_up:
+            # One looked up by its own name or number: "Tracking number 81067: carrier FedEx, status Delivered."
+            thing = _thing(first.label)
+            return f"{thing[:1].upper() + thing[1:]} {shown[0][first.name]}: {', '.join(details(shown[0]))}."
+        listed = [str(r[first.name]) + (f" ({', '.join(details(r))})" if details(r) else "")
+                  for r in shown[:8] if r[first.name] not in (None, "")]
         more = f", and {len(raw) - 8:,} more" if len(raw) > 8 else ""
-        return f"{len(raw):,} {_noun(groups[0].label)}{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
+        what = _thing(first.label) if len(raw) == 1 else _noun(first.label)     # "1 service", never "1 services"
+        return f"{len(raw):,} {what}{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
     m = measures[0]
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     value = lambda r, c=m: fmt(r[c.name], c.format, unit=units.of(r))   # noqa: E731
@@ -731,6 +759,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         return text + "."
     if members and not periods:
         g = members[0]
+        shown = [{**r, g.name: _said(g, r[g.name])} for r in shown]      # "fill number 0", never a bare "0"
         # Ranked lowest first ("the 5 items with the least gross profit"), the answer names the lowest:
         # "leads with" the largest read as the opposite of what was asked.
         lowest = bool(logical.sort) and not logical.sort[0][1] and logical.sort[0][0] in {c.name for c in measures}

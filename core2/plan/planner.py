@@ -52,8 +52,10 @@ How to plan:
    time") go in durations: a short name, start and end (two date slugs on one table, the earlier event as
    start) and agg (avg; max for "longest", min for "shortest", sum for "total days"). To keep only rows by
    it ("invoiced more than 14 days after ordering"), add a filter whose field is the duration's name (op
-   gt, gte, lt, lte or between; values in days), with measure false when the rows are only counted. Sort
-   by a duration with its name.
+   gt, gte, lt, lte or between; values in days), with measure false when the rows are only counted. To
+   keep groups by their figure instead ("carriers whose average delivery takes over 4 days", "ship methods
+   with a transit time of 3 days" when no field holds it), keep the duration as a measure and set total
+   true on its filter. Sort by a duration with its name.
 3. group_by: attribute or entity slugs for "by X", "per X", "each X", "which X"; an entity slug groups by
    its name. A time: attribute for "by weekday", "by month of the year", "weekends". When the catalog lists
    roles for an entity and the question names one ("by ship-to customer", "the customer's home store"),
@@ -85,6 +87,11 @@ How to plan:
    measure slug. A name in VALUE MATCHES can also be what a measure measures ("cost of goods sold" is a
    ledger account and the cost on sales lines): read it as the member only when that member's table can
    be broken down and filtered as the question asks; otherwise use the measure.
+   A field the catalog calls a number (a price, a weight, days in transit) is compared on its value: op eq,
+   gt, gte, lt, lte or between with numbers ("a transit time of exactly 3 days" -> eq [3]); sort by its
+   slug ("the cheapest"), and group by it only when the catalog lists its values. An identifier (an
+   invoice or tracking number) is filtered with eq on the value the reader wrote, and listed or ranked by
+   ("the 10 largest invoices"). Free text is filtered with contains on the words the reader looks for.
 9. sort and limit: "top 5" -> sort by the measure (desc) with limit 5; "bottom 5", "least" -> desc false.
    "grew the most" -> sort by "change" desc; "biggest drop" -> "change" with desc false.
 10. intent: value | breakdown | trend | compare | rank | share | list | count | drivers | forecast. "List the
@@ -335,8 +342,9 @@ def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) 
     data = plan.model_dump(mode="json", exclude_defaults=True)
     durations = {str(d.get("name", "")).casefold() for d in data.get("durations", [])}
     for f in data.get("filters", []):
-        if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles):
-            continue      # amounts and dates, not member values
+        if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles
+                                  or getattr(model.attributes.get(f.get("field")), "kind", "") == "number"):
+            continue      # amounts, dates and numbers ("3 days in transit"), not member values
         if str(f.get("field", "")).casefold() in durations:
             continue      # numbers of days
         f["values"] = [placeholder(v, masked.values) for v in f.get("values", [])]

@@ -126,10 +126,12 @@ def test_names_that_repeat_still_name_members_and_never_merge_two():
 
 def test_columns_about_the_load_or_never_filled_are_not_groupings():
     _, model = _built()
-    offered = {model.columns[a.column].name for a in model.attributes.values()}
-    for column in ("AZ_LST_UPD_USR", "AZ_EXT_ID", "CUS_FR_NM", "PRU_GRP_DMS_KEY", "ITM_GRS_WT"):
+    offered = {model.columns[a.column].name: a.kind for a in model.attributes.values()}
+    for column in ("AZ_LST_UPD_USR", "AZ_EXT_ID", "CUS_FR_NM", "PRU_GRP_DMS_KEY"):
         assert column not in offered, column
-    assert {"CUS_NM", "ITM_NM", "CUS_TYP_DSC"} <= offered
+    # A weight is a number each item has: compared, sorted and shown ("items over 100 kg"), never a grouping.
+    assert offered.get("ITM_GRS_WT") == "number"
+    assert {"CUS_NM", "ITM_NM", "CUS_TYP_DSC"} <= set(offered)
 
 
 def test_abbreviations_read_by_the_column_they_are_in():

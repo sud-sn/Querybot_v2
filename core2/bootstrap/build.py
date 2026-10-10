@@ -570,12 +570,12 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         for column in table.columns:
             col = model.columns[ck[(key, column.name)]]
             p = col.profile
-            if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure", "text"):
+            if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure"):
                 continue
             if not _attribute_worthy(column, col, kind):
                 continue
-            if kind != "dimension" and col.role not in ("status", "flag") and not (
-                    p and 1 < p.distinct <= 1000 and column.data_type == "text"):
+            how = _attribute_kind(column, col, kind)
+            if how is None:
                 continue
             name = _attribute_name(col.business_name, model.entities.get(owner))
             slug = f"{owner}.{ids.slug(name)}"
@@ -583,7 +583,7 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 slug = ids.unique_slug(slug, set(model.attributes))
             model.attributes[slug] = Attribute(
                 slug=slug, column=col.key, entity=owner if key in entity_of else None,
-                business_name=col.business_name, members=p.distinct if p else 0,
+                business_name=col.business_name, members=p.distinct if p else 0, kind=how,
                 provenance="profile", status="verified", confidence=0.8)
         # A name read from two columns (first and last) is grouped and filtered by like any other.
         entity = model.entities.get(owner) if key in entity_of else None
@@ -675,12 +675,58 @@ def _attribute_worthy(column: InvColumn, col: Column, kind: str) -> bool:
     if words & _TECHNICAL or words & AUDIT_WORDS:
         return False
     last = names.tokens(column.name)[-1:] or [""]
-    if column.data_type in ("integer", "decimal", "float") and last[0] in names.KEY_SUFFIXES - {"code", "cd", "no"}:
+    if column.data_type in _NUMBERS and last[0] in names.KEY_SUFFIXES - {"code", "cd", "no"}:
         return False   # a key to a table this warehouse does not hold
-    if kind == "dimension" and column.data_type in ("integer", "decimal", "float") and (
-            p.distinct > 20 or p.distinct > 0.5 * p.non_null):
-        return False   # a weight or a size, one per member: a number to read, not a group (pack sizes repeat)
     return True
+
+
+_NUMBERS = ("integer", "decimal", "float")
+# Words that make a whole number name something rather than count it: an NPI, a ZIP code, a GL account.
+_IDENTIFYING = {"code", "cd", "no", "nbr", "num", "number", "npi", "zip", "zipcode", "postal", "postcode", "bin",
+                "sku", "upc", "ean", "gtin", "isbn", "account", "acct", "acc"}
+# Words of a row's place in its document (line 3 of an invoice, the second parcel of a shipment).
+_ORDINAL = {"line", "lin", "ln", "seq", "sequence", "position", "pos"}
+_FEW_NUMBERS = 50      # a number with more values than this on a fact row is a figure the measures add up
+
+
+def _attribute_kind(column: InvColumn, col: Column, kind: str) -> str | None:
+    """How a question reads ``col`` (see :class:`Attribute`), or None when it is not one to read.
+
+    A number each member has (a list price, a weight, a ship method's typical transit days) is kept as a
+    number to compare, sort and show: dropped, it could not be asked about at all ("ship methods with a
+    transit time of 3 days" read as no such data). A whole number that names (an NPI, a GL account code)
+    is an identifier, shown as written; a fact's own small numbers (refills authorized, fill number) are
+    numbers; its position in a document (line 3) is nothing. A fact's text with more values than a
+    category has (an invoice number, a tracking number) identifies its rows; free text is searched.
+    """
+    p = col.profile
+    if p is None:
+        return None
+    if col.role in ("status", "flag"):
+        return "group"
+    people = col.personal != "none" or col.sensitivity != "none"
+    if col.role == "text":
+        return "text" if kind != "bridge" and not people else None
+    few = p.distinct <= 20 and p.distinct <= 0.5 * p.non_null     # numbers members share (pack sizes)
+    if people:      # read as before: governed where it is shown, never offered in a new way
+        if kind == "dimension":
+            return "group" if column.data_type not in _NUMBERS or few else None
+        return "group" if column.data_type == "text" and 1 < p.distinct <= 1000 else None
+    words = set(names.tokens(column.name))
+    if column.data_type in _NUMBERS:
+        whole = column.data_type == "integer" or p.integer_share == 1
+        if whole and words & _IDENTIFYING and (p.min_num or 0) >= 100:
+            return "identifier"
+        if kind == "dimension":
+            return "group" if few else "number"
+        if words & _ORDINAL or not 1 < p.distinct <= _FEW_NUMBERS:
+            return None
+        return "number"
+    if kind == "dimension":
+        return "group"
+    if column.data_type != "text" or p.distinct <= 1:
+        return None
+    return "group" if p.distinct <= 1000 else "identifier"
 
 
 def _attribute_name(business: str, entity: Entity | None) -> str:

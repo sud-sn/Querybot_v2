@@ -59,6 +59,7 @@ class OutColumn:
     measure: str | None = None      # the measure's key, for measures and their derived columns
     grain: str | None = None        # for the period
     flag: bool = False              # a yes/no grouping (its two members are a thing and its opposite)
+    numbered: bool = False          # its members are numbers (fill number 0, GL account 4000), said with its name
 
 
 @dataclass
@@ -279,6 +280,11 @@ class _Compiler:
         if g.column is None:
             raise CompileError(f"{g.name} has no column")
         return self.named_values(self.col(g.alias, g.column), g.column)
+
+    def _numbered(self, slug: str | None) -> bool:
+        """Are the attribute ``slug``'s members numbers or codes (a fill number, an NPI), read with its name?"""
+        attribute = self.model.attributes.get(slug) if slug else None
+        return attribute is not None and attribute.kind in ("number", "identifier")
 
     def _flag(self, slug: str | None) -> bool:
         """Is the attribute ``slug`` a yes/no flag (its members a thing and its opposite)?"""
@@ -502,7 +508,8 @@ class _Compiler:
         for g in q.groups:
             columns.append(OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
                                      grain=g.grain if g.kind == "period" else None,
-                                     flag=self._flag(getattr(g, "attribute", None))))
+                                     flag=self._flag(getattr(g, "attribute", None)),
+                                     numbered=self._numbered(getattr(g, "attribute", None))))
         for m in q.measures:
             key = m.measure.key if m.measure else None
             columns.append(OutColumn(m.name, m.label, "measure", m.format, key))

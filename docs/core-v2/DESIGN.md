@@ -175,7 +175,15 @@ All objects carry `evidence: list[Evidence]`, `confidence: float (0..1)`,
   role-playing variants), value-indexed flag.
 * **Attribute**: slug (`entity.attr`), column key, business name, members
   count, value-indexed flag. Degenerate attributes live on fact tables
-  (`invoice.status`).
+  (`invoice.status`). `kind` says how a question reads it: `group` (a category),
+  `number` (an amount each member or row has: a list price, a weight, a ship
+  method's typical transit days; compared, sorted and shown, grouped by only
+  when it has few values), `identifier` (a whole number that names, as an NPI,
+  a ZIP or a GL account code, or a fact's document number, as an invoice or
+  tracking number; looked up, listed and ranked by, shown as written, never in
+  the member index) or `text` (free text: searched with contains, never
+  grouped). A row's place in its document (line 2) and people's data offered in
+  no new way are still left out.
 * **QualityFlag**: object key, `kind` (`outlier_period | negative_values |
   constant | low_match_rate | status_column | placeholder_dates |
   listed_vs_active | load_timestamp | unit_mix`), message, data, severity.
@@ -433,7 +441,8 @@ Plan {
 }
 Filter { field: slug, op: "in"|"not_in"|"eq"|"ne"|"gt"|"gte"|"lt"|"lte"|"between"
                           |"contains"|"starts_with"|"is_null"|"not_null",
-         values: [str|number|bool] }
+         values: [str|number|bool],
+         total: bool }      # on a duration: each group's figure (its average), not each row's days
 ```
 
 A duration ("average days from order to invoice") is whole calendar days from
@@ -442,7 +451,11 @@ DATE, a timestamp, a yyyymmdd number). A row missing either date, or holding a
 placeholder, is left out of the days and still counted by the answer's other
 measures: the dates it reads are joined left. A filter whose field is a
 duration's name keeps rows by their days ("invoiced more than 14 days after
-ordering"); a sort names it the same way. Two dates of different tables, the
+ordering"); a sort names it the same way. With `total`, the filter keeps groups
+by their own figure instead ("ship methods whose transit time is 3 days", worked
+out from the ship and delivery dates when no field holds it): an average kept at
+a whole number of days is one that rounds to it (2.5 to under 3.5), and the
+answer says "about 3 days". Two dates of different tables, the
 same date twice, or a date kept by month are refused with the reason.
 
 Relative windows are written relatively (`last 6 months`) and resolved by code

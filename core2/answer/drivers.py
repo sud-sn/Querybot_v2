@@ -223,7 +223,8 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         column = model.columns[a.column]
         members = a.members or (column.profile.distinct if column.profile else 0)
         if a.slug in skip or column.key in names_or_keys or column.hidden or column.sensitivity != "none" \
-                or column.personal != "none" or not 2 <= members <= 50 or _a_flag(column):
+                or column.personal != "none" or not 2 <= members <= 50 or _a_flag(column) \
+                or a.kind in ("number", "text"):       # a price or a note explains no change
             continue
         n = hops(column.table)
         if n is None or n > 1:

@@ -190,7 +190,7 @@ class Condition:
     next questions it offers say which ones narrowed what it counts.
     """
 
-    kind: str                # member | flag | days | total | date | by | activity
+    kind: str                # member | flag | number | days | total | date | by | activity
     label: str               # what it is on, as a reader reads it: "customer type", "ship date"
     op: str = ""
     values: list = field(default_factory=list)
@@ -823,6 +823,9 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             raise ResolveError("unknown", f"nothing to group by called {slug}", _closest(slug, _slugs(model, "group")))
         attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
         assert isinstance(attribute, Attribute)
+        if attribute.kind == "text":
+            raise ResolveError("unsupported", f"{attribute.business_name} is free text: it can be searched "
+                               "(contains), not grouped by")
         wanted.append((slug, _shown(model, attribute, slug, entity=found[0] == "entity", personal=ctx.personal_shown), None))
 
     intent = plan.intent or ("trend" if plan.time.grain else ("breakdown" if wanted else "value"))
@@ -1012,6 +1015,30 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 days = [float(v) for v in f.values]
             except (TypeError, ValueError):
                 raise ResolveError("unsupported", f"{duration.name} is compared with a number of days") from None
+            if f.total:
+                # Each group by its figure ("ship methods whose transit time is 3 days", worked out from the
+                # ship and delivery dates): the average is rarely a whole number, so "3 days" is one that
+                # rounds to 3, from 2.5 to just under 3.5.
+                target = next((o for o in measures_out if o.measure is None and o.label == duration.name), None)
+                if target is None:
+                    raise ResolveError("unsupported", f"a condition on each group's {duration.name.lower()} needs "
+                                       "it as a measure of the answer")
+                words = f"{duration.name} {_AGG_WORDS[duration.agg]} {_op_words(f)} days"
+                if f.op in ("eq", "ne") and len(days) == 1:
+                    low, high = days[0] - 0.5, days[0] + 0.5
+                    if f.op == "eq":
+                        having += [Pred("", target.name, "gte", [low], words), Pred("", target.name, "lt", [high], words)]
+                    else:
+                        raise ResolveError("unsupported", f"{duration.name} can be kept above or below a number of "
+                                           "days on each group, not 'not equal'")
+                else:
+                    having.append(Pred("", target.name, f.op, days, words))
+                conditions.append(Condition("days_total", f"{duration.name.lower()} {_AGG_WORDS[duration.agg]}",
+                                            f.op, list(f.values)))
+                notes.append(f"Only groups whose {duration.name.lower()}, {_AGG_WORDS[duration.agg]}, is "
+                             f"{_op_words(f).split(' ', 1)[-1] if f.op == 'eq' else _op_words(f)} days"
+                             + (" (rounded to whole days)." if f.op == "eq" else "."))
+                continue
             dated = [(b, p) for b, p in ((b, b.part) for b, _ in builders) if p.table == start_role.table]
             if not dated:
                 raise ResolveError("unsupported", f"{duration.name} is on "
@@ -1065,6 +1092,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
             _shown(model, attribute, f.field, entity=kind == "entity", personal=ctx.personal_shown)
+            if attribute.kind == "text" and f.op not in ("contains", "starts_with", "eq", "ne", "is_null", "not_null"):
+                raise ResolveError("unsupported", f"{attribute.business_name} is free text: search it with contains")
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, f.field)
             try:
@@ -1093,7 +1122,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             assert isinstance(attribute, Attribute)
             via_words = _via_words(model, plan, f.field)
             flag = model.columns[attribute.column].role == "flag" if attribute.column in model.columns else False
-            conditions.append(Condition("flag" if flag else "member", _member_label(model, kind, f.field, attribute)
+            what = "flag" if flag else "number" if attribute.kind == "number" else "member"
+            conditions.append(Condition(what, _member_label(model, kind, f.field, attribute)
                                         + (f" ({via_words.lower()})" if via_words else ""), f.op, list(f.values)))
         if missed:
             limited = ", ".join(o.label for p in took for o in p.measures)
@@ -1395,9 +1425,19 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         col = model.columns[attr.column]
         f, stored = _named_filter(col, f)
         part.preds.append(Pred(builder.reach(col.table), col.key, f.op, stored))
-        conditions.append(Condition("member", _member_label(model, found[0], f.field, attr), f.op, list(f.values)))
+        conditions.append(Condition("number" if attr.kind == "number" else "member",
+                                    _member_label(model, found[0], f.field, attr), f.op, list(f.values)))
+    # In the order asked ("the lowest base rate": by base rate, lowest first), else by the first grouping's name.
+    names = {s_: g.name for (s_, _, _), g in zip(wanted, groups)}
+    sort = []
+    for s in plan.sort:
+        name = _sort_name(s.by, [], names, model)
+        if not name:
+            raise ResolveError("unknown", f"nothing to sort by called {s.by}", list(names))
+        sort.append((name, s.desc))
+    sort += [(groups[0].name, False)] if all(n != groups[0].name for n, _ in sort) else []
     return Logical(intent="list", parts=[part], groups=groups, measures=[], window=Range(None, None),
-                   sort=[(groups[0].name, False)], limit=plan.limit, max_rows=ctx.max_rows, conditions=conditions,
+                   sort=sort, limit=plan.limit, max_rows=ctx.max_rows, conditions=conditions,
                    notes=[f"{model.tables[column.table].business_name}: {attribute.business_name.lower()} as listed."])
 
 

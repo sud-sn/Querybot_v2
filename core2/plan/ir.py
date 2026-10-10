@@ -57,6 +57,7 @@ class Filter(_Strict):
     field: str                       # an attribute slug, a date slug (a second date), or a measure slug (on totals)
     op: FilterOp
     values: list[Scalar] = Field(default_factory=list)
+    total: bool = False              # on a duration: each group's figure (its average), not each row's days
 
 
 class Sort(_Strict):

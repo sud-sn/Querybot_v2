@@ -751,7 +751,9 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
         def unknown(value: str) -> bool:      # a member the data does not have: said, never answered for all
             return read and index.stored(attribute.slug, value) is None   # type: ignore[union-attr]
 
-        kept = [v for v in f.values if not isinstance(v, str) or quoted(v) or unknown(v) or not written(v)]
+        amount = attribute is not None and attribute.kind == "number"    # "exactly 3 days": a value, no name
+        kept = [v for v in f.values
+                if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)]
         dropped += [(thing, v) for v in f.values if v not in kept]
         if kept:
             filters.append(f.model_copy(update={"values": kept}))

@@ -364,11 +364,13 @@ def which_end(question: str, shown: list[Shown], taken: list[ValueMatch]) -> tup
 
 
 def listable(model: SemanticModel) -> list[str]:
-    """The attributes whose member names may be read: text, not hidden, not sensitive, values allowed."""
+    """The attributes whose member names may be read: text, not hidden, not sensitive, values allowed. Never a
+    document's number or free text: a question names those in quotes, and there are too many to read."""
     out = []
     for slug, attribute in model.attributes.items():
         column = model.columns[attribute.column]
-        if column.data_type == "text" and not column.hidden and column.sensitivity == "none" and column.values_allowed:
+        if column.data_type == "text" and not column.hidden and column.sensitivity == "none" and column.values_allowed \
+                and attribute.kind not in ("identifier", "text"):
             out.append(slug)
     return out
 
