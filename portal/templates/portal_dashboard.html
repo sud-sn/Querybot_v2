@@ -81,7 +81,6 @@
 {% if dashboard_artifact %}
 {% if dashboard_artifact %}
 {% set _editable = dashboard_artifact.can_edit %}
-{% set _is_draft = dashboard_artifact.status != 'published' %}
 {# The dashboard leads. It used to be an h2 below the account KPI strip and the
    table-access card, under a permanently generic "Dashboards" h1 -- the page
    was organised around the account rather than around the thing you opened. #}
@@ -90,9 +89,11 @@
     <h1>{{ dashboard_artifact.name }}</h1>
     {# Who sees it and when its numbers were drawn; the versions are under ⋯. #}
     <div class="dash-header-meta">
-      {# Draft or published matters only to a dashboard the team shares. #}
-      {% if dashboard_artifact.visibility == 'team' %}<span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span><span>{{ t('ui.dash.shared_with_team') }}</span>
-      {% else %}<span>{{ enum_label('visibility', dashboard_artifact.visibility) }}</span>{% endif %}
+      {# Who sees it. A shared dashboard is always live: everyone it is shared with sees its current version. #}
+      {% if not _editable %}<span>{{ t('ui.dash.shared_by', owner=dashboard_artifact.owner_name or '') }}</span>
+      {% elif dashboard_artifact.visibility == 'team' %}<span>{{ t('ui.dash.shared_with_workspace') }}</span>
+      {% elif dashboard_audience %}<span>{{ plural('ui.dash.shared_with_people', dashboard_audience) }}</span>
+      {% else %}<span>{{ t('ui.dash.only_you') }}</span>{% endif %}
       {# UTC from the server; the page writes it in the reader's own time. #}
       {% if drawn_at %}<span aria-hidden="true">·</span><span data-drawn-at="{{ drawn_at }}">{{ t('ui.dash.updated_at', at=drawn_at[11:16] ~ ' UTC') }}</span>{% endif %}
       {% if dashboard_artifact.refresh_schedule and dashboard_artifact.refresh_schedule != 'manual' %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>{% endif %}
@@ -139,23 +140,6 @@
     </div>
   </div>
 </header>
-
-{# Every edit -- adding a chart, DRAGGING a tile, changing a palette, renaming a
-   card -- marks a team dashboard draft, and get_dashboard_for_view gates on
-   `visibility='team' AND status='published'`. So one drag makes the dashboard
-   vanish from every teammate's portal, and until now the page neither said so
-   nor offered any way to publish it back: publishing was a chat command only. #}
-{% if _editable and _is_draft and dashboard_artifact.visibility == 'team' %}
-<div class="dash-unpublished">
-  <div style="flex:1;min-width:0">
-    <strong>{{ t('ui.dash.unpublished_title') }}</strong>
-    {{ t('ui.dash.unpublished_body') }}
-  </div>
-  <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/publish">
-    <button class="btn btn-primary btn-sm" type="submit">{{ t('ui.dash.publish') }}</button>
-  </form>
-</div>
-{% endif %}
 
 {% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="{{ t('ui.dash.tabs_label') }}">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
 
@@ -354,7 +338,7 @@
 
 {% if not dashboard_artifact and dashboards %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_with_team') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %}{% if item.visibility == 'team' %} · {{ enum_label('status', item.status) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
+<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_by', owner=item.owner_name or '') }}{% elif item.visibility == 'team' %}{{ t('ui.dash.shared_with_workspace') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
 {% else %}
 <div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
 {% endif %}

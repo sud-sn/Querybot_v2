@@ -1246,6 +1246,9 @@ async def _render_dashboard(request: Request, user: dict):
         "dashboard_tabs": dashboard_tabs,
         "selected_tab": selected_tab,
         "dashboard_subscription": dashboard_subscription,
+        # Who else sees it, for the owner's header ("Shared with 3 people").
+        "dashboard_audience": store.dashboard_audience(requested_dashboard["id"], user["account_id"])
+        if requested_dashboard and requested_dashboard.get("can_edit") else 0,
         "dash_view":     view,
         "dash_periods":  list(DASH_PERIODS) if has_core2 else [],
         "dash_groupings": groupings,
@@ -2481,6 +2484,67 @@ async def tidy_dashboard_api(request: Request, dashboard_id: int):
     if not store.tidy_dashboard_layout(dashboard_id, user["id"], user["account_id"]):
         return JSONResponse({"ok": False, "error": "Dashboard layout was not updated."}, status_code=403)
     return JSONResponse({"ok": True})
+
+
+def _shares_reply(dashboard: dict, user: dict) -> JSONResponse:
+    """Who an owned dashboard is shared with: the workspace switch, then people and groups by name."""
+    return JSONResponse({
+        "ok": True,
+        "workspace": (dashboard.get("visibility") or "personal") == "team",
+        "shares": store.list_dashboard_shares(int(dashboard["id"]), user["id"], user["account_id"]),
+    })
+
+
+@router.get("/api/dashboard/{dashboard_id}/shares")
+async def dashboard_shares_api(request: Request, dashboard_id: int):
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+    if not dashboard:
+        return JSONResponse({"ok": False, "error": "Only the dashboard's owner can share it."}, status_code=404)
+    return _shares_reply(dashboard, user)
+
+
+@router.post("/api/dashboard/{dashboard_id}/shares")
+async def add_dashboard_share_api(request: Request, dashboard_id: int):
+    """Share an owned dashboard with a person or a group of the workspace ({"subject_type", "subject_id"}),
+    or with the whole workspace ({"workspace": true|false}). Saved at once."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    if "workspace" in payload:
+        shared = store.share_dashboard(int(dashboard_id), user["id"], user["account_id"],
+                                       "team" if payload.get("workspace") else "personal")
+    else:
+        try:
+            shared = store.add_dashboard_share(int(dashboard_id), user["id"], user["account_id"],
+                                               str(payload.get("subject_type") or ""),
+                                               int(payload.get("subject_id") or 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"ok": False, "error": "Share with a person or a group."}, status_code=400)
+    if not shared:
+        return JSONResponse({"ok": False, "error": "That person or group is not in this workspace, or the "
+                             "dashboard is not yours to share."}, status_code=404)
+    return _shares_reply(store.get_dashboard(dashboard_id, user["id"], user["account_id"]), user)
+
+
+@router.delete("/api/dashboard/{dashboard_id}/shares/{subject_type}/{subject_id}")
+async def remove_dashboard_share_api(request: Request, dashboard_id: int, subject_type: str, subject_id: int):
+    """Stop sharing with a person or a group; their follows end unless they still see it another way."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+    if not dashboard:
+        return JSONResponse({"ok": False, "error": "Only the dashboard's owner can share it."}, status_code=404)
+    store.remove_dashboard_share(int(dashboard_id), user["id"], user["account_id"], subject_type, subject_id)
+    return _shares_reply(dashboard, user)
 
 
 @router.post("/unpin")

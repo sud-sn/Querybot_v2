@@ -100,6 +100,18 @@ def create_dashboard(
     return dict(row)
 
 
+# Who may open a dashboard: its owner, everyone in the workspace when it is shared with the workspace, and
+# each person it is shared with, by name or through their group. Always live: a shared dashboard shows its
+# current version (version history lets the owner roll back), never only a published one.
+def _may_view(alias: str, viewer: str = "?") -> str:
+    """The condition, on ``alias`` (a dashboard_artifact row), for the viewer ``viewer`` (a parameter, or a
+    column), whose own row is joined as ``v`` (portal_user, the same workspace)."""
+    return (f"({alias}.user_id={viewer} OR ({alias}.visibility='team' AND v.id IS NOT NULL) OR EXISTS ("
+            f"SELECT 1 FROM dashboard_share s WHERE s.dashboard_id={alias}.id AND s.account_id={alias}.account_id"
+            f" AND ((s.subject_type='user' AND s.subject_id=v.id) OR (s.subject_type='group' AND s.subject_id=v.group_id))"
+            f" AND v.id IS NOT NULL))")
+
+
 def get_dashboard(dashboard_id: int, user_id: int, account_id: str) -> dict | None:
     with get_db() as conn:
         row = conn.execute(
@@ -115,14 +127,15 @@ def get_dashboard(dashboard_id: int, user_id: int, account_id: str) -> dict | No
 def get_dashboard_for_view(
     dashboard_id: int, user_id: int, account_id: str
 ) -> dict | None:
-    """Return an owned dashboard or a published team dashboard, read-only."""
+    """An owned dashboard, or one shared with the viewer (the workspace, them, or their group), read-only."""
     with get_db() as conn:
         row = conn.execute(
-            """SELECT *, CASE WHEN user_id=? THEN 1 ELSE 0 END AS can_edit
-                 FROM dashboard_artifact
-                WHERE id=? AND account_id=?
-                  AND (user_id=? OR (visibility='team' AND status='published'))""",
-            (int(user_id), int(dashboard_id), account_id, int(user_id)),
+            f"""SELECT d.*, CASE WHEN d.user_id=? THEN 1 ELSE 0 END AS can_edit, o.name AS owner_name
+                  FROM dashboard_artifact d
+                  LEFT JOIN portal_user v ON v.id=? AND v.account_id=d.account_id
+                  LEFT JOIN portal_user o ON o.id=d.user_id
+                 WHERE d.id=? AND d.account_id=? AND {_may_view("d")}""",
+            (int(user_id), int(user_id), int(dashboard_id), account_id, int(user_id)),
         ).fetchone()
     return dict(row) if row else None
 
@@ -145,15 +158,17 @@ def latest_dashboard_for_thread(
 def list_dashboards(account_id: str, user_id: int) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT d.*, COUNT(c.id) AS chart_count,
-                      CASE WHEN d.user_id=? THEN 1 ELSE 0 END AS can_edit
-                 FROM dashboard_artifact d
-                 LEFT JOIN pinned_chart c ON c.dashboard_id=d.id AND c.user_id=d.user_id
-                WHERE d.account_id=?
-                  AND (d.user_id=? OR (d.visibility='team' AND d.status='published'))
-                GROUP BY d.id
-                ORDER BY can_edit DESC, d.updated_at DESC, d.id DESC""",
-            (int(user_id), account_id, int(user_id)),
+            f"""SELECT d.*, COUNT(c.id) AS chart_count,
+                       CASE WHEN d.user_id=? THEN 1 ELSE 0 END AS can_edit,
+                       o.name AS owner_name
+                  FROM dashboard_artifact d
+                  LEFT JOIN portal_user v ON v.id=? AND v.account_id=d.account_id
+                  LEFT JOIN portal_user o ON o.id=d.user_id
+                  LEFT JOIN pinned_chart c ON c.dashboard_id=d.id AND c.user_id=d.user_id
+                 WHERE d.account_id=? AND {_may_view("d")}
+                 GROUP BY d.id, o.name
+                 ORDER BY can_edit DESC, d.updated_at DESC, d.id DESC""",
+            (int(user_id), int(user_id), account_id, int(user_id)),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1203,7 +1218,114 @@ def share_dashboard(dashboard_id: int, user_id: int, account_id: str, visibility
             return None
         _snapshot_locked(conn, dashboard_id, user_id, account_id,
                          "Shared with the team" if value == "team" else "Kept to its owner")
+        _drop_lost_follows(conn, dashboard_id, account_id)
     return get_dashboard(dashboard_id, user_id, account_id)
+
+
+# ── shares with people and groups ─────────────────────────────────────────
+
+SHARE_SUBJECTS = ("user", "group")
+
+
+def _drop_lost_follows(conn, dashboard_id: int, account_id: str) -> int:
+    """Follows of people who can no longer open the dashboard: nothing is sent to someone who lost access."""
+    cur = conn.execute(
+        f"""DELETE FROM dashboard_subscription
+             WHERE dashboard_id=? AND account_id=? AND user_id NOT IN (
+                 SELECT v.id FROM dashboard_artifact d JOIN portal_user v ON v.account_id=d.account_id
+                  WHERE d.id=? AND d.account_id=? AND {_may_view("d", "v.id")})""",
+        (int(dashboard_id), account_id, int(dashboard_id), account_id),
+    )
+    return cur.rowcount or 0
+
+
+def add_dashboard_share(dashboard_id: int, owner_id: int, account_id: str, subject_type: str,
+                        subject_id: int) -> dict | None:
+    """Share an owned dashboard with a person or a group of the same workspace. None: not the owner's, or
+    no such person or group here. Sharing with someone twice, or with its owner, changes nothing."""
+    subject_type = str(subject_type or "").lower()
+    if subject_type not in SHARE_SUBJECTS:
+        raise ValueError("Share with a person or a group.")
+    with get_db() as conn:
+        owned = conn.execute("SELECT id FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+                             (int(dashboard_id), int(owner_id), account_id)).fetchone()
+        if not owned:
+            return None
+        if subject_type == "user":
+            found = conn.execute("SELECT id FROM portal_user WHERE id=? AND account_id=? AND is_active=1",
+                                 (int(subject_id), account_id)).fetchone()
+        else:
+            found = conn.execute("SELECT id FROM user_group WHERE id=? AND account_id=?",
+                                 (int(subject_id), account_id)).fetchone()
+        if not found:
+            return None
+        if not (subject_type == "user" and int(subject_id) == int(owner_id)):
+            conn.execute(
+                """INSERT INTO dashboard_share (dashboard_id, account_id, subject_type, subject_id, created_by)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(dashboard_id, subject_type, subject_id) DO NOTHING""",
+                (int(dashboard_id), account_id, subject_type, int(subject_id), int(owner_id)),
+            )
+    return {"dashboard_id": int(dashboard_id), "subject_type": subject_type, "subject_id": int(subject_id)}
+
+
+def remove_dashboard_share(dashboard_id: int, owner_id: int, account_id: str, subject_type: str,
+                           subject_id: int) -> bool:
+    """Stop sharing with a person or a group; their follows go too, unless they still see it another way."""
+    with get_db() as conn:
+        owned = conn.execute("SELECT id FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+                             (int(dashboard_id), int(owner_id), account_id)).fetchone()
+        if not owned:
+            return False
+        cur = conn.execute(
+            """DELETE FROM dashboard_share
+                WHERE dashboard_id=? AND account_id=? AND subject_type=? AND subject_id=?""",
+            (int(dashboard_id), account_id, str(subject_type or "").lower(), int(subject_id)),
+        )
+        _drop_lost_follows(conn, dashboard_id, account_id)
+    return bool(cur.rowcount)
+
+
+def dashboard_audience(dashboard_id: int, account_id: str) -> int:
+    """How many active people besides its owner may open the dashboard through its shares (by name or group)."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT COUNT(DISTINCT u.id) AS n
+                 FROM dashboard_artifact d
+                 JOIN dashboard_share s ON s.dashboard_id=d.id AND s.account_id=d.account_id
+                 JOIN portal_user u ON u.account_id=d.account_id AND u.is_active=1 AND u.id<>d.user_id
+                  AND ((s.subject_type='user' AND s.subject_id=u.id) OR (s.subject_type='group' AND s.subject_id=u.group_id))
+                WHERE d.id=? AND d.account_id=?""",
+            (int(dashboard_id), account_id),
+        ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def list_dashboard_shares(dashboard_id: int, owner_id: int, account_id: str) -> list[dict]:
+    """Who an owned dashboard is shared with, by name: people (with their group) and groups (with their size).
+    Never an email."""
+    with get_db() as conn:
+        owned = conn.execute("SELECT id FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+                             (int(dashboard_id), int(owner_id), account_id)).fetchone()
+        if not owned:
+            return []
+        people = conn.execute(
+            """SELECT 'user' AS subject_type, u.id AS subject_id, u.name AS name, g.name AS group_name
+                 FROM dashboard_share s JOIN portal_user u ON u.id=s.subject_id AND u.account_id=s.account_id
+                 LEFT JOIN user_group g ON g.id=u.group_id
+                WHERE s.dashboard_id=? AND s.account_id=? AND s.subject_type='user'
+                ORDER BY s.created_at, s.id""",
+            (int(dashboard_id), account_id),
+        ).fetchall()
+        groups = conn.execute(
+            """SELECT 'group' AS subject_type, g.id AS subject_id, g.name AS name,
+                      (SELECT COUNT(*) FROM portal_user m WHERE m.group_id=g.id AND m.is_active=1) AS members
+                 FROM dashboard_share s JOIN user_group g ON g.id=s.subject_id AND g.account_id=s.account_id
+                WHERE s.dashboard_id=? AND s.account_id=? AND s.subject_type='group'
+                ORDER BY s.created_at, s.id""",
+            (int(dashboard_id), account_id),
+        ).fetchall()
+    return [dict(r) for r in people] + [dict(r) for r in groups]
 
 
 def mark_dashboard_draft(
@@ -1282,6 +1404,8 @@ def update_dashboard_controls(
         if cur.rowcount == 0:
             return None
         _snapshot_locked(conn, dashboard_id, user_id, account_id, change_summary)
+        if visibility is not None:
+            _drop_lost_follows(conn, dashboard_id, account_id)
     return get_dashboard(dashboard_id, user_id, account_id)
 
 
@@ -1314,14 +1438,15 @@ def rollback_dashboard(
         # A version saved on the old, taller rows comes back on today's: its rows and heights twice as many.
         stretch = GRID_SCALE // max(1, int(meta.get("grid_scale") or 1))
         conn.execute(
+            # Tiles and layout come back; who may open it never does (its sharing stays as it is now).
             """UPDATE dashboard_artifact
-                  SET name=?, description=?, status='draft', visibility=?,
+                  SET name=?, description=?, status='draft',
                       refresh_schedule=?, filters_json=?, tabs_json=?,
                       version=version+1, updated_at=datetime('now')
                 WHERE id=? AND user_id=? AND account_id=?""",
             (
                 _clean_name(meta.get("name")), str(meta.get("description") or "")[:500],
-                str(meta.get("visibility") or "personal"), str(meta.get("refresh_schedule") or "manual"),
+                str(meta.get("refresh_schedule") or "manual"),
                 str(meta.get("filters_json") or "[]"), str(meta.get("tabs_json") or '["Overview"]'),
                 int(dashboard_id), int(user_id), account_id,
             ),

@@ -1479,6 +1479,7 @@ def _run_migrations() -> None:
         _ensure_join_types_are_sql(conn)
         _ensure_core2_tables(conn)
         _ensure_llm_usage_tables(conn)
+        _ensure_dashboard_share_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1732,6 +1733,26 @@ def _ensure_join_types_are_sql(conn: sqlite3.Connection) -> None:
     """
     conn.execute(
         "UPDATE entity_relationships SET join_type='LEFT' WHERE UPPER(join_type)='OUTER'"
+    )
+
+
+def _ensure_dashboard_share_table(conn: sqlite3.Connection) -> None:
+    """Who a dashboard is shared with besides the whole workspace: a person, or a group (its members as they
+    are when the dashboard is opened). store/dashboard_store.py reads it in every access check."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_share (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            dashboard_id INTEGER NOT NULL REFERENCES dashboard_artifact(id) ON DELETE CASCADE,
+            account_id   TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            subject_type TEXT    NOT NULL CHECK(subject_type IN ('user','group')),
+            subject_id   INTEGER NOT NULL,
+            created_by   INTEGER,
+            created_at   TEXT    DEFAULT (datetime('now')),
+            UNIQUE(dashboard_id, subject_type, subject_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dashboard_share_subject ON dashboard_share(account_id, subject_type, subject_id);
+        """
     )
 
 

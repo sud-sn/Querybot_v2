@@ -483,7 +483,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.history": {"en": "Revision history · {count}", "fr": "Historique des révisions · {count}"},
     "ui.dash.restore": {"en": "Restore", "fr": "Restaurer"},
     "ui.dash.current": {"en": "Current", "fr": "Version actuelle"},
-    "ui.dash.published_team": {"en": "Published team dashboard", "fr": "Tableau de bord d'équipe publié"},
+    "ui.dash.published_team": {"en": "Shared dashboard", "fr": "Tableau de bord partagé"},
     "ui.dash.published_team_body": {
         "en": "You can view and filter this dashboard. Only its owner can edit "
               "or restore it.",
@@ -505,6 +505,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.library_title": {"en": "Your dashboards", "fr": "Vos tableaux de bord"},
     "ui.dash.library_count": {"en": "{count} saved", "fr": "{count} enregistrés"},
     "ui.dash.shared_with_team": {"en": "Shared with team", "fr": "Partagé avec l'équipe"},
+    "ui.dash.shared_with_workspace": {"en": "Shared with the workspace", "fr": "Partagé avec l'espace de travail"},
+    "ui.dash.shared_with_people.one": {"en": "Shared with {count} person", "fr": "Partagé avec {count} personne"},
+    "ui.dash.shared_with_people.other": {"en": "Shared with {count} people", "fr": "Partagé avec {count} personnes"},
+    "ui.dash.only_you": {"en": "Only you", "fr": "Vous seul"},
+    "ui.dash.shared_by": {"en": "Shared by {owner}", "fr": "Partagé par {owner}"},
     "ui.dash.welcome": {"en": "Welcome to QueryBot, {name}", "fr": "Bienvenue sur QueryBot, {name}"},
     "ui.dash.welcome_body": {
         "en": "Your account is ready. Add governed results to named dashboards "

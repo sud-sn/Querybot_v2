@@ -109,7 +109,7 @@ def _language_context(lang=None) -> dict:
 
 
 def _render(charts=None, *, can_edit=True, dashboards=True, lang=None,
-            artifact=None, library=None) -> str:
+            artifact=None, library=None, audience=0) -> str:
     from jinja2 import ChainableUndefined
 
     import portal.routes as pr
@@ -136,7 +136,7 @@ def _render(charts=None, *, can_edit=True, dashboards=True, lang=None,
             dashboards=library if library is not None else (
                 [dict(artifact, chart_count=2)] if (artifact and dashboards) else []),
             dashboard_filters=[], dashboard_sources=[], dashboard_tabs=["Overview"],
-            dashboard_versions=[], dashboard_subscription=None,
+            dashboard_versions=[], dashboard_subscription=None, dashboard_audience=audience,
             selected_tab="Overview", welcome=False,
             allowed_tables=["DW.SALES"], group_tables=[], monthly_count=3,
             query_status={"blocked": False, "limit_label": "500", "limit_pct": 1,
@@ -598,45 +598,43 @@ class TestThePageLeadsWithTheDashboard:
         assert "Query limit" in markup
 
 
-class TestTheUnpublishedTeamDashboardIsVisible:
-    """Adding a chart, DRAGGING a tile, changing a palette or renaming a card
-    all mark a team dashboard draft, and get_dashboard_for_view gates on
-    `visibility='team' AND status='published'` -- so one drag made it vanish
-    from every teammate's portal. The page said nothing, and publishing was a
-    chat command only."""
+class TestASharedDashboardIsAlwaysLive:
+    """Adding a chart, dragging a tile or renaming a card used to mark a team dashboard draft, and teammates
+    could not see a draft: one drag made it vanish from every teammate's portal until it was published again.
+    A shared dashboard is now always live -- everyone it is shared with sees its current version -- so there
+    is nothing to publish and no draft to warn about. The header says who sees it instead."""
 
-    def _render_status(self, status, visibility, can_edit=True, lang=None):
+    def _render_status(self, status, visibility, can_edit=True, lang=None, audience=0):
         return _render(
-            [_chart(chart_json='{"type":"bar"}')], lang=lang, library=[],
+            [_chart(chart_json='{"type":"bar"}')], lang=lang, library=[], audience=audience,
             artifact={"id": 5, "name": "Ops", "status": status,
                       "visibility": visibility, "version": 3,
-                      "can_edit": 1 if can_edit else 0,
+                      "can_edit": 1 if can_edit else 0, "owner_name": "Ada",
                       "refresh_schedule": "daily", "thread_id": "t"},
         )
 
-    def test_a_draft_team_dashboard_says_teammates_cannot_see_it(self):
+    def test_a_draft_shared_with_the_workspace_asks_for_no_publishing(self):
         markup = self._render_status("draft", "team")
-        assert "teammates cannot see this dashboard" in markup.lower()
-        assert 'action="/portal/dashboard/5/publish"' in markup
-
-    def test_a_published_team_dashboard_says_nothing(self):
-        markup = self._render_status("published", "team")
         assert "teammates cannot see" not in _visible(markup).lower()
-        assert "/publish" not in _visible(markup)
+        assert "/publish" not in _visible(markup) and 'action="/portal/dashboard/5/publish"' not in markup
+        assert "dash-status" not in markup              # no draft or published pill: it is simply live
+        assert "Shared with the workspace" in _visible(markup)
 
-    def test_a_personal_draft_says_nothing(self):
-        """A personal dashboard has no audience to lose."""
-        markup = self._render_status("draft", "personal")
-        assert "teammates cannot see" not in _visible(markup).lower()
+    def test_the_owner_reads_how_many_people_see_it(self):
+        assert "Shared with 3 people" in _visible(self._render_status("draft", "personal", audience=3))
+        assert "Shared with 1 person" in _visible(self._render_status("draft", "personal", audience=1))
+        assert "Only you" in _visible(self._render_status("draft", "personal"))
 
-    def test_a_viewer_who_cannot_edit_is_not_asked_to_publish(self):
+    def test_a_viewer_reads_who_shared_it_and_is_not_asked_to_publish(self):
         markup = self._render_status("draft", "team", can_edit=False)
+        assert "Shared by Ada" in _visible(markup)
         assert "/publish" not in _visible(markup)
 
-    def test_the_status_is_a_pill_not_a_run_on_sentence(self):
-        markup = self._render_status("draft", "team")
-        assert 'class="dash-status is-draft"' in markup
-        assert 'class="dash-status is-published"' in self._render_status("published", "team")
+    def test_who_sees_it_is_said_in_french(self):
+        markup = _visible(self._render_status("draft", "personal", lang="fr", audience=2))
+        assert "Partagé avec 2 personnes" in markup
+        viewer = _visible(self._render_status("draft", "team", can_edit=False, lang="fr"))
+        assert "Partagé par Ada" in viewer
 
 
 class TestThePublishEndpoint:
@@ -757,9 +755,9 @@ class TestServerEnumsAreTranslatedNotCapitalised:
 
     def test_status_and_visibility(self):
         markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
-        assert "Publié" in markup
-        assert "Partagé avec l&#39;équipe" in markup or "Partagé avec l'équipe" in markup   # who sees it, in words
-        assert ">Published<" not in markup and "Shared with team" not in markup
+        # Who sees it, in words (a shared dashboard is always live: no draft or published status to show).
+        assert "Partagé avec l&#39;espace de travail" in markup or "Partagé avec l'espace de travail" in markup
+        assert ">Published<" not in markup and "Shared with" not in markup
 
     def test_the_refresh_schedule_agrees_in_gender(self):
         """French adjectives agree with the noun. "Actualisation quotidienne",
