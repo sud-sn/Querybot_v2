@@ -578,3 +578,16 @@ body:not(:has(.portal-app-shell)) .main {
 @media (pointer: coarse) {
   .portal-nav a, .portal-new-thread, .portal-brand, .portal-sidebar-notifications { min-height: 44px; }
 }
+
+/* Numbers and charts arriving: a KPI rises in, its trend line draws from the left, a dashboard's tiles come in
+   one after another. Never for a reader whose system asks for less motion, or who chose none (Settings). */
+@keyframes qb-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes qb-reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="off"]) .kpi-tile,
+  html:not([data-motion="off"]) .dash-kpi { animation: qb-rise .45s cubic-bezier(.2, .7, .2, 1) both; }
+  html:not([data-motion="off"]) .kpi-spark,
+  html:not([data-motion="off"]) .dash-kpi-spark { animation: qb-reveal .9s ease-out .15s both; }
+  html:not([data-motion="off"]) .grid-stack-item > .grid-stack-item-content {
+    animation: qb-rise .45s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--tile, 0) * 45ms); }
+}

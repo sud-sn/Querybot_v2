@@ -1414,6 +1414,9 @@ def _run_migrations() -> None:
         # session cookie carries the version it was issued under, so each of
         # those ends every session the user had. Declared HERE ONLY, as above.
         ("portal_user", "session_version", "INTEGER NOT NULL DEFAULT 1"),
+        # How this reader's charts are drawn (store.user_store.CHART_PREFS): a JSON object of chosen values,
+        # '' for the defaults. Declared HERE ONLY, as above.
+        ("portal_user", "chart_prefs", "TEXT NOT NULL DEFAULT ''"),
         # Egress posture: cloud | private | airgapped. See
         # core/compliance/egress.py. Empty rather than 'cloud' as the column
         # default, so "never chosen" stays distinguishable from "chose cloud"

@@ -163,7 +163,7 @@
   {% set grid_y = chart.grid_y if chart.grid_y is defined and chart.grid_y is not none else (loop.index0 // 2) * 5 %}
   {% set grid_w = chart.grid_w if chart.grid_w is defined and chart.grid_w is not none else 6 %}
   {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else 5 %}
-  <div class="chart-card grid-stack-item" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
+  <div class="chart-card grid-stack-item" style="--tile:{{ loop.index0 }}" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
     <div class="chart-card-content grid-stack-item-content">
     <div class="chart-card-header">
       <div style="flex:1;min-width:0">

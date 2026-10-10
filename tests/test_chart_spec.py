@@ -940,6 +940,19 @@ class ChartPaletteValidationTests(unittest.TestCase):
                         f"{name}/{mode} worst adjacent CVD ΔE {worst_cvd:.1f} below the {self.CVD_FLOOR} floor",
                     )
 
+    def test_the_palettes_a_reader_may_choose_tell_six_series_apart_in_every_pair(self):
+        # Ocean and Vivid are offered on the reader's Settings page and drawn for up to six lines or stacked
+        # parts at once, each named by a legend: two of them alike anywhere in the six is two series read as
+        # one. The old ocean set held two blues 5.3 apart; neighbours-only checks passed it.
+        palettes = self._extract_palettes(self.PALETTES.read_text(encoding="utf-8"))
+        for name in ("ocean", "candy"):
+            six = palettes[name]["light"][:6]
+            pairs = [(a, b) for i, a in enumerate(six) for b in six[i + 1:]]
+            with self.subTest(palette=name):
+                self.assertGreaterEqual(min(self._delta_e(a, b) for a, b in pairs), self.NORMAL_FLOOR)
+                self.assertGreaterEqual(min(self._delta_e(a, b, kind) for a, b in pairs
+                                            for kind in ("protan", "deutan")), self.CVD_FLOOR)
+
     def test_sunset_and_forest_stay_within_their_documented_ceiling(self):
         # Both are inherently narrow-hue (warm-only / green-only) themes
         # that cannot clear the 15.0 normal-vision floor for all 8 adjacent

@@ -37,12 +37,19 @@
 // view / direct labels as the required relief, risky past that.
 window.QB_PALETTES = {
   default: ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],
-  ocean: ['#14B8A6','#1D4ED8','#0EA5E9','#2347B8','#0D9488','#2563EB','#38BDF8','#0369A1'],
+  // Offered to readers on their Settings page (store.user_store.CHART_PREFS), so a chart of up to six series
+  // -- six lines, six stacked parts -- must be told apart in EVERY pair, not only neighbours: re-picked
+  // (October 2026) to pass the validator with --pairs all on the first six (normal vision >= 15.9, colour-
+  // blind 7.5 in the floor band, which the legend, the table and direct labels relieve) and adjacent on all
+  // eight. The old ocean set held two blues 5.3 apart: the same colour to anyone.
+  ocean: ['#1d4ed8','#059669','#0ea5e9','#f59e0b','#8b5cf6','#ec4899','#0891b2','#dc2626'],
   // Best-achievable, not fully passing -- see comment above.
   sunset: ['#F97316','#9A3412','#F59E0B','#DC2626','#EC4899','#C2410C','#A21CAF','#E11D48'],
   // Best-achievable, not fully passing -- see comment above.
   forest: ['#10B981','#00704E','#22C55E','#4D7C0F','#059669','#84CC16','#166534','#2FBF8E'],
-  candy: ['#EC4899','#CA8A04','#8B5CF6','#14B8A6','#6366F1','#F97316','#0891B2','#DC2626'],
+  // Shown as "Vivid". Re-picked as ocean was: every pair of the first six >= 17.2 normal, >= 8.6 colour-blind
+  // (the old set held indigo and violet 6.3 apart).
+  candy: ['#7c3aed','#dc2626','#ca8a04','#0ea5e9','#10b981','#15803d','#db2777','#2563eb'],
   // Reclassified as a one-hue ORDINAL ramp, not an 8-slot categorical set --
   // true grayscale has ~0 OKLCH chroma, which fails the categorical chroma
   // floor by design (a hue-based check can't apply to a hue-less palette).

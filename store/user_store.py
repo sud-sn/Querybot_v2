@@ -458,6 +458,36 @@ def set_user_language(user_id: int, lang: str) -> str:
     return stored
 
 
+# How a reader's charts are drawn, chosen on their Settings page; the first of each is the default. A palette is
+# offered only once it passes the colour-vision checks (static/js/chart-palettes.js says which do).
+CHART_PREFS: dict[str, tuple[str, ...]] = {
+    "palette": ("default", "ocean", "candy"),
+    "line": ("straight", "smooth"),
+    "values": ("show", "hide"),
+    "motion": ("on", "off"),
+}
+
+
+def chart_prefs(user: Optional[dict]) -> dict[str, str]:
+    """The reader's chart choices, each one of CHART_PREFS's values (its default when unset or unknown)."""
+    try:
+        stored = json.loads(str((user or {}).get("chart_prefs") or "") or "{}")
+    except ValueError:
+        stored = {}
+    stored = stored if isinstance(stored, dict) else {}
+    return {key: str(stored.get(key)) if str(stored.get(key)) in allowed else allowed[0]
+            for key, allowed in CHART_PREFS.items()}
+
+
+def set_chart_prefs(user_id: int, chosen: dict) -> dict[str, str]:
+    """Keep the reader's chart choices (anything not one of CHART_PREFS's values is its default) and return them."""
+    kept = chart_prefs({"chart_prefs": json.dumps({k: str(v) for k, v in (chosen or {}).items()})})
+    with get_db() as conn:
+        conn.execute("UPDATE portal_user SET chart_prefs=? WHERE id=?", (json.dumps(kept), int(user_id)))
+        conn.commit()
+    return kept
+
+
 def touch_user_activity(user_id: int, *, gap_minutes: int = 30) -> bool:
     """
     Update last_active_at for the portal user and return whether this message

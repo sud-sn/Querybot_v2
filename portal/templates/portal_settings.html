@@ -1,0 +1,140 @@
+{% extends "portal_base.html" %}
+{% from "icons.html" import ic %}
+{% block title %}{{ t('ui.shell.settings') }} — {{ t('ui.title.suffix') }}{% endblock %}
+{% block head %}
+<script src="{{ asset('vendor/echarts.min.js') }}"></script>
+<script src="{{ asset('js/chart-palettes.js') }}"></script>
+<script src="{{ asset('js/qb-charts.js') }}"></script>
+{% endblock %}
+{% block content %}
+<div class="settings-page">
+  <div class="page-header">
+    <h1>{{ t('ui.shell.settings') }}</h1>
+    <p>{{ t('ui.settings.lead') }}</p>
+  </div>
+  {% if saved %}<div class="alert alert-success" role="status">{{ t('ui.settings.saved') }}</div>{% endif %}
+
+  <form method="post" action="/portal/settings" class="card settings-card" id="chartSettings">
+    <div class="card-body">
+      <h2 class="settings-title">{{ t('ui.settings.charts') }}</h2>
+      <p class="settings-note">{{ t('ui.settings.charts_note') }}</p>
+
+      <fieldset class="settings-group">
+        <legend>{{ t('ui.settings.palette') }}</legend>
+        <div class="settings-palettes">
+          {% for name in choices.palette %}
+          <label class="settings-palette">
+            <input type="radio" name="palette" value="{{ name }}" {% if prefs.palette == name %}checked{% endif %}>
+            <span class="settings-swatches" data-palette="{{ name }}" aria-hidden="true"></span>
+            <span>{{ t('ui.settings.palette.' ~ name) }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>{{ t('ui.settings.line') }}</legend>
+        {% for name in choices.line %}
+        <label class="settings-choice"><input type="radio" name="line" value="{{ name }}" {% if prefs.line == name %}checked{% endif %}> {{ t('ui.settings.line.' ~ name) }}</label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>{{ t('ui.settings.values') }}</legend>
+        {% for name in choices['values'] %}
+        <label class="settings-choice"><input type="radio" name="values" value="{{ name }}" {% if prefs['values'] == name %}checked{% endif %}> {{ t('ui.settings.values.' ~ name) }}</label>
+        {% endfor %}
+      </fieldset>
+
+      <fieldset class="settings-group">
+        <legend>{{ t('ui.settings.motion') }}</legend>
+        {% for name in choices.motion %}
+        <label class="settings-choice"><input type="radio" name="motion" value="{{ name }}" {% if prefs.motion == name %}checked{% endif %}> {{ t('ui.settings.motion.' ~ name) }}</label>
+        {% endfor %}
+      </fieldset>
+
+      <div class="settings-preview-label">{{ t('ui.settings.preview') }}</div>
+      <div class="settings-previews">
+        <div class="settings-preview" id="chartPreview" role="img" aria-label="{{ t('ui.settings.preview') }}"></div>
+        <div class="settings-preview" id="chartPreviewParts" role="img" aria-label="{{ t('ui.settings.preview') }}"></div>
+      </div>
+
+      <div class="settings-actions">
+        <button type="submit" class="btn btn-primary">{{ t('ui.settings.save') }}</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="card settings-card">
+    <div class="card-body settings-row">
+      <div>
+        <h2 class="settings-title">{{ t('ui.auth.change_password_title') }}</h2>
+        <p class="settings-note">{{ t('ui.settings.password_note') }}</p>
+      </div>
+      <a class="btn btn-secondary" href="/portal/change-password">{{ t('ui.auth.change_password_title') }}</a>
+    </div>
+  </div>
+</div>
+
+<style>
+.settings-page { max-width: 720px; margin: 2rem auto; padding: 0 16px; }
+.settings-card { margin-bottom: 1rem; }
+.settings-card .card-body { padding: 1.5rem; }
+.settings-title { font-size: var(--font-md); font-weight: var(--weight-bold); margin: 0 0 .25rem; }
+.settings-note { color: var(--text-muted); font-size: var(--font-sm); margin: 0 0 1rem; }
+.settings-group { border: 0; padding: 0; margin: 0 0 1.1rem; }
+.settings-group legend { font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text); margin-bottom: .4rem; }
+.settings-choice { display: inline-flex; align-items: center; gap: .4rem; margin-right: 1.25rem; font-size: var(--font-sm); cursor: pointer; }
+.settings-palettes { display: flex; flex-wrap: wrap; gap: .6rem; }
+.settings-palette { display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem; border: 1px solid var(--line);
+  border-radius: var(--radius-lg); cursor: pointer; font-size: var(--font-sm); }
+.settings-palette:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.settings-swatches { display: inline-flex; gap: 2px; }
+.settings-swatches i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.settings-preview-label { font-size: var(--font-sm); font-weight: var(--weight-semibold); margin: .5rem 0 .4rem; }
+.settings-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
+.settings-preview { height: 220px; border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); background: var(--surface); }
+.settings-actions { margin-top: 1rem; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+</style>
+
+<script>
+// The swatches and the preview are drawn from the same palettes and renderer the charts use, so what is chosen
+// here is what the chat and the dashboards draw. Invented numbers.
+(function () {
+  const form = document.getElementById('chartSettings');
+  document.querySelectorAll('.settings-swatches').forEach(node => {
+    const colors = (window.QB_PALETTES || {})[node.dataset.palette] || [];
+    node.innerHTML = colors.slice(0, 5).map(c => `<i style="background:${c}"></i>`).join('');
+  });
+  const months = ['2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01'];
+  const sales = [42, 47, 44, 53, 58, 55];
+  const line = {
+    chart_type: 'line', x_key: 'period', y_keys: ['sales'], x_style: 'month_year_long',
+    rows: months.map((m, i) => ({period: m, sales: sales[i] * 1000})),
+    column_roles: {period: {role: 'temporal', label: 'Month'}, sales: {role: 'measure', label: 'Sales', format: 'currency'}},
+    column_formats: {sales: 'currency'}, chart_spec: {x: {column: 'period', role: 'temporal'}},
+  };
+  const parts = ['North', 'South', 'East', 'West', 'Central'];
+  const stores = {'Store A': [14, 9, 7, 5, 3], 'Store B': [11, 10, 6, 4, 4], 'Store C': [8, 7, 9, 3, 2]};
+  const stacked = {
+    chart_type: 'stacked', x_key: 'store', y_keys: parts,
+    rows: Object.entries(stores).map(([s, v]) => Object.assign({store: s}, ...parts.map((p, i) => ({[p]: v[i] * 1000})))),
+    column_roles: Object.assign({store: {role: 'dimension', label: 'Store'}},
+                                ...parts.map(p => ({[p]: {role: 'measure', label: p, format: 'currency'}}))),
+    column_formats: Object.fromEntries(parts.map(p => [p, 'currency'])), chart_spec: {x: {column: 'store', role: 'dimension'}},
+  };
+  function draw() {
+    if (!window.QBCharts || !window.echarts) return;
+    const chosen = Object.fromEntries(new FormData(form));
+    window.QB_CHART_PREFS = Object.assign({}, window.QB_CHART_PREFS || {}, chosen);
+    document.documentElement.dataset.motion = chosen.motion || 'on';
+    const a = document.getElementById('chartPreview'), b = document.getElementById('chartPreviewParts');
+    if (a) window.QBCharts.render(a, line, {grow: false});
+    if (b) window.QBCharts.render(b, stacked, {grow: false});
+  }
+  form.addEventListener('change', draw);
+  draw();
+})();
+</script>
+{% endblock %}

@@ -243,7 +243,14 @@
   // A reader who asked the system for less motion gets charts that simply
   // appear. The product's own CSS already honours the setting; ECharts does
   // not look at it.
+  // The reader's own choices (their Settings page): palette, line shape, values on lines, motion.
+  function prefs() {
+    const p = global.QB_CHART_PREFS;
+    return p && typeof p === 'object' ? p : {};
+  }
+  // Still when the system asks for less motion, or the reader chose no motion.
   function prefersReducedMotion() {
+    if (prefs().motion === 'off') return true;
     try {
       return Boolean(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
     } catch (e) {
@@ -368,7 +375,9 @@
     let yKeys = Array.isArray(payload && payload.y_keys) ? payload.y_keys.slice() : [];
 
     const palettes = global.QB_PALETTES || {};
-    const colors = palettes[(payload && payload.color_palette) || 'default'] || palettes.default
+    // A palette saved with a chart wins; otherwise the reader's own (their Settings page), else the default.
+    const saved = payload && payload.color_palette && payload.color_palette !== 'default' ? payload.color_palette : '';
+    const colors = palettes[saved || prefs().palette || 'default'] || palettes.default
       || ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
     const c = chrome();
 
@@ -1214,14 +1223,28 @@
         axisPointer: {type: 'line', lineStyle: {color: c.axis, width: 1}},
         formatter: multiTip,
       });
+      // Straight segments by default: a curve can bulge past the data. A reader who chose smooth lines gets a
+      // monotone curve, which never overshoots a point it passes through.
+      const smooth = prefs().line === 'smooth';
+      // A single line of a dozen points or fewer says each value above its point (unless the reader chose not
+      // to); a longer one, or several, says only where each ends.
+      const pointLabels = single && rows.length <= 12 && prefs().values !== 'hide';
+      // Room above the highest point for its value, and the first and last points set in from the edges, so
+      // their values clear the axis's own labels.
+      if (pointLabels) {
+        if (option.grid && !Array.isArray(option.grid)) option.grid.top = (Number(option.grid.top) || 0) + 18;
+        if (option.xAxis && !Array.isArray(option.xAxis)) option.xAxis.boundaryGap = true;
+      }
       option.series = yKeys.map((k, i) => {
         const values = rows.map(r => num(r && r[k]));
         const color = otherName && k === otherName ? c.muted : colors[i % colors.length];
         return {
           name: k, type: 'line', data: values,
-          // Straight segments: a smoothed curve bulges past the data and draws
-          // values that were never measured.
-          smooth: false,
+          smooth: smooth ? 0.35 : false,
+          smoothMonotone: smooth ? 'x' : undefined,
+          label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
+                                fontFamily: c.font, formatter: p => valueFmt(p.value, k, true)} : undefined,
+          labelLayout: pointLabels ? {hideOverlap: true} : undefined,
           showSymbol: rows.length <= MARKER_MAX_POINTS,
           symbol: 'circle', symbolSize: 8,
           lineStyle: {width: 2, color, cap: 'round', join: 'round'},
@@ -1231,8 +1254,8 @@
           // lines it is fainter still, or the washes tint each other into mud.
           areaStyle: type === 'area' ? {color, opacity: single ? 0.10 : 0.06} : undefined,
           // A single line says its latest value at its end.
-          endLabel: single ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 6,
-                              formatter: p => valueFmt(p.value, k, true)} : undefined,
+          endLabel: single && !pointLabels ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 6,
+                                              formatter: p => valueFmt(p.value, k, true)} : undefined,
           markPoint: i === 0 ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
         };
       });
@@ -1471,7 +1494,58 @@
     return chart;
   }
 
+  // ── A number counting up ─────────────────────────────────────────────────
+  // A KPI's number counts up to itself as it appears, in the format it is written in ("$185,933.03",
+  // "185 933,03 $", "38.0%"), ending on exactly that text. A number written any other way is left as it is.
+  const COUNTING = [
+    {re: /\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?/, group: ',', point: '.'},
+    {re: /\d{1,3}(?:[ \u00a0\u202f]\d{3})*(?:,\d+)?/, group: null, point: ','},
+  ];
+  function countUp(el, ms) {
+    if (!el || el.dataset.counted || prefersReducedMotion() || !global.requestAnimationFrame) return;
+    el.dataset.counted = '1';
+    const text = el.textContent;
+    const lang = String(global.QB_LANG || 'en');
+    const way = lang === 'fr' && /\d[ \u00a0\u202f]\d{3}|\d,\d/.test(text) ? COUNTING[1] : COUNTING[0];
+    const m = text.match(way.re);
+    if (!m || m[0].length < 2) return;
+    const raw = m[0];
+    const sep = way.group || (raw.match(/[ \u00a0\u202f]/) || [''])[0];
+    const decimals = raw.includes(way.point) ? raw.split(way.point)[1].length : 0;
+    const target = Number(raw.split(sep || '\u0000').join('').replace(way.point, '.'));
+    if (!isFinite(target) || target === 0) return;
+    const write = v => {
+      const [whole, frac] = v.toFixed(decimals).split('.');
+      const grouped = sep ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, sep) : whole;
+      return text.slice(0, m.index) + grouped + (decimals ? way.point + frac : '') + text.slice(m.index + raw.length);
+    };
+    const start = global.performance ? global.performance.now() : Date.now();
+    const step = now => {
+      const k = Math.min(1, (now - start) / (ms || 700));
+      el.textContent = k >= 1 ? text : write(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) global.requestAnimationFrame(step);
+    };
+    global.requestAnimationFrame(step);
+  }
+  // Every KPI number on the page, now and as answers arrive.
+  function countUpAll(root) {
+    (root || global.document).querySelectorAll('.kpi-value, .dash-kpi-value').forEach(el => countUp(el));
+  }
+  if (global.document && global.MutationObserver) {
+    const watch = () => {
+      countUpAll();
+      new global.MutationObserver(records => records.forEach(r => r.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        if (n.matches && n.matches('.kpi-value, .dash-kpi-value')) countUp(n);
+        else if (n.querySelectorAll) countUpAll(n);
+      }))).observe(global.document.body, {childList: true, subtree: true});
+    };
+    if (global.document.readyState === 'loading') global.document.addEventListener('DOMContentLoaded', watch);
+    else if (global.document.body) watch();
+  }
+
   global.QBCharts = {
+    countUp,
     buildOption,
     render,
     update,

@@ -63,6 +63,8 @@ templates = Jinja2Templates(
 )
 # Every /static/ link carries a hash of the file it names (core/static_assets.py).
 templates.env.globals["asset"] = asset_url
+# The reader's chart choices (palette, line shape, values on lines, motion), for every page that draws charts.
+templates.env.globals["chart_prefs"] = lambda user: store.chart_prefs(user if isinstance(user, dict) else None)
 
 _COOKIE = "qb_portal_session"  # different from admin cookie
 
@@ -1672,6 +1674,28 @@ async def portal_dashboard_unsubscribe(request: Request, dashboard_id: int):
 # ══════════════════════════════════════════════════════════════════════════════
 # Change password
 # ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    """The reader's own settings: how their charts are drawn, and a way to change their password."""
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    return _resp(request, "portal_settings.html", {
+        "user": user, "prefs": store.chart_prefs(user), "choices": store.CHART_PREFS,
+        "saved": request.query_params.get("saved") == "1",
+    })
+
+
+@router.post("/settings")
+async def settings_submit(request: Request):
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    form = await request.form()
+    store.set_chart_prefs(user["id"], {key: str(form.get(key) or "") for key in store.CHART_PREFS})
+    return RedirectResponse("/portal/settings?saved=1", status_code=303)
+
 
 @router.get("/change-password", response_class=HTMLResponse)
 async def change_pw_page(request: Request):

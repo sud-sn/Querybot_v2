@@ -685,6 +685,13 @@ words:
 * two measures over more than 12 members, or 8 or more in two different
   units, are a dot per member, the three furthest out named; bars stay on
   offer. The reader may ask for "stacked", "as a heatmap", "as a scatter";
+* each reader chooses, on their Settings page, how their charts are drawn
+  (portal_user.chart_prefs, only offered values kept): one of three
+  palettes that tell six series apart in every pair (Standard, Ocean,
+  Vivid; a palette saved with a chart still wins), straight or smooth
+  (monotone, never past a point) lines, each value on a single line of a
+  dozen points or only the last, and motion on or off (off stills charts,
+  KPI count-ups and tile entrances, as the system's reduce-motion does);
 * a number tile for a bounded window carries its change against the period
   before (▲/▼ and a sign, never a colour: up is good for sales, bad for
   costs; a percentage moves by points) and a trend line of the periods up to

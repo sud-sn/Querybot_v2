@@ -44,6 +44,10 @@ window.QB_NUM = {{ number_format|tojson }};
 // administrator made, and flipping it by language would silently change which
 // number is the day.
 window.QB_DATE = {{ date_format|tojson }};
+// How this reader's charts are drawn, as they chose on their Settings page (static/js/qb-charts.js reads it).
+window.QB_CHART_PREFS = {{ chart_prefs(user if user is defined else none)|tojson }};
+// "No animation" stills the page's own motion too (portal.css), not only its charts.
+document.documentElement.dataset.motion = window.QB_CHART_PREFS.motion || 'on';
 window.qbT = function (id, vars) {
   var out = Object.prototype.hasOwnProperty.call(window.QB_I18N, id) ? window.QB_I18N[id] : id;
   if (vars) for (var k in vars) out = out.split('{' + k + '}').join(String(vars[k]));
@@ -291,7 +295,7 @@ window.qbEnumLabel = function (group, value) {
           </button>
           {% endfor %}
         </form>
-        <a href="/portal/change-password" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }} <span>{{ t('ui.shell.settings') }}</span></a>
+        <a href="/portal/settings" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }} <span>{{ t('ui.shell.settings') }}</span></a>
         <a href="/portal/logout" title="{{ t('ui.shell.logout') }}">{{ ic("log-out", 16) }}<span>{{ t('ui.shell.logout') }}</span></a>
       </div>
     </footer>
@@ -308,7 +312,7 @@ window.qbEnumLabel = function (group, value) {
         <span class="portal-brand-word">Query<span>Bot</span></span>
       </a>
       <div class="portal-mobile-actions">
-        <a href="/portal/change-password" class="icon-btn" aria-label="{{ t('ui.shell.settings') }}" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }}</a>
+        <a href="/portal/settings" class="icon-btn" aria-label="{{ t('ui.shell.settings') }}" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }}</a>
       </div>
     </header>
 {% endif %}

@@ -46,6 +46,10 @@ PAGES = {
     "portal_notifications.html": dict(
         user=USER, saved=False, error="", alerts=[], my_reports=[], reports=[],
         subscriptions={}),
+    "portal_settings.html": dict(
+        user=USER, saved=True, prefs={"palette": "ocean", "line": "smooth", "values": "show", "motion": "on"},
+        choices={"palette": ("default", "ocean", "candy"), "line": ("straight", "smooth"),
+                 "values": ("show", "hide"), "motion": ("on", "off")}),
     "portal_kb.html": dict(
         user=USER, pending_count=3, saved=False, semantic_tables=[KB_TABLE],
         schemas=["DW"], selected_schema="DW", visible_tables=[KB_TABLE]),

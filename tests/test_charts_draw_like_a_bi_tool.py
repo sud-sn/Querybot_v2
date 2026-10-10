@@ -192,8 +192,13 @@ class TestTheMarks:
         assert opt(payload, "opt.series[0].areaStyle.opacity") == pytest.approx(0.10)
 
     def test_a_single_line_says_its_latest_value_at_its_end(self):
-        payload = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")
-        assert opt(payload, "opt.series[0].endLabel.show") is True
+        # A dozen points or fewer say every value (asked for, October 2026; a reader may choose only the last on
+        # their Settings page): the end label is for a longer line.
+        long_ = ranking([f"2020-{1 + n % 12:02d}-{1 + n // 12:02d}" for n in range(40)],
+                        role="temporal", chart_type="line")
+        assert opt(long_, "opt.series[0].endLabel.show") is True
+        short = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")
+        assert opt(short, "opt.series[0].label.show") is True and opt(short, "!!opt.series[0].endLabel") is False
 
     def test_markers_give_way_on_a_long_series(self):
         short = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")

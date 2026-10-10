@@ -177,7 +177,9 @@ def test_theme_stylesheets_are_linked_by_their_content():
 def test_portal_mobile_shell_exposes_its_account_actions():
     template = _read("portal/templates/portal_base.html")
     assert 'class="portal-mobile-actions"' in template
-    assert 'href="/portal/change-password"' in template
+    # Settings, where the password is a link away (tests/test_a_reader_chooses_how_charts_are_drawn.py).
+    assert 'href="/portal/settings"' in template
+    assert 'href="/portal/change-password"' in _read("portal/templates/portal_settings.html")
     assert "ToggleTheme" not in template, "the theme toggle is back"
 
 
