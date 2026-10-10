@@ -142,6 +142,37 @@ class Column(Belief):
     parts: list[str] = Field(default_factory=list)
 
 
+_FLAG_TAIL = (" flag", " indicator", " ind", " yn")
+_FLAG_LEADS = (("is ", "", "Not "), ("was ", "", "Not "), ("are ", "", "Not "), ("has ", "With ", "Without "),
+               ("have ", "With ", "Without "), ("can ", "Can ", "Cannot "))
+
+
+def value_names(column: Column) -> dict[str, str]:
+    """What readers see for a column's stored values: the names an admin gave its codes ("C" -> "Cancelled"), or
+    for a yes/no flag Learn found (1 and 0), words made of its own name: "Is sterile" -> Sterile and Not sterile,
+    "Cancelled flag" -> Cancelled and Not cancelled, "Has sterile cleanroom" -> With and Without sterile cleanroom.
+    Never 0 and 1 in an answer."""
+    if column.value_names or column.role != "flag" or column.data_type not in ("integer", "boolean"):
+        return column.value_names
+    seen = {str(t.value).lower() for t in (column.profile.top if column.profile else []) if t.value is not None}
+    if not seen <= {"0", "1", "true", "false"}:
+        return {}          # a "flag" holding other values: shown as stored, never some of them as no value
+    words = (column.business_name or column.name).strip()
+    for tail in _FLAG_TAIL:
+        if words.lower().endswith(tail) and len(words) > len(tail):
+            words = words[:-len(tail)].strip()
+    yes, no = "", "Not "
+    for lead, with_, without in _FLAG_LEADS:
+        if words.lower().startswith(lead) and len(words) > len(lead):
+            words, yes, no = words[len(lead):].strip(), with_, without
+            break
+    if not words:
+        return {}
+    first = words.split()[0]
+    lower = words if first.isupper() and len(first) > 1 else words[:1].lower() + words[1:]
+    return {"1": f"{yes}{lower}" if yes else words[:1].upper() + words[1:], "0": f"{no}{lower}"}
+
+
 class ColumnFilter(_Data):
     """A row filter on one column of the model (keys, not slugs)."""
 

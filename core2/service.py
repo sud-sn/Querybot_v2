@@ -482,6 +482,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                          'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+    if not plan.include_left_out and _found_nothing(payload):
+        _say_left_out(payload, question, plan, services, ctx)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     if unquoted:
         _say_unquoted(payload, question, unquoted)
@@ -618,6 +620,34 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
 _REFERENCE = re.compile(r"^\s*(?:(?:the\s+)?(?:first|second|third|last|top|bottom|lowest|highest|biggest|smallest|"
                         r"largest|best|worst|previous|same)(?:\s+one)?|(?:that|this|these|those)(?:\s+[\w-]+){1,2}|"
                         r"it|them|one|its|their)\s*$", re.IGNORECASE)
+
+
+def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context) -> None:
+    """Nothing matched, and the tables leave rows out by default: when the rows left out would answer it, say so
+    and offer them ("No rows match" read as if there were none, when every one was a cancelled order)."""
+    from core2.plan.catalog import left_out_words
+
+    model = services.model
+    measures = [found[1] for found in (find_slug(model, slug) for slug in plan.measures)
+                if found is not None and isinstance(found[1], Measure)]
+    tables = [model.tables[m.table] for m in measures if m.table in model.tables]
+    rules = [(t, df) for t in {t.key: t for t in tables}.values() if t.readers_may_include for df in t.default_filters]
+    if not rules:
+        return
+    try:
+        wider = _compute(question, plan.model_copy(update={"include_left_out": True}), services, ctx, question_id="",
+                         started=time.perf_counter())
+    except Exception as exc:  # noqa: BLE001 - only a better sentence is lost; the answer stands as it is
+        log.warning("core2: could not check the rows left out for %r: %s", question, exc)
+        return
+    if _found_nothing(wider):
+        return
+    words = "; ".join(left_out_words(model, df) for _, df in rules)
+    answer = payload.setdefault("answer", {})
+    said = (answer.get("headline") or "No rows match.").rstrip(".")
+    answer["headline"] = f"{said}: every row that matches is left out by default ({words})."
+    chip = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
+    payload["follow_up_suggestions"] = [chip, *(payload.get("follow_up_suggestions") or [])][:4]
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:

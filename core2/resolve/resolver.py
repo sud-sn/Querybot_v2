@@ -31,6 +31,7 @@ from core2.model.schema import (
     RefExpr,
     SemanticModel,
     SqlExpr,
+    value_names,
 )
 from core2.plan.catalog import left_out_note, left_out_words
 from core2.plan.ir import TIME_ATTRIBUTES, Duration, Filter, Plan
@@ -189,7 +190,7 @@ class Condition:
     next questions it offers say which ones narrowed what it counts.
     """
 
-    kind: str                # member | days | total | date | by | activity
+    kind: str                # member | flag | days | total | date | by | activity
     label: str               # what it is on, as a reader reads it: "customer type", "ship date"
     op: str = ""
     values: list = field(default_factory=list)
@@ -655,6 +656,22 @@ class _Days:
 _AGG_WORDS = {"avg": "on average", "min": "the shortest", "max": "the longest", "sum": "added up"}
 
 
+# A field named by a bare word says nothing on its own: "Description" is the diagnosis description.
+_BARE_NAMES = frozenset({"description", "desc", "name", "code", "label", "title", "id", "key", "value", "number"})
+
+
+def _attribute_label(model: SemanticModel, attribute: Attribute) -> str:
+    """An attribute as an answer heads it: its own name, or with its owner's when the name is a bare word."""
+    name = attribute.business_name
+    if name.strip().lower() not in _BARE_NAMES or attribute.column not in model.columns:
+        return name
+    table = model.columns[attribute.column].table
+    entity = next((e for e in model.entities.values() if e.table == table), None)
+    owner = entity.business_name if entity is not None else model.tables[table].business_name if table in \
+        model.tables else ""
+    return f"{owner} {name.strip().lower()}" if owner and owner.lower() not in name.lower() else name
+
+
 def _member_label(model: SemanticModel, kind: str, slug: str, attribute: Attribute) -> str:
     """What a member filter is on, as a reader says it: "customer" for a customer's name, else the attribute."""
     entity = model.entities.get(slug) if kind == "entity" else next(
@@ -887,7 +904,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             name = _output_name(attribute.slug.replace(".", "_"), out_names)
             # A grouping reached through a named link says which: "Customer name (Ship to customer)".
             via_words = _via_words(model, plan, slug)
-            label = f"{attribute.business_name} ({via_words})" if via_words else attribute.business_name
+            named = _attribute_label(model, attribute)
+            label = f"{named} ({via_words})" if via_words else named
             groups.append(Group(name, label, "attribute", attribute=attribute.slug))
             identity = _member_identity(model, attribute)
             if identity is not None:
@@ -1074,7 +1092,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
             via_words = _via_words(model, plan, f.field)
-            conditions.append(Condition("member", _member_label(model, kind, f.field, attribute)
+            flag = model.columns[attribute.column].role == "flag" if attribute.column in model.columns else False
+            conditions.append(Condition("flag" if flag else "member", _member_label(model, kind, f.field, attribute)
                                         + (f" ({via_words.lower()})" if via_words else ""), f.op, list(f.values)))
         if missed:
             limited = ", ".join(o.label for p in took for o in p.measures)
@@ -1121,8 +1140,17 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if alternatives:
                 reached = model.tables[table].business_name
                 how = "each row's own" if len(path.joins) == 1 else f"through {path.describe(model)}"
-                routes = sorted({model.tables[p.joins[0].to_table].business_name.lower() if len(p.joins) > 1 else
-                                 (p.joins[0].role or reached).lower() for p in alternatives[:3]})
+
+                def branch(other: P.Path) -> str:
+                    """Where another route leaves this one: "the pharmacist", not the rx fill both go through."""
+                    for i, step in enumerate(other.joins):
+                        if i >= len(path.joins) or step.key != path.joins[i].key:
+                            if step.to_table == table:
+                                return (step.role or reached).lower()
+                            return model.tables[step.to_table].business_name.lower()
+                    return reached.lower()
+
+                routes = sorted({branch(p) for p in alternatives[:3]})
                 notes.append(f"{reached}: {how} (it could also come through the {' or the '.join(routes)}).")
         for j in model.joins.values():
             if j.from_table == part.table and j.trust == "proposed" and any(
@@ -1355,7 +1383,7 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         alias = builder.reach(col.table, label=attr.business_name)
         name = _output_name(attr.slug.replace(".", "_"), out_names)
         part.groups.append(PartGroup(name, alias, col.key, "attribute"))
-        groups.append(Group(name, attr.business_name, "attribute", attribute=attr.slug))
+        groups.append(Group(name, _attribute_label(model, attr), "attribute", attribute=attr.slug))
     conditions: list[Condition] = []
     for f in plan.filters:
         found = find_slug(model, f.field)
@@ -1392,15 +1420,20 @@ def _named_filter(column: Column, f: Filter) -> tuple[Filter, list]:
     "Cancelled" filters on the code "C" and is told as Cancelled; a code written as stored is told by its
     name too. A value that is neither is kept as written.
     """
-    if not column.value_names or f.op not in ("eq", "in", "ne", "not_in"):
+    names = value_names(column)
+    if not names or f.op not in ("eq", "in", "ne", "not_in"):
         return f, list(f.values)
     from core2.plan.values import normalise
 
-    by_name = {normalise(name): code for code, name in column.value_names.items()}
-    stored = [v if not isinstance(v, str) or v in column.value_names else by_name.get(normalise(v), v)
-              for v in f.values]
-    said = [column.value_names.get(v, v) if isinstance(v, str) else v for v in stored]
-    return f.model_copy(update={"values": said}), stored
+    by_name = {normalise(name): code for code, name in names.items()}
+    stored = [v if not isinstance(v, str) or v in names else by_name.get(normalise(v), v) for v in f.values]
+
+    def told(v: object) -> object:
+        if column.role == "flag" and isinstance(v, (bool, int, float)):
+            return names.get(str(int(v)), v)
+        return names.get(v, v) if isinstance(v, str) else v
+
+    return f.model_copy(update={"values": [told(v) for v in stored]}), stored
 
 
 def _op_words(f: Filter | ColumnFilter) -> str:
@@ -1417,11 +1450,14 @@ def _sort_name(by: str, measures: list[OutMeasure], groups: dict[str, str], mode
     if by == "period":
         return "period"
     plain = " ".join(re.findall(r"[a-z0-9]+", by.casefold()))
+    # A measure by its slug or its exact name first: "Cost %" is the ratio worked out for the question, not the
+    # cost measure that its plain words ("cost") also spell.
     for o in measures:
-        # A measure by its slug; one worked out for the question by the name the plan gave it
-        # ("Discount rate"), however it is written.
-        if o.measure is not None and o.measure.slug == by or o.name == by or \
-                " ".join(re.findall(r"[a-z0-9]+", o.label.casefold())) == plain:
+        if o.measure is not None and o.measure.slug == by or o.name == by or o.label.casefold() == by.casefold():
+            return o.name
+    for o in measures:
+        # One worked out for the question by the name the plan gave it ("Discount rate"), however it is written.
+        if " ".join(re.findall(r"[a-z0-9]+", o.label.casefold())) == plain:
             return o.name
     if by in groups:
         return groups[by]

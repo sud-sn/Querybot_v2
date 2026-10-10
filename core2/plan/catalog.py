@@ -16,7 +16,8 @@ import re
 from sqlglot import exp
 
 from core2.model import formula
-from core2.model.schema import AggExpr, Attribute, Measure, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr
+from core2.model.schema import (AggExpr, Attribute, Measure, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr,
+                                 value_names)
 from core2.plan.ir import TIME_ATTRIBUTES
 from core2.resolve import paths as P
 
@@ -115,7 +116,7 @@ def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, l
             or count > limit:
         return f"{count:,} values" if count else ""
     shown = sorted(str(t.value) for t in p.top if t.value is not None)[:limit]
-    names = column.value_names
+    names = value_names(column)
     return f"{count} values: {', '.join(f'{names[v]} ({v})' if v in names else v for v in shown)}"
 
 

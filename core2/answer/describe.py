@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 from core2.bootstrap import names
-from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel
+from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel, value_names
 from core2.plan.catalog import definition
 from core2.plan.ir import TIME_ATTRIBUTES
 from core2.resolve import paths as P
@@ -297,7 +297,7 @@ def _group(reader: _Reader, thing: Entity | Attribute) -> Described:
         table, word = column.table, thing.business_name.lower()
         count = thing.members or (column.profile.distinct if column.profile else 0)
         p = column.profile
-        shown = sorted(column.value_names.get(str(t.value), str(t.value)) for t in p.top if t.value is not None) if (
+        shown = sorted(value_names(column).get(str(t.value), str(t.value)) for t in p.top if t.value is not None) if (
             reader.values and column.values_allowed and column.sensitivity == "none" and p and p.top
             and 0 < count <= 12) else []
         head = (f"{thing.business_name} has {count:,} values: {_listed(shown)}." if shown

@@ -143,11 +143,26 @@ def _compared(op: str, values: list[str]) -> str:
     return _listed(values, "or") if values else ""
 
 
+def article(words: str) -> str:
+    """ "a" or "an" as the words are said: an order, a unit, an rx fill, an SKU, a one-off."""
+    first = (words.split() or [""])[0]
+    low = first.lower()
+    if not low:
+        return "a"
+    # Letters said one by one ("rx", "SKU", "HR"): by the sound of the first letter's name.
+    if (first.isupper() and len(first) > 1) or (len(low) <= 3 and low.isalpha() and not set(low) & set("aeiouy")) \
+            or (len(low) > 2 and low[1] == "-" and low[0].isalpha()):     # "x-ray", "e-prescription"
+        return "an" if low[0] in "aefhilmnorsx" else "a"
+    if low.startswith(("uni", "use", "usu", "uti", "eu", "one", "once")):
+        return "a"
+    return "an" if low[0] in "aeiou" or low.startswith(("hour", "honest", "honou", "heir")) else "a"
+
+
 def condition_words(c: Condition, *, quoted: bool = False) -> str:
     """A condition as the answer's sentence names it: "for customer type Wholesale". ``quoted``: its members in
     quotes, for a question the reader can send again (a name narrows an answer only when it is quoted)."""
     if c.kind == "activity":
-        return f"with {'an' if c.label[:1] in 'aeiou' else 'a'} {c.label}"
+        return f"with {article(c.label)} {c.label}"
     if c.kind == "by":
         return f"by {c.label}"
     if c.kind == "snapshot":
@@ -161,6 +176,11 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         amounts = [f"${float(v):,.0f}" if c.format == "currency" and _number(v) is not None
                    and float(v).is_integer() else fmt(v, c.format or "number") for v in c.values]
         return f"with {c.label} {_compared(c.op, amounts)}"
+    if c.kind == "flag":
+        # A yes/no flag by its word: "for cancelled", never "for cancelled flag Cancelled" (or 1).
+        words = [f'"{v}"' if quoted else str(v)[:1].lower() + str(v)[1:] if not str(v).split()[0].isupper() else str(v)
+                 for v in c.values if str(v)]
+        return f"{'excluding' if c.op in ('ne', 'not_in') else 'for'} {_listed(words, 'or')}" if words else ""
     values = [f'"{v}"' if quoted and isinstance(v, str) else v for v in c.values]
     if c.op in ("eq", "in"):
         return f"for {c.label} {_listed(values, 'or')}"
@@ -720,38 +740,71 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             count_of = len({str(r[g.name]) for r in shown})
             among = f" of the {count_of:,} {_noun(g.label)} shown" if count_of > 1 and g.role != "time" else ""
             return f"{lead}: {shown[low][g.name]} is lowest{among}, at {value(raw[low], ranked_by)}."
-        best = max(range(len(raw)), key=lambda i: _number(raw[i][m.name]) or float("-inf"))
+        # "Unknown" is rows with no member: never the leader, never counted ("across 7 territories" beside an
+        # insight on the 6 there are), and said apart when it would have led.
+        named = [i for i in range(len(raw)) if shown[i][g.name] not in (None, "", "Unknown")]
+        # Only a member with something to show leads instead: where every member has nothing ("X leads with 0;
+        # 95,895 has no item group"), the rows with none are the answer, as they were.
+        if not named or not any((_number(raw[i][m.name]) or 0) > 0 for i in named):
+            named = list(range(len(raw)))
+        best = max(named, key=lambda i: _number(raw[i][m.name]) or float("-inf"))
         top = raw[best]
         leader = str(shown[best][g.name])
         total = sum(_number(r[m.name]) or 0.0 for r in raw)
-        share = ""
         # The share the query worked out is of everything; the rows shown may be the top 10 of many, and a
         # share of their sum said "11%" beside a share column saying 3%.
         worked_out = next((c for c in cols.of("share") if c.measure == (m.measure or None)), None)
-        if not units.mixed and worked_out is not None and _number(top.get(worked_out.name)) is not None:
-            portion = _number(top[worked_out.name]) or 0.0      # a fraction, as the query returns it
-            share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
-        elif not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
-                                                    and len(raw) > 1 and not logical.limit and _sums(logical, m))):
-            portion = (_number(top[m.name]) or 0.0) / total if total else 0.0
-            share = f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
-        count_of = len({str(r[g.name]) for r in shown})
-        # Days of the week and weekends are always the same few: counting them says nothing ("across 2 is weekends").
-        count = f" across {count_of:,} {_noun(g.label)}" if count_of > 1 and g.role != "time" else ""
+
+        def share_of(row: dict) -> str:
+            if not units.mixed and worked_out is not None and _number(row.get(worked_out.name)) is not None:
+                portion = _number(row[worked_out.name]) or 0.0      # a fraction, as the query returns it
+                return f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
+            if not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
+                                                      and len(raw) > 1 and not logical.limit and _sums(logical, m))):
+                portion = (_number(row[m.name]) or 0.0) / total if total else 0.0
+                return f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
+            return ""
+
+        share = share_of(top)
+        nameless = [i for i in range(len(raw)) if i not in named]
+        no_member = ""
+        if nameless and (_number(raw[nameless[0]][m.name]) or float("-inf")) > (_number(top[m.name]) or float("-inf")):
+            noun = _lower(g.label).split()
+            while len(noun) > 1 and noun[-1] in ("name", "description", "desc", "label", "title", "code"):
+                noun.pop()              # "has no item group", not "has no item group description"
+            no_member = f"; {value(raw[nameless[0]])}{share_of(raw[nameless[0]])} has no {' '.join(noun)}"
+        count_of = len({str(shown[i][g.name]) for i in named})
+        # Days of the week and weekends are always the same few, and a yes/no grouping is a thing and its opposite:
+        # counting them says nothing ("across 2 is weekends", "across 2 is steriles").
+        count = (f" across {count_of:,} {_noun(g.label)}" if count_of > 1 and g.role != "time" and not g.flag
+                 else "")
         # A tie is not a lead: five groups of 12 members each read "<the first group> leads with 12".
-        tied = [i for i in range(len(raw)) if _number(raw[i][m.name]) == _number(top[m.name])]
+        tied = [i for i in named if _number(raw[i][m.name]) == _number(top[m.name])]
         if len(tied) > 1 and not units.mixed:
             if len(tied) == len(raw):
                 return f"{lead}: each of the {len(raw):,} {_noun(g.label)} has {value(top)}."
-            named = [str(shown[i][g.name]) for i in tied]
-            leaders = (", ".join(named[:-1]) + f" and {named[-1]}" if len(named) <= 3
-                       else ", ".join(named[:3]) + f" and {len(named) - 3} more")
+            names = [str(shown[i][g.name]) for i in tied]
+            leaders = (", ".join(names[:-1]) + f" and {names[-1]}" if len(names) <= 3
+                       else ", ".join(names[:3]) + f" and {len(names) - 3} more")
             return f"{lead}: {leaders} lead with {value(top)} each{share.replace(' of the total)', ' of the total each)')}{count}."
+        # Ranked by another of the measures ("which category has the highest cost %?"): that one leads.
+        ranked_by = next((c for c in measures if logical.sort and logical.sort[0][1] and c.name == logical.sort[0][0]
+                          and c is not m), None)
+        if ranked_by is not None:
+            high = max(named, key=lambda i: _number(raw[i][ranked_by.name]) or float("-inf"))
+            row = raw[high]
+            rest = [_valued(fmt(row[c.name], c.format, unit=units.of(row)), c) for c in measures
+                    if c is not ranked_by and c.name in row]
+            joined = ", ".join(rest[:-1]) + f" and {rest[-1]}" if len(rest) > 1 else "".join(rest)
+            return (f"{lead}: {shown[high][g.name]} has the highest {_lower(ranked_by.label)}, at "
+                    f"{value(row, ranked_by)}{(', with ' + joined) if joined else ''}{count}.")
         # The other measures asked for, for the same leader: "and $456K gross profit".
         others = [_valued(fmt(top[c.name], c.format, unit=units.of(top)), c) for c in measures[1:] if c.name in top]
         joined = ", ".join(others[:-1]) + f" and {others[-1]}" if len(others) > 1 else "".join(others)
         also = f", and {joined}{',' if count else ''}" if others else ""
-        return f"{lead}: {leader} leads with {value(top)}{share}{also}{count}."
+        # Days between two dates: more is longer, not a lead ("USPS takes longest, at 4.3 days").
+        verb = "takes longest, at" if m.format == "days" else "leads with"
+        return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{no_member}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:
             ordered = sorted(raw, key=lambda r: -(_number(r[m.name]) or 0.0))

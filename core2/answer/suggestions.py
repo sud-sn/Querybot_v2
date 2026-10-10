@@ -14,7 +14,7 @@ from typing import Any
 
 from core2.answer.builder import condition_words, span_words
 from core2.answer.drivers import Grouping, candidates
-from core2.model.schema import SemanticModel
+from core2.model.schema import SemanticModel, value_names
 from core2.plan.ir import Plan
 from core2.resolve.resolver import Logical, adds_up, measure_dates
 from core2.resolve.time import label as period_label
@@ -28,6 +28,10 @@ def _word(model: SemanticModel, slug: str) -> str:
         name = model.entities[slug].business_name
     elif slug in model.attributes:
         name = model.attributes[slug].business_name
+        column = model.columns.get(model.attributes[slug].column)
+        yes = value_names(column).get("1") if column is not None and column.role == "flag" else None
+        if yes:
+            return f"{yes[:1].lower() + yes[1:]} or not"       # "by sterile or not", never "by is sterile"
     else:
         return ""
     return Grouping(slug, name, []).word
@@ -78,7 +82,9 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
         if bounded and logical.compare is None:
             out.append(f"Why did {lower} change {span}{tail}?")
         if not logical.share and logical.compare is None and logical.measures and adds_up(logical.measures[0]):
-            out.append(f"Share of {lower} by {Grouping('', grouped[0].label, []).word} {span}".strip() + tail)
+            word = (_word(model, grouped[0].attribute) if grouped[0].attribute else "") or \
+                Grouping("", grouped[0].label, []).word
+            out.append(f"Share of {lower} by {word} {span}".strip() + tail)
     elif not grouped and period is None:
         if bounded:
             out.append(f"Why did {lower} change {span}{tail}?")

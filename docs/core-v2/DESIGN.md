@@ -660,6 +660,24 @@ words:
 * next steps from the plan (drill into the top contributor, compare with the
   previous period, by week).
 
+Words, never codes, in what the answer says:
+* a yes/no flag Learn found (1/0) reads as words made of its name: "Is
+  sterile" is Sterile / Not sterile, "Cancelled flag" Cancelled / Not
+  cancelled (an admin's names for the codes win); the words are its members
+  in quotes ("Sterile"), it is never counted ("across 2"), and a filter on it
+  reads "for cancelled";
+* a ranking by one of several measures leads with that one ("has the highest
+  cost %, at 29.8%"), and days between two dates "take longest", never lead;
+* rows with no member ("Unknown") are said apart ("$446K has no territory")
+  and never counted, unless no member has anything to show;
+* a field named by a bare word ("Description") is headed with its owner's
+  name ("Diagnosis description");
+* the note on how a table was reached names where another route branches off
+  ("it could also come through the pharmacist");
+* an answer with no rows, where every matching row is one a table leaves out
+  by default, says so and offers "Include the rows left out";
+* "an rx fill": a or an by how the words are said.
+
 The payload matches what the web portal renders today (§12.3).
 
 ---

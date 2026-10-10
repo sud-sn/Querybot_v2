@@ -35,7 +35,7 @@ from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
-from core2.model.schema import AggExpr, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr
+from core2.model.schema import AggExpr, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
 from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
@@ -58,6 +58,7 @@ class OutColumn:
     format: str = ""
     measure: str | None = None      # the measure's key, for measures and their derived columns
     grain: str | None = None        # for the period
+    flag: bool = False              # a yes/no grouping (its two members are a thing and its opposite)
 
 
 @dataclass
@@ -279,15 +280,29 @@ class _Compiler:
             raise CompileError(f"{g.name} has no column")
         return self.named_values(self.col(g.alias, g.column), g.column)
 
+    def _flag(self, slug: str | None) -> bool:
+        """Is the attribute ``slug`` a yes/no flag (its members a thing and its opposite)?"""
+        attribute = self.model.attributes.get(slug) if slug else None
+        return attribute is not None and attribute.column in self.model.columns and \
+            self.model.columns[attribute.column].role == "flag"
+
     def named_values(self, value: exp.Expression, column_key: str) -> exp.Expression:
         """A text column's values as readers see them: the names an admin gave its codes ("C" -> "Cancelled"),
         any other value as stored."""
         column = self.model.columns[column_key]
-        if column.data_type != "text" or not column.value_names:
+        names = value_names(column)
+        if not names:
             return value
-        return exp.Case(ifs=[exp.If(this=exp.EQ(this=value.copy(), expression=exp.Literal.string(code)),
-                                    true=exp.Literal.string(name))
-                             for code, name in sorted(column.value_names.items())], default=value.copy())
+        if column.data_type == "text":
+            return exp.Case(ifs=[exp.If(this=exp.EQ(this=value.copy(), expression=exp.Literal.string(code)),
+                                        true=exp.Literal.string(name))
+                                 for code, name in sorted(names.items())], default=value.copy())
+        if column.role != "flag":
+            return value
+        # A yes/no flag: its words, never 1 and 0 (no value stays no value).
+        return exp.Case(ifs=[exp.If(this=exp.EQ(this=value.copy(), expression=(
+            exp.Boolean(this=code == "1") if column.data_type == "boolean" else exp.Literal.number(code))),
+            true=exp.Literal.string(name)) for code, name in sorted(names.items())])
 
     # ── measures ───────────────────────────────────────────────────────────
     def aggregate(self, expr: MeasureExpr | DaysBetween, part: Part,
@@ -486,7 +501,8 @@ class _Compiler:
         columns: list[OutColumn] = []
         for g in q.groups:
             columns.append(OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
-                                     grain=g.grain if g.kind == "period" else None))
+                                     grain=g.grain if g.kind == "period" else None,
+                                     flag=self._flag(getattr(g, "attribute", None))))
         for m in q.measures:
             key = m.measure.key if m.measure else None
             columns.append(OutColumn(m.name, m.label, "measure", m.format, key))

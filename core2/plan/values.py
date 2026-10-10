@@ -20,7 +20,7 @@ import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 
-from core2.model.schema import SemanticModel
+from core2.model.schema import SemanticModel, value_names
 
 MAX_TOKENS = 8
 
@@ -93,10 +93,13 @@ class MemberIndex:
         """
         aliases: dict[str, list[tuple[str, str]]] = {}
         longest = self.longest
-        for slug in self.attributes:
+        # A yes/no flag is never read as members, but its words are names: "Sterile" finds the flag at 1.
+        flags = {slug for slug, a in model.attributes.items()
+                 if a.column in model.columns and model.columns[a.column].role == "flag"}
+        for slug in sorted({*self.attributes, *flags}):
             attribute = model.attributes.get(slug)
             column = model.columns.get(attribute.column) if attribute is not None else None
-            for code, name in (column.value_names.items() if column is not None else ()):
+            for code, name in (value_names(column).items() if column is not None else ()):
                 key = normalise(name)
                 if len(key) >= 2 and (slug, code) not in aliases.get(key, []):
                     aliases.setdefault(key, []).append((slug, code))
