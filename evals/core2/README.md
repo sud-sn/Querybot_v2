@@ -58,7 +58,11 @@ a domain moves into `DOMAINS` once the learner passes it. `baselines/phase0.json
 holds the numbers before any of the accuracy work (Phase 0), every miss listed;
 `baselines/metrics_and_dates.json` the numbers after the first join fix and the
 metric and date work. `baselines/people_and_statuses.json` the numbers after Learn read statuses kept
-in lookups, people's data, running numbers and documents' figures (home services added). Every link, metric and
+in lookups, people's data, running numbers and documents' figures (home services added).
+`baselines/links_precision.json` the numbers after links stopped being read from values alone (minutes, line
+numbers and counts inside small tables' keys, figures named after a table, backup copies) and reached what they
+missed (a unique number beside a table's key, a code kept as text against a number key, a document and its line
+in two columns): joins 91% accuracy, 99% right among what is not sent to review. Every link, metric and
 date of a domain's truth counts once; a link or metric the learner invents counts
 against it; what it sends to an admin counts as review, not as right.
 
