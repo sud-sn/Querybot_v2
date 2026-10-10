@@ -2912,6 +2912,20 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     try:
         while True:
             data = await websocket.receive_json()
+            # The person as they are now, not as they were when the chat opened: deactivated, a password reset or
+            # a move to another workspace ends the chat; a new group or role applies from this message on (every
+            # question reads its access from portal_user when it runs).
+            current = _session_user(cookie)
+            if not current or current.get("account_id") != account_id:
+                log.info("WebSocket chat closed, the session no longer holds: user=%d account=%s", user_id, account_id)
+                try:
+                    await websocket.send_json({"type": "message", "role": "assistant",
+                                               "content": _t("reply.session.ended")})
+                    await websocket.close(code=4003)
+                except Exception:   # noqa: BLE001 - the socket may already be gone
+                    pass
+                return
+            portal_user = current
             if not isinstance(data, dict):
                 await websocket.send_json({
                     "type": "assistant_error",

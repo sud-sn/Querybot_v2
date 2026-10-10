@@ -62,12 +62,25 @@ def get_compliance_profile(account_id: str) -> dict:
     return result
 
 
+# The profile's settings a governed query reads: a change to any of them ends what dashboards kept under the old.
+_GOVERNS_QUERIES = ("mode", "industry", "jurisdictions", "frameworks", "policy_pack_key", "policy_pack_version",
+                    "lifecycle_state", "enforcement_mode", "active_policy_version")
+
+
+def _forget_kept_rows(conn, **scope) -> None:
+    from store.dashboard_store import forget_kept_rows
+
+    forget_kept_rows(conn, **scope)
+
+
 def save_compliance_profile(account_id: str, **values: Any) -> dict:
     current = get_compliance_profile(account_id)
     merged = {**current, **values}
     jurisdictions = merged.get("jurisdictions", [])
     frameworks = merged.get("frameworks", [])
     with get_db() as conn:
+        if any(merged.get(key) != current.get(key) for key in _GOVERNS_QUERIES):
+            _forget_kept_rows(conn, account_id=account_id)
         conn.execute(
             """
             INSERT INTO compliance_profile (
@@ -228,6 +241,7 @@ def save_classification(
     table_fqn = table_fqn.upper()
     column_name = column_name.upper()
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         conn.execute(
             """
             INSERT INTO data_asset_classification (
@@ -284,6 +298,7 @@ def list_policy_rules(account_id: str, version: int | None = None) -> list[dict]
 
 def replace_policy_rules(account_id: str, version: int, rules: list[dict]) -> None:
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         conn.execute(
             "DELETE FROM policy_rule WHERE account_id=? AND policy_version=?",
             (account_id, version),
@@ -329,6 +344,7 @@ def list_row_policies(account_id: str, version: int | None = None) -> list[dict]
 
 def replace_row_policies(account_id: str, version: int, policies: list[dict]) -> None:
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         conn.execute(
             "DELETE FROM row_policy WHERE account_id=? AND policy_version=?",
             (account_id, version),
@@ -375,6 +391,7 @@ def list_purposes(account_id: str) -> list[dict]:
 
 def replace_purposes(account_id: str, purposes: list[dict]) -> None:
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         old = conn.execute(
             "SELECT id FROM purpose_registry WHERE account_id=?", (account_id,)
         ).fetchall()
@@ -493,6 +510,7 @@ def save_user_attestation(
     with it."""
     scope = ",".join(sorted({s.strip().upper() for s in str(scope or "*").split(",") if s.strip()})) or "*"
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         cur = conn.execute(
             """
             INSERT INTO user_attestation (
@@ -518,6 +536,7 @@ def _now_text() -> str:
 
 def revoke_user_attestation(account_id: str, attestation_id: int, revoked_by: str = "") -> bool:
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         cur = conn.execute(
             """
             UPDATE user_attestation SET revoked_at=datetime('now'), revoked_by=?
@@ -820,6 +839,7 @@ def create_break_glass_grant(
 ) -> str:
     grant_id = str(uuid.uuid4())
     with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
         conn.execute(
             """
             INSERT INTO break_glass_grant (
@@ -870,6 +890,30 @@ def get_active_break_glass_for_user(account_id: str, user_id: str) -> dict | Non
     result["resources"] = _loads(result.pop("resource_json", "[]"), [])
     result["actions"] = _loads(result.pop("action_json", "[]"), [])
     return result
+
+
+def access_ends_at(account_id: str, portal_user_id: str) -> str | None:
+    """When the first of a user's access with a set end ends ('YYYY-MM-DD HH:MM:SS', UTC): a valid attestation
+    with an expiry, or an emergency (break-glass) grant. None when nothing they hold ends by itself.
+
+    Nothing is written when such access ends, so nothing clears what was kept under it: what a dashboard keeps
+    for its owner is kept no longer than this."""
+    if not portal_user_id:
+        return None
+    now = _now_text()
+    with get_db() as conn:
+        row = conn.execute(
+            f"""SELECT MIN(ends) AS ends FROM (
+                    SELECT expires_at AS ends FROM user_attestation
+                     WHERE account_id=? AND portal_user_id=? AND {_ATTESTATION_VALID}
+                       AND expires_at IS NOT NULL AND expires_at <> ''
+                    UNION ALL
+                    SELECT expires_at FROM break_glass_grant
+                     WHERE account_id=? AND user_id=? AND revoked_at IS NULL AND expires_at > ?)""",
+            (account_id, str(portal_user_id), now, account_id, str(portal_user_id), now),
+        ).fetchone()
+    ends = str((row["ends"] if row else "") or "").replace("T", " ")[:19]
+    return ends or None
 
 
 def save_assessment(account_id: str, policy_version: int, results: list[dict]) -> int:

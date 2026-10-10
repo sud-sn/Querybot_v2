@@ -434,10 +434,19 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "notify.dashboard_refresh_failed": {
         "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
-              "since {since} UTC. It still shows the data from {at} UTC. The next attempt is at {next} UTC.",
+              "since {since} UTC. It shows the data from {at} UTC until {until} UTC. The next attempt is at "
+              "{next} UTC.",
         "fr": "Votre tableau de bord « {name} » n'a pas pu être actualisé : {count} tentatives de suite "
-              "ont échoué depuis le {since} UTC. Il affiche toujours les données du {at} UTC. La prochaine "
-              "tentative aura lieu le {next} UTC.",
+              "ont échoué depuis le {since} UTC. Il affiche les données du {at} UTC jusqu'au {until} UTC. La "
+              "prochaine tentative aura lieu le {next} UTC.",
+    },
+    "notify.dashboard_refresh_failed_expired": {
+        "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
+              "since {since} UTC. Its data from {at} UTC has expired, so it shows none until a refresh works. "
+              "The next attempt is at {next} UTC.",
+        "fr": "Votre tableau de bord « {name} » n'a pas pu être actualisé : {count} tentatives de suite "
+              "ont échoué depuis le {since} UTC. Ses données du {at} UTC ont expiré : il n'en affiche plus tant "
+              "qu'une actualisation n'a pas réussi. La prochaine tentative aura lieu le {next} UTC.",
     },
     "notify.dashboard_refresh_failed_no_data": {
         "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
@@ -5470,6 +5479,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # sentence that decides whether someone files a ticket or gives up.
 
     # ── Connecting ──────────────────────────────────────────────────────────
+    "reply.session.ended": {
+        "en": "Your access to this workspace has changed. Sign in again to continue.",
+        "fr": "Votre accès à cet espace de travail a changé. Reconnectez-vous pour continuer.",
+    },
     "reply.session.connected": {
         "en": "Connected as {name}. Ask me anything about your data.",
         "fr": "Connecté en tant que {name}. Posez-moi toutes vos questions sur vos données.",

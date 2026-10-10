@@ -99,7 +99,11 @@ def update_group(group_id: int, name: str, description: str) -> None:
 
 
 def delete_group(group_id: int) -> None:
+    from store.dashboard_store import forget_kept_rows
+
     with get_db() as conn:
+        # Its members lose its tables: what their dashboards kept under them goes first, while they are members.
+        forget_kept_rows(conn, group_id=group_id)
         conn.execute("DELETE FROM user_group WHERE id=?", (group_id,))
 
 
@@ -107,7 +111,10 @@ def delete_group(group_id: int) -> None:
 
 def set_group_tables(group_id: int, account_id: str, tables: list[str]) -> None:
     """Replace the entire table access list for a group."""
+    from store.dashboard_store import forget_kept_rows
+
     with get_db() as conn:
+        forget_kept_rows(conn, group_id=group_id)
         conn.execute("DELETE FROM group_table_access WHERE group_id=?", (group_id,))
         for t in tables:
             conn.execute(
@@ -261,8 +268,13 @@ def update_user(
         return
     fields.append("updated_at=datetime('now')")
     params.append(user_id)
+    from store.dashboard_store import forget_kept_rows
+
     with get_db() as conn:
         conn.execute(f"UPDATE portal_user SET {','.join(fields)} WHERE id=?", params)
+        # A new group or role, or a deactivation, changes what they may see.
+        if group_id is not None or role is not None or is_active is not None:
+            forget_kept_rows(conn, user_id=user_id)
 
 
 def change_password(user_id: int, new_password: str, is_temp: bool = False) -> None:
@@ -321,7 +333,10 @@ def upgrade_password_hash(user: dict, password: str) -> bool:
 
 
 def delete_user(user_id: int) -> None:
+    from store.dashboard_store import forget_kept_rows
+
     with get_db() as conn:
+        forget_kept_rows(conn, user_id=user_id)
         conn.execute("DELETE FROM portal_user WHERE id=?", (user_id,))
 
 
@@ -388,7 +403,10 @@ def list_user_events(account_id: str, limit: int = 20) -> list[dict]:
 # ── Individual table overrides ────────────────────────────────────────────────
 
 def set_user_extra_tables(user_id: int, account_id: str, tables: list[str]) -> None:
+    from store.dashboard_store import forget_kept_rows
+
     with get_db() as conn:
+        forget_kept_rows(conn, user_id=user_id)
         conn.execute("DELETE FROM user_table_access WHERE user_id=?", (user_id,))
         for t in tables:
             conn.execute(
@@ -664,10 +682,13 @@ def approve_pending_user(
 
         # Update group_id if we just hit the IGNORE path (user existed)
         if portal_user_row and group_id:
+            from store.dashboard_store import forget_kept_rows
+
             conn.execute(
                 "UPDATE portal_user SET group_id=?, updated_at=? WHERE id=?",
                 (group_id, now, portal_user_id),
             )
+            forget_kept_rows(conn, user_id=portal_user_id)
 
         conn.execute(
             """UPDATE pending_platform_user SET

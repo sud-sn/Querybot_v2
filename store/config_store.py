@@ -698,6 +698,20 @@ def log_query(
               question_id or "", parent_question_id or "", error_code or "", source))
 
 
+def logged_sql(account_id: str, question_id: str) -> str:
+    """The SQL a question's answer ran, as the query log kept it: "" when it kept none. A follow-up answered from
+    the result on screen keeps its SQL here and not on its trace."""
+    if not question_id:
+        return ""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT sql_generated FROM query_log WHERE account_id=? AND question_id=? AND success=1 "
+            "AND COALESCE(sql_generated, '') <> '' ORDER BY id DESC LIMIT 1",
+            (account_id, question_id),
+        ).fetchone()
+    return str(row["sql_generated"] or "") if row else ""
+
+
 def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = None) -> dict:
     """
     Summary stats — optionally filtered by client and/or month (YYYY-MM).

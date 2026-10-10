@@ -185,14 +185,19 @@ class FailOpenRemovalTests(unittest.TestCase):
 
         account_id = f"acct{os.urandom(4).hex()}"
         store.upsert_client(account_id, "T")
+        # A reader who still has the table the answer read: the export's
+        # table check passes, and the export policy is what is tested.
+        group_id = store.create_group(account_id, "Readers")
+        store.set_group_tables(group_id, account_id, ["T"])
         user_id, _ = store.create_user(account_id, "Ada",
-                                       f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
+                                       f"{os.urandom(4).hex()}@x.com", group_id=group_id,
+                                       password="a-password-they-chose")
         trace_id = store.create_answer_trace(
             account_id=account_id, question_id="q1", question_text="q",
             portal_user_id=user_id)
         with store.get_db() as conn:
-            conn.execute("UPDATE answer_trace SET result_rows=? WHERE id=?",
-                         (json.dumps([{"A": 1}]), trace_id))
+            conn.execute("UPDATE answer_trace SET result_rows=?, generated_sql=? WHERE id=?",
+                         (json.dumps([{"A": 1}]), "SELECT A FROM T", trace_id))
         client.cookies.set(routes._COOKIE, routes._sign_session_value(user_id))
 
         with patch.object(policy_engine, "resolve_context",

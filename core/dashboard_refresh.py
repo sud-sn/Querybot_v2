@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import store
 from core.dashboard_filters import compile_dashboard_filters
@@ -101,20 +102,40 @@ def execute_dashboard_source(
     from core.result_renderer import _sanitize_rows
     safe_rows = _sanitize_rows(list(governed.rows or []))
     if is_owner and not active_values:
-        ttl = int(getattr(governed.decision, "cache_ttl_seconds", 0) or 600)
-        store.save_source_cache(
-            source,
-            safe_rows,
-            policy_version=policy_version,
-            contract_version=contract_version,
-            ttl_seconds=ttl,
-        )
+        ttl = _kept_for(account_id, viewer, int(getattr(governed.decision, "cache_ttl_seconds", 0) or 600))
+        if ttl:
+            store.save_source_cache(
+                source,
+                safe_rows,
+                policy_version=policy_version,
+                contract_version=contract_version,
+                ttl_seconds=ttl,
+            )
     return DashboardSourceResult(
         rows=safe_rows,
         sql=str(governed.sql or compiled.sql),
         applied_filters=compiled.applied,
         ignored_filters=compiled.ignored,
     )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _kept_for(account_id: str, owner: dict, ttl: int) -> int:
+    """How long an owner's rows are kept: the source's own cache life, but no longer than access of theirs that
+    ends by itself (an attestation's term, an emergency grant) -- nothing is written when it ends, so nothing
+    else would stop the rows. 0: not kept, the access ends within the minute a cache lasts at least."""
+    ends = store.access_ends_at(account_id, str(owner.get("id") or ""))
+    if not ends:
+        return ttl
+    try:
+        # A bare date ends at the start of that day, as validity compares it.
+        left = int((datetime.fromisoformat(ends) - _utc_now()).total_seconds())
+    except ValueError:
+        return 0
+    return min(ttl, left) if left >= 60 else 0
 
 
 def refresh_dashboard_source(source: dict) -> bool:
@@ -153,13 +174,19 @@ def _tell_the_owner(source: dict, owner: dict, failure: dict) -> None:
     if not claim:
         return
     refreshed = str(source.get("cache_refreshed_at") or "")[:16]
+    # The rows of the last refresh that worked are shown until they expire, and not after.
+    until = str(source.get("cache_expires_at") or "")
+    shown = bool(refreshed) and until > _utc_now().strftime("%Y-%m-%d %H:%M:%S")
     message = t(
-        "notify.dashboard_refresh_failed" if refreshed else "notify.dashboard_refresh_failed_no_data",
+        "notify.dashboard_refresh_failed" if shown
+        else "notify.dashboard_refresh_failed_expired" if refreshed
+        else "notify.dashboard_refresh_failed_no_data",
         lang=owner.get("lang") or "en",
         name=source.get("dashboard_name") or source.get("name") or "",
         count=failure["failure_count"],
         since=str(failure["failed_at"])[:16],
         at=refreshed,
+        until=until[:16],
         next=str(failure["next_attempt_at"])[:16],
     )
     try:

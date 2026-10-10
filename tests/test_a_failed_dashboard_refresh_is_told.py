@@ -10,13 +10,17 @@ tick -- every minute, for as long as the warehouse refused it. Nobody was told:
 the failure went to the log.
 
 Now a failure keeps the time of the last refresh that worked, and the rows,
-and the owner's chart goes on showing them, saying they are from before the
-failures. Each failure in a row waits twice as long as the one before it,
-from five minutes up to the dashboard's own cadence. The owner is told once
-per dashboard, in their language, when a second refresh in a row has failed
--- since when, what the dashboard shows, and when it is tried again -- and a
-notice that reached no one is sent at a later failure. Every time is UTC, and
-says so. A dashboard whose charts all refresh again clears all of it.
+and the owner's chart goes on showing them until they expire, saying they are
+from before the failures -- and not after: they were released under the
+owner's access as it was, and a refresh that keeps failing (the warehouse
+refusing an owner it no longer serves) kept them on screen with no end.
+Each failure in a row waits twice as long as the one before it, from five
+minutes up to the dashboard's own cadence. The owner is told once per
+dashboard, in their language, when a second refresh in a row has failed --
+since when, what the dashboard shows and until when, and when it is tried
+again -- and a notice that reached no one is sent at a later failure. Every
+time is UTC, and says so. A dashboard whose charts all refresh again clears
+all of it.
 
 A scratch store holds the owner, the dashboard, its sources and their cache;
 the warehouse and the delivery of the notice are the only stand-ins.
@@ -159,11 +163,10 @@ class TestAFailure:
         since = _cache(dashboard)["failed_at"][:16]
         assert f"L'actualisation planifiée échoue depuis le {since} UTC : ces données" in page
 
-    def test_the_chart_keeps_the_rows_once_they_expire(self, dashboard):
-        """A source whose governed decision sets no cache life keeps its rows
-        ten minutes, and the scheduler tries again only once they expire: the
-        owner's chart then showed the warehouse's error, while the notice said
-        the dashboard still showed the data."""
+    def test_the_chart_stops_showing_the_rows_once_they_expire(self, dashboard):
+        """Rows a failing refresh kept were served with no end. Once they
+        expire the owner's chart runs as the owner may now see it: the
+        warehouse's refusal while it refuses, fresh rows once it answers."""
         dashboard.warehouse["ttl"] = 0
         assert refresh.refresh_dashboard_source(_due(dashboard)) is True
         with store.get_db() as conn:
@@ -171,9 +174,25 @@ class TestAFailure:
                          (dashboard.source["id"],))
         dashboard.warehouse["down"] = True
         assert refresh.refresh_dashboard_source(_due(dashboard)) is False
+        assert store.get_source_cache(dashboard.source["id"], dashboard.owner_id, dashboard.account_id) is None
         chart = _owners_chart(dashboard)
-        assert (chart["from_cache"], chart["row_count"], chart["refresh_failed_at"]) == (
-            True, 1, _cache(dashboard)["failed_at"])
+        assert (chart["from_cache"], chart["row_count"], chart["refresh_failed_at"]) == (False, 0, "")
+        assert chart["error"]
+        dashboard.warehouse["down"] = False
+        chart = _owners_chart(dashboard)
+        assert (chart["from_cache"], chart["row_count"], chart.get("error") or "") == (False, 1, "")
+        assert _cache(dashboard)["failure_count"] == 0
+
+    def test_the_chart_keeps_the_rows_until_they_expire(self, dashboard):
+        _refreshed_yesterday(dashboard)
+        dashboard.warehouse["down"] = True
+        assert refresh.refresh_dashboard_source(_source(dashboard)) is False
+        assert _owners_chart(dashboard)["from_cache"] is True
+        with store.get_db() as conn:
+            conn.execute("UPDATE dashboard_source_cache SET expires_at=? WHERE source_id=?",
+                         ((_now() - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), dashboard.source["id"]))
+        chart = _owners_chart(dashboard)
+        assert (chart["from_cache"], chart["row_count"]) == (False, 0)
 
     def test_a_first_one_is_kept_and_waits(self, dashboard):
         dashboard.warehouse["down"] = True
@@ -230,10 +249,30 @@ class TestTheOwner:
         assert (account, user_id) == (dashboard.account_id, dashboard.owner_id)
         assert message == (
             f"Votre tableau de bord « Stock by warehouse » n'a pas pu être actualisé : 2 tentatives de suite ont "
-            f"échoué depuis le {cache['failed_at'][:16]} UTC. Il affiche toujours les données du 2026-09-27 06:00 "
-            f"UTC. La prochaine tentative aura lieu le {cache['next_attempt_at'][:16]} UTC.")
+            f"échoué depuis le {cache['failed_at'][:16]} UTC. Il affiche les données du 2026-09-27 06:00 UTC "
+            f"jusqu'au {cache['expires_at'][:16]} UTC. La prochaine tentative aura lieu le "
+            f"{cache['next_attempt_at'][:16]} UTC.")
         _fail(dashboard)
         assert len(dashboard.told) == 1
+
+    @pytest.mark.parametrize("lang,said", [
+        ("en", "Its data from 2026-09-27 06:00 UTC has expired, so it shows none until a refresh works."),
+        ("fr", "Ses données du 2026-09-27 06:00 UTC ont expiré : il n'en affiche plus tant qu'une actualisation "
+               "n'a pas réussi."),
+    ])
+    def test_is_told_when_the_rows_it_kept_have_expired(self, dashboard, lang, said):
+        store.set_user_language(dashboard.owner_id, lang)
+        _refreshed_yesterday(dashboard)
+        with store.get_db() as conn:
+            conn.execute("UPDATE dashboard_source_cache SET expires_at='2026-09-27 06:10:00' WHERE source_id=?",
+                         (dashboard.source["id"],))
+        dashboard.warehouse["down"] = True
+        _fail(dashboard)
+        _fail(dashboard)
+        ((_, _, message),) = dashboard.told
+        assert said in message
+        assert "2026-09-27 06:10" not in message
+        assert _owners_chart(dashboard)["from_cache"] is False
 
     def test_is_told_again_after_a_refresh_that_worked(self, dashboard):
         dashboard.warehouse["down"] = True
@@ -344,7 +383,8 @@ class TestOneClock:
         failed, refreshed = (datetime.strptime(cache[key], "%Y-%m-%d %H:%M:%S") for key in ("failed_at", "refreshed_at"))
         assert timedelta(0) <= failed - refreshed < timedelta(minutes=1)
         ((_, _, message),) = dashboard.told
-        assert f"since {cache['failed_at'][:16]} UTC. It still shows the data from {cache['refreshed_at'][:16]} UTC" in message
+        assert (f"since {cache['failed_at'][:16]} UTC. It shows the data from {cache['refreshed_at'][:16]} UTC "
+                f"until {cache['expires_at'][:16]} UTC.") in message
 
     def test_an_hourly_source_refreshed_a_moment_ago_is_not_due(self, dashboard, east_of_utc):
         store.update_dashboard_controls(dashboard.board["id"], dashboard.owner_id, dashboard.account_id,

@@ -2960,6 +2960,19 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     if not rows:
         return JSONResponse({"ok": False, "error": "No rows in this query result."}, status_code=404)
 
+    # The tables its query read must still be granted, as the thread's history checks: the rows were released
+    # when the question was asked, and a table taken from the reader since is not read again through an export.
+    sql = str(trace.get("sql") or trace.get("generated_sql") or "") or store.logged_sql(
+        user["account_id"], str(trace.get("question_id") or ""))
+    allowed = store.get_allowed_tables(user)
+    if allowed is not None and not sql:
+        return JSONResponse({"ok": False, "error": "These rows could not be checked against your access today."},
+                            status_code=403)
+    if not _trace_tables_still_granted(sql, str(trace.get("db_type") or ""), allowed, user["account_id"]):
+        return JSONResponse({"ok": False, "error": "This answer read a table you no longer have access to. "
+                                                   "Ask the question again to see what you may see now."},
+                            status_code=403)
+
     from core.compliance import kept_answers
     if kept_answers.withheld(user["account_id"], user, trace):
         return JSONResponse({"ok": False, "error": kept_answers.WITHHELD}, status_code=403)
@@ -2968,7 +2981,6 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
         return JSONResponse({"ok": False, "error": "These rows could not be checked against your access today."},
                             status_code=403)
 
-    sql = str(trace.get("sql") or trace.get("generated_sql") or "")
     try:
         from core.compliance.policy_engine import evaluate, resolve_context
         from core.compliance.sql_guard import analyze_sql

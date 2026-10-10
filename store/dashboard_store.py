@@ -1080,14 +1080,12 @@ def get_source_cache(
     if not row:
         return None
     result = dict(row)
-    # Rows a failing refresh kept are served until a refresh works: the owner
-    # otherwise saw an error once they expired, while the notice said the
-    # dashboard still showed them. The chart says how old they are.
-    if (
-        not allow_stale
-        and not result.get("failed_at")
-        and str(result.get("expires_at") or "") <= _utc_now().strftime(_STAMP)
-    ):
+    # Rows a failing refresh kept are served until their normal expiry, and no
+    # longer: they were released under the owner's access when they were
+    # refreshed, and a refresh that keeps failing -- the warehouse refusing an
+    # owner whose access it removed, say -- served them with no end. The chart
+    # says how old they are; the owner's notice says when they stop.
+    if not allow_stale and str(result.get("expires_at") or "") <= _utc_now().strftime(_STAMP):
         return None
     try:
         payload = decrypt_json(result.pop("rows_encrypted"))
@@ -1095,6 +1093,25 @@ def get_source_cache(
     except Exception:
         return None
     return result
+
+
+def forget_kept_rows(conn, *, account_id: str | None = None, user_id: int | None = None,
+                     group_id: int | None = None) -> None:
+    """Drop the rows dashboard owners' scheduled refreshes kept, after a change to what they may see.
+
+    Kept rows were released under their owner's access when they were refreshed: their role, group and
+    tables, and the workspace's row rules, masking, purposes and attestations. They were served until they
+    expired, whatever changed meanwhile. Each change to that access calls this in the write that makes it,
+    on that write's connection, so the owner's next view and the next scheduled refresh run under the access as
+    it is now: one person's rows (``user_id``), a group's members' (``group_id``), or the whole workspace's.
+    """
+    if user_id is not None:
+        conn.execute("DELETE FROM dashboard_source_cache WHERE user_id=?", (int(user_id),))
+    if group_id is not None:
+        conn.execute("DELETE FROM dashboard_source_cache WHERE user_id IN "
+                     "(SELECT id FROM portal_user WHERE group_id=?)", (int(group_id),))
+    if account_id:
+        conn.execute("DELETE FROM dashboard_source_cache WHERE account_id=?", (account_id,))
 
 
 def list_due_dashboard_sources(now: datetime | None = None) -> list[dict]:
