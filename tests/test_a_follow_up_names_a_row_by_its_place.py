@@ -165,6 +165,8 @@ def test_that_division_is_found_in_whichever_grouping_shows_it():
     assert [(m.text, m.value) for m in placed("monthly gross profit for that one", one, [])] == \
         [("that one", "PC 7")]
     assert placed("monthly gross profit for that one", two, []) == []          # which one: not guessed
+    by_month = [("time:month_of_year", "March", 10.0)]
+    assert placed("net sales this year by region", by_month, []) == []          # a period, not the row
 
 
 def test_that_region_of_a_store_on_screen_narrows_the_next_answer(retail):

@@ -208,6 +208,8 @@ _BY_VALUE = re.compile(r"\b(?:the\s+)?(highest|largest|biggest|lowest|smallest)\
 _HIGH = {"highest", "largest", "biggest"}
 # "That division": the one member of that field the answer on screen showed.
 _THAT = re.compile(r"\b(that|this)\s+([a-z]+)\b", re.IGNORECASE)
+# "this year", "that month": a period, never a member on screen, whatever the answer was grouped by.
+_PERIOD_NOUNS = {"year", "month", "quarter", "week", "day", "half", "period", "time", "fiscal", "season"}
 
 Shown = tuple  # (attribute slug, stored value or None, the answer's number for it or None,
 #                 and optionally the row's members of the answer's other groupings, by attribute slug)
@@ -259,6 +261,8 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
             fields.setdefault(attribute, set()).update([value] if value is not None else [])
     for m in _THAT.finditer(question):
         noun = m.group(2).lower()
+        if noun in _PERIOD_NOUNS:
+            continue
         # "that one": the one member of the answer's first grouping; "that division": of the field so named.
         named = ([(shown[0][0], fields[shown[0][0]])] if noun in ("one", "1") and len(fields[shown[0][0]]) == 1 else
                  [(a, v) for a, v in fields.items() if noun in _field_words(a) and len(v) == 1])
