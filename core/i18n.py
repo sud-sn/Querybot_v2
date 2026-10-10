@@ -541,6 +541,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.enum.charttype.scatter": {"en": "Scatter", "fr": "Nuage de points"},
     "ui.enum.charttype.dumbbell": {"en": "Change", "fr": "Variation"},
     "ui.enum.charttype.stacked": {"en": "Stacked", "fr": "Empilé"},
+    "ui.enum.charttype.map": {"en": "Map", "fr": "Carte"},
     "ui.enum.charttype.heatmap": {"en": "Grid", "fr": "Grille"},
     "ui.enum.role.admin": {"en": "Admin", "fr": "Administrateur"},
     "ui.enum.role.analyst": {"en": "Analyst", "fr": "Analyste"},
@@ -4314,6 +4315,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.settings.save": {"en": "Save", "fr": "Enregistrer"},
     "ui.settings.password_note": {"en": "Choose a new password for signing in.",
                                   "fr": "Choisissez un nouveau mot de passe de connexion."},
+    "ui.chart.map_loading": {"en": "Drawing the map…", "fr": "Dessin de la carte…"},
     "ui.kpi.vs": {
         "en": "vs {period}",
         "fr": "par rapport à {period}",

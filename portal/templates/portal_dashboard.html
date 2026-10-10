@@ -596,7 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Per-card type toggle ──────────────────────────────────────────────────────
 // No palette switcher: one palette, in a fixed order, so a colour means the same
 // thing on every chart (two of the six it offered failed the colour-vision check).
-const DASH_TYPES = ['dumbbell','bar','stacked','line','area','pie','donut','scatter','heatmap'];
+const DASH_TYPES = ['dumbbell','bar','stacked','line','area','pie','donut','scatter','heatmap','map'];
 
 function mountDashChartControls(ctrlRow) {
   const chartId = Number(ctrlRow.dataset.chartId);

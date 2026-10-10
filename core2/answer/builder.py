@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable
 
+from core2.answer.geo import FILES as GEO_FILES, off_map_zips, place_kind, regions
 from core2.bootstrap import names
 from core2.compile.compiler import Compiled, OutColumn
 from core2.resolve.resolver import Condition, Logical, adds_up
@@ -1182,6 +1183,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         return None
     m = measures[0]
     ranked = _ranked_periods(logical, cols) and not members
+    place: str | None = None
     compare: dict | None = None
     if logical.compare is not None and members:
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
@@ -1214,6 +1216,14 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         if len(ys) == 2 and not logical.share and (len(records) > MOST_BARS or (
                 len(records) >= 8 and formats.get(ys[0]) != formats.get(ys[1]))):
             kind = "scatter"
+        # Members that are places (states, provinces, countries, ZIP codes): a map, a region shaded for each, or
+        # a dot per ZIP code. A top 5 stays a ranking, and amounts below zero stay bars (one hue light to dark
+        # would draw a loss as a small gain): both with the map on offer.
+        if len(ys) == 1 and kind == "bar":
+            place = place_kind(labels[x.name], x.name, [str(r[x.name]) for r in records if r[x.name] is not None])
+            if place and not logical.limit and len(records) >= 5 \
+                    and all((_number(r[ys[0]]) or 0) >= 0 for r in records):
+                kind = "map"
     else:
         return None
     temporal = x.role == "period" and not ranked
@@ -1275,7 +1285,20 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     parts = whole and share is not None and 2 <= len(rows) <= MAX_SLICES \
         and all((r[ys[0]] or 0) >= 0 for r in rows)
     pairs = len(ys) == 2 and compare is None and not temporal and not ranked and len(rows) >= 5
-    if kind == "scatter":
+    geo: dict | None = None
+    if place is not None:
+        values = [str(r[x.name]) for r in rows]
+        named = regions(place, values) if place != "us_zip" else {}
+        geo = {"map": place, "file": GEO_FILES[place], "regions": named}
+        if kind == "map":
+            missing = off_map_zips(values) if place == "us_zip" else \
+                [v for v in values if v not in named and v != "Unknown"]
+            if missing:
+                warnings.append(f"{_listed(missing, 'and')} {'is' if len(missing) == 1 else 'are'} not on the map: "
+                                "every one is in the table.")
+    if kind == "map":
+        renderable, allowed = ["map", "bar"], ["map", "bar"]
+    elif kind == "scatter":
         renderable, allowed = ["scatter", "bar"], ["scatter", "bar"]
     elif kind == "dumbbell":
         renderable, allowed = ["dumbbell", "bar"], ["dumbbell", "bar"]
@@ -1288,6 +1311,8 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked else ["bar"]
         if pairs:                         # two measures by member: also as a dot per member
             renderable, allowed = [*renderable, "scatter"], [*allowed, "scatter"]
+        if geo is not None:               # places: also as a map
+            renderable, allowed = [*renderable, "map"], [*allowed, "map"]
     measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and")
     return {"title": chart_title(logical, measure, [_by_words(c, labels) for c in [*members, *periods]], unit),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,
@@ -1296,7 +1321,8 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             "renderable_types": renderable, "allowed_types": allowed, "recommended_type": kind,
             "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
-            "x_order": "number" if in_order or in_calendar else "", "intent": logical.intent, "grouped_by": None,
+            "geo": geo, "x_order": "number" if in_order or in_calendar else "", "intent": logical.intent,
+            "grouped_by": None,
             "forecast_meta": None, "chart_warnings": warnings}
 
 

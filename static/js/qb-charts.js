@@ -367,6 +367,98 @@
     return points;
   }
 
+  // ── Maps ──────────────────────────────────────────────────────────────────
+  // The United States as its maps are drawn: the lower 48 on a conic equal-area projection, Alaska and
+  // Hawaii as insets below them (the arrangement of d3-geo's geoAlbersUsa, written out here: three conic
+  // equal-area projections with that composite's own parameters). A ZIP code is placed by the same
+  // projection, so its dot sits where its state is drawn.
+  function conicEqualArea(rotate, center, parallels, scale, translate) {
+    const rad = Math.PI / 180;
+    const [p1, p2] = parallels.map(v => v * rad);
+    const n = (Math.sin(p1) + Math.sin(p2)) / 2;
+    const c = Math.cos(p1) * Math.cos(p1) + 2 * n * Math.sin(p1);
+    const raw = (lon, lat) => {
+      const r = Math.sqrt(Math.max(0, c - 2 * n * Math.sin(lat * rad))) / n;
+      const t = n * ((lon + rotate) * rad);
+      return [r * Math.sin(t), -r * Math.cos(t)];
+    };
+    const [cx, cy] = raw(center[0], center[1]);
+    const project = ([lon, lat]) => {
+      const [x, y] = raw(lon, lat);
+      return [translate[0] + scale * (x - cx), translate[1] - scale * (y - cy)];
+    };
+    const unproject = ([px, py]) => {
+      const x = (px - translate[0]) / scale + cx, y = -(py - translate[1]) / scale + cy;
+      const r = Math.sqrt(x * x + y * y) * Math.sign(n);
+      const t = Math.atan2(x, -y);
+      return [t / n / rad - rotate, Math.asin(Math.max(-1, Math.min(1, (c - (r * n) * (r * n)) / (2 * n)))) / rad];
+    };
+    return {project, unproject};
+  }
+  const ALBERS_USA = (function () {
+    const k = 1070, x = 480, y = 250;
+    const lower48 = conicEqualArea(96, [-96.6, 38.7], [29.5, 45.5], k, [x, y]);
+    const alaska = conicEqualArea(154, [-156, 58.5], [55, 65], k * 0.35, [x - 0.307 * k, y + 0.201 * k]);
+    const hawaii = conicEqualArea(157, [-160, 19.9], [8, 18], k, [x - 0.205 * k, y + 0.212 * k]);
+    // Alaska's western islands lie past the date line (east longitudes): they are Alaska's, a turn west.
+    const toAlaska = ([lon, lat]) => lat > 50 && (lon < -129 || lon > 150);
+    const which = ([lon, lat]) => (toAlaska([lon, lat]) ? alaska : (lat < 26 && lon < -150 ? hawaii : lower48));
+    return {
+      project: ([lon, lat]) => which([lon, lat]).project([toAlaska([lon, lat]) && lon > 0 ? lon - 360 : lon, lat]),
+      unproject: point => lower48.unproject(point),
+    };
+  })();
+  // A map whose outline could not be fetched (offline, blocked) is drawn as its bars instead.
+  const geoStore = {maps: {}, zips: null, loading: {}, failed: {}};
+  function mapName(kind) { return 'qb-' + kind; }
+  function geoReady(payload) {
+    const geo = (payload && payload.geo) || {};
+    return Boolean(geo.map && geoStore.maps[geo.map] && (geo.map !== 'us_zip' || geoStore.zips));
+  }
+  function geoFailed(payload) {
+    const geo = (payload && payload.geo) || {};
+    return !geo.map || Boolean(geoStore.failed[geo.map]);
+  }
+  // A ZIP code as five digits: "02101-1234", and one kept as a number ("2101"), both "02101".
+  function zip5(value) {
+    const raw = String(value == null ? '' : value).trim();
+    const found = /^(\d{3,5})(?:-\d{4})?$/.exec(raw);
+    return found ? found[1].padStart(5, '0') : raw;
+  }
+  // The map a payload is drawn on, fetched once per page (and its ZIP points, for ZIP codes).
+  function loadGeo(payload) {
+    const geo = (payload && payload.geo) || {};
+    if (!geo.map || geoReady(payload)) return Promise.resolve();
+    if (!global.fetch) { geoStore.failed[geo.map] = true; return Promise.resolve(); }
+    const base = String(global.QB_GEO_BASE || '/static/geo/');
+    const fetched = (url, read) => global.fetch(url).then(r => {
+      if (!r.ok) throw new Error(`${url}: ${r.status}`);
+      return read(r);
+    });
+    const outline = geoStore.maps[geo.map] ? Promise.resolve() : (geoStore.loading[geo.file] ||
+      (geoStore.loading[geo.file] = fetched(base + geo.file, r => r.json())))
+      .then(json => {
+        if (!json) return;
+        ['us_state', 'us_zip', 'ca_province', 'country'].forEach(kind => {
+          if ((kind === geo.map || (geo.file === 'us-states.json' && kind.startsWith('us_'))) && global.echarts) {
+            global.echarts.registerMap(mapName(kind), json);
+            geoStore.maps[kind] = true;
+          }
+        });
+      });
+    const points = geo.map !== 'us_zip' || geoStore.zips ? Promise.resolve() : (geoStore.loading.zips ||
+      (geoStore.loading.zips = fetched(base + 'us-zip.csv', r => r.text())))
+      .then(text => {
+        const zips = {};
+        String(text || '').split('\n').slice(1).forEach(line => {
+          const [zip, lat, lon] = line.split(',');
+          if (zip && lat && lon) zips[zip] = [Number(lon), Number(lat)];
+        });
+        geoStore.zips = zips;
+      });
+    return Promise.all([outline, points]).catch(() => { geoStore.failed[geo.map] = true; });
+  }
+
   // ── The option ────────────────────────────────────────────────────────────
   function buildOption(payload, layout) {
     let rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
@@ -408,10 +500,12 @@
 
     const req = String((payload && payload.chart_type) || 'bar').toLowerCase();
     const known = ['pie', 'donut', 'scatter', 'area', 'line', 'waterfall', 'heatmap', 'funnel',
-                   'forecast', 'histogram', 'boxplot', 'treemap', 'dumbbell', 'bar'];
+                   'forecast', 'histogram', 'boxplot', 'treemap', 'dumbbell', 'map', 'bar'];
     // Stacked bars are bars: one bar per member, its parts piled to its total.
     const stacked = req === 'stacked';
-    const type = stacked ? 'bar' : (known.includes(req) ? req : (temporal ? 'line' : 'bar'));
+    // A map with no outline to draw on is its bars.
+    const unmapped = req === 'map' && geoFailed(payload);
+    const type = stacked || unmapped ? 'bar' : (known.includes(req) ? req : (temporal ? 'line' : 'bar'));
 
     // ── Density ────────────────────────────────────────────────────────────
     // Past a readable count a categorical chart shows the largest values and
@@ -579,6 +673,60 @@
           labelLine: {show: labelled, length: 10, length2: 10, lineStyle: {color: c.axis, width: 1}},
           emphasis: {scale: true, scaleSize: 4, label: {fontWeight: 600}},
         }],
+      });
+    }
+
+    // ── Map ────────────────────────────────────────────────────────────────
+    // A region shaded for each member, one hue light to dark, with nothing drawn for a region the answer has
+    // no row for; a ZIP code is a dot on its state, as large as its value. The map file is fetched first
+    // (loadGeo, in render); until it is here the chart says it is coming.
+    if (type === 'map') {
+      const geo = (payload && payload.geo) || {};
+      if (!geoReady(payload)) {
+        return Object.assign(base, {graphic: {type: 'text', left: 'center', top: 'middle',
+          style: {text: t('ui.chart.map_loading'), fill: c.muted, fontSize: 13, fontFamily: c.font}}});
+      }
+      const us = geo.map === 'us_state' || geo.map === 'us_zip';
+      const projection = us ? ALBERS_USA : undefined;
+      const regionsOf = geo.regions || {};
+      const values = rows.map(r => num(r && r[yKey])).filter(v => v != null);
+      const lo = values.length ? Math.min(...values) : 0, hi = values.length ? Math.max(...values) : 1;
+      const ramp = sequentialRamp();
+      const tip = (name, value) => tipHeader(name, c)
+        + tipRow(colors[0], yLabel, value == null ? t('ui.chart.not_available') : valueFmt(value, yKey), c, 'swatch');
+      const land = {areaColor: c.grid, borderColor: c.surface, borderWidth: 0.8};
+      if (geo.map === 'us_zip') {
+        const zips = geoStore.zips || {};
+        const dots = rows.map(r => {
+          const zip = zip5(r && r[xKey]);
+          const at = zips[zip];
+          return at ? {name: zip, value: [at[0], at[1], num(r[yKey])]} : null;
+        }).filter(Boolean);
+        const most = Math.max(1, ...dots.map(d => Math.abs(d.value[2] || 0)));
+        return Object.assign(base, {
+          tooltip: Object.assign(tooltipBase(c), {trigger: 'item',
+            formatter: p => tip(`${xLabel}: ${p.name}`, p.value && p.value[2])}),
+          geo: {map: mapName('us_zip'), projection, roam: false, silent: true, itemStyle: land,
+                emphasis: {disabled: true}, left: 8, right: 8, top: 8, bottom: 8},
+          series: [{type: 'scatter', coordinateSystem: 'geo', data: dots,
+            symbolSize: v => 5 + 17 * Math.sqrt(Math.abs((v && v[2]) || 0) / most),
+            itemStyle: {color: colors[0], opacity: 0.75, borderColor: c.surface, borderWidth: 1},
+            emphasis: {scale: 1.3}}],
+        });
+      }
+      const data = rows.map(r => ({name: regionsOf[String(r && r[xKey])] || String(r && r[xKey]),
+                                   value: num(r && r[yKey]), member: String(r && r[xKey])}));
+      return Object.assign(base, {
+        tooltip: Object.assign(tooltipBase(c), {trigger: 'item',
+          formatter: p => tip(p.name, p.data ? p.data.value : null)}),
+        visualMap: {min: lo, max: hi > lo ? hi : lo + 1, calculable: false, orient: 'horizontal',
+                    left: 8, bottom: 0, itemWidth: 10, itemHeight: 140, inRange: {color: ramp},
+                    text: [valueFmt(hi, yKey, true), valueFmt(lo, yKey, true)],
+                    textStyle: {color: c.muted, fontSize: 12, fontFamily: c.font}},
+        series: [{type: 'map', map: mapName(geo.map), projection, roam: false, data,
+                  top: 8, bottom: 36, left: 8, right: 8, selectedMode: false,
+                  itemStyle: land, label: {show: false},
+                  emphasis: {label: {show: false}, itemStyle: {borderColor: c.ink, borderWidth: 1}}}],
       });
     }
 
@@ -1455,6 +1603,10 @@
       fitToBox(option, el, opts);
       chart.resize();
       chart.setOption(option, true);
+      // A map draws once its outline is here: drawn now saying so, and again when it arrives.
+      if (String(payload.chart_type || '').toLowerCase() === 'map' && !geoReady(payload) && !geoFailed(payload)) {
+        loadGeo(payload).then(() => { if (geoReady(payload) || geoFailed(payload)) draw(); });
+      }
     };
     // Redrawn in place -- a new type in the same card -- the box is already
     // laid out, and waiting would only blank the chart for a frame.
@@ -1491,6 +1643,11 @@
     const option = buildOption(payload, layoutFor(el, opts));
     fitToBox(option, el, opts);
     chart.setOption(option, true);
+    if (String(payload.chart_type || '').toLowerCase() === 'map' && !geoReady(payload) && !geoFailed(payload)) {
+      loadGeo(payload).then(() => {
+        if ((geoReady(payload) || geoFailed(payload)) && !(chart.isDisposed && chart.isDisposed())) update(chart, payload, opts);
+      });
+    }
     return chart;
   }
 
@@ -1546,6 +1703,9 @@
 
   global.QBCharts = {
     countUp,
+    loadGeo,
+    albersUsa: ALBERS_USA,
+    _geo: geoStore,
     buildOption,
     render,
     update,

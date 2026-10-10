@@ -1,0 +1,1515 @@
+{
+"ca_province": {
+"Alberta": [
+"AB",
+"Alberta",
+"CA-AB"
+],
+"British Columbia": [
+"BC",
+"British Columbia",
+"CA-BC"
+],
+"Manitoba": [
+"CA-MB",
+"MB",
+"Manitoba"
+],
+"New Brunswick": [
+"CA-NB",
+"NB",
+"New Brunswick"
+],
+"Newfoundland and Labrador": [
+"CA-NL",
+"NL",
+"Newfoundland and Labrador"
+],
+"Northwest Territories": [
+"CA-NT",
+"NT",
+"Northwest Territories"
+],
+"Nova Scotia": [
+"CA-NS",
+"NS",
+"Nova Scotia"
+],
+"Nunavut": [
+"CA-NU",
+"NU",
+"Nunavut"
+],
+"Ontario": [
+"CA-ON",
+"ON",
+"Ontario"
+],
+"Prince Edward Island": [
+"CA-PE",
+"PE",
+"Prince Edward Island"
+],
+"Québec": [
+"CA-QC",
+"QC",
+"Quebec",
+"Québec"
+],
+"Saskatchewan": [
+"CA-SK",
+"SK",
+"Saskatchewan"
+],
+"Yukon": [
+"CA-YT",
+"YT",
+"Yukon"
+]
+},
+"country": {
+"Afghanistan": [
+"AF",
+"AFG",
+"Afg.",
+"Afghanistan",
+"Islamic State of Afghanistan"
+],
+"Albania": [
+"AL",
+"ALB",
+"Alb.",
+"Albania",
+"Republic of Albania"
+],
+"Algeria": [
+"Alg.",
+"Algeria",
+"DZ",
+"DZA",
+"People's Democratic Republic of Algeria"
+],
+"Angola": [
+"AGO",
+"AO",
+"Ang.",
+"Angola",
+"People's Republic of Angola"
+],
+"Argentina": [
+"AR",
+"ARG",
+"Arg.",
+"Argentina",
+"Argentine Republic"
+],
+"Armenia": [
+"AM",
+"ARM",
+"Arm.",
+"Armenia",
+"Republic of Armenia"
+],
+"Australia": [
+"AU",
+"AUS",
+"Australia",
+"Auz.",
+"Commonwealth of Australia"
+],
+"Austria": [
+"AT",
+"AUT",
+"Aust.",
+"Austria",
+"Republic of Austria"
+],
+"Azerbaijan": [
+"AZ",
+"AZE",
+"Aze.",
+"Azerbaijan",
+"Republic of Azerbaijan"
+],
+"Bahamas": [
+"BHS",
+"BS",
+"Bahamas",
+"Bhs.",
+"Commonwealth of the Bahamas",
+"The Bahamas"
+],
+"Bangladesh": [
+"BD",
+"BGD",
+"Bang.",
+"Bangladesh",
+"People's Republic of Bangladesh"
+],
+"Belarus": [
+"BLR",
+"BY",
+"Bela.",
+"Belarus",
+"Republic of Belarus"
+],
+"Belgium": [
+"BE",
+"BEL",
+"Belg.",
+"Belgium",
+"Kingdom of Belgium"
+],
+"Belize": [
+"BLZ",
+"BZ",
+"Belize"
+],
+"Benin": [
+"BEN",
+"BJ",
+"Benin",
+"Republic of Benin"
+],
+"Bhutan": [
+"BT",
+"BTN",
+"Bhutan",
+"Kingdom of Bhutan"
+],
+"Bolivia": [
+"BO",
+"BOL",
+"Bolivia",
+"Plurinational State of Bolivia"
+],
+"Bosnia and Herz.": [
+"B.H.",
+"BA",
+"BIH",
+"Bosnia and Herz.",
+"Bosnia and Herzegovina"
+],
+"Botswana": [
+"BW",
+"BWA",
+"Botswana",
+"Bwa.",
+"Republic of Botswana"
+],
+"Brazil": [
+"BR",
+"BRA",
+"Brazil",
+"Federative Republic of Brazil"
+],
+"Brunei": [
+"BN",
+"BRN",
+"Brunei",
+"Brunei Darussalam",
+"Negara Brunei Darussalam"
+],
+"Bulgaria": [
+"BG",
+"BGR",
+"Bulg.",
+"Bulgaria",
+"Republic of Bulgaria"
+],
+"Burkina Faso": [
+"B.F.",
+"BF",
+"BFA",
+"Burkina Faso"
+],
+"Burundi": [
+"BDI",
+"BI",
+"Bur.",
+"Burundi",
+"Republic of Burundi"
+],
+"Cambodia": [
+"Camb.",
+"Cambodia",
+"KH",
+"KHM",
+"Kingdom of Cambodia"
+],
+"Cameroon": [
+"CM",
+"CMR",
+"Cam.",
+"Cameroon",
+"Republic of Cameroon"
+],
+"Canada": [
+"CA",
+"CAN",
+"Can.",
+"Canada"
+],
+"Central African Rep.": [
+"C.A.R.",
+"CAF",
+"CF",
+"Central African Rep.",
+"Central African Republic"
+],
+"Chad": [
+"Chad",
+"Republic of Chad",
+"TCD",
+"TD"
+],
+"Chile": [
+"CHL",
+"CL",
+"Chile",
+"Republic of Chile"
+],
+"China": [
+"CHN",
+"CN",
+"China",
+"People's Republic of China"
+],
+"Colombia": [
+"CO",
+"COL",
+"Col.",
+"Colombia",
+"Republic of Colombia"
+],
+"Congo": [
+"CG",
+"COG",
+"Congo",
+"Rep. Congo",
+"Republic of the Congo"
+],
+"Costa Rica": [
+"C.R.",
+"CR",
+"CRI",
+"Costa Rica",
+"Republic of Costa Rica"
+],
+"Croatia": [
+"Cro.",
+"Croatia",
+"HR",
+"HRV",
+"Republic of Croatia"
+],
+"Cuba": [
+"CU",
+"CUB",
+"Cuba",
+"Republic of Cuba"
+],
+"Cyprus": [
+"CY",
+"CYP",
+"Cyp.",
+"Cyprus",
+"Republic of Cyprus"
+],
+"Czechia": [
+"CZ",
+"CZE",
+"Cz.",
+"Czech Republic",
+"Czechia"
+],
+"Côte d'Ivoire": [
+"CI",
+"CIV",
+"Côte d'Ivoire",
+"I.C.",
+"Ivory Coast",
+"Republic of Ivory Coast"
+],
+"Dem. Rep. Congo": [
+"CD",
+"COD",
+"D.R.C.",
+"DR Congo",
+"DRC",
+"Dem. Rep. Congo",
+"Democratic Republic of the Congo"
+],
+"Denmark": [
+"DK",
+"DNK",
+"Den.",
+"Denmark",
+"Kingdom of Denmark"
+],
+"Djibouti": [
+"DJ",
+"DJI",
+"Dji.",
+"Djibouti",
+"Republic of Djibouti"
+],
+"Dominican Rep.": [
+"DO",
+"DOM",
+"Dom. Rep.",
+"Dominican Rep.",
+"Dominican Republic"
+],
+"Ecuador": [
+"EC",
+"ECU",
+"Ecu.",
+"Ecuador",
+"Republic of Ecuador"
+],
+"Egypt": [
+"Arab Republic of Egypt",
+"EG",
+"EGY",
+"Egypt"
+],
+"El Salvador": [
+"El Salvador",
+"El. S.",
+"Republic of El Salvador",
+"SLV",
+"SV"
+],
+"Eq. Guinea": [
+"Eq. G.",
+"Eq. Guinea",
+"Equatorial Guinea",
+"GNQ",
+"GQ",
+"Republic of Equatorial Guinea"
+],
+"Eritrea": [
+"ER",
+"ERI",
+"Erit.",
+"Eritrea",
+"State of Eritrea"
+],
+"Estonia": [
+"EE",
+"EST",
+"Est.",
+"Estonia",
+"Republic of Estonia"
+],
+"Ethiopia": [
+"ET",
+"ETH",
+"Eth.",
+"Ethiopia",
+"Federal Democratic Republic of Ethiopia"
+],
+"Falkland Is.": [
+"FK",
+"FLK",
+"Falkland Is.",
+"Falkland Islands",
+"Falkland Islands / Malvinas",
+"Flk. Is."
+],
+"Fiji": [
+"FJ",
+"FJI",
+"Fiji",
+"Republic of Fiji"
+],
+"Finland": [
+"FI",
+"FIN",
+"Fin.",
+"Finland",
+"Republic of Finland"
+],
+"France": [
+"FR",
+"FRA",
+"Fr.",
+"France",
+"French Republic"
+],
+"Gabon": [
+"GA",
+"GAB",
+"Gabon",
+"Gabonese Republic"
+],
+"Gambia": [
+"GM",
+"GMB",
+"Gambia",
+"Republic of the Gambia",
+"The Gambia"
+],
+"Georgia": [
+"GE",
+"GEO",
+"Geo.",
+"Georgia"
+],
+"Germany": [
+"DE",
+"DEU",
+"Federal Republic of Germany",
+"Ger.",
+"Germany"
+],
+"Ghana": [
+"GH",
+"GHA",
+"Ghana",
+"Republic of Ghana"
+],
+"Greece": [
+"GR",
+"GRC",
+"Greece",
+"Hellenic Republic"
+],
+"Greenland": [
+"GL",
+"GRL",
+"Greenland",
+"Grlnd."
+],
+"Guatemala": [
+"GT",
+"GTM",
+"Guat.",
+"Guatemala",
+"Republic of Guatemala"
+],
+"Guinea": [
+"GIN",
+"GN",
+"Gin.",
+"Guinea",
+"Republic of Guinea"
+],
+"Guinea-Bissau": [
+"GNB",
+"GW",
+"GnB.",
+"Guinea-Bissau",
+"Republic of Guinea-Bissau"
+],
+"Guyana": [
+"Co-operative Republic of Guyana",
+"GUY",
+"GY",
+"Guy.",
+"Guyana"
+],
+"Haiti": [
+"HT",
+"HTI",
+"Haiti",
+"Republic of Haiti"
+],
+"Honduras": [
+"HN",
+"HND",
+"Hond.",
+"Honduras",
+"Republic of Honduras"
+],
+"Hungary": [
+"HU",
+"HUN",
+"Hun.",
+"Hungary",
+"Republic of Hungary"
+],
+"Iceland": [
+"IS",
+"ISL",
+"Iceland",
+"Republic of Iceland"
+],
+"India": [
+"IN",
+"IND",
+"India",
+"Republic of India"
+],
+"Indonesia": [
+"ID",
+"IDN",
+"Indo.",
+"Indonesia",
+"Republic of Indonesia"
+],
+"Iran": [
+"IR",
+"IRN",
+"Iran",
+"Islamic Republic of Iran"
+],
+"Iraq": [
+"IQ",
+"IRQ",
+"Iraq",
+"Republic of Iraq"
+],
+"Ireland": [
+"IE",
+"IRL",
+"Ire.",
+"Ireland"
+],
+"Israel": [
+"IL",
+"ISR",
+"Isr.",
+"Israel",
+"State of Israel"
+],
+"Italy": [
+"IT",
+"ITA",
+"Italian Republic",
+"Italy"
+],
+"Jamaica": [
+"JAM",
+"JM",
+"Jam.",
+"Jamaica"
+],
+"Japan": [
+"JP",
+"JPN",
+"Japan"
+],
+"Jordan": [
+"Hashemite Kingdom of Jordan",
+"JO",
+"JOR",
+"Jord.",
+"Jordan"
+],
+"Kazakhstan": [
+"KAZ",
+"KZ",
+"Kaz.",
+"Kazakhstan",
+"Republic of Kazakhstan"
+],
+"Kenya": [
+"KE",
+"KEN",
+"Ken.",
+"Kenya",
+"Republic of Kenya"
+],
+"Kosovo": [
+"Kos.",
+"Kosovo",
+"Republic of Kosovo",
+"XK"
+],
+"Kuwait": [
+"KW",
+"KWT",
+"Kuwait",
+"Kwt.",
+"State of Kuwait"
+],
+"Kyrgyzstan": [
+"KG",
+"KGZ",
+"Kgz.",
+"Kyrgyz Republic",
+"Kyrgyzstan"
+],
+"Laos": [
+"LA",
+"LAO",
+"Lao PDR",
+"Lao People's Democratic Republic",
+"Laos"
+],
+"Latvia": [
+"LV",
+"LVA",
+"Lat.",
+"Latvia",
+"Republic of Latvia"
+],
+"Lebanon": [
+"LB",
+"LBN",
+"Leb.",
+"Lebanese Republic",
+"Lebanon"
+],
+"Lesotho": [
+"Kingdom of Lesotho",
+"LS",
+"LSO",
+"Les.",
+"Lesotho"
+],
+"Liberia": [
+"LBR",
+"LR",
+"Liberia",
+"Republic of Liberia"
+],
+"Libya": [
+"LBY",
+"LY",
+"Libya"
+],
+"Lithuania": [
+"LT",
+"LTU",
+"Lith.",
+"Lithuania",
+"Republic of Lithuania"
+],
+"Luxembourg": [
+"Grand Duchy of Luxembourg",
+"LU",
+"LUX",
+"Lux.",
+"Luxembourg"
+],
+"Madagascar": [
+"MDG",
+"MG",
+"Mad.",
+"Madagascar",
+"Republic of Madagascar"
+],
+"Malawi": [
+"MW",
+"MWI",
+"Mal.",
+"Malawi",
+"Republic of Malawi"
+],
+"Malaysia": [
+"MY",
+"MYS",
+"Malay.",
+"Malaysia"
+],
+"Mali": [
+"ML",
+"MLI",
+"Mali",
+"Republic of Mali"
+],
+"Mauritania": [
+"Islamic Republic of Mauritania",
+"MR",
+"MRT",
+"Mauritania",
+"Mrt."
+],
+"Mexico": [
+"MEX",
+"MX",
+"Mex.",
+"Mexico",
+"United Mexican States"
+],
+"Moldova": [
+"MD",
+"MDA",
+"Mda.",
+"Moldova",
+"Republic of Moldova"
+],
+"Mongolia": [
+"MN",
+"MNG",
+"Mong.",
+"Mongolia"
+],
+"Montenegro": [
+"ME",
+"MNE",
+"Mont.",
+"Montenegro"
+],
+"Morocco": [
+"Kingdom of Morocco",
+"MA",
+"MAR",
+"Mor.",
+"Morocco"
+],
+"Mozambique": [
+"MOZ",
+"MZ",
+"Moz.",
+"Mozambique",
+"Republic of Mozambique"
+],
+"Myanmar": [
+"Burma",
+"MM",
+"MMR",
+"Myan.",
+"Myanmar",
+"Republic of the Union of Myanmar"
+],
+"N. Cyprus": [
+"N. Cy.",
+"N. Cyprus",
+"Northern Cyprus",
+"Turkish Republic of Northern Cyprus"
+],
+"Namibia": [
+"NA",
+"NAM",
+"Nam.",
+"Namibia",
+"Republic of Namibia"
+],
+"Nepal": [
+"NP",
+"NPL",
+"Nepal"
+],
+"Netherlands": [
+"Kingdom of the Netherlands",
+"NL",
+"NLD",
+"Neth.",
+"Netherlands"
+],
+"New Caledonia": [
+"NC",
+"NCL",
+"New C.",
+"New Caledonia"
+],
+"New Zealand": [
+"N.Z.",
+"NZ",
+"NZL",
+"New Zealand"
+],
+"Nicaragua": [
+"NI",
+"NIC",
+"Nic.",
+"Nicaragua",
+"Republic of Nicaragua"
+],
+"Niger": [
+"NE",
+"NER",
+"Niger",
+"Republic of Niger"
+],
+"Nigeria": [
+"Federal Republic of Nigeria",
+"NG",
+"NGA",
+"Nigeria"
+],
+"North Korea": [
+"Dem. Rep. Korea",
+"Democratic People's Republic of Korea",
+"KP",
+"N.K.",
+"North Korea",
+"PRK"
+],
+"North Macedonia": [
+"MK",
+"MKD",
+"Macedonia",
+"N. Mac.",
+"North Macedonia",
+"Republic of North Macedonia"
+],
+"Norway": [
+"Kingdom of Norway",
+"NO",
+"NOR",
+"Nor.",
+"Norway"
+],
+"Oman": [
+"OM",
+"OMN",
+"Oman",
+"Sultanate of Oman"
+],
+"Pakistan": [
+"Islamic Republic of Pakistan",
+"PAK",
+"PK",
+"Pak.",
+"Pakistan"
+],
+"Palestine": [
+"PS",
+"PSE",
+"Pal.",
+"Palestine",
+"West Bank and Gaza"
+],
+"Panama": [
+"PA",
+"PAN",
+"Pan.",
+"Panama",
+"Republic of Panama"
+],
+"Papua New Guinea": [
+"Independent State of Papua New Guinea",
+"P.N.G.",
+"PG",
+"PNG",
+"Papua New Guinea"
+],
+"Paraguay": [
+"PRY",
+"PY",
+"Para.",
+"Paraguay",
+"Republic of Paraguay"
+],
+"Peru": [
+"PE",
+"PER",
+"Peru",
+"Republic of Peru"
+],
+"Philippines": [
+"PH",
+"PHL",
+"Phil.",
+"Philippines",
+"Republic of the Philippines"
+],
+"Poland": [
+"PL",
+"POL",
+"Pol.",
+"Poland",
+"Republic of Poland"
+],
+"Portugal": [
+"PRT",
+"PT",
+"Port.",
+"Portugal",
+"Portuguese Republic"
+],
+"Puerto Rico": [
+"Commonwealth of Puerto Rico",
+"P.R.",
+"PR",
+"PRI",
+"Puerto Rico"
+],
+"Qatar": [
+"QA",
+"QAT",
+"Qatar",
+"State of Qatar"
+],
+"Romania": [
+"RO",
+"ROU",
+"Rom.",
+"Romania"
+],
+"Russia": [
+"RU",
+"RUS",
+"Rus.",
+"Russia",
+"Russian Federation"
+],
+"Rwanda": [
+"RW",
+"RWA",
+"Republic of Rwanda",
+"Rwa.",
+"Rwanda"
+],
+"S. Sudan": [
+"Republic of South Sudan",
+"S. Sud.",
+"S. Sudan",
+"SS",
+"SSD",
+"South Sudan"
+],
+"Saudi Arabia": [
+"Kingdom of Saudi Arabia",
+"SA",
+"SAU",
+"Saud.",
+"Saudi Arabia"
+],
+"Senegal": [
+"Republic of Senegal",
+"SEN",
+"SN",
+"Sen.",
+"Senegal"
+],
+"Serbia": [
+"RS",
+"Republic of Serbia",
+"SRB",
+"Serb.",
+"Serbia"
+],
+"Sierra Leone": [
+"Republic of Sierra Leone",
+"S.L.",
+"SL",
+"SLE",
+"Sierra Leone"
+],
+"Slovakia": [
+"SK",
+"SVK",
+"Slovak Republic",
+"Slovakia",
+"Svk."
+],
+"Slovenia": [
+"Republic of Slovenia",
+"SI",
+"SVN",
+"Slo.",
+"Slovenia"
+],
+"Solomon Is.": [
+"S. Is.",
+"SB",
+"SLB",
+"Solomon Is.",
+"Solomon Islands"
+],
+"Somalia": [
+"Federal Republic of Somalia",
+"SO",
+"SOM",
+"Som.",
+"Somalia"
+],
+"Somaliland": [
+"Republic of Somaliland",
+"Solnd.",
+"Somaliland"
+],
+"South Africa": [
+"Republic of South Africa",
+"S.Af.",
+"South Africa",
+"ZA",
+"ZAF"
+],
+"South Korea": [
+"KOR",
+"KR",
+"Republic of Korea",
+"S.K.",
+"South Korea"
+],
+"Spain": [
+"ES",
+"ESP",
+"Kingdom of Spain",
+"Sp.",
+"Spain"
+],
+"Sri Lanka": [
+"Democratic Socialist Republic of Sri Lanka",
+"LK",
+"LKA",
+"Sri L.",
+"Sri Lanka"
+],
+"Sudan": [
+"Republic of the Sudan",
+"SD",
+"SDN",
+"Sudan"
+],
+"Suriname": [
+"Republic of Suriname",
+"SR",
+"SUR",
+"Sur.",
+"Suriname"
+],
+"Sweden": [
+"Kingdom of Sweden",
+"SE",
+"SWE",
+"Swe.",
+"Sweden"
+],
+"Switzerland": [
+"CH",
+"CHE",
+"Swiss Confederation",
+"Switz.",
+"Switzerland"
+],
+"Syria": [
+"SY",
+"SYR",
+"Syria",
+"Syrian Arab Republic"
+],
+"Taiwan": [
+"CN-TW",
+"TW",
+"TWN",
+"Taiwan"
+],
+"Tajikistan": [
+"Republic of Tajikistan",
+"TJ",
+"TJK",
+"Tajikistan",
+"Tjk."
+],
+"Tanzania": [
+"TZ",
+"TZA",
+"Tanz.",
+"Tanzania",
+"United Republic of Tanzania"
+],
+"Thailand": [
+"Kingdom of Thailand",
+"TH",
+"THA",
+"Thai.",
+"Thailand"
+],
+"Timor-Leste": [
+"Democratic Republic of Timor-Leste",
+"East Timor",
+"T.L.",
+"TL",
+"TLS",
+"Timor-Leste"
+],
+"Togo": [
+"TG",
+"TGO",
+"Togo",
+"Togolese Republic"
+],
+"Trinidad and Tobago": [
+"Republic of Trinidad and Tobago",
+"TT",
+"TTO",
+"Tr.T.",
+"Trinidad and Tobago"
+],
+"Tunisia": [
+"Republic of Tunisia",
+"TN",
+"TUN",
+"Tun.",
+"Tunisia"
+],
+"Turkey": [
+"Republic of Turkey",
+"TR",
+"TUR",
+"Tur.",
+"Turkey"
+],
+"Turkmenistan": [
+"TKM",
+"TM",
+"Turkm.",
+"Turkmenistan"
+],
+"Uganda": [
+"Republic of Uganda",
+"UG",
+"UGA",
+"Uga.",
+"Uganda"
+],
+"Ukraine": [
+"UA",
+"UKR",
+"Ukr.",
+"Ukraine"
+],
+"United Arab Emirates": [
+"AE",
+"ARE",
+"U.A.E.",
+"United Arab Emirates"
+],
+"United Kingdom": [
+"Britain",
+"GB",
+"GBR",
+"Great Britain",
+"U.K.",
+"UK",
+"United Kingdom",
+"United Kingdom of Great Britain and Northern Ireland"
+],
+"United States of America": [
+"America",
+"U.S.",
+"U.S.A.",
+"US",
+"USA",
+"United States",
+"United States of America"
+],
+"Uruguay": [
+"Oriental Republic of Uruguay",
+"URY",
+"UY",
+"Uruguay",
+"Ury."
+],
+"Uzbekistan": [
+"Republic of Uzbekistan",
+"UZ",
+"UZB",
+"Uzb.",
+"Uzbekistan"
+],
+"Vanuatu": [
+"Republic of Vanuatu",
+"VU",
+"VUT",
+"Van.",
+"Vanuatu"
+],
+"Venezuela": [
+"Bolivarian Republic of Venezuela",
+"VE",
+"VEN",
+"Ven.",
+"Venezuela"
+],
+"Vietnam": [
+"Socialist Republic of Vietnam",
+"VN",
+"VNM",
+"Viet.",
+"Vietnam"
+],
+"W. Sahara": [
+"EH",
+"ESH",
+"Sahrawi Arab Democratic Republic",
+"W. Sah.",
+"W. Sahara",
+"Western Sahara"
+],
+"Yemen": [
+"Republic of Yemen",
+"YE",
+"YEM",
+"Yem.",
+"Yemen"
+],
+"Zambia": [
+"Republic of Zambia",
+"ZM",
+"ZMB",
+"Zambia"
+],
+"Zimbabwe": [
+"Republic of Zimbabwe",
+"ZW",
+"ZWE",
+"Zimb.",
+"Zimbabwe"
+],
+"eSwatini": [
+"Eswatini",
+"Kingdom of eSwatini",
+"SWZ",
+"SZ",
+"eSw.",
+"eSwatini"
+]
+},
+"us_state": {
+"Alabama": [
+"AL",
+"Alabama",
+"US-AL"
+],
+"Alaska": [
+"AK",
+"Alaska",
+"US-AK"
+],
+"Arizona": [
+"AZ",
+"Arizona",
+"US-AZ"
+],
+"Arkansas": [
+"AR",
+"Arkansas",
+"US-AR"
+],
+"California": [
+"CA",
+"California",
+"US-CA"
+],
+"Colorado": [
+"CO",
+"Colorado",
+"US-CO"
+],
+"Connecticut": [
+"CT",
+"Connecticut",
+"US-CT"
+],
+"Delaware": [
+"DE",
+"Delaware",
+"US-DE"
+],
+"District of Columbia": [
+"DC",
+"District of Columbia",
+"US-DC",
+"Washington"
+],
+"Florida": [
+"FL",
+"Florida",
+"US-FL"
+],
+"Georgia": [
+"GA",
+"Georgia",
+"US-GA"
+],
+"Hawaii": [
+"HI",
+"Hawaii",
+"US-HI"
+],
+"Idaho": [
+"ID",
+"Idaho",
+"US-ID"
+],
+"Illinois": [
+"IL",
+"Illinois",
+"US-IL"
+],
+"Indiana": [
+"IN",
+"Indiana",
+"US-IN"
+],
+"Iowa": [
+"IA",
+"Iowa",
+"US-IA"
+],
+"Kansas": [
+"KS",
+"Kansas",
+"US-KS"
+],
+"Kentucky": [
+"KY",
+"Kentucky",
+"US-KY"
+],
+"Louisiana": [
+"LA",
+"Louisiana",
+"US-LA"
+],
+"Maine": [
+"ME",
+"Maine",
+"US-ME"
+],
+"Maryland": [
+"MD",
+"Maryland",
+"US-MD"
+],
+"Massachusetts": [
+"MA",
+"Massachusetts",
+"US-MA"
+],
+"Michigan": [
+"MI",
+"Michigan",
+"US-MI"
+],
+"Minnesota": [
+"MN",
+"Minnesota",
+"US-MN"
+],
+"Mississippi": [
+"MS",
+"Mississippi",
+"US-MS"
+],
+"Missouri": [
+"MO",
+"Missouri",
+"US-MO"
+],
+"Montana": [
+"MT",
+"Montana",
+"US-MT"
+],
+"Nebraska": [
+"NE",
+"Nebraska",
+"US-NE"
+],
+"Nevada": [
+"NV",
+"Nevada",
+"US-NV"
+],
+"New Hampshire": [
+"NH",
+"New Hampshire",
+"US-NH"
+],
+"New Jersey": [
+"NJ",
+"New Jersey",
+"US-NJ"
+],
+"New Mexico": [
+"NM",
+"New Mexico",
+"US-NM"
+],
+"New York": [
+"NY",
+"New York",
+"US-NY"
+],
+"North Carolina": [
+"NC",
+"North Carolina",
+"US-NC"
+],
+"North Dakota": [
+"ND",
+"North Dakota",
+"US-ND"
+],
+"Ohio": [
+"OH",
+"Ohio",
+"US-OH"
+],
+"Oklahoma": [
+"OK",
+"Oklahoma",
+"US-OK"
+],
+"Oregon": [
+"OR",
+"Oregon",
+"US-OR"
+],
+"Pennsylvania": [
+"PA",
+"Pennsylvania",
+"US-PA"
+],
+"Rhode Island": [
+"RI",
+"Rhode Island",
+"US-RI"
+],
+"South Carolina": [
+"SC",
+"South Carolina",
+"US-SC"
+],
+"South Dakota": [
+"SD",
+"South Dakota",
+"US-SD"
+],
+"Tennessee": [
+"TN",
+"Tennessee",
+"US-TN"
+],
+"Texas": [
+"TX",
+"Texas",
+"US-TX"
+],
+"Utah": [
+"US-UT",
+"UT",
+"Utah"
+],
+"Vermont": [
+"US-VT",
+"VT",
+"Vermont"
+],
+"Virginia": [
+"US-VA",
+"VA",
+"Virginia"
+],
+"Washington": [
+"US-WA",
+"WA",
+"Washington"
+],
+"West Virginia": [
+"US-WV",
+"WV",
+"West Virginia"
+],
+"Wisconsin": [
+"US-WI",
+"WI",
+"Wisconsin"
+],
+"Wyoming": [
+"US-WY",
+"WY",
+"Wyoming"
+]
+}
+}

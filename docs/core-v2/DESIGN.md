@@ -685,6 +685,15 @@ words:
 * two measures over more than 12 members, or 8 or more in two different
   units, are a dot per member, the three furthest out named; bars stay on
   offer. The reader may ask for "stacked", "as a heatmap", "as a scatter";
+* a measure by places is a map (core2/answer/geo.py): US states, Canadian
+  provinces and countries, read from the members themselves (a code such as
+  "CA" only under a grouping named for one), each region shaded one hue
+  light to dark; US ZIP codes, four in five of them known, a dot each on
+  the states as large as its value. Named under the map: any member it has
+  no region or point for. A top N, or amounts below zero, stay bars with
+  the map on offer ("on a map"). The outlines are bundled (static/geo,
+  public domain; ZIP points MIT), fetched only when a map is drawn; one
+  that cannot be fetched is drawn as bars;
 * each reader chooses, on their Settings page, how their charts are drawn
   (portal_user.chart_prefs, only offered values kept): one of three
   palettes that tell six series apart in every pair (Standard, Ocean,

@@ -2169,7 +2169,7 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   const ct   = stored().chart_type || 'bar';
 
   // Type toggle
-  const TYPES = ['dumbbell', 'bar', 'stacked', 'line', 'area', 'pie', 'donut', 'scatter', 'heatmap']
+  const TYPES = ['dumbbell', 'bar', 'stacked', 'line', 'area', 'pie', 'donut', 'scatter', 'heatmap', 'map']
     .map(k => ({k, label: enumLabel('charttype', k)}));
   // `x`, not `t`: t is the translator in this scope, and shadowing it inside a
   // callback is how a lookup silently becomes whatever the callback iterates.
@@ -3143,11 +3143,12 @@ function _answerChartHeight(chart) {
   const temporal = ((chart.chart_spec || {}).x || {}).role === 'temporal';
   if (temporal || ['line', 'area', 'forecast', 'scatter', 'heatmap'].includes(type)) return 260;
   if (['pie', 'donut'].includes(type)) return 280;
+  if (type === 'map') return 340;
   const n = Array.isArray(chart.rows) ? chart.rows.length : 0;
   return Math.max(200, Math.min(460, n * 28 + 56));
 }
 
-const ANSWER_CHART_TYPES = ['line', 'area', 'bar', 'stacked', 'pie', 'donut', 'dumbbell', 'scatter', 'heatmap'];
+const ANSWER_CHART_TYPES = ['line', 'area', 'bar', 'stacked', 'pie', 'donut', 'dumbbell', 'scatter', 'heatmap', 'map'];
 function _answerChartTypes(chart) {
   if (!chart || !Array.isArray(chart.renderable_types)) return [];
   return ANSWER_CHART_TYPES.filter(k => chart.renderable_types.includes(k));

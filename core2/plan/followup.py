@@ -48,7 +48,7 @@ _RELATIVE = re.compile(r"\b(?:that|which|who)\s+(?:\w+ed|are|were|have|has|had|d
                        r"sold|made|got|took|left|went|came|hold|holds|pay|pays|use|uses)\b", re.IGNORECASE)
 _DISPLAY = re.compile(
     r"\b(?:as an?\s+(?:pie|bar|line|donut|doughnut|ring|table|chart|area|graph|heatmap|heat map|scatter|grid)|"
-    r"stacked(?: bars?)?|as a share|share of (?:the )?total|"
+    r"stacked(?: bars?)?|(?:as|on) a map|as a share|share of (?:the )?total|"
     r"as a percent(?:age)? of (?:the )?total|chart it|plot it|graph it|just the table)\b", re.IGNORECASE)
 _WHY = re.compile(r"^\s*(?:why|what\s+(?:drove|caused|explains|is behind)|how come|what changed)\b", re.IGNORECASE)
 # "Which items explain the change?", "what is behind this drop": about the change the answer on screen shows.
