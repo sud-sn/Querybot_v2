@@ -17,9 +17,12 @@ Routes:
   GET  /portal/kb                 — view KB files for user's tables
 """
 
+import asyncio
 import base64
 import collections
+import contextvars
 import datetime as _dt
+import functools
 import hashlib
 import hmac
 import json
@@ -28,6 +31,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -1203,24 +1207,19 @@ async def _render_dashboard(request: Request, user: dict):
     }
 
     # Refresh all pinned charts — re-execute SQL against live DB
-    rendered_charts = []
     db_cfg = None
     if charts:
         db_cfg = store.get_db_config(charts[0]["db_config_id"]) if charts[0].get("db_config_id") else None
-
-    for chart in charts:
-        chart_db = store.get_db_config(chart["db_config_id"]) if chart.get("db_config_id") else db_cfg
-        chart_data = _refresh_chart(
-            chart, chart_db, user,
-            filters=dashboard_filters,
-            filter_values={
-                str(item.get("field") or ""): str(request.query_params.get(f"filter_{index}") or "")
-                for index, item in enumerate(dashboard_filters)
-                if isinstance(item, dict)
-            },
-            view=view,
-        )
-        rendered_charts.append(chart_data)
+    rendered_charts = await _draw_tiles(
+        charts, db_cfg, user,
+        filters=dashboard_filters,
+        filter_values={
+            str(item.get("field") or ""): str(request.query_params.get(f"filter_{index}") or "")
+            for index, item in enumerate(dashboard_filters)
+            if isinstance(item, dict)
+        },
+        view=view,
+    )
 
     # The member filters on offer: each field a tile is grouped by alone, with that tile's members (the first
     # tile for a field wins), at most four of them.
@@ -1262,9 +1261,57 @@ async def _render_dashboard(request: Request, user: dict):
     })
 
 
+# A dashboard's tiles are drawn several at once, off the server's loop. Each may wait seconds on the warehouse;
+# drawn one after another on the loop, a 12-tile dashboard waited for all 12 in turn and held up every other
+# reader's page and chat meanwhile. Their own pool, so tiles never take the threads answers and scheduled jobs
+# use; and at most TILES_AT_ONCE of one dashboard at a time, so one big dashboard cannot take the whole pool.
+TILES_AT_ONCE = 4
+
+
+def _tile_threads() -> int:
+    """QUERYBOT_TILE_THREADS, 2 to 32; 8 when unset or not a number (a typo never stops the server)."""
+    try:
+        wanted = int(os.getenv("QUERYBOT_TILE_THREADS") or 8)
+    except ValueError:
+        wanted = 8
+    return max(2, min(32, wanted))
+
+
+_TILE_POOL = ThreadPoolExecutor(max_workers=_tile_threads(), thread_name_prefix="qb-tile")
+
+
+async def _draw_tiles(charts: list[dict], db_cfg: dict | None, user: dict, **draw) -> list[dict]:
+    """Every tile drawn (``_refresh_chart``), in the dashboard's order. A tile that fails says so on its card;
+    the others are drawn."""
+    loop = asyncio.get_running_loop()
+    gate = asyncio.Semaphore(TILES_AT_ONCE)
+
+    async def one(chart: dict) -> dict:
+        chart_db = store.get_db_config(chart["db_config_id"]) if chart.get("db_config_id") else db_cfg
+        async with gate:
+            # In a copy of this request's context: the reader's language goes with the tile to its thread.
+            context = contextvars.copy_context()
+            try:
+                return await loop.run_in_executor(
+                    _TILE_POOL, functools.partial(context.run, _refresh_chart, chart, chart_db, user, **draw))
+            except Exception as exc:  # noqa: BLE001 - one tile failing must not take the dashboard with it
+                log.warning("Dashboard tile %s could not be drawn: %s", chart.get("id"), exc, exc_info=True)
+                return {**_blank_tile(chart), "error": "This chart could not be refreshed."}
+
+    return list(await asyncio.gather(*(one(chart) for chart in charts)))
+
+
 # The table tile renders at most this many rows. The card says so now; it used
 # to print the full row count above fifty rendered rows.
 _TABLE_TILE_ROWS = 50
+
+
+def _blank_tile(chart: dict) -> dict:
+    """A tile before it is drawn: what every card reads, empty."""
+    return {**chart, "chart_json": None, "error": None, "row_count": 0, "kpi": None, "table_columns": [],
+            "table_column_labels": {}, "table_rows": [], "table_column_formats": {}, "table_truncated": False,
+            "table_shown": 0, "from_cache": False, "refresh_failed_at": "", "filter_warnings": [],
+            "error_next_step": ""}
 
 
 def _refresh_chart(
@@ -1278,21 +1325,7 @@ def _refresh_chart(
 ) -> dict:
     """Re-execute stored SQL and prepare interactive chart data. ``view``: the dashboard's period and member
     filters, for a new-core tile (_view_plan)."""
-    result = dict(chart)
-    result["chart_json"] = None
-    result["error"] = None
-    result["row_count"] = 0
-    result["kpi"] = None
-    result["table_columns"] = []
-    result["table_column_labels"] = {}
-    result["table_rows"] = []
-    result["table_column_formats"] = {}
-    result["table_truncated"] = False
-    result["table_shown"] = 0
-    result["from_cache"] = False
-    result["refresh_failed_at"] = ""
-    result["filter_warnings"] = []
-    result["error_next_step"] = ""
+    result = _blank_tile(chart)
 
     if not db_cfg:
         result["error"] = "Database not configured"

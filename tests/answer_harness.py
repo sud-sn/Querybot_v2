@@ -220,9 +220,15 @@ class Warehouse:
             # DATEADD(month, DATEDIFF(month, 0, d), 0) is 1900-01-01.
             tree = tree.transform(_tsql_concatenation).transform(_tsql_try_date).transform(_tsql_day_zero)
             statements.append(tree.sql(dialect="duckdb"))
-        cursor = self.con.execute(";\n".join(statements))
-        names = [d[0] for d in cursor.description]
-        return [dict(zip(names, row)) for row in cursor.fetchmany(max_rows)]
+        # A cursor of its own: the connection's execute() answers on the connection itself, so two queries at
+        # once (a dashboard's tiles, drawn together) read each other's rows.
+        cursor = self.con.cursor()
+        try:
+            cursor.execute(";\n".join(statements))
+            names = [d[0] for d in cursor.description]
+            return [dict(zip(names, row)) for row in cursor.fetchmany(max_rows)]
+        finally:
+            cursor.close()
 
 
 def _is_text(node) -> bool:
