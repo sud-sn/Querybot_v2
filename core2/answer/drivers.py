@@ -455,6 +455,10 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
             skipped.append(slug)
             why_not.append(f"{_grouping_word(model, slug)} ({str(exc).splitlines()[0][:120].rstrip('.')})")
             continue
+        if any(o.overlaps for o in logical.measures):
+            # Asked across a bridge (the candidates never cross one): a row counts under several members, so
+            # their changes are shown but do not split the change.
+            additive = False
         label = next((g.label for g in logical.groups if g.kind in ("attribute", "time")), slug)
         grouping = Grouping(slug, label, _movers(compiled, res, logical), truncated=res.truncated)
         score(grouping, change, additive)

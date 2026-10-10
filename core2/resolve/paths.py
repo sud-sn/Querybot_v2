@@ -145,6 +145,64 @@ def best_path(model: SemanticModel, start: str, goal: str, *, through: str | Non
     return paths[0]
 
 
+def reverse(j: Join) -> Join:
+    """``j`` followed from its target back to its source: a bridge table entered from one of the tables it links.
+    Its key starts with "~", so a path walked through it is told apart from one walked forward."""
+    return j.model_copy(update={
+        "key": f"~{j.key}", "from_table": j.to_table, "to_table": j.from_table, "from_columns": list(j.to_columns),
+        "to_columns": list(j.from_columns), "conditions": [], "role": None,
+        "cardinality": "one_to_one" if j.cardinality == "one_to_one" else "one_to_many"})
+
+
+def is_reverse(j: Join) -> bool:
+    return j.key.startswith("~")
+
+
+def crossings(model: SemanticModel, start: str, goal: str, *, through: str | None = None,
+              skip: frozenset[str] = frozenset()) -> list[Path]:
+    """Paths from ``start`` to ``goal`` that cross one bridge table (an actor in many films: FILM_ACTOR), best
+    first: row-safe steps to a table the bridge links, into the bridge, out to the other table, row-safe steps on.
+
+    Only a bridge holding each pair once (its key is the two links' columns) is crossed: then a row of ``start``
+    is under each member of ``goal`` at most once, and a figure for one member is right. Across members it is
+    counted once for each (``overlaps``), unless the bridge holds one row for each of the entered table's.
+    """
+    found: list[Path] = []
+    for bridge in sorted(model.tables.values(), key=lambda t: t.key):
+        if bridge.kind != "bridge" or not bridge.primary_key or bridge.key in (start, goal):
+            continue
+        out = [j for j in model.joins.values() if j.from_table == bridge.key and usable(j) and not repeats(j)
+               and not j.to_calendar and j.key not in skip]
+        for entered in out:
+            for left in out:
+                if left.key == entered.key or left.to_table == entered.to_table:
+                    continue
+                if not set(bridge.primary_key) <= set(entered.from_columns) | set(left.from_columns):
+                    continue          # a pair could be held twice: a row would count twice under one member
+                before = all_paths(model, start, entered.to_table, skip=skip)
+                after = all_paths(model, left.to_table, goal, skip=skip)
+                if not before or not after:
+                    continue
+                joins = before[0].joins + [reverse(entered), left] + after[0].joins
+                path = Path(joins)
+                tables = path.tables
+                if len(set(tables)) != len(tables) or (through is not None and through not in tables[1:]):
+                    continue
+                found.append(path)
+    return sorted(found, key=lambda p: (len(p.joins), p.score))
+
+
+def overlaps(path: Path) -> bool:
+    """Does ``path`` count a row once under each of several members (entering a bridge that holds several
+    rows for each row of the table it is entered from)?"""
+    return any(is_reverse(j) and j.cardinality != "one_to_one" for j in path.joins)
+
+
+def bridge_of(path: Path) -> str | None:
+    """The bridge table ``path`` crosses, if it crosses one."""
+    return next((j.to_table for j in path.joins if is_reverse(j)), None)
+
+
 def roles(path: Path) -> list[str]:
     return [j.role for j in path.joins if j.role]
 

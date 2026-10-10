@@ -36,7 +36,7 @@ from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
-from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
+from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup, Semi
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -136,6 +136,16 @@ class _Compiler:
         keys = [equal_keys(self.model, self.col(left, lc), lc, self.col(j.alias, rc), rc, self.d) for left, lc, rc in j.on]
         kept = [self.predicate(self.col(j.alias, column), op, list(values), column) for column, op, values in j.conds]
         return exp.and_(*keys, *kept)
+
+    def exists(self, semi: Semi) -> exp.Expr:
+        """A filter across a bridge: the part's row has at least one match (kept once, however many match)."""
+        first = semi.joins[0]
+        inner = exp.select(_num(1)).from_(self.table(first.table, first.alias))
+        for j in semi.joins[1:]:
+            inner = inner.join(self.table(j.table, j.alias), on=self.on(j), join_type="inner")
+        kept = [self.on(first)] + [self.predicate(self.col(p.alias, p.column), p.op, p.values, p.column)
+                                   for p in semi.preds]
+        return exp.Exists(this=inner.where(exp.and_(*kept)))
 
     def at(self, part: Part, column_key: str) -> exp.Column:
         """A column a measure reads: on the part's own table, or where the part reached its table."""
@@ -424,6 +434,7 @@ class _Compiler:
                                  join_type="inner" if j.kind == "inner" else "left")
         conds: list[exp.Expr] = [self.predicate(self.col(p.alias, p.column), p.op, p.values, p.column)
                                        for p in part.preds]
+        conds += [self.exists(semi) for semi in part.semis]
         conds += [self.days_condition(p) for p in part.day_preds]
         dated = False
         for use, rng in part.date_ranges:
@@ -629,10 +640,15 @@ def check_references(sql: str, dialect: str) -> None:
 
     DuckDB ignores the case of names, so a query that runs there can still name
     ``q`` where Snowflake or Oracle defined ``Q``; this catches it without a warehouse.
+    A correlated subquery (a filter across a bridge: EXISTS) may also name the tables of the scopes around it.
     """
     tree = normalize_identifiers(sqlglot.parse_one(sql, read=dialect), dialect=dialect)
     for scope in traverse_scope(tree):
         sources = set(scope.sources)
+        outer = scope.parent if scope.is_subquery else None
+        while outer is not None:
+            sources |= set(outer.sources)
+            outer = outer.parent
         stars = [c for c in scope.expression.find_all(exp.Column) if isinstance(c.this, exp.Star)
                  and c.find_ancestor(exp.Select) is scope.expression]
         for column in [*scope.columns, *stars]:

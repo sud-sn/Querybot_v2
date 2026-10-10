@@ -527,7 +527,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     kept: list[JoinFinding] = []
     for group in by_column.values():
         order = {"verified": 0, "declared": 1, "proposed": 2}
-        group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score, -f.coverage,
+        # Equal otherwise, the table the column is named for: PRODUCT_ID points at PRODUCTS, not at
+        # PRODUCT_CATEGORIES, which holds the same numbers once each beside each product's category.
+        group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score,
+                                  not _names_its_table(f.to_column, inventory.tables[f.to_table].name), -f.coverage,
                                   -f.match_rate, f.ident))
         best = group[0]
         if len(group) > 1 and not best.declared and not best.history and best.name_score == 0:

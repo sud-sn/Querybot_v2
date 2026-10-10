@@ -128,6 +128,7 @@ class OutMeasure:
     measure: Measure | None
     semi: bool = False
     hidden: bool = False     # one table's share of a combined measure: worked with, never shown
+    overlaps: bool = False   # grouped through a bridge: a row counts under each of its members (an actor's films)
 
 
 def adds_up(o: OutMeasure) -> bool:
@@ -136,8 +137,8 @@ def adds_up(o: OutMeasure) -> bool:
     An average, a ratio ("gross profit per invoice") or a percentage does not: its values over eight
     profit centres added together are no total, and "14% of the total" of them said nothing.
     """
-    if o.format in ("percent", "percentage", "days"):
-        return False
+    if o.format in ("percent", "percentage", "days") or o.overlaps:
+        return False          # grouped through a bridge, the members' values add up to more than the whole
     if o.measure is not None and o.measure.additivity == "non_additive":
         return False
     if isinstance(o.expr, DaysBetween):
@@ -172,10 +173,20 @@ class Pred:
 
 
 @dataclass
+class Semi:
+    """A filter reached through a bridge (films with a given actor): the rows that have at least one match,
+    each kept once, however many of its members match (EXISTS). ``joins[0]`` enters the bridge from the part."""
+
+    joins: list[Joined]
+    preds: list[Pred] = field(default_factory=list)
+
+
+@dataclass
 class Part:
     table: str
     alias: str
     joins: list[Joined] = field(default_factory=list)
+    semis: list[Semi] = field(default_factory=list)
     measures: list[OutMeasure] = field(default_factory=list)
     groups: list[PartGroup] = field(default_factory=list)
     preds: list[Pred] = field(default_factory=list)
@@ -354,13 +365,20 @@ class _PartBuilder:
         self.part = Part(table=table, alias=aliases.new(model.tables[table].slug or "f"))
         self.by_path: dict[tuple[str, ...], str] = {(): self.part.alias}
         self.paths_used: dict[str, P.Path] = {}
+        self.crossed: list[P.Path] = []        # paths through a bridge a grouping took (each row under each member)
+        self.semi_of: dict[str, Semi] = {}     # alias inside a filter's EXISTS -> that filter
 
     def _allowed(self, table: str) -> None:
         if self.ctx.allowed_tables is not None and table not in self.ctx.allowed_tables:
             raise ResolveError("denied", f"{self.model.tables[table].business_name} is not available to you")
 
-    def reach(self, table: str, *, through: str | None = None, role: str | None = None, label: str = "") -> str:
-        """The alias holding ``table``, joining along the one path rule (or through the named role)."""
+    def reach(self, table: str, *, through: str | None = None, role: str | None = None, label: str = "",
+              filtering: bool = False) -> str:
+        """The alias holding ``table``, joining along the one path rule (or through the named role).
+
+        A table reached only across a bridge (an actor, from rentals of films) is joined for a grouping, each
+        row counted under each of its members; for a filter (``filtering``) the rows with a match are kept
+        once each, inside an EXISTS (``semi_of``) -- unless a grouping already joined it."""
         self._allowed(table)
         if role:
             chosen = P.with_role(self.model, self.part.table, table, role, through=through)
@@ -393,12 +411,53 @@ class _PartBuilder:
                     "unconfirmed", f"{label or self.model.tables[table].business_name} is reached through a link "
                     "an admin has not confirmed yet", [f"{self.model.columns[j.from_columns[0]].business_name} -> "
                                                        f"{self.model.tables[j.to_table].business_name}" for j in links])
+            # Only when no direct way exists, confirmed or not: across a bridge a row counts under each member.
+            crossing = self._crossing(table, through, frozenset(skip), label)
+            if crossing is not None:
+                return self._cross(table, crossing, filtering)
             error = ResolveError("unsupported", self._counted_twice(table, label, skip) or (
                 f"{label or self.model.tables[table].business_name} is not linked to "
                 f"{self.model.tables[self.part.table].business_name}"))
             error.unlinked = table
             raise error
         return self._walk(table, path)
+
+    def _crossing(self, table: str, through: str | None, skip: frozenset[str], label: str) -> P.Path | None:
+        """The best path to ``table`` across one bridge, or None; two bridges equally good are asked about."""
+        found = [p for p in P.crossings(self.model, self.part.table, table, through=through, skip=skip)
+                 if not any(self._repeats(j) for j in p.joins if not P.is_reverse(j))]
+        if not found:
+            return None
+        best = [p for p in found if (len(p.joins), p.score) == (len(found[0].joins), found[0].score)]
+        if len({P.bridge_of(p) for p in best}) > 1:
+            raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be reached "
+                               "more than one way", [self.model.tables[P.bridge_of(p) or ""].business_name
+                                                     for p in best])
+        return found[0]
+
+    def _cross(self, table: str, path: P.Path, filtering: bool) -> str:
+        """Join ``path`` (a grouping), or keep its rows with a match once each (a filter, as an EXISTS)."""
+        keys = tuple(j.key for j in path.joins)
+        if not filtering or keys in self.by_path:
+            alias = self._walk(table, path)
+            if path not in self.crossed:
+                self.crossed.append(path)
+            return alias
+        entry = next(i for i, j in enumerate(path.joins) if P.is_reverse(j))
+        outer = self._walk(path.joins[entry - 1].to_table, P.Path(path.joins[:entry])) if entry else self.part.alias
+        semi = Semi(joins=[])
+        alias = outer
+        for j in path.joins[entry:]:
+            self._allowed(j.to_table)
+            new = self.aliases.new(self.model.tables[j.to_table].slug)
+            semi.joins.append(Joined(alias=new, table=j.to_table, on=[(alias, f, t) for f, t in
+                                                                      zip(j.from_columns, j.to_columns)],
+                                     kind="inner", what=self.model.tables[j.to_table].business_name,
+                                     conds=[(c.column, c.op, list(c.values)) for c in j.conditions]))
+            alias = new
+        self.part.semis.append(semi)
+        self.semi_of[alias] = semi
+        return alias
 
     def _repeats(self, j: Join) -> bool:
         """A link no one measured, found by the data to hold more than one target row for some key."""
@@ -1134,15 +1193,24 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, f.field)
             try:
-                alias = _reach(builder, column.table, f.field, through, link_role, attribute.business_name)
+                alias = _reach(builder, column.table, f.field, through, link_role, attribute.business_name,
+                               filtering=True)
             except ResolveError as exc:
                 if exc.kind != "unsupported":
                     raise
                 unreachable = exc
                 missed.append(part)
                 continue
-            part.preds.append(Pred(alias, column.key, f.op, list(f.values if stored is None else stored),
-                                   f"{attribute.business_name} {_op_words(f)}"))
+            pred = Pred(alias, column.key, f.op, list(f.values if stored is None else stored),
+                        f"{attribute.business_name} {_op_words(f)}")
+            if alias in builder.semi_of:
+                builder.semi_of[alias].preds.append(pred)     # rows with a match, each kept once
+                if len(pred.values) > 1 or f.op not in ("eq", "in"):
+                    notes.append(f"Each {model.tables[part.table].business_name.lower()} row is counted once, "
+                                 f"however many {plural(model.tables[column.table].business_name).lower()} "
+                                 "it matches.")
+            else:
+                part.preds.append(pred)
             took.append(part)
         if not took:
             if unreachable is not None:
@@ -1202,6 +1270,21 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         part = builder.part
         if part.date is not None and role is not None:
             notes.insert(0, f"{', '.join(o.label for o in part.measures)} by {role.name.lower()}.")
+        overlapping = [p for p in builder.crossed if P.overlaps(p)]
+        crossed = overlapping[0] if overlapping else None
+        if crossed is not None and part.measures:
+            # Through a bridge each row counts under every member it has: right for each, never added up.
+            for each_path in overlapping:
+                _one_member_a_group(model, builder, each_path)
+            for o in part.measures:
+                o.overlaps = True
+            entered = next(j for j in crossed.joins if P.is_reverse(j))
+            each = model.tables[entered.from_table].business_name.lower()
+            member = model.tables[crossed.tables[-1]].business_name.lower()
+            what = ", ".join(o.label for o in part.measures if not o.hidden)
+            notes.append(f"{what}: counted under each {member} of its {each} (a {each} with three "
+                         f"{plural(member)} counts for each of them), so the {plural(member)}' figures add up to "
+                         "more than the total.")
         # A table joined only to keep units apart is not one the reader asked about: no path note.
         unit_column = model.attributes[unit_slug].column if unit_slug is not None else None
         asked = {model.columns[g.column].table for g in part.groups if g.column and g.column != unit_column} | {
@@ -1326,8 +1409,11 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     share = intent == "share"
     if share and not all(adds_up(o) for o in measures_out if not o.hidden):
         share = False
-        notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not add up "
-                     "across its groups (an average or a ratio): no share of a total is worked out.")
+        if any(o.overlaps for o in measures_out):
+            notes.append("No share of a total is worked out: its groups overlap.")
+        else:
+            notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not "
+                         "add up across its groups (an average or a ratio): no share of a total is worked out.")
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, having=having,
                    notes=_unique(notes),
@@ -1385,9 +1471,48 @@ def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str |
     return None, named.removeprefix("role:").strip()
 
 
-def _reach(builder: _PartBuilder, table: str, slug: str, through: str | None, role: str | None, label: str) -> str:
+def _one_member_a_group(model: SemanticModel, builder: _PartBuilder, crossed: P.Path) -> None:
+    """Grouped through a bridge, each group must be one member: a row under two actors sharing a last name
+    would count twice under that last name. A grouping beyond the bridge needs one that tells its members
+    apart (their key, a unique code, a name with its key beside it); else the question is refused."""
+    entry = next(i for i, j in enumerate(crossed.joins) if P.is_reverse(j))
+    member = crossed.joins[entry + 1].to_table
+    beyond = set(crossed.tables[entry + 2:])
+    groups = [g for g in builder.part.groups if g.kind == "attribute" and g.column
+              and model.columns[g.column].table in beyond]
+    if not groups:
+        return
+    apart = any(model.columns[g.column].table == member and _tells_apart(model, g.column) for g in groups)
+    if apart:
+        return
+    g = groups[0]
+    rows = plural(model.tables[builder.part.table].business_name).lower()
+    members = plural(model.tables[member].business_name).lower()
+    what = model.columns[g.column].business_name
+    raise ResolveError("unsupported", f"{what} cannot split {rows} through "
+                       f"{model.tables[P.bridge_of(crossed) or ''].business_name.lower()}: several {members} can "
+                       f"share one {what.lower()}, and a row under two of them would be counted twice under it. "
+                       f"Ask by {model.tables[member].business_name.lower()} instead")
+
+
+def _tells_apart(model: SemanticModel, column_key: str) -> bool:
+    """Does ``column_key`` hold a different value for every row of its table (its key, a unique code)?"""
+    column = model.columns[column_key]
+    table = model.tables[column.table]
+    if table.primary_key == [column_key]:
+        return True
+    if table.versions is None and any(e.table == table.key and column_key in (e.code_column, *e.key_columns)
+                                      for e in model.entities.values()):
+        return True           # the members' own code, found unique when Learn read the table
+    p = column.profile
+    return p is not None and bool(table.row_count) and p.distinct >= (table.row_count or 0) and p.non_null >= (
+        table.row_count or 0)
+
+
+def _reach(builder: _PartBuilder, table: str, slug: str, through: str | None, role: str | None, label: str,
+           *, filtering: bool = False) -> str:
     try:
-        return builder.reach(table, through=through, role=role, label=label)
+        return builder.reach(table, through=through, role=role, label=label, filtering=filtering)
     except ResolveError as exc:
         if exc.kind == "ambiguous" and exc.field is None:
             exc.field = slug                 # the reply names a link for this slug
