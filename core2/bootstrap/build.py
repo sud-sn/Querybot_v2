@@ -393,8 +393,11 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 business_name=names.readable(column.name, column.data_type), format=fmt,  # type: ignore[arg-type]
                 values_allowed=f.values_allowed(key, column.name) and held is None,
                 sensitivity="pii" if held == personal.PII else "none",
-                # People's values are not kept in the model: the catalog and the member list never see them.
-                profile=p.model_copy(update={"top": None}) if held and p is not None else p,
+                personal="detail" if held == personal.PII else "name" if held == personal.NAME else "none",
+                # People's values are not kept in the model: the catalog and the member list never see them,
+                # nor its first and last (two people's birth dates, two emails).
+                profile=p.model_copy(update={"top": None, "min": None, "max": None, "min_num": None, "max_num": None,
+                                             "date_min": None, "date_max": None}) if held and p is not None else p,
                 provenance="profile", status="verified", confidence=1.0)
 
     # Measures.
@@ -520,8 +523,9 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         slug = ids.unique_slug(ids.slug(business), taken)
         entity_of[key] = slug
         held = people.get(key, {})
+        # A code shown beside each member's name is never a person's data: a unique last name or email is not one.
         texts = [c for c in tkeys.unique_columns if table.type_of(c) == "text" and c not in tkeys.primary_key
-                 and held.get(c) != personal.PII]
+                 and c not in held]
         found = _label_column(table, profile, tkeys, held)
         label_key = _two_part_name(model, key, business, found, profile) if isinstance(found, tuple) else (
             ck[(key, found)] if found else None)
@@ -647,7 +651,7 @@ def _two_part_name(model: SemanticModel, key: str, business: str, parts: tuple[s
     k = f"{key}.{first.casefold()}+{last.casefold()}"
     a, b = profile.columns[first], profile.columns[last]
     model.columns[k] = Column(
-        key=k, table=key, name=f"{first}+{last}", data_type="text", role="label",
+        key=k, table=key, name=f"{first}+{last}", data_type="text", role="label", personal="name",
         business_name=f"{business} name", format="text", values_allowed=False,
         parts=[f"{key}.{first.casefold()}", f"{key}.{last.casefold()}"],
         # Two people can share a name: never read as unique, so a grouping keeps them apart by their key.

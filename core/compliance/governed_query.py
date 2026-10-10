@@ -100,6 +100,27 @@ def governed_reader_for_user(
     return run
 
 
+def _attested_scope(account_id: str, user_id: str) -> set[str]:
+    """The data classes the reader's valid attestations release ("*": every one). Unreadable, or none valid
+    any more (it ended since it was checked): none."""
+    try:
+        scope = store.user_attestation_scope(account_id, user_id)
+    except Exception:  # noqa: BLE001 - a scope that cannot be read releases nothing
+        return set()
+    return scope or set()
+
+
+def _covered(resource: str, scope: set[str], account_id: str) -> bool:
+    """Do the attestation's data classes cover every tag of this masked column?"""
+    key = str(resource).upper()
+    for classified, item in (store.get_classification_map(account_id) or {}).items():
+        classified = str(classified).upper()
+        if key == classified or key.endswith("." + classified) or classified.endswith("." + key):
+            tags = {str(t).upper() for t in (item.get("tags") or [])}
+            return bool(tags) and tags <= scope
+    return False
+
+
 def execute_governed_query(
     credentials: dict,
     db_type: str,
@@ -184,6 +205,14 @@ def execute_governed_query(
     if combined_masking and store.user_attestation_valid(
         context.account_id, context.user_id
     ):
+        # Released only within the data classes the attestation names ("*": all of them). A
+        # classification the attestation does not cover stays masked.
+        scope = _attested_scope(context.account_id, context.user_id)
+        kept = {} if "*" in scope else {
+            resource: strategy for resource, strategy in combined_masking.items()
+            if not _covered(resource, scope, context.account_id)
+        }
+        waived = {k: v for k, v in combined_masking.items() if k not in kept}
         try:
             store.log_policy_decision(
                 account_id=context.account_id,
@@ -193,11 +222,11 @@ def execute_governed_query(
                 channel=context.channel,
                 allowed=True,
                 reason_code="attested_unmasked_release",
-                resources=sorted(combined_masking.keys()),
-                obligations={"masking_waived": combined_masking},
+                resources=sorted(waived.keys()),
+                obligations={"masking_waived": waived},
                 policy_version=context.policy_version or 0,
-            )
-            combined_masking = {}
+            ) if waived else None
+            combined_masking = kept
         except Exception:
             # An unmasked release without its audit row is worse than a
             # masked result — if the log can't be written, keep the masking.

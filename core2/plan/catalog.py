@@ -100,12 +100,17 @@ def _meaning(model: SemanticModel, attribute: Attribute) -> str:
     return f" ({text[:160]})" if column.provenance == "admin" and text else ""
 
 
-def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, limit: int) -> str:
+def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, limit: int,
+             personal_shown: bool = False) -> str:
     column = model.columns[attribute.column]
     p = column.profile
     count = attribute.members or (p.distinct if p else 0)
+    if column.sensitivity == "pii" and column.personal == "detail" and personal_shown:
+        return "a personal detail: shown masked unless the reader is cleared to see it; its values are never listed"
     if column.sensitivity != "none":
         return "sensitive: never shown or filtered on"
+    if column.personal != "none":
+        return f"{count:,} people: their names are never listed" if count else "people's names: never listed"
     if not values_allowed or not column.values_allowed or not p or not p.top \
             or count > limit:
         return f"{count:,} values" if count else ""
@@ -114,7 +119,8 @@ def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, l
     return f"{count} values: {', '.join(f'{names[v]} ({v})' if v in names else v for v in shown)}"
 
 
-def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_values_up_to: int = 12) -> str:
+def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_values_up_to: int = 12,
+                 personal_shown: bool = False) -> str:
     """The planner's view of ``model``: stable for a model version (no clock, no question)."""
     lines: list[str] = ["DATA CATALOG", "Use only these names (slugs), exactly as written.", ""]
 
@@ -172,14 +178,14 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
         for a in sorted(by_owner.get(e.table, []), key=lambda a: a.slug):
             if a.column == e.label_column:
                 continue
-            values = _members(model, a, values_allowed, list_values_up_to)
+            values = _members(model, a, values_allowed, list_values_up_to, personal_shown)
             lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     for table_key in measure_tables:
         own = sorted(by_owner.get(table_key, []), key=lambda a: a.slug)
         if own and not any(e.table == table_key for e in model.entities.values()):
             lines.append(f"- on {model.tables[table_key].business_name} itself:")
             for a in own:
-                values = _members(model, a, values_allowed, list_values_up_to)
+                values = _members(model, a, values_allowed, list_values_up_to, personal_shown)
                 lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     lines.append("")
 

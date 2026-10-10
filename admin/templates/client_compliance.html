@@ -53,7 +53,13 @@
   {% if _regulated %}<span class="readiness {% if state == 'REGULATED_READY' %}ready-green{% elif state in ['PILOT_READY','PRODUCTION_BLOCKED','CLASSIFICATION_PENDING','POLICY_PENDING'] %}ready-amber{% else %}ready-red{% endif %}">{{ state }}</span>{% endif %}
 </div>
 {% if saved %}<div class="alert alert-success">Compliance configuration updated: {{ saved }}.</div>{% endif %}
-{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% set _attestation_errors = {
+    "attestation_user_required": "Choose who signed the attestation.",
+    "attestation_scope_required": "Tick at least one kind of personal data the attestation covers.",
+    "attestation_document_type": "The signed document must be a PDF, PNG or JPG file.",
+    "attestation_document_size": "The signed document must be smaller than 5 MB.",
+} %}
+{% if error %}<div class="alert alert-error">{{ _attestation_errors.get(error, error) }}</div>{% endif %}
 
 {# ── Ordered readiness checklist ──────────────────────────────────────────
    Mirrors readiness.py:assess()'s exact criteria and order, computed here
@@ -242,25 +248,35 @@
           <strong>{{ item.user_name or ('user #' ~ item.portal_user_id) }}</strong>
           {% if item.user_email %}<span style="font-size:var(--font-xs);color:var(--text-muted)"> {{ item.user_email }}</span>{% endif %}
           <span class="tag">{{ item.attestation_type }}</span>
-          {% if item.revoked_at %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">revoked {{ item.revoked_at[:10] }}</span>{% else %}<span class="tag" style="background:var(--success-soft);color:var(--success)">active</span>{% endif %}
-          <div style="font-size:var(--font-xs);color:var(--text-muted)">granted {{ item.granted_at[:10] }} by {{ item.granted_by or 'admin' }}{% if item.document_ref %} · {{ item.document_ref }}{% endif %}</div>
+          {% if item.state == "revoked" %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">revoked {{ item.revoked_at[:10] }}</span>{% elif item.state == "expired" %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">ended {{ item.expires_at[:10] }}</span>{% else %}<span class="tag" style="background:var(--success-soft);color:var(--success)">active{% if item.expires_at %} until {{ item.expires_at[:10] }}{% endif %}</span>{% endif %}
+          <span class="tag">{{ "every data class" if (item.scope or "*") == "*" else item.scope|replace(",", ", ") }}</span>
+          <div style="font-size:var(--font-xs);color:var(--text-muted)">granted {{ item.granted_at[:10] }} by {{ item.granted_by or 'admin' }}{% if item.document_ref %} · {{ item.document_ref }}{% endif %}{% if item.document_name %} · <a href="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/document" title="SHA-256 {{ item.document_sha256 }}">{{ item.document_name }}</a>{% endif %}</div>
         </div>
-        {% if not item.revoked_at %}
+        {% if item.state == "signed" %}
         <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ item.id }}/revoke" id="revoke-att-{{ item.id }}">
           <button type="submit" class="btn btn-secondary" style="font-size:var(--font-xs)"
-            data-confirm-title="Revoke this attestation?" data-confirm="{{ item.user_id or 'This user' }} will see masked values again immediately, on their next query." data-confirm-label="Revoke">Revoke</button>
+            data-confirm-title="Revoke this attestation?" data-confirm="{{ item.user_name or 'This user' }} will see masked values again from their next question, and answers shown to them before are not shown again as they were." data-confirm-label="Revoke">Revoke</button>
         </form>
         {% endif %}
       </div>
       {% else %}<p>No user attestations recorded — all users see masked values.</p>{% endfor %}
     </div></div>
     <div class="card"><div class="card-header"><h2>Grant attestation</h2></div><div class="card-body">
-      <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation">
-        <div class="form-group"><label>User</label><select name="portal_user_id" required><option value="">Select a user…</option>{% for user in users %}<option value="{{ user.id }}">{{ user.name }} ({{ user.email }})</option>{% endfor %}</select></div>
-        <div class="form-group"><label>Attestation type</label><select name="attestation_type"><option value="confidentiality">Confidentiality agreement</option><option value="hipaa_workforce">HIPAA workforce training</option><option value="access_authorization">Access authorization</option></select></div>
-        <div class="form-group"><label>Document reference</label><input name="document_ref" placeholder="Signed-document reference (HR system, DMS link…)"></div>
+      <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation" enctype="multipart/form-data">
+        <div class="form-group"><label for="ga_user">User</label><select id="ga_user" name="portal_user_id" required><option value="">Select a user…</option>{% for user in users %}<option value="{{ user.id }}">{{ user.name }} ({{ user.email }})</option>{% endfor %}</select></div>
+        <div class="form-group"><label for="ga_type">Attestation type</label><select id="ga_type" name="attestation_type"><option value="confidentiality">Confidentiality agreement</option><option value="hipaa_workforce">HIPAA workforce training</option><option value="access_authorization">Access authorization</option></select></div>
+        <div class="form-group"><label for="ga_term">Valid for</label><select id="ga_term" name="valid_months"><option value="3">3 months</option><option value="6">6 months</option><option value="12" selected>12 months</option><option value="24">24 months</option><option value="">No end date</option></select></div>
+        <fieldset class="form-group" style="border:0;padding:0;margin:0 0 .75rem">
+          <legend style="font-weight:var(--weight-semibold);font-size:var(--font-sm)">What it covers</legend>
+          <p style="font-size:var(--font-xs);color:var(--text-muted);margin:.25rem 0">Tick none for every kind of personal data; tick some to release only those.</p>
+          <label style="display:block;font-size:var(--font-sm)"><input type="checkbox" name="scope" value="PII"> Personal details (PII)</label>
+          <label style="display:block;font-size:var(--font-sm)"><input type="checkbox" name="scope" value="PHI"> Health information (PHI)</label>
+          <label style="display:block;font-size:var(--font-sm)"><input type="checkbox" name="scope" value="PCI"> Payment card data (PCI)</label>
+        </fieldset>
+        <div class="form-group"><label for="ga_ref">Document reference</label><input id="ga_ref" name="document_ref" placeholder="Signed-document reference (HR system, DMS link…)"></div>
+        <div class="form-group"><label for="ga_doc">Signed document (PDF, PNG or JPG, under 5 MB)</label><input type="file" id="ga_doc" name="document" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"></div>
         <button class="btn btn-primary">Grant attestation</button>
-        <p style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.5rem">Record the signed document reference so an auditor can trace the grant to the paper trail.</p>
+        <p style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.5rem">The signed document is kept with the grant and its SHA-256, so an auditor can trace it to the paper trail. The People page shows each person's status.</p>
       </form>
     </div></div>
   </div>
@@ -368,7 +384,7 @@
           <td><span class="tag">{{ decision_counts.allowed }} allowed · {{ decision_counts.denied }} denied</span></td>
           <td style="font-size:var(--font-sm)">Hash-chained records (each entry signs the previous) — History tab</td>
         </tr>
-        {% set _active_attestations = attestations|rejectattr('revoked_at')|list|length %}
+        {% set _active_attestations = attestations|selectattr('state', 'equalto', 'signed')|list|length %}
         <tr>
           <td>Unmasked releases to attested users</td>
           <td>

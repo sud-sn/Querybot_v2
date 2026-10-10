@@ -3973,34 +3973,118 @@ async def compliance_grant_attestation(request: Request, account_id: str):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
     form = await request.form()
+    page = "users" if str(form.get("back") or "") == "users" else "compliance"
     portal_user_id = str(form.get("portal_user_id") or "").strip()
-    if not portal_user_id:
+    if not portal_user_id.isdigit():
         return RedirectResponse(
-            f"/admin/clients/{account_id}/compliance?error=attestation_user_required",
+            f"/admin/clients/{account_id}/{page}?error=attestation_user_required",
             status_code=303,
         )
+    _workspace_user(account_id, int(portal_user_id))      # someone in this workspace, or a 404
+    # Limited to the data classes ticked; "only these" with none ticked never widens to every class.
+    scope = ",".join(str(s) for s in form.getlist("scope") if str(s).strip())
+    if not scope and str(form.get("scope_all") or "1") == "0":
+        return RedirectResponse(
+            f"/admin/clients/{account_id}/{page}?error=attestation_scope_required",
+            status_code=303,
+        )
+    document_name, digest = "", ""
+    upload = form.get("document")
+    if upload is not None and getattr(upload, "filename", ""):
+        kept = await _attestation_document(account_id, upload)
+        if isinstance(kept, str):
+            return RedirectResponse(f"/admin/clients/{account_id}/{page}?error={kept}", status_code=303)
+        document_name, digest = kept
     store.save_user_attestation(
         account_id,
         portal_user_id,
         attestation_type=str(form.get("attestation_type") or "confidentiality"),
         document_ref=str(form.get("document_ref") or "").strip(),
         granted_by="admin",
+        expires_at=_attestation_ends(str(form.get("valid_months") or "")),
+        scope=scope or "*",
+        document_name=document_name,
+        document_sha256=digest,
     )
     return RedirectResponse(
-        f"/admin/clients/{account_id}/compliance?saved=attestation", status_code=303
+        f"/admin/clients/{account_id}/{page}?saved=attestation", status_code=303
     )
+
+
+_ATTESTATION_DOCUMENT_TYPES = {".pdf", ".png", ".jpg", ".jpeg"}
+_ATTESTATION_DOCUMENT_BYTES = 5_000_000
+
+
+def _attestation_ends(months: str) -> str | None:
+    """The end of an attestation granted now for ``months`` months (UTC); None for one with no end."""
+    if not months.isdigit() or not 0 < int(months) <= 60:
+        return None
+    import datetime as _dt
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    month = now.month - 1 + int(months)
+    year, month = now.year + month // 12, month % 12 + 1
+    day = min(now.day, [31, 29 if year % 4 == 0 and (year % 100 or year % 400 == 0) else 28, 31, 30, 31, 30,
+                        31, 31, 30, 31, 30, 31][month - 1])
+    return now.replace(year=year, month=month, day=day).strftime("%Y-%m-%d %H:%M:%S")
+
+
+async def _attestation_document(account_id: str, upload) -> tuple[str, str] | str:
+    """The signed document kept with an attestation, named by its SHA-256: (its name, the digest), or the
+    error code that says why it was not kept."""
+    import hashlib
+    from pathlib import Path as _Path
+
+    from core.pipeline_context import client_dir
+
+    suffix = _Path(str(upload.filename)).suffix.lower()
+    if suffix not in _ATTESTATION_DOCUMENT_TYPES:
+        return "attestation_document_type"
+    raw = await upload.read()
+    if not raw or len(raw) > _ATTESTATION_DOCUMENT_BYTES:
+        return "attestation_document_size"
+    digest = hashlib.sha256(raw).hexdigest()
+    folder = client_dir(account_id) / "attestations"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{digest}{suffix}").write_bytes(raw)
+    return _Path(str(upload.filename)).name[:120], digest
+
+
+@router.get("/clients/{account_id}/compliance/attestation/{attestation_id}/document")
+async def compliance_attestation_document(request: Request, account_id: str, attestation_id: int):
+    """The signed document kept with an attestation, for an admin of the workspace."""
+    if not _is_auth(request):
+        raise HTTPException(status_code=401)
+    from pathlib import Path as _Path
+
+    from fastapi.responses import FileResponse
+
+    from core.pipeline_context import client_dir
+
+    row = next((a for a in store.list_user_attestations(account_id) if int(a.get("id") or 0) == attestation_id),
+               None)
+    digest = str((row or {}).get("document_sha256") or "")
+    name = str((row or {}).get("document_name") or "")
+    if not row or not digest or not all(c in "0123456789abcdef" for c in digest):
+        raise HTTPException(status_code=404)
+    path = client_dir(account_id) / "attestations" / f"{digest}{_Path(name).suffix.lower()}"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(str(path), filename=name or path.name)
 
 
 @router.post("/clients/{account_id}/compliance/attestation/{attestation_id}/revoke")
 async def compliance_revoke_attestation(request: Request, account_id: str, attestation_id: int):
     if not _is_auth(request):
         raise HTTPException(status_code=401)
+    form = await request.form()
+    page = "users" if str(form.get("back") or "") == "users" else "compliance"
     store.revoke_user_attestation(
         account_id, attestation_id,
         revoked_by="admin",
     )
     return RedirectResponse(
-        f"/admin/clients/{account_id}/compliance?saved=attestation_revoked", status_code=303
+        f"/admin/clients/{account_id}/{page}?saved=attestation_revoked", status_code=303
     )
 
 
@@ -4291,6 +4375,17 @@ def _take_reveal(account_id: str, token: str | None) -> dict:
     return shown if owner == account_id and expires >= time.monotonic() else {}
 
 
+def _workspace_regulated(account_id: str) -> bool:
+    """Is the workspace under compliance (people's data masked unless a reader is cleared)?"""
+    try:
+        from core2.service import question_scrubber
+
+        return question_scrubber(account_id) is not None
+    except Exception as exc:  # noqa: BLE001 - shown as under compliance: the column says more, never less
+        log.warning("Could not read whether %s is under compliance: %s", account_id, exc)
+        return True
+
+
 @router.get("/clients/{account_id}/users", response_class=HTMLResponse)
 async def users_page(request: Request, account_id: str):
     if not _is_auth(request):
@@ -4320,6 +4415,10 @@ async def users_page(request: Request, account_id: str):
         "temp_pw_hours": store.TEMP_PASSWORD_HOURS,
         "events":    store.list_user_events(account_id),
         "error":     request.query_params.get("error"),
+        # Who may see people's data as stored: each user's confidentiality attestation, where the workspace is
+        # under compliance (the column is not shown elsewhere).
+        "regulated": _workspace_regulated(account_id),
+        "attestations": store.attestation_status(account_id),
     })
     # The page can show a password: not for the browser's cache or Back button.
     if hasattr(response, "headers"):

@@ -211,8 +211,10 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         return len(path.joins) if path is not None else None
 
     for e in model.entities.values():
-        if e.slug in skip or e.table == table or not 2 <= (e.members or 0) <= 2000:
-            continue
+        label = model.columns.get(e.label_column or "")
+        if e.slug in skip or e.table == table or not 2 <= (e.members or 0) <= 2000 \
+                or label is not None and label.personal != "none":
+            continue          # people (patients, customers by name) are never ranked as a change's drivers
         n = hops(e.table)
         if n is None or n > 2:
             continue
@@ -221,7 +223,7 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         column = model.columns[a.column]
         members = a.members or (column.profile.distinct if column.profile else 0)
         if a.slug in skip or column.key in names_or_keys or column.hidden or column.sensitivity != "none" \
-                or not 2 <= members <= 50 or _a_flag(column):
+                or column.personal != "none" or not 2 <= members <= 50 or _a_flag(column):
             continue
         n = hops(column.table)
         if n is None or n > 1:

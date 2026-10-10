@@ -157,6 +157,49 @@ def answering_model(account_id: str, client: dict[str, Any]) -> SemanticModel | 
     return model
 
 
+def propose_classifications(account_id: str, model: SemanticModel) -> int:
+    """People's data Learn found, proposed on the Compliance page of a workspace under compliance.
+
+    A name or a detail (an email, a phone, a birth date) becomes a classification to review, with the
+    tags the workspace's classifier gives its name (a patient's name is PHI in a pharmacy) or, where the
+    name says nothing (an email column called C07, read by its values), as directly identifying PII. An
+    admin's reviewed classification is never changed; an automatic one is raised only when it did not
+    know the column held people's data. Unreviewed, it already masks, as every classification does.
+    Returns how many were written.
+    """
+    import store
+    from core.compliance.classifier import classify_column
+    from core2.service import question_scrubber
+
+    if question_scrubber(account_id) is None:
+        return 0          # not under compliance: no classifications to keep
+    profile = store.get_compliance_profile(account_id) or {}
+    industry = str(profile.get("industry") or "")
+    existing = store.get_classification_map(account_id)
+    written = 0
+    for column in model.columns.values():
+        table = model.tables.get(column.table)
+        if column.personal == "none" or column.parts or table is None:
+            continue
+        fqn = ".".join(p for p in (table.database, table.schema_name, table.name) if p)
+        tail = f".{table.name}.{column.name}".upper()
+        current = existing.get(f"{fqn}.{column.name}".upper()) or next(
+            (v for k, v in existing.items() if ("." + k).endswith(tail)), None)
+        if current and (current.get("reviewed") or set(current.get("tags") or []) & {"PII", "PHI"}):
+            continue
+        said = classify_column(column.name, industry)
+        tags = said["tags"] if set(said["tags"]) & {"PII", "PHI"} else sorted({*said["tags"], "PII"})
+        try:
+            store.save_classification(
+                account_id, fqn, column.name, sensitivity="RESTRICTED", identifiability="DIRECT", tags=tags,
+                confidence=0.9, reviewed=False, reviewed_by="", source="learn",
+                mask_strategy="safe_alias_name" if column.personal == "name" else "tokenize")
+            written += 1
+        except Exception as exc:  # noqa: BLE001 - a proposal not written leaves the column masked by core2 itself
+            log.warning("core2: the classification of %s.%s was not proposed: %s", table.name, column.name, exc)
+    return written
+
+
 def build_workspace(account_id: str, started: str | None = None) -> int:
     """Learn the workspace's database and store a new model version; returns the version.
 
@@ -201,6 +244,9 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
                                          source_hash=source_hash(inventory), stats=stats(model))
         say("Bringing over the decisions already made in today's setup")
         bring_over(account_id, db_id, model, client)
+        proposed = propose_classifications(account_id, model)
+        if proposed:
+            say(f"Proposed {proposed} column(s) of people's data on the Compliance page, masked until reviewed")
         say("Reading the member names questions use (customers, products and the like), so the first "
             "question does not wait for them")
         try:

@@ -162,6 +162,8 @@ class GovernedQueryAttestationTests(unittest.TestCase):
                 stack.enter_context(patch.object(st, "list_purposes", return_value=[]))
                 stack.enter_context(patch.object(st, "list_row_policies", return_value=[]))
                 stack.enter_context(patch.object(st, "user_attestation_valid", return_value=attested))
+                stack.enter_context(patch.object(st, "user_attestation_scope",
+                                                 return_value={"*"} if attested else None))
                 stack.enter_context(patch.object(st, "log_policy_decision", side_effect=_fake_log))
             stack.enter_context(patch.object(governed_query, "run_query",
                                              return_value=[dict(r) for r in self.RAW_ROWS]))

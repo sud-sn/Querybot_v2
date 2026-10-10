@@ -26,6 +26,7 @@ from core2.warehouse import dialect as D
 
 MAX_NAMED = 30            # a field whose values can be named has at most this many
 SHOWN = ("shown", "hidden", "sensitive")
+PERSONAL = ("none", "name", "detail")       # not people's data; a person's name; a personal detail
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December")
 _KIND_ORDER = {"fact": 0, "snapshot": 1, "dimension": 2, "bridge": 3, "calendar": 4, "other": 5}
@@ -96,6 +97,7 @@ def table_view(model: SemanticModel, table_key: str) -> dict[str, Any]:
         fields.append({
             "key": column.key, "name": column.business_name or column.name, "physical": column.name,
             "description": column.description, "synonyms": _words(column.synonyms), "shown": shown(column),
+            "personal": column.personal,
             "values": values, "namable": bool(values),
             "kind": "date" if column.key in dated or column.data_type in ("date", "timestamp") else column.data_type,
         })
@@ -131,6 +133,12 @@ def field_changes(model: SemanticModel, column_key: str, data: dict[str, Any]) -
         if choice != shown(column):
             changes["hidden"] = choice == "hidden"
             changes["sensitivity"] = "confidential" if choice == "sensitive" else "none"
+    if "personal" in data:
+        reading = str(data.get("personal") or "")
+        if reading not in PERSONAL:
+            raise KnowledgeError("Choose whether it holds people's names, their details, or neither.")
+        if reading != column.personal:
+            changes["personal"] = reading
     if "value_names" in data:
         codes = {v["code"] for v in namable(column)}
         given = data.get("value_names") or {}

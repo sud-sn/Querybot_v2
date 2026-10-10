@@ -1443,6 +1443,12 @@ def _run_migrations() -> None:
         # rebuilt by today's pipeline from its rows. Empty for every other
         # answer. Declared HERE ONLY, as above.
         ("answer_trace", "answer_frame", "TEXT NOT NULL DEFAULT ''"),
+        # A confidentiality attestation's term, the data classes it covers ("*": all), and the signed
+        # document an admin uploaded with it (its file name and SHA-256, so the copy kept can be proved).
+        ("user_attestation", "expires_at", "TEXT DEFAULT NULL"),
+        ("user_attestation", "scope", "TEXT NOT NULL DEFAULT '*'"),
+        ("user_attestation", "document_name", "TEXT NOT NULL DEFAULT ''"),
+        ("user_attestation", "document_sha256", "TEXT NOT NULL DEFAULT ''"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

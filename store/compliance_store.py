@@ -474,6 +474,10 @@ def save_user_attestation(
     attestation_type: str = "confidentiality",
     document_ref: str = "",
     granted_by: str = "",
+    expires_at: str | None = None,
+    scope: str = "*",
+    document_name: str = "",
+    document_sha256: str = "",
 ) -> int:
     """Record that a named internal user signed a confidentiality/access
     attestation and may see unmasked regulated values in query results.
@@ -482,18 +486,34 @@ def save_user_attestation(
     govern what may reach the LLM provider; this is the per-USER display
     instrument — a different legal document, kept in a separate table so
     an auditor never confuses the two. Re-granting after a revoke inserts
-    a fresh row, preserving the full grant/revoke history."""
+    a fresh row, preserving the full grant/revoke history.
+
+    ``expires_at`` ('YYYY-MM-DD HH:MM:SS', UTC) ends it without a revoke; ``scope`` names the data
+    classes it releases ("PII,PHI"), "*" every one; the signed document's name and SHA-256 are kept
+    with it."""
+    scope = ",".join(sorted({s.strip().upper() for s in str(scope or "*").split(",") if s.strip()})) or "*"
     with get_db() as conn:
         cur = conn.execute(
             """
             INSERT INTO user_attestation (
                 account_id, portal_user_id, attestation_type,
-                document_ref, granted_by
-            ) VALUES (?,?,?,?,?)
+                document_ref, granted_by, expires_at, scope, document_name, document_sha256
+            ) VALUES (?,?,?,?,?,?,?,?,?)
             """,
-            (account_id, str(portal_user_id), attestation_type, document_ref, granted_by),
+            (account_id, str(portal_user_id), attestation_type, document_ref, granted_by,
+             expires_at or None, scope, document_name, document_sha256),
         )
         return int(cur.lastrowid)
+
+
+# Revoked, or past its term: no longer valid.
+_ATTESTATION_VALID = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at = '' OR expires_at > ?)"
+
+
+def _now_text() -> str:
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def revoke_user_attestation(account_id: str, attestation_id: int, revoked_by: str = "") -> bool:
@@ -513,19 +533,72 @@ def user_attestation_valid(account_id: str, portal_user_id: str) -> bool:
         return False
     with get_db() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT 1 FROM user_attestation
-            WHERE account_id=? AND portal_user_id=? AND revoked_at IS NULL
+            WHERE account_id=? AND portal_user_id=? AND {_ATTESTATION_VALID}
             LIMIT 1
             """,
-            (account_id, str(portal_user_id)),
+            (account_id, str(portal_user_id), _now_text()),
         ).fetchone()
     return row is not None
 
 
+def user_attestation_scope(account_id: str, portal_user_id: str) -> set[str] | None:
+    """The data classes a user's valid attestations release ("*": every one), or None when none is valid."""
+    if not portal_user_id:
+        return None
+    with get_db() as conn:
+        rows = conn.execute(
+            f"SELECT scope FROM user_attestation WHERE account_id=? AND portal_user_id=? AND {_ATTESTATION_VALID}",
+            (account_id, str(portal_user_id), _now_text()),
+        ).fetchall()
+    if not rows:
+        return None
+    out: set[str] = set()
+    for row in rows:
+        out |= {s.strip().upper() for s in str(row["scope"] or "*").split(",") if s.strip()} or {"*"}
+    return out
+
+
+def attestation_status(account_id: str, *, renew_within_days: int = 30) -> dict[str, dict]:
+    """Each user's attestation as the People page shows it: signed (until when, for what), expired,
+    revoked, keyed by portal user id. A user with no row is not in it (not signed)."""
+    import datetime as _dt
+
+    soon = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None) + _dt.timedelta(days=renew_within_days)
+    out: dict[str, dict] = {}
+    for row in list_user_attestations(account_id):
+        user = str(row.get("portal_user_id") or "")
+        expires = _parse_utc(row.get("expires_at"))
+        state = row["state"]
+        item = {"status": state, "id": row.get("id"), "granted_at": row.get("granted_at") or "",
+                "expires_at": row.get("expires_at") or "", "scope": row.get("scope") or "*",
+                "attestation_type": row.get("attestation_type") or "", "document_name": row.get("document_name") or "",
+                "document_sha256": row.get("document_sha256") or "",
+                "renew_soon": state == "signed" and expires is not None and expires <= soon}
+        if user not in out or (state == "signed" and out[user]["status"] != "signed"):
+            out[user] = item          # newest first; a signed row wins over an older ended one
+    return out
+
+
+def _parse_utc(text):
+    import datetime as _dt
+
+    if not text:
+        return None
+    try:
+        return _dt.datetime.fromisoformat(str(text).replace("T", " ")[:19])
+    except ValueError:
+        return None
+
+
 def list_user_attestations(account_id: str) -> list[dict]:
-    """All attestation rows (active and revoked) with the user's display
-    name/email joined in for the admin panel."""
+    """All attestation rows (active, ended and revoked) with the user's display
+    name/email joined in for the admin panel, and each row's ``state``: signed,
+    expired (past its term) or revoked."""
+    import datetime as _dt
+
+    now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
     with get_db() as conn:
         rows = conn.execute(
             """
@@ -537,7 +610,14 @@ def list_user_attestations(account_id: str) -> list[dict]:
             """,
             (account_id,),
         ).fetchall()
-    return [dict(row) for row in rows]
+    out = []
+    for row in rows:
+        item = dict(row)
+        expires = _parse_utc(item.get("expires_at"))
+        item["state"] = ("revoked" if item.get("revoked_at")
+                         else "expired" if expires and expires <= now else "signed")
+        out.append(item)
+    return out
 
 
 def policy_decision_hash(

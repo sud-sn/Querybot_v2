@@ -68,6 +68,8 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
   font-weight:var(--weight-semibold);white-space:nowrap}
 .kb-tag.sensitive{background:var(--warning-soft);color:var(--warning-strong)}
 .kb-tag.hidden{background:var(--surface-3);color:var(--text-secondary)}
+.kb-tag.person{background:var(--surface-3);color:var(--text-strong);margin-left:4px}
+.kb-person{margin-top:6px}
 .kb-edit{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:6px;border:0;background:transparent;
   color:var(--text-secondary);cursor:pointer}
 .kb-edit:hover{background:var(--surface-3);color:var(--text-strong)}
@@ -150,7 +152,10 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
       <tbody id="kb-rows"></tbody>
     </table></div>
     <p class="kb-note">Sensitive: never shown to readers, never grouped or filtered by, and its values are never sent to the AI.
-      Hidden: not offered at all. Changes apply from the next answer, and are kept when QueryBot learns again.</p>
+      Hidden: not offered at all. People's data: a person's name is shown in answers but never sent to the AI, and a
+      personal detail (an email, a phone, a birth date) is never shown; in a workspace under compliance both are shown
+      masked to readers who have not signed the confidentiality attestation.
+      Changes apply from the next answer, and are kept when QueryBot learns again.</p>
   </div>
 </div>
 
@@ -163,6 +168,7 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
   var fields = data.table.fields;
   var state = {show: 'all', search: '', editing: null, naming: false, error: ''};
   var SHOWN = [['shown', 'Shown'], ['hidden', 'Hidden'], ['sensitive', 'Sensitive']];
+  var PERSONAL = [['none', 'Not people\'s data'], ['name', 'A person\'s name'], ['detail', 'A personal detail']];
   var rows = document.getElementById('kb-rows');
 
   function esc(s) {
@@ -201,10 +207,15 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
     }
     return f.kind === 'date' ? '<span class="kb-muted">Date</span>' : '<span class="kb-muted">—</span>';
   }
+  function personTag(f) {
+    if (f.personal === 'name') return ' <span class="kb-tag person">Person\'s name</span>';
+    if (f.personal === 'detail') return ' <span class="kb-tag person">Personal detail</span>';
+    return '';
+  }
   function shownCell(f) {
-    if (f.shown === 'sensitive') return '<span class="kb-tag sensitive">Sensitive</span>';
-    if (f.shown === 'hidden') return '<span class="kb-tag hidden">Hidden</span>';
-    return '<span class="kb-vis">' + icon('eye', 14) + ' Shown</span>';
+    if (f.shown === 'sensitive') return '<span class="kb-tag sensitive">Sensitive</span>' + personTag(f);
+    if (f.shown === 'hidden') return '<span class="kb-tag hidden">Hidden</span>' + personTag(f);
+    return '<span class="kb-vis">' + icon('eye', 14) + ' Shown</span>' + personTag(f);
   }
 
   function plainRow(f) {
@@ -241,6 +252,8 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
       '<td data-label="Values">' + vals + '</td>' +
       '<td data-label="Shown"><select class="form-input form-input-sm" id="kb-e-shown" aria-label="Shown, hidden or sensitive">' +
         SHOWN.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === f.shown ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
+        '</select><select class="form-input form-input-sm kb-person" id="kb-e-personal" aria-label="Whether it holds people\'s data">' +
+        PERSONAL.map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (f.personal || 'none') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') +
         '</select></td><td class="act"></td></tr>' +
       '<tr class="kb-editing"><td colspan="6" class="wide"><div class="kb-actions">' +
         '<button type="button" class="btn btn-primary btn-sm" id="kb-save">Save</button>' +
@@ -264,7 +277,8 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
     var body = {column: f.key, name: document.getElementById('kb-e-name').value,
                 description: document.getElementById('kb-e-desc').value,
                 synonyms: document.getElementById('kb-e-words').value.split(',').map(function (w) { return w.trim(); }).filter(Boolean),
-                shown: document.getElementById('kb-e-shown').value};
+                shown: document.getElementById('kb-e-shown').value,
+                personal: document.getElementById('kb-e-personal').value};
     var named = rows.querySelectorAll('[data-code]');
     if (named.length) {
       body.value_names = {};

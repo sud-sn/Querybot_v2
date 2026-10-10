@@ -129,6 +129,10 @@ class Column(Belief):
     format: Format | None = None
     label_of: str | None = None     # the key column this column names
     sensitivity: Literal["none", "pii", "confidential"] = "none"
+    # Learn's reading of people's data (core2/bootstrap/personal.py): a person's name, or a personal detail
+    # (contact, birth date, national ID). Never sent to the AI; where the workspace is under compliance,
+    # shown masked to a reader who has not signed the confidentiality attestation.
+    personal: Literal["none", "name", "detail"] = "none"
     values_allowed: bool = False    # may common values be shown to the AI and in the catalog
     profile: ColumnProfile | None = None
     hidden: bool = False            # an admin hid it from questions

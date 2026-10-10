@@ -18,7 +18,7 @@ ALLOWED = {
     "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters",
               "readers_may_include", "grain_text"},
     "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity",
-               "value_names"},
+               "value_names", "personal"},
     "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",

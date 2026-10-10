@@ -62,6 +62,7 @@ class Context:
     allowed_tables: set[str] | None = None      # table keys the reader may use; None = all
     max_rows: int = 5000
     split_units: bool = False                   # a reader's answer: quantities kept apart by unit (issue E4)
+    personal_shown: bool = False                # people's details shown (masked unless the reader is cleared)
 
 
 @dataclass
@@ -312,18 +313,24 @@ def _entity_label(model: SemanticModel, slug: str) -> Attribute:
     raise ResolveError("unknown", f"{entity.business_name} has no name to show")
 
 
-def _shown(model: SemanticModel, attribute: Attribute, slug: str, *, entity: bool = False) -> Attribute:
+def _shown(model: SemanticModel, attribute: Attribute, slug: str, *, entity: bool = False,
+           personal: bool = False) -> Attribute:
     """``attribute``, if an answer may group, list or filter by it.
 
     A column an admin hid is not offered at all: it reads as unknown (an entity is still
     grouped by, named as before by its own name column). One marked sensitive is known
     but never shown, listed or filtered on (its values would reach the reader, or the AI
     as the filter's words); it may still be counted inside a metric the admin defined.
+    ``personal``: the workspace is under compliance, and a person's detail Learn found
+    (an email, a phone) is shown as every answer is, masked by the governed warehouse
+    unless the reader has signed the confidentiality attestation.
     """
     column = model.columns[attribute.column]
     if column.hidden and not entity:
         raise ResolveError("unknown", f"nothing to group or filter by called {slug}",
                            _closest(slug, _slugs(model, "group")))
+    if personal and column.sensitivity == "pii" and column.personal == "detail":
+        return attribute
     if column.sensitivity != "none":
         raise ResolveError("sensitive", f"{attribute.business_name or column.business_name} is marked sensitive, "
                            "so answers never show it or filter by it")
@@ -799,7 +806,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             raise ResolveError("unknown", f"nothing to group by called {slug}", _closest(slug, _slugs(model, "group")))
         attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
         assert isinstance(attribute, Attribute)
-        wanted.append((slug, _shown(model, attribute, slug, entity=found[0] == "entity"), None))
+        wanted.append((slug, _shown(model, attribute, slug, entity=found[0] == "entity", personal=ctx.personal_shown), None))
 
     intent = plan.intent or ("trend" if plan.time.grain else ("breakdown" if wanted else "value"))
     if not chosen:
@@ -1039,7 +1046,7 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 continue
             attribute = _entity_label(model, f.field) if kind == "entity" else obj
             assert isinstance(attribute, Attribute)
-            _shown(model, attribute, f.field, entity=kind == "entity")
+            _shown(model, attribute, f.field, entity=kind == "entity", personal=ctx.personal_shown)
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, f.field)
             try:
@@ -1356,7 +1363,7 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
             raise ResolveError("unsupported", f"listing cannot filter on {f.field}")
         attr = _entity_label(model, f.field) if found[0] == "entity" else found[1]
         assert isinstance(attr, Attribute)
-        _shown(model, attr, f.field, entity=found[0] == "entity")
+        _shown(model, attr, f.field, entity=found[0] == "entity", personal=ctx.personal_shown)
         col = model.columns[attr.column]
         f, stored = _named_filter(col, f)
         part.preds.append(Pred(builder.reach(col.table), col.key, f.op, stored))

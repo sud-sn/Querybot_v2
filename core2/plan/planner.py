@@ -206,11 +206,11 @@ def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | 
     return (default, later[0]) if later else None
 
 
-def stable_prompt(model: SemanticModel, *, values_allowed: bool = True) -> str:
+def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal_shown: bool = False) -> str:
     """Rules, schema, catalog and examples: identical for every question on a model version."""
     return "\n\n".join(part for part in (
         RULES, "PLAN SCHEMA (JSON Schema)\n" + schema_text(),
-        catalog_text(model, values_allowed=values_allowed), _examples(model)) if part)
+        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), _examples(model)) if part)
 
 
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
@@ -361,7 +361,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     history = history or []
     known = history[-1].masked.values if history and history[-1].masked is not None else None
     masked = None if values_allowed else mask(question, matches, known=known)
-    stable = stable_prompt(model, values_allowed=values_allowed)
+    # A workspace under compliance (its questions scrubbed) shows people's details masked, never refuses them.
+    stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
                          scrub=scrub, model=model, reading=reading)
     raw: list[str] = []

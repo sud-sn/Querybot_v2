@@ -60,6 +60,8 @@ def eligible(payload: dict[str, Any], *, values_allowed: bool) -> bool:
     data = payload.get("data") or {}
     if payload.get("unsupported") or payload.get("engine") != "core2" or not data.get("rows"):
         return False
+    if payload.get("personal"):
+        return False      # people's names or details: never sent to the AI, in any workspace
     return values_allowed or not names_members(payload)
 
 

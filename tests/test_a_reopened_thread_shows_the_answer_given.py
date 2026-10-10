@@ -411,3 +411,24 @@ def test_a_conversation_the_socket_reconnects_to_carries_on_without_notices():
 def test_an_empty_thread_says_it_is_connected_without_keeping_it():
     put = _handled([CONNECTED], conversation=False)
     assert put == {"bot": [], "system": [[CONNECTED["content"], False]]}
+
+
+def test_an_answer_that_showed_peoples_data_is_withheld_once_the_reader_is_no_longer_cleared(tenant):
+    """Shown as given while the reader's attestation holds; once it is revoked, neither the reopened answer
+    nor its CSV shows the data again (core/compliance/kept_answers.py)."""
+    import store
+
+    user_id = _reader(harness.ACCOUNT, tables=("DBO.PURCHASES",))
+    thread_id = f"released_{os.urandom(3).hex()}"
+    granted = store.save_user_attestation(harness.ACCOUNT, str(user_id))
+    trace_id = _trace(harness.ACCOUNT, user_id, thread_id, "purchases", route="core2", sql=CHARTED["trust"]["sql"],
+                      rows=ROWS, frame={**CHARTED, "released": True})
+    client = _portal(user_id)
+    (turn,) = _turns(client, thread_id)
+    assert turn["payload"]["answer"]["headline"] == CHARTED["answer"]["headline"]
+    store.revoke_user_attestation(harness.ACCOUNT, granted, "admin")
+    (turn,) = _turns(client, thread_id)
+    assert turn["payload"].get("withheld") is True and "no longer cleared" in turn["payload"]["answer"]["headline"]
+    assert "data" not in turn["payload"]
+    exported = client.get(f"/portal/api/export-csv?trace_id={trace_id}")
+    assert exported.status_code == 403 and "no longer cleared" in exported.json()["error"]

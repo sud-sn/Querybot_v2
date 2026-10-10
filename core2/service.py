@@ -392,7 +392,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
 
     plan, missing = _members_named(plan, model, services.index)
 
-    ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
+    ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
+                  personal_shown=services.scrub is not None)
     shown: list[tuple] = []
     try:
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown)
@@ -472,6 +473,9 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
+    if any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"
+           for part in logical.parts for g in part.groups):
+        payload["personal"] = True      # its rows name people: no written summary by the AI
     if shown is not None:
         shown.extend(_members_shown(logical, payload))
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
@@ -760,6 +764,17 @@ def question_scrubber(account_id: str) -> Callable[[str], str] | None:
     return lambda text: scrub_question_pii(text, industry)[0]
 
 
+def personal_columns(model: SemanticModel) -> dict[tuple[str, str], str]:
+    """People's data the model knows of: (table, column) as the warehouse spells them, casefolded -> "name" or
+    "detail". The governed warehouse masks what comes from them for a reader not cleared to see it."""
+    out = {}
+    for column in model.columns.values():
+        table = model.tables.get(column.table)
+        if column.personal != "none" and not column.parts and table is not None:
+            out[(table.name.casefold(), column.name.casefold())] = column.personal
+    return out
+
+
 def _portal_services(account_id: str, question: str, portal_user: dict[str, Any] | None,
                      question_id: str = "") -> tuple[Services | None, dict[str, Any] | None]:
     """The services a portal answer runs on, or the frame that says why there are none."""
@@ -782,10 +797,10 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
                                       "the What QueryBot learned page.")
     state = store.get_client_state(account_id) or {}
     allowed = store.get_allowed_tables(portal_user) if portal_user else None
+    scrub = question_scrubber(account_id)
     warehouse = GovernedWarehouse(account_id, portal_user, db_config,
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
-                                  allowed_tables=allowed)
-    scrub = question_scrubber(account_id)
+                                  allowed_tables=allowed, personal=personal_columns(model) if scrub else {})
     # The admin's "value indexing" switch, as today's pipeline reads it: off, no member
     # name is read from the warehouse or put before the AI.
     indexing = value_index_enabled(state)
@@ -839,6 +854,10 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
     payload = answer_question(question, services, _session(session_key), question_id=question_id)
+    if getattr(services.warehouse, "released", False):
+        # People's data went out as stored, to a cleared reader: kept with the answer, so a reopened thread
+        # never shows it again once the clearance ends (core/compliance/kept_answers.py).
+        payload["released"] = True
     own = payload.get("own_metric")
     if own and isinstance(own.get("measure"), Measure):
         # The definition stays on the server; the reader's buttons name it by a token only they can use.
@@ -898,8 +917,12 @@ def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
     plan = parse_plan(plan_data)
-    ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS)
-    return _compute(question, plan, services, ctx, question_id="", started=time.perf_counter())
+    ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
+                  personal_shown=services.scrub is not None)
+    payload = _compute(question, plan, services, ctx, question_id="", started=time.perf_counter())
+    if getattr(services.warehouse, "released", False):
+        payload["released"] = True       # as portal_answer: people's data went out as stored, to a cleared reader
+    return payload
 
 
 def parse_plan(data: dict[str, Any]) -> Plan:

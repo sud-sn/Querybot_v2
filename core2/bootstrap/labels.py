@@ -32,6 +32,8 @@ For each table you receive what was already established from the data itself: wh
 what one row means, its keys, joins, dates and measures, and a profile of every column (how many distinct
 values, how many are empty, ranges, and for short code columns their most common values when allowed).
 Names may be abbreviations, codes or meaningless (C07); use the profile and the context to read them.
+A column of people's data says what it holds ("email addresses", "people's names") and gives made-up examples
+of their shape: they are invented, never real values.
 
 Reply with one JSON object, no markdown, in exactly this shape:
 {"tables": {"<table>": {
@@ -67,19 +69,43 @@ def table_brief(model: SemanticModel, table_key: str) -> dict[str, Any]:
         column = model.columns[key]
         p = column.profile
         entry: dict[str, Any] = {"column": column.name, "type": column.data_type, "role": column.role}
+        mine = column.personal != "none"
         if p:
             entry["distinct"] = p.distinct
             if p.rows:
                 entry["empty"] = f"{1 - p.non_null / p.rows:.0%}"
-            if column.data_type in ("integer", "decimal", "float", "date", "timestamp") and p.min is not None:
-                entry["range"] = [p.min, p.max]
-            if column.values_allowed and p.top and column.data_type in ("text", "integer", "boolean"):
+            if column.data_type in ("integer", "decimal", "float", "date", "timestamp") and p.min is not None \
+                    and not mine:
+                entry["range"] = [p.min, p.max]      # a birth date's first and last are two people's
+            if column.values_allowed and p.top and column.data_type in ("text", "integer", "boolean") and not mine:
                 entry["common_values"] = [t.value for t in p.top[:8]]
             if p.avg_len:
                 entry["avg_length"] = round(p.avg_len, 1)
+        if mine:
+            entry["holds"], entry["made_up_examples"] = _shape(column)
         columns.append(entry)
     return {"table": table.name, "kind": table.kind, "rows": table.row_count, "grain": table.grain_text,
             "joins": joins, "dates": dates, "measures": measures, "columns": columns}
+
+
+# What a column of people's data holds, and invented examples of its shape: never a value of the warehouse.
+_SHAPES = {
+    "email": ("email addresses", ["a.person@example.com", "someone.else@example.net"]),
+    "phone": ("phone numbers", ["555-0100", "+1 555 0199"]),
+    "street": ("street addresses", ["12 Example Street", "4 Sample Road, Unit 2"]),
+    "national_id": ("national ID numbers", ["000-00-0000"]),
+}
+
+
+def _shape(column: Any) -> tuple[str, list[str]]:
+    pattern = column.profile.pattern if column.profile else None
+    if pattern in _SHAPES:
+        return _SHAPES[pattern]
+    if column.personal == "name":
+        return "people's names", ["Alex Example", "Sam Sample"]
+    if column.data_type in ("date", "timestamp"):
+        return "people's dates, such as birth dates", ["1980-01-01"]
+    return "people's personal details", []
 
 
 def _parse(text: str) -> dict[str, Any]:

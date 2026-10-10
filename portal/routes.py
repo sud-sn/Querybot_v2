@@ -2650,6 +2650,17 @@ async def portal_query_thread(request: Request, thread_id: str):
             question = extract_original_question(
                 str(trace.get("question_text_sanitized") or "")
             )
+            from core.compliance import kept_answers
+            if kept_answers.withheld(user["account_id"], user, trace):
+                # People's data this reader was cleared to see then, and is not now: not shown again.
+                turns.append({
+                    "question": question,
+                    "payload": {"engine": "core2", "question": question, "withheld": True,
+                                "answer": {"headline": kept_answers.WITHHELD}},
+                    "created_at": str(trace.get("created_at") or ""),
+                })
+                continue
+            rows = kept_answers.remasked(user["account_id"], user, trace, rows)
             if new_core and _kept_answer(trace) is not None:
                 # Drawn as the new core drew it, never rebuilt by today's
                 # pipeline (another engine's wording and chart), and with
@@ -2744,6 +2755,14 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
 
     if not rows:
         return JSONResponse({"ok": False, "error": "No rows in this query result."}, status_code=404)
+
+    from core.compliance import kept_answers
+    if kept_answers.withheld(user["account_id"], user, trace):
+        return JSONResponse({"ok": False, "error": kept_answers.WITHHELD}, status_code=403)
+    rows = kept_answers.remasked(user["account_id"], user, trace, rows)
+    if not rows:
+        return JSONResponse({"ok": False, "error": "These rows could not be checked against your access today."},
+                            status_code=403)
 
     sql = str(trace.get("sql") or trace.get("generated_sql") or "")
     try:

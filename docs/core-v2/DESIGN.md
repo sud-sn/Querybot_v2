@@ -727,7 +727,17 @@ untouched.
   tables, dialect rules, production shape), applies policies and row filters,
   executes and masks. `table_columns` is not passed: its heuristics (for example
   the null-aggregate diagnostic) reject correct compiled SQL, and the compiler
-  only references columns the model holds. Compiled SQL uses `COUNT(1)`, never
+  only references columns the model holds. People's data Learn found (a column's
+  `personal`: a name, or a detail such as an email) is masked by core2's governed
+  warehouse on top, in a regulated tenant: an output the SQL's lineage traces to it
+  becomes a stable alias or token for a reader without a valid confidentiality
+  attestation (`store.user_attestation_valid`), and is released as stored to one
+  whose attestation is in its term and covers people's data (`scope` `*`, PII or
+  PHI; `store.user_attestation_scope`), each release logged as `attested_unmasked_release` (no log row, no
+  release); counts and sums are exempt, and what the tenant's own policies already
+  mask is not masked twice. Learn proposes these columns as classifications to
+  review (`store.save_classification`, unreviewed, source `learn`). An answer whose
+  rows name people gets no AI-written summary in any tenant. Compiled SQL uses `COUNT(1)`, never
   `COUNT(*)` (a star on a classified table is refused), and never names an alias
   after a word the validator's DDL screen matches;
 * usage: in `core2` mode `store.log_query` per question (quota and billing);
