@@ -270,8 +270,10 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         model.joins[key] = Join(
             key=key, from_table=j.from_table, from_columns=[ck[(j.from_table, c)] for c in j.from_columns],
             to_table=j.to_table, to_columns=[ck[(j.to_table, t)] for _, t in j.pairs],
-            cardinality="one_to_one" if j.from_unique else "many_to_one", match_rate=j.match_rate,
-            null_rate=j.null_rate, orphan_rows=j.unmatched, to_unique=True, role=j.role,
+            cardinality=("one_to_one" if j.from_unique else "many_to_one") if j.to_unique
+            else ("one_to_many" if j.from_unique else "many_to_many"), match_rate=j.match_rate,
+            null_rate=j.null_rate, orphan_rows=j.unmatched, to_unique=j.to_unique, max_fanout=j.max_fanout,
+            target_checked=j.target_checked, role=j.role,
             trust="verified" if j.trust == "verified" else ("declared" if j.trust == "declared" else "proposed"),
             to_calendar=j.to_calendar, evidence=j.evidence, confidence=j.match_rate,
             provenance="declared" if j.declared else "profile",

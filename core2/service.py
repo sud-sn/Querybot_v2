@@ -15,6 +15,7 @@ Nothing here writes SQL from text: a question the plan cannot express is said so
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import re
 import threading
@@ -32,8 +33,8 @@ from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
 from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import drills, follow_ups
-from core2.compile.compiler import CompileError, compile_query
-from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticModel
+from core2.compile.compiler import CompileError, compile_query, repeats_sql
+from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
@@ -437,7 +438,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     plan, missing = _members_named(plan, model, services.index)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
-                  personal_shown=services.scrub is not None)
+                  personal_shown=services.scrub is not None, link_repeats=_link_check(services))
     shown: list[tuple] = []
     try:
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown)
@@ -537,6 +538,47 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
     return payload
+
+
+# Links no one measured, as the data answered for them: asked the first time a question follows one, once per
+# workspace, model version, link (its key columns and conditions) and reader -- what a reader's rules leave
+# them is what their totals count. At most LINK_CHECKS answers are kept.
+LINK_CHECKS = 4096
+_LINK_REPEATS: OrderedDict[tuple, bool] = OrderedDict()
+_LINK_LOCK = threading.Lock()
+
+
+def _link_check(services: Services) -> Callable[[Join], bool] | None:
+    """Does a link hold more than one target row for some key, as the data says? (resolver Context.link_repeats)"""
+    warehouse, model = services.warehouse, services.model
+    if not hasattr(warehouse, "query"):
+        return None
+    account = str(getattr(warehouse, "account_id", "") or "")
+    reader = str((getattr(warehouse, "user", None) or {}).get("id") or "")
+
+    def repeats(j: Join) -> bool:
+        key = (account, model.version, j.key, tuple(j.to_columns),
+               tuple(json.dumps(c.model_dump(mode="json"), sort_keys=True) for c in j.conditions), reader)
+        with _LINK_LOCK:
+            if key in _LINK_REPEATS:
+                _LINK_REPEATS.move_to_end(key)
+                return _LINK_REPEATS[key]
+        try:
+            found = bool(warehouse.query(repeats_sql(model, j, warehouse.dialect), max_rows=1).rows)
+        except Exception as exc:  # noqa: BLE001 - followed as the model has it; asked again next time
+            log.warning("core2: could not check whether the link %s of %s matches one row per key; followed as "
+                        "learned: %s", j.key, account, exc)
+            return False
+        if found:
+            log.warning("core2: the link %s of %s matches more than one row for some keys: questions do not follow "
+                        "it", j.key, account)
+        with _LINK_LOCK:
+            _LINK_REPEATS[key] = found
+            while len(_LINK_REPEATS) > LINK_CHECKS:
+                _LINK_REPEATS.popitem(last=False)
+        return found
+
+    return repeats
 
 
 def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> list[tuple]:
@@ -1161,7 +1203,7 @@ def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[
         return refused or _frame(question, "The new core cannot answer here yet.")
     plan = parse_plan(plan_data)
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
-                  personal_shown=services.scrub is not None)
+                  personal_shown=services.scrub is not None, link_repeats=_link_check(services))
     payload = _compute(question, plan, services, ctx, question_id="", started=time.perf_counter())
     if getattr(services.warehouse, "released", False):
         payload["released"] = True       # as portal_answer: people's data went out as stored, to a cleared reader

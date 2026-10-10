@@ -215,6 +215,10 @@ class Join(Belief):
     orphan_rows: int = 0
     to_unique: bool = False
     max_fanout: float = 1.0
+    # to_unique and max_fanout were measured on the data (by Learn, or the admin's link check). A link no one
+    # measured -- declared by the database or brought over from today's setup, in a model learned before
+    # the measure was taken -- is checked the first time a question follows it (core2/resolve/paths.unchecked).
+    target_checked: bool = False
     role: str | None = None         # business name when the same tables join more than one way
     trust: JoinTrust = "proposed"
     to_calendar: bool = False       # the target is a calendar: used only as a date role

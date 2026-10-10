@@ -216,7 +216,7 @@ def as_join(model: SemanticModel, spec: LinkSpec, checked: dict[str, Any] | None
                 cardinality=spec.cardinality, role=spec.role or None, trust="admin", provenance="admin",
                 status="approved", conditions=spec.conditions, keep_unmatched=spec.keep_unmatched,
                 match_rate=float(checked.get("match") or 0.0), to_unique=(checked.get("most") or 1) <= 1,
-                max_fanout=float(checked.get("most") or 1.0),
+                max_fanout=float(checked.get("most") or 1.0), target_checked="most" in checked,
                 to_calendar=model.tables[spec.to_table].kind == "calendar")
 
 
@@ -293,7 +293,8 @@ def check_link(model: SemanticModel, spec: LinkSpec, warehouse: Any) -> dict[str
     if out["twice"]:
         words.append(f"{out['twice']:,} {_table_name(model, spec.from_table).lower()} rows match more than one "
                      f"{_table_name(model, spec.to_table).lower()} row: totals through this link would count them "
-                     "more than once.")
+                     "more than once, so questions do not follow it. A condition that keeps one row for each "
+                     "(the current one, say) lets them.")
     without = out.get("without")
     if without and without["twice"] and not out["twice"]:
         out["without_words"] = (f"{without['per_row']:.2f}", f"{to_rows} per {from_rows}, and totals by {to_rows} "

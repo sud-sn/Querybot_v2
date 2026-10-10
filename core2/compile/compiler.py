@@ -35,7 +35,7 @@ from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
-from core2.model.schema import AggExpr, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
+from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
 from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
@@ -643,6 +643,19 @@ def check_references(sql: str, dialect: str) -> None:
 def compile_query(logical: Logical, model: SemanticModel, dialect: str) -> Compiled:
     """SQL for ``dialect`` (snowflake | tsql | oracle | duckdb), read back by the dialect before it is returned."""
     return _Compiler(logical, model, dialect).compile()
+
+
+def repeats_sql(model: SemanticModel, join: Join, dialect: str) -> str:
+    """A query returning a row when ``join``'s target holds more than one row for some key: a key value
+    found twice among the rows its conditions keep. None when every key is its own row."""
+    writer = _Compiler(None, model, dialect)  # type: ignore[arg-type] - a check needs no logical query
+    keys = [writer.col("t", c) for c in join.to_columns]
+    kept = [exp.not_(exp.Is(this=k.copy(), expression=exp.Null())) for k in keys]
+    kept += [writer.predicate(writer.col("t", f.column), f.op, list(f.values), f.column) for f in join.conditions]
+    query = (exp.select(*[k.copy() for k in keys]).from_(writer.table(join.to_table, "t")).where(exp.and_(*kept))
+             .group_by(*[k.copy() for k in keys])
+             .having(exp.GT(this=exp.Count(this=exp.Star()), expression=exp.Literal.number(1))))
+    return query.sql(dialect=dialect)
 
 
 def row_conditions(model: SemanticModel, dialect: str, alias: str, filters: list) -> list[exp.Expr]:

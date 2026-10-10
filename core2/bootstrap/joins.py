@@ -66,6 +66,11 @@ class JoinFinding:
     also: list[tuple[str, str]] = field(default_factory=list)   # a multi-column key's other (from, to) pairs
     to_alternate: bool = False        # the target is another unique column of its table, not its key
     history: int = 0                  # queries in the warehouse's own history that join it this way
+    # One target row per key, as measured: a declared link may point at a column that repeats (a customer
+    # number kept once per version of the customer), and following it would count a row once per match.
+    to_unique: bool = True
+    max_fanout: float = 1.0           # the most target rows one key finds
+    target_checked: bool = True       # False: the warehouse refused the check; a question checks it again
 
     @property
     def ident(self) -> tuple[str, str, str, str]:
@@ -526,8 +531,46 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 continue
         kept.append(best)
 
+    for f in kept:
+        _measure_target(warehouse, inventory, keys, calendars, f)
     _name_roles(kept, inventory)
     return sorted(kept, key=lambda f: f.ident)
+
+
+def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, TableKeys],
+                    calendars: dict[str, CalendarFinding], f: JoinFinding) -> None:
+    """Does each key find one target row? From the target's keys when they say so, from the data otherwise."""
+    columns = [t for _, t in f.pairs]
+    tkeys = keys[f.to_table]
+    known = (len(columns) == 1 and columns[0] in tkeys.unique_columns) or (
+        sorted(columns) == sorted(tkeys.primary_key) and bool(tkeys.primary_key)) or any(
+        sorted(columns) == sorted(alt) for alt in tkeys.alternate_keys)
+    if known or f.to_calendar or f.to_table in calendars:
+        return
+    target = inventory.tables[f.to_table]
+    what = f"the link check {target.name} ({', '.join(columns)})"
+    most = attempt(warehouse, what, lambda: _most_per_key(warehouse, target, columns), None)
+    if most is None:
+        f.target_checked = False
+        return
+    if most <= 1:
+        return
+    f.to_unique, f.max_fanout = False, float(most)
+    f.evidence.append(Evidence(kind="fanout", weight=-1.0, detail=(
+        f"some {f.from_column} values find up to {most:,} {target.name} rows: totals through it would count a "
+        "row once for each")))
+
+
+def _most_per_key(warehouse: Warehouse, table: InvTable, columns: list[str]) -> int:
+    """The most rows one value of ``columns`` holds in ``table`` (keys with no value left out)."""
+    d = warehouse.dialect
+    cols = [exp.column(D.ident(c, d)) for c in dict.fromkeys(columns)]
+    inner = (exp.select(exp.Count(this=exp.Star()).as_("n")).from_(exp.to_table("__TGT__"))
+             .where(exp.and_(*[exp.not_(exp.Is(this=c.copy(), expression=exp.Null())) for c in cols]))
+             .group_by(*[c.copy() for c in cols]))
+    query = exp.select(exp.Max(this=exp.column("n"))).from_(inner.subquery("x"))
+    sql = query.sql(dialect=d).replace("__TGT__", D.table_sql(table.database, table.schema, table.name, d), 1)
+    return int(warehouse.query(sql).rows[0][0] or 0)
 
 
 def _copies(inventory: Inventory) -> set[str]:

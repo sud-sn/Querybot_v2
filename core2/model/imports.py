@@ -162,6 +162,11 @@ def _links(model: SemanticModel, legacy: Legacy, names: _Names, report: Report) 
             extra = []
         pairs += [(c.get("from_col") or c.get("from_column"), c.get("to_col") or c.get("to_column"))
                   for c in extra if isinstance(c, dict)]
+        kind = str(rel.get("relationship_type") or "many_to_one").lower().replace("-", "_").replace(" ", "_")
+        if kind == "one_to_many":
+            # Written from the one side (a customer to their orders): the link a question follows goes from
+            # the many to the one. Followed as written, it would count a customer once per order.
+            ft, tt, pairs = tt, ft, [(b, a) for a, b in pairs]
         left = [names.column(ft, a) for a, _ in pairs]
         right = [names.column(tt, b) for _, b in pairs]
         if not ft or not tt or None in left or None in right:
@@ -184,7 +189,8 @@ def _links(model: SemanticModel, legacy: Legacy, names: _Names, report: Report) 
         rate = rel.get("match_rate")
         join = Join(key=key, from_table=ft, from_columns=[c for c in left if c], to_table=tt,
                     to_columns=[c for c in right if c],
-                    cardinality="one_to_one" if str(rel.get("relationship_type")) == "one_to_one" else "many_to_one",
+                    # Many to many is kept, never followed: each row would be counted once per match.
+                    cardinality=kind if kind in ("one_to_one", "many_to_many") else "many_to_one",
                     match_rate=float(rate) if isinstance(rate, (int, float)) and rate >= 0 else 1.0,
                     trust="admin", provenance="admin", status="approved")
         report.decisions.append(Decision(f"join:{key}", "define", join.model_dump(mode="json"),

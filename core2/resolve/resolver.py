@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import difflib
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from core2 import ids
@@ -25,6 +26,7 @@ from core2.model.schema import (
     ColumnFilter,
     DateRole,
     Entity,
+    Join,
     Measure,
     MeasureExpr,
     OpExpr,
@@ -64,6 +66,9 @@ class Context:
     max_rows: int = 5000
     split_units: bool = False                   # a reader's answer: quantities kept apart by unit (issue E4)
     personal_shown: bool = False                # people's details shown (masked unless the reader is cleared)
+    # Does a link no one measured (paths.unchecked) hold more than one target row for some key? Asked of
+    # the data the first time a question follows it; None answers with what the model says.
+    link_repeats: Callable[[Join], bool] | None = None
 
 
 @dataclass
@@ -362,27 +367,58 @@ class _PartBuilder:
             if not chosen:
                 raise ResolveError("unknown", f"{label or self.model.tables[table].business_name} is not reached as "
                                    f"{role}", P.role_names(self.model, self.part.table, table))
+            repeating = {j.key for j in chosen[0].joins if self._repeats(j)}
+            if repeating:
+                raise ResolveError("unsupported", self._counted_twice(table, label, repeating))
             return self._walk(table, chosen[0])
-        try:
-            path = P.best_path(self.model, self.part.table, table, through=through)
-        except P.Ambiguous as exc:
-            # The choice is offered by role ("Bill-to", "Ship-to"): what the plan's via names.
-            options = [", ".join(P.roles(p)) or p.describe(self.model) for p in exc.options]
-            raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be reached "
-                               "more than one way", options) from None
+        skip: set[str] = set()
+        while True:
+            try:
+                path = P.best_path(self.model, self.part.table, table, through=through, skip=frozenset(skip))
+            except P.Ambiguous as exc:
+                # The choice is offered by role ("Bill-to", "Ship-to"): what the plan's via names.
+                options = [", ".join(P.roles(p)) or p.describe(self.model) for p in exc.options]
+                raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be "
+                                   "reached more than one way", options) from None
+            repeating = [j for j in (path.joins if path else []) if self._repeats(j)]
+            if not repeating:
+                break
+            skip.update(j.key for j in repeating)     # another way round, if there is one
         if path is None:
-            waiting = P.all_paths(self.model, self.part.table, table, through=through, unconfirmed=True)
+            waiting = P.all_paths(self.model, self.part.table, table, through=through, unconfirmed=True,
+                                  skip=frozenset(skip))
             if waiting:
                 links = [j for j in waiting[0].joins if not P.usable(j)]
                 raise ResolveError(
                     "unconfirmed", f"{label or self.model.tables[table].business_name} is reached through a link "
                     "an admin has not confirmed yet", [f"{self.model.columns[j.from_columns[0]].business_name} -> "
                                                        f"{self.model.tables[j.to_table].business_name}" for j in links])
-            error = ResolveError("unsupported", f"{label or self.model.tables[table].business_name} is not linked to "
-                                 f"{self.model.tables[self.part.table].business_name}")
+            error = ResolveError("unsupported", self._counted_twice(table, label, skip) or (
+                f"{label or self.model.tables[table].business_name} is not linked to "
+                f"{self.model.tables[self.part.table].business_name}"))
             error.unlinked = table
             raise error
         return self._walk(table, path)
+
+    def _repeats(self, j: Join) -> bool:
+        """A link no one measured, found by the data to hold more than one target row for some key."""
+        return P.unchecked(j) and self.ctx.link_repeats is not None and self.ctx.link_repeats(j)
+
+    def _counted_twice(self, table: str, label: str, found: set[str]) -> str:
+        """Why ``table`` is not reached when only a link that would count rows twice reaches it, or ""."""
+        start, tables = self.part.table, self.model.tables
+        what, mine = label or tables[table].business_name, tables[start].business_name
+        through = P.all_paths(self.model, start, table, repeating=True)
+        rows = plural(mine).lower()
+        for path in through:
+            bad = next((j for j in path.joins if P.repeats(j) or j.key in found), None)
+            if bad is not None:
+                return (f"{what} cannot split {rows}: some {rows} match more than one "
+                        f"{tables[bad.to_table].business_name.lower()}, so they would be counted more than once")
+        if P.all_paths(self.model, table, start):
+            return (f"{what} cannot split {rows}: each {mine.lower()} has several "
+                    f"{plural(tables[table].business_name).lower()}, so it would be counted once for each")
+        return ""
 
     def _walk(self, table: str, path: P.Path) -> str:
         alias = self.part.alias

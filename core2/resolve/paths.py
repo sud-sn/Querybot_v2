@@ -70,11 +70,27 @@ def usable(j: Join) -> bool:
     return j.trust == "admin" or j.status == "approved" or not any(e.kind == "ambiguous" for e in j.evidence)
 
 
-def _edges(model: SemanticModel, unconfirmed: bool = False) -> dict[str, list[Join]]:
+def repeats(j: Join) -> bool:
+    """Its target holds more than one row for some of its keys, as measured or as its cardinality says:
+    followed from its source, it would count each source row once for every match."""
+    return (j.cardinality not in ("many_to_one", "one_to_one") or j.max_fanout > 1
+            or (j.target_checked and not j.to_unique))
+
+
+def unchecked(j: Join) -> bool:
+    """No one measured whether its target repeats: one the database declares, or brought over from today's
+    setup, in a model learned before Learn measured it. A link Learn found by its values points at a column
+    whose every value is unique, and a calendar keeps one row per day."""
+    return not j.target_checked and j.provenance != "profile" and not j.to_calendar
+
+
+def _edges(model: SemanticModel, unconfirmed: bool = False, skip: frozenset[str] = frozenset(),
+           repeating: bool = False) -> dict[str, list[Join]]:
+    """``repeating``: also the links that would count a row more than once -- to say why a question stops."""
     out: dict[str, list[Join]] = {}
     for j in sorted(model.joins.values(), key=lambda j: j.key):
         allowed = usable(j) or (unconfirmed and j.trust != "rejected")
-        if j.to_calendar or not allowed or j.cardinality not in ("many_to_one", "one_to_one"):
+        if j.to_calendar or not allowed or j.key in skip or (repeats(j) and not repeating):
             continue
         if model.tables.get(j.to_table) is not None and model.tables[j.to_table].kind == "calendar":
             continue
@@ -83,15 +99,16 @@ def _edges(model: SemanticModel, unconfirmed: bool = False) -> dict[str, list[Jo
 
 
 def all_paths(model: SemanticModel, start: str, goal: str, *, through: str | None = None,
-              unconfirmed: bool = False) -> list[Path]:
+              unconfirmed: bool = False, skip: frozenset[str] = frozenset(), repeating: bool = False) -> list[Path]:
     """Every row-safe path from ``start`` to ``goal`` (optionally passing ``through`` a table), best first.
 
     ``unconfirmed`` also follows links waiting for an admin, to say what a question
-    would need confirmed, never to answer it.
+    would need confirmed, never to answer it; ``repeating`` the links that would count a
+    row more than once, to say why a question stops; ``skip`` leaves links out by key.
     """
     if start == goal:
         return [Path([])]
-    edges = _edges(model, unconfirmed)
+    edges = _edges(model, unconfirmed, skip, repeating)
     found: list[Path] = []
     stack: list[tuple[str, list[Join]]] = [(start, [])]
     while stack:
@@ -111,8 +128,9 @@ def all_paths(model: SemanticModel, start: str, goal: str, *, through: str | Non
     return sorted(found, key=lambda p: p.score)
 
 
-def best_path(model: SemanticModel, start: str, goal: str, *, through: str | None = None) -> Path | None:
-    paths = all_paths(model, start, goal, through=through)
+def best_path(model: SemanticModel, start: str, goal: str, *, through: str | None = None,
+              skip: frozenset[str] = frozenset()) -> Path | None:
+    paths = all_paths(model, start, goal, through=through, skip=skip)
     if not paths:
         return None
     direct = [p for p in paths if len(p.joins) == 1]
