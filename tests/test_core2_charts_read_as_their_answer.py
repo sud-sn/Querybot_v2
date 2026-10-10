@@ -348,5 +348,5 @@ def test_a_tile_of_several_numbers_gets_a_share_of_its_row_for_each():
     def kpi(i, measures):
         return {"id": i, "chart_type": "kpi", "display_config": json.dumps({"core2_plan": {"measures": measures}})}
     rects = _packed([kpi(1, ["a"]), kpi(2, ["a", "b", "c"]), kpi(3, ["a", "b"])])
-    assert rects[0] == (0, 0, 3, 3) and rects[1] == (3, 0, 9, 3), "one number and three share a row of four"
-    assert rects[2] == (0, 3, 12, 3), "the next two numbers start a row of their own"
+    assert rects[0] == (0, 0, 3, 2) and rects[1] == (3, 0, 9, 2), "one number and three share a row of four"
+    assert rects[2] == (0, 2, 12, 2), "the next two numbers start a row of their own"

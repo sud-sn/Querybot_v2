@@ -668,7 +668,12 @@ words:
 * a chart's title is what it counts and by what, with the conditions ("Net
   amount by store, for segment Retail"), never its period (a tile's subtitle
   says that, and moves on with "last month"); a tile pinned under the
-  measure alone takes it when it is drawn again;
+  measure alone takes it when it is drawn again, unless the reader named it;
+* a dashboard tile is its name and the period it counts, never the question
+  it came from: the add dialog offers the chart's own name to keep or change,
+  and Edit renames it (the pencil, or the name); a name the reader gave is
+  kept as written (pinned_chart.title_set). A number tile is its number, its
+  trend beside it and its change below, two grid rows tall;
 * members that are amounts (an Attribute of kind number: transit days, a
   fill number) are drawn in number order; past 20 of them, and for a measure
   that adds up, in about ten equal ranges with the empty ones at zero;

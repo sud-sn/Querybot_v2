@@ -120,7 +120,7 @@ for (const id of ['dashboardPickerBackdrop','dashboardPickerError','dashboardPic
                   'dashboardExistingMode','dashboardNewMode','dashboardExistingPanel',
                   'dashboardNewPanel','dashboardPickerList','dashboardPickerSearch',
                   'dashboardNewName','dashboardNewDescription','dashboardNewVisibility',
-                  'dashboardPickerSubject','dashboardPickerSubjectTitle',
+                  'dashboardPickerSubject','dashboardTileName',
                   'dashboardPickerSubjectKind','dashboardPickerPanel']) {{
   _nodes[id] = _el(); _nodes[id]._id = id;
 }}
@@ -161,6 +161,10 @@ function setTimeout(fn) {{ fn(); return 0; }}
 const THREAD_ID = 'thread-1';
 const DASHBOARD_ID = 0;
 const I18N = {json.dumps(i18n.catalogue_for(lang))};
+// The shell's own enum label, lifted as qbFold is, reading the same catalogue.
+{_function(SHELL, "window.qbEnumLabel = function (group, value)")}
+window.QB_I18N = I18N;
+const enumLabel = window.qbEnumLabel;
 
 {_const_block(tmpl, "_PIN_ERRORS")}
 
@@ -660,19 +664,28 @@ class TestKeyboardNavigation:
         assert html.count('tabindex="-1"') == 1
 
 
-class TestTheSubjectStrip:
-    """The dialog already knew the title and the chart type and displayed
-    neither, so it asked the user to place something it would not name."""
+class TestTheTileIsNamedWhenItIsAdded:
+    """Asked for: a name for the tile when it is added to a dashboard -- the chart's own when none is given.
+    The dialog showed "Adding: Revenue by region" and the tile took that name, or the question's first 50
+    characters, with no say."""
 
-    def test_it_names_what_is_being_added(self):
+    def test_the_box_holds_the_charts_own_name_ready_to_change(self):
         out = _run("_renderPickerSubject({title:'Revenue by region', chart_type:'bar'});")
         assert out["nodes"]["dashboardPickerSubject"]["hidden"] is False
-        assert "Revenue by region" in out["nodes"]["dashboardPickerSubjectTitle"]["text"]
-        assert out["nodes"]["dashboardPickerSubjectKind"]["text"] == "BAR"
+        assert out["nodes"]["dashboardTileName"]["value"] == "Revenue by region"
+        assert out["nodes"]["dashboardPickerSubjectKind"]["text"] == "Bar"
+        french = _run("_renderPickerSubject({title:'Revenue by region', chart_type:'kpi'});", lang="fr")
+        assert french["nodes"]["dashboardPickerSubjectKind"]["text"] == "KPI"
 
-    def test_it_stays_hidden_with_nothing_to_name(self):
-        out = _run("_renderPickerSubject({});")
-        assert out["nodes"]["dashboardPickerSubject"]["hidden"] is True
+    def test_the_name_typed_is_the_tiles(self):
+        out = _run("_result = _collectPinRequest();", context={"token": "tok", "title": "Revenue by region"},
+                   selected=7, fields={"dashboardTileName": "  Regional revenue  "})
+        assert out["result"]["payload"]["title"] == "Regional revenue"
+
+    def test_an_emptied_box_gives_the_charts_own_name(self):
+        out = _run("_result = _collectPinRequest();", context={"token": "tok", "title": "Revenue by region"},
+                   selected=7, fields={"dashboardTileName": "   "})
+        assert out["result"]["payload"]["title"] == "Revenue by region"
 
 
 class TestTheWholeModalRendersInFrench:

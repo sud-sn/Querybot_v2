@@ -756,7 +756,9 @@ def pin_chart(
     color_palette: str = "default",
     dashboard_id: int | None = None,
     display_config: dict | None = None,
+    title_set: bool = False,
 ) -> int:
+    """``title_set``: the reader named the tile themselves, so the answer's own title never replaces it."""
     with get_db() as conn:
         # Positions belong to one dashboard, never to the user's global chart list.
         if dashboard_id:
@@ -773,7 +775,7 @@ def pin_chart(
             ).fetchone()
         pos = row["next"] if row else 1
         kind = str(chart_type or "bar").lower()
-        grid_w, grid_h = ((3, 3) if kind == "kpi" else ((12, 6) if kind == "table" else (6, 5)))
+        grid_w, grid_h = ((3, 2) if kind == "kpi" else ((12, 6) if kind == "table" else (6, 5)))
         columns = max(1, 12 // grid_w)
         grid_x = ((pos - 1) % columns) * grid_w
         grid_y = ((pos - 1) // columns) * grid_h
@@ -781,11 +783,11 @@ def pin_chart(
             INSERT INTO pinned_chart
                 (user_id, account_id, title, question, sql_query, chart_type,
                  db_config_id, position, color_palette, grid_x, grid_y, grid_w, grid_h,
-                 dashboard_id, display_config)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 dashboard_id, display_config, title_set)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (user_id, account_id, title, question, sql_query, chart_type,
                db_config_id, pos, color_palette, grid_x, grid_y, grid_w, grid_h,
-               dashboard_id, json.dumps(display_config or {})))
+               dashboard_id, json.dumps(display_config or {}), 1 if title_set else 0))
         cid = cur.lastrowid
     log.info("Pinned chart %d for user %d", cid, user_id)
     return cid
@@ -811,7 +813,7 @@ def delete_pinned_chart(chart_id: int, user_id: int) -> None:
 def update_pinned_chart_title(chart_id: int, user_id: int, title: str) -> None:
     with get_db() as conn:
         conn.execute(
-            "UPDATE pinned_chart SET title=? WHERE id=? AND user_id=?",
+            "UPDATE pinned_chart SET title=?, title_set=1 WHERE id=? AND user_id=?",
             (title, chart_id, user_id)
         )
 
@@ -827,7 +829,7 @@ def update_pinned_chart(
     fields: list[str] = []
     values: list = []
     if title is not None:
-        fields.append("title=?"); values.append(title.strip()[:120])
+        fields.extend(("title=?", "title_set=1")); values.append(title.strip()[:120])
     if chart_type is not None:
         fields.append("chart_type=?"); values.append(chart_type.strip())
     if color_palette is not None:

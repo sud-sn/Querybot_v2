@@ -29,14 +29,12 @@
    dashboard you had actually opened was an h2 BELOW the account KPI strip and
    the table-access card. The artifact leads now; the account context follows
    it. */
+/* On the page itself, as the approved design has it: the tiles are the cards. */
 .dash-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--space-4); margin-bottom: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--border); background: var(--surface);
-  border-radius: var(--radius);
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-4); margin-bottom: var(--space-1);
 }
-.dash-header h1 { font-size: var(--font-xl); font-weight: var(--weight-bold); margin: var(--space-1) 0; }
+.dash-header h1 { font-size: var(--font-2xl); font-weight: var(--weight-bold); letter-spacing: -.01em; margin: 0 0 var(--space-1); }
 .dash-header-meta {
   display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   font-size: var(--font-sm); color: var(--text-muted);
@@ -45,6 +43,13 @@
   display: flex; align-items: center; gap: var(--space-2);
   flex-wrap: wrap; justify-content: flex-end;
 }
+.dash-header-actions .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; }
+/* How often, and Subscribe, read as one control. */
+.dash-follow { display: flex; margin: 0; }
+.dash-follow select { height: 36px; min-width: 92px; padding: 0 .55rem; border: 1px solid var(--line-control);
+  border-right: 0; border-radius: var(--radius) 0 0 var(--radius); background: var(--surface); color: var(--text); }
+.dash-follow .btn { border-radius: 0 var(--radius) var(--radius) 0; }
+.dash-edit-hint { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
 .dash-status {
   display: inline-flex; align-items: center; gap: var(--space-1);
   font-size: var(--font-xs); font-weight: var(--weight-bold); padding: 2px var(--space-2);
@@ -100,29 +105,40 @@
 .chart-grid.is-gridstack { display: block; min-height: 460px; }
 .chart-card { min-height: 420px; }
 .chart-grid.is-gridstack .chart-card { min-height: 0; }
-.chart-card-content { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; transition: box-shadow var(--t-med), border-color var(--t-med); display: flex; flex-direction: column; height: 100%; }
+.chart-card-content { background: var(--surface); border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; transition: box-shadow var(--t-med), border-color var(--t-med); display: flex; flex-direction: column; height: 100%; }
+/* On the grid the content is placed by its insets (the grid's margin); a height of 100% as well pushed each
+   tile's bottom edge into the gap below it, and the rows touched. */
+.chart-grid.is-gridstack .chart-card-content { height: auto; }
 .chart-card.dragging { opacity: .58; transform: scale(.985); border-color: var(--primary); }
 .chart-card.drag-over { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
-.chart-card-header { border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.chart-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.chart-card-heading { flex: 1; min-width: 0; }
+.chart-card-name { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.chart-card-actions { display: flex; gap: 2px; flex-shrink: 0; align-items: center; margin: -4px -6px 0 0; }
+/* A tile's own controls: quiet icon buttons (the shared ghost button), above the grid's resize strip. */
+.dash-tile-action { flex-shrink: 0; position: relative; z-index: 101; }
+.chart-title-input { flex: 1; min-width: 0; font: inherit; font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text);
+  padding: 2px 6px; margin: -3px 0 -3px -7px; border: 1px solid var(--primary); border-radius: var(--radius); background: var(--surface); }
+.chart-title-input:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); outline-offset: 0; }
 .chart-card-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.chart-card-title { font-size: var(--font-md); font-weight: var(--weight-bold); color: var(--text); line-height: 1.4;
+.chart-card-title { font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text); line-height: 1.4;
   /* A title that names its conditions can run long: two lines at most, so the chart keeps its room. */
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-/* cursor:text was unconditional, so a read-only viewer's pointer said the title
-   was editable when it is not. It follows the permission now. */
-.chart-card-title.is-editable { cursor: text; }
-.chart-card-title[contenteditable=true] { display: block; -webkit-line-clamp: unset;  outline: none; border-bottom: 2px solid var(--primary); padding-bottom: 1px; }
-.chart-card-sub { font-size: var(--font-xs); color: var(--text-muted); margin-top: var(--space-1); }
+/* The name says it can be renamed only in Edit, and only to someone who may. */
+.dashboard-page[data-mode="edit"] .chart-card-title.is-editable { cursor: text; }
+.dashboard-page[data-mode="edit"] .chart-card-title.is-editable:hover { text-decoration: underline dotted var(--text-muted); text-underline-offset: 3px; }
+.chart-card-sub { font-size: var(--font-xs); color: var(--text-muted); margin-top: 2px; }
 
-.chart-drag-handle { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: var(--weight-bold); line-height: 1; }
+.chart-drag-handle { border: 0; background: transparent; color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: var(--weight-bold); line-height: 1; }
+.chart-drag-handle:hover { background: var(--surface-3); color: var(--text); }
 .chart-drag-handle:active { cursor: grabbing; }
 /* The grid starts a drag only on the handle itself: a press on its icon (where people press) landed on the
    svg inside the button, which the grid ignores as "a button's content", so no tile ever moved. */
 .chart-drag-handle > * { pointer-events: none; }
 /* A headline number sized by its tile, not the window: "$185,933.03" was cut off in a narrow tile. */
 .dash-kpi { container-type: inline-size; }
-.dash-kpi-value { font-size: clamp(22px, 13cqw, 52px); font-weight: var(--weight-bold); letter-spacing: -.04em;
-  color: var(--text); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.dash-kpi-value { font-size: clamp(20px, 10cqw, 34px); font-weight: var(--weight-bold); letter-spacing: -.02em; line-height: 1.15;
+  color: var(--text); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .chart-drag-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .chart-canvas { height: clamp(280px, 34vh, 460px); width: 100%; border-radius: var(--radius); flex: 1; min-height: 280px; }
@@ -137,10 +153,11 @@
 .dash-th-sort { border: 0; background: transparent; padding: 0; margin: 0; font: inherit; font-weight: var(--weight-bold); color: inherit; cursor: pointer; text-align: inherit; }
 /* A table tile reads like the answer it came from: amounts (and their headings) aligned right, every other
    row lightly shaded, the row under the pointer lifted with a quick wash and a thin accent at its start. */
-.dash-table-wrap { width: 100%; height: 100%; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.dash-table-wrap { width: 100%; height: 100%; overflow: auto; }
 .dash-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); white-space: nowrap; }
-.dash-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); padding: .55rem .65rem; text-align: left; border-bottom: 1px solid var(--border); }
-.dash-table td { padding: .5rem .65rem; border-bottom: 1px solid var(--border); transition: background-color .16s ease, box-shadow .16s ease; }
+.dash-table th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); padding: .55rem .65rem; text-align: left; border-bottom: 1px solid var(--line-subtle);
+  font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.dash-table td { padding: .55rem .65rem; border-bottom: 1px solid var(--line-subtle); transition: background-color .16s ease, box-shadow .16s ease; }
 .dash-table th.num { text-align: right; }
 .dash-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .dash-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-3) 50%, var(--surface)); }
@@ -210,15 +227,12 @@
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
 }
-.chart-grid { gap: 14px; }
-.chart-card-content { border-radius: var(--radius); }
-.chart-card-header { padding: 12px 14px; }
-.chart-card-body { padding: 14px; }
+.chart-grid { gap: 16px; }
+.chart-card-header { padding: 14px 16px 4px; }
+.chart-card-body { padding: 8px 16px 14px; }
 .chart-canvas { background: var(--surface); }
 .welcome-banner { background: var(--primary); box-shadow: none; }
-@media (max-width: 640px) {
-  .chart-card-header { flex-direction: column; }
-}
+
 
 /* ── View and edit ────────────────────────────────────────────────────────
    A dashboard opens to read: no drag handles, no remove buttons, no type
@@ -226,21 +240,28 @@
    then do the tiles move (the grid is static in view). */
 .dashboard-page[data-mode="view"] .chart-drag-handle,
 .dashboard-page[data-mode="view"] .dash-edit-only,
-.dashboard-page[data-mode="view"] .dash-ctrl-row,
-.dashboard-page[data-mode="view"] .chart-meta { display: none; }
+.dashboard-page[data-mode="view"] .dash-ctrl-row { display: none; }
 
-/* A KPI against the period before, and its trend: ink, never a colour for the direction. */
-.dash-kpi-change { font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text-secondary); margin-top: .35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* A KPI: its number, its trend beside it, its change against the period before below. The tile's name is its
+   heading, so the number is not named twice. The change is ink in a soft pill, never a colour for the
+   direction: up is good for sales, bad for costs. */
+.dash-kpi { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; }
+.dash-kpi-main { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); min-width: 0; }
+.dash-kpi-main .dash-kpi-value { flex: none; }
+.dash-kpi-change { display: flex; align-items: center; gap: 6px; font-size: var(--font-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dash-kpi-delta { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--surface-3);
+  color: var(--text-secondary); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
 .dash-kpi-arrow { font-size: .8em; margin-right: 4px; }
-.dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); }
-/* In a short tile the trend line gives up its room first: the number is never squeezed under the line below it. */
-.dash-kpi > * { flex-shrink: 0; }
-.dash-kpi > .dash-kpi-spark { flex: 0 1 32px; min-height: 10px; }
-.dash-kpi-spark { display: block; width: min(100%, 220px); height: 32px; margin-top: .5rem; overflow: visible; }
+.dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); overflow: hidden; text-overflow: ellipsis; }
+/* The trend takes the room the number leaves, and gives it up first: the number is never cut. */
+.dash-kpi-spark { display: block; flex: 1 1 0; min-width: 0; max-width: 160px; height: 36px; overflow: visible; }
 .dash-kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.dash-kpi-spark .dash-kpi-spark-area { fill: color-mix(in srgb, var(--primary) 10%, transparent); stroke: none; }
 .dash-kpi-spark .dash-kpi-spark-tail { stroke-dasharray: 3 3; }
-/* Several numbers of one answer, side by side; stacked when the tile is too narrow for them. */
-.dash-kpi-group { height: 100%; min-height: 150px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: center; gap: .75rem 1rem; padding: .75rem; }
-.dash-kpi-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; min-width: 0; }
-.dash-kpi-group .dash-kpi-value { font-size: clamp(16px, 12cqw, 44px); }
-.dash-kpi-label { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text-muted); margin-bottom: .35rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 210px) { .dash-kpi-spark { display: none; } }
+/* Several numbers of one answer, side by side with a rule between them; stacked when the tile is too narrow. */
+.dash-kpi-group { height: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); align-items: center; gap: .75rem 0; }
+.dash-kpi-cell { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; min-width: 0; height: auto; gap: 4px; padding: 0 16px; border-left: 1px solid var(--line-subtle); }
+.dash-kpi-cell:first-child { padding-left: 0; border-left: 0; }
+.dash-kpi-group .dash-kpi-value { font-size: clamp(18px, 12cqw, 30px); }
+.dash-kpi-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

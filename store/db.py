@@ -1238,6 +1238,8 @@ def _run_migrations() -> None:
         ("pinned_chart", "dashboard_tab", "TEXT NOT NULL DEFAULT 'Overview'"),
         ("pinned_chart", "sort_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ("pinned_chart", "layout_locked", "INTEGER NOT NULL DEFAULT 0"),
+        # A tile's name chosen by its reader (in the add dialog, or renamed): never replaced by the answer's own.
+        ("pinned_chart", "title_set", "INTEGER NOT NULL DEFAULT 0"),
         ("dashboard_artifact", "visibility", "TEXT NOT NULL DEFAULT 'personal'"),
         ("dashboard_artifact", "refresh_schedule", "TEXT NOT NULL DEFAULT 'manual'"),
         ("dashboard_artifact", "filters_json", "TEXT NOT NULL DEFAULT '[]'"),

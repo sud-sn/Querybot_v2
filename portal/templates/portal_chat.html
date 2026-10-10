@@ -419,8 +419,12 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 /* The strip the modal never had. It already knew the title and the chart type
    and displayed neither, so "Add to dashboard" asked the user to place
    something the dialog would not name. */
-.dashboard-picker-subject{display:flex;align-items:center;gap:var(--space-2);margin:0 var(--space-5) var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);font-size:var(--font-sm);color:var(--text-soft);min-width:0}
-.dashboard-picker-subject strong{color:var(--text);font-weight:var(--weight-bold);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dashboard-picker-subject{display:grid;gap:var(--space-1);margin:0 var(--space-5) var(--space-3);min-width:0}
+.dashboard-picker-subject[hidden]{display:none}
+.dashboard-picker-name{font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-soft)}
+.dashboard-picker-name-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
+.dashboard-picker-name-row input{flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--line-control);border-radius:var(--radius);font-size:var(--font-sm);color:var(--text);background:var(--surface)}
+.dashboard-picker-name-row input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)}
 .dashboard-picker-kind{margin-left:auto;flex:none;font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px var(--space-2)}
 .dashboard-picker-body{padding:0 var(--space-5) var(--space-4);overflow:auto;flex:1;min-height:0}
 .dashboard-picker-switch{display:flex;gap:var(--space-1);margin-bottom:var(--space-3);padding:var(--space-1);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
@@ -615,6 +619,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .kpi-spark { display: block; width: 100%; height: 32px; margin: 8px 0 2px; overflow: visible; }
 .kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .kpi-spark .kpi-spark-tail { stroke-dasharray: 3 3; }
+.kpi-spark .kpi-spark-area { fill: color-mix(in srgb, var(--primary) 10%, transparent); stroke: none; }
 /* A metric the reader made in this chat: how it is counted, and that it is theirs until their admin keeps it. */
 .own-metric { border: 1px dashed color-mix(in srgb, var(--primary) 45%, var(--line)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--primary) 4%, var(--surface)); padding: 12px 14px; display: grid; gap: 6px; }
 .own-metric-title { font-size: var(--font-xs); font-weight: var(--weight-bold); color: var(--primary); display: flex; align-items: center; gap: 6px; }
@@ -910,9 +915,13 @@ body:has(.chat-page) .main { background: var(--bg); }
       </div>
       <button type="button" class="dashboard-picker-close" onclick="closeDashboardPicker()" aria-label="{{ t('ui.pin.close') }}">{{ ic("x", 16) }}</button>
     </header>
+    {# The tile's name: the chart's own, ready to change; left empty, the chart's own again. #}
     <div class="dashboard-picker-subject" id="dashboardPickerSubject" hidden>
-      <strong id="dashboardPickerSubjectTitle"></strong>
-      <span class="dashboard-picker-kind" id="dashboardPickerSubjectKind"></span>
+      <label class="dashboard-picker-name" for="dashboardTileName">{{ t('ui.pin.tile_name_label') }}</label>
+      <div class="dashboard-picker-name-row">
+        <input id="dashboardTileName" maxlength="120" autocomplete="off">
+        <span class="dashboard-picker-kind" id="dashboardPickerSubjectKind"></span>
+      </div>
     </div>
     <div class="dashboard-picker-body">
       <div class="dashboard-picker-switch" role="tablist" aria-label="{{ t('ui.pin.title') }}">
@@ -1251,17 +1260,16 @@ function renderDashboardPickerOptions(query = ''){
   }).join('');
 }
 
-// The dialog knew the title and the chart type all along and displayed neither.
+// The tile's name, ready to change: the chart's own title, which is also what an emptied box gives.
 function _renderPickerSubject(context){
   const strip = document.getElementById('dashboardPickerSubject');
   if (!strip) return;
   const title = String(context.title || '').trim();
-  if (!title) { strip.hidden = true; return; }
   strip.hidden = false;
-  const name = document.getElementById('dashboardPickerSubjectTitle');
+  const name = document.getElementById('dashboardTileName');
   const kind = document.getElementById('dashboardPickerSubjectKind');
-  if (name) name.textContent = t('ui.pin.adding_what', {title: title});
-  if (kind) kind.textContent = String(context.chart_type || 'chart').toUpperCase();
+  if (name) { name.value = title; name.placeholder = title || t('ui.chat.artifact.default_visual'); }
+  if (kind) kind.textContent = enumLabel('charttype', String(context.chart_type || 'chart').toLowerCase());
 }
 
 async function openDashboardPicker(context = {}){
@@ -1334,9 +1342,13 @@ async function openDashboardPicker(context = {}){
 // What the user is asking for, or why we cannot ask for it yet.
 function _collectPinRequest(){
   if (!_dashboardAddContext) return {error: t('ui.pin.err_expired')};
+  const named = (document.getElementById('dashboardTileName')?.value || '').trim();
+  const own = String(_dashboardAddContext.title || '').trim();
   const payload = {
     token: _dashboardAddContext.token,
-    title: _dashboardAddContext.title || t('ui.chat.artifact.default_visual'),
+    title: named || own || t('ui.chat.artifact.default_visual'),
+    // A name of the reader's own: kept as written, never replaced by the answer's title.
+    named: Boolean(named && named !== own),
     chart_type: _dashboardAddContext.chart_type || 'auto',
     color_palette: _dashboardAddContext.color_palette || 'default',
     thread_id: typeof THREAD_ID === 'undefined' ? '' : THREAD_ID,
@@ -3122,7 +3134,9 @@ function _kpiTrendHtml(trend) {
   if (!trend || !trend.path) return '';
   const label = t('ui.kpi.trend', {span: trend.span || ''});
   return `<svg class="qb-graphic kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="${escHtml(label)}">`
-    + `<title>${escHtml(label)}</title><path d="${escHtml(trend.path)}"/>`
+    + `<title>${escHtml(label)}</title>`
+    + (trend.area ? `<path class="kpi-spark-area" d="${escHtml(trend.area)}"/>` : '')
+    + `<path d="${escHtml(trend.path)}"/>`
     + (trend.tail ? `<path class="kpi-spark-tail" d="${escHtml(trend.tail)}"/>` : '') + `</svg>`;
 }
 

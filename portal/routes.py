@@ -1519,7 +1519,8 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     # by store"); a title the reader wrote stays as written.
     fresh = str((shape or {}).get("title") or (payload.get("kpi") or {}).get("title") or "")
     pinned = str(chart.get("title") or "")
-    if pinned and fresh.startswith(tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))):
+    if pinned and not chart.get("title_set") and fresh.startswith(
+            tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))):
         result["title"] = fresh
     if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):
         from core.response_builder import _format_number
@@ -2161,7 +2162,7 @@ async def pin_chart_api(request: Request):
         payload = {}
 
     token          = str(payload.get("token") or "").strip()
-    title          = str(payload.get("title") or "").strip()
+    title          = str(payload.get("title") or "").strip()[:120]
     # Allow the frontend to send the currently-active chart type / palette
     # (user may have toggled type or changed palette before pinning)
     type_override    = str(payload.get("chart_type") or "").strip() or None
@@ -2232,6 +2233,8 @@ async def pin_chart_api(request: Request):
         color_palette=palette_override,
         dashboard_id=dashboard_id,
         display_config=_pin_display_config(pin_data),
+        # Named in the add dialog: the reader's name stays, whatever the answer calls itself later.
+        title_set=bool(payload.get("named")) and bool(title),
     )
     if not store.add_chart_to_dashboard(
         dashboard_id,
@@ -2275,8 +2278,9 @@ async def update_chart_api(request: Request):
     dashboard_id = int(payload.get("dashboard_id") or 0)
     if not chart_id:
         return JSONResponse({"ok": False, "error": "chart_id required."}, status_code=400)
+    # A tile's name: an empty one keeps the name it has (the page never sends one; nothing should blank it).
     updates = {
-        "title": str(payload["title"]).strip() if "title" in payload else None,
+        "title": (str(payload["title"]).strip()[:120] or None) if "title" in payload else None,
         "chart_type": str(payload["chart_type"]).strip() if "chart_type" in payload else None,
         "color_palette": str(payload["color_palette"]).strip() if "color_palette" in payload else None,
     }

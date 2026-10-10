@@ -1009,7 +1009,9 @@ def sparkline(values: list[float | None], *, partial: bool = False, width: int =
               height: int = 32) -> dict[str, str] | None:
     """SVG paths for a KPI's trend in a ``width`` x ``height`` box (drawn stretched to its tile): a gap where a
     period has no value. ``partial``: the last period is not over yet, so its segment is ``tail`` (drawn dashed,
-    a dip that is only a month not finished). None when fewer than three periods have a value."""
+    a dip that is only a month not finished). ``area``: the wash under the line down to the box's foot, when
+    every period has a value (a gap would close it across the gap). None when fewer than three periods have a
+    value."""
     known = [v for v in values if v is not None]
     if len(known) < 3:
         return None
@@ -1029,7 +1031,11 @@ def sparkline(values: list[float | None], *, partial: bool = False, width: int =
         pen = "L"
     n = len(values) - 1
     tail = f"M{at(n - 1, values[-2])} L{at(n, values[-1])}" if split else ""   # type: ignore[arg-type]
-    return {"path": " ".join(path), "tail": tail}
+    area = ""
+    if all(v is not None for v in values):
+        points = " L".join(at(i, v) for i, v in enumerate(values))      # type: ignore[arg-type]
+        area = f"M{points} L{pad + n * step:.1f},{height} L{pad:.1f},{height} Z"
+    return {"path": " ".join(path), "tail": tail, "area": area}
 
 
 MAX_SLICES = 10     # members a pie or donut is offered for (under the renderer's 12, so no "Other" slice)

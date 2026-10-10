@@ -294,10 +294,14 @@ def get_data_source(source_id: int, user_id: int, account_id: str) -> dict | Non
     return dict(row) if row else None
 
 
+# A number tile's height on the grid: its number, its trend beside it and its change fit in two rows.
+KPI_ROWS = 2
+
+
 def _layout_size(chart_type: str) -> tuple[int, int]:
     kind = str(chart_type or "bar").strip().lower()
     if kind == "kpi":
-        return 3, 3
+        return 3, KPI_ROWS
     if kind == "table":
         return 12, 6
     return 6, 5
@@ -359,9 +363,9 @@ def _packed(charts: list) -> list[tuple[int, int, int, int]]:
         slots, x = sum(_numbers_in(c) for c in row), 0
         for i, chart in enumerate(row):
             width = 12 - x if i == len(row) - 1 else 12 * _numbers_in(chart) // slots
-            rects[int(chart["id"])] = (x, y, width, 3)
+            rects[int(chart["id"])] = (x, y, width, KPI_ROWS)
             x += width
-        y += 3
+        y += KPI_ROWS
     waiting = None                     # a chart alone, so far, in the current row
     for chart in rest:
         if str(chart["chart_type"] or "").lower() == "table":
@@ -551,7 +555,7 @@ def update_dashboard_chart(
     assignments: list[str] = []
     values: list = []
     if title is not None:
-        assignments.append("title=?")
+        assignments.extend(("title=?", "title_set=1"))     # the reader's own name, kept as written
         values.append(str(title).strip()[:120])
     if chart_type is not None:
         assignments.extend(("chart_type=?", "layout_locked=0"))

@@ -114,13 +114,13 @@
       <button class="btn btn-secondary" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</button>
     </form>
     {% else %}
-    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" style="margin:0;display:flex;gap:.4rem">
-      <select name="cadence" aria-label="{{ t('ui.dash.cadence_label') }}" style="min-width:92px;padding:.45rem .55rem"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
+    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" class="dash-follow">
+      <select name="cadence" aria-label="{{ t('ui.dash.cadence_label') }}"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
       <input type="hidden" name="channel" value="in_app">
-      <button class="btn btn-secondary" type="submit">{{ t('ui.dash.subscribe') }}</button>
+      <button class="btn btn-secondary" type="submit">{{ ic("bell", 14) }}<span>{{ t('ui.dash.subscribe') }}</span></button>
     </form>
     {% endif %}
-    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-secondary">{{ t('ui.dash.chat_with') }}</a>
+    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-primary">{{ ic("chat", 14) }}<span>{{ t('ui.dash.chat_with') }}</span></a>
   </div>
 </header>
 
@@ -153,44 +153,46 @@
 
 {% endif %}
 {% if charts %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap">
-  <h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.tab_visuals', tab=selected_tab) }}</h2>
-  <span style="font-size:var(--font-sm);color:var(--text-muted)">{% if dashboard_artifact.can_edit %}<span class="dash-edit-only">{{ t('ui.dash.drag_hint') }} · </span>{% endif %}{{ t('ui.dash.live_data') }}</span>
-</div>
+{% if dashboard_artifact.can_edit %}<p class="dash-edit-hint dash-edit-only">{{ t('ui.dash.drag_hint') }}</p>{% endif %}
 <div class="chart-grid">
   {% for chart in charts %}
   {% set grid_x = chart.grid_x if chart.grid_x is defined and chart.grid_x is not none else (loop.index0 % 2) * 6 %}
   {% set grid_y = chart.grid_y if chart.grid_y is defined and chart.grid_y is not none else (loop.index0 // 2) * 5 %}
   {% set grid_w = chart.grid_w if chart.grid_w is defined and chart.grid_w is not none else 6 %}
-  {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else 5 %}
+  {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else (2 if chart.kpi else 5) %}
   <div class="chart-card grid-stack-item" style="--tile:{{ loop.index0 }}" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
     <div class="chart-card-content grid-stack-item-content">
     <div class="chart-card-header">
-      <div style="flex:1;min-width:0">
-        {% set _can_edit = dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}
-        {# The tooltip used to sit OUTSIDE the can_edit guard that wraps
-           ondblclick, so a team viewer was told to double-click to rename and
-           nothing happened. #}
-        <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
-             title="{{ chart.title }}{% if _can_edit %} · {{ t('ui.dash.rename_hint') }}{% endif %}"
-             {% if _can_edit %}ondblclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
-             id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-        <div class="chart-card-sub">{% if chart.subtitle %}{{ chart.subtitle }}{% elif chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
+      {# A tile is its name: the question it came from is not shown. Its owner names it when adding it and can
+         rename it in Edit (the pencil, or a click on the name). #}
+      {% set _can_edit = dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}
+      <div class="chart-card-heading">
+        <div class="chart-card-name">
+          <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}" title="{{ chart.title }}"
+               {% if _can_edit %}onclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
+               id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
+          {% if _can_edit %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only" title="{{ t('ui.dash.rename') }}" aria-label="{{ t('ui.dash.rename') }}"
+            onclick="startRenameChart(document.getElementById('chart-title-{{ chart.id }}'), {{ chart.id|int }})">{{ ic("pencil", 14) }}</button>{% endif %}
+        </div>
+        {# The period the tile counts; a table says how much of it shows; a tile kept from its last refresh says when. #}
+        {% set _sub = chart.subtitle or (t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) if chart.table_truncated else '') %}
+        {% set _cache = t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') if chart.from_cache else '' %}
+        {% if _sub or _cache %}<div class="chart-card-sub">{{ _sub }}{% if _sub and _cache %} · {% endif %}{{ _cache }}</div>{% endif %}
       </div>
-      <div style="display:flex;gap:.5rem;flex-shrink:0;align-items:center">
-        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">{{ ic("grip", 16) }}</button>{% endif %}
+      <div class="chart-card-actions">
+        {% if _can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">{{ ic("grip", 16) }}</button>{% endif %}
         {# Only a card that HAS a chart node can expand: openChartModal does
            `querySelector('[data-chart]'); if (!node) return;`, so on error, KPI
            and table cards this was a button that did nothing and said nothing. #}
-        {% if chart.chart_json %}<button type="button" class="btn btn-xs btn-secondary"
+        {% if chart.chart_json %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action"
           onclick="openChartModal(this.closest('.chart-card'))"
-          title="{{ t('ui.dash.expand_title') }}" style="font-size:var(--font-sm);padding:4px 8px">⤢ {{ t('ui.dash.expand') }}</button>{% endif %}
+          title="{{ t('ui.dash.expand_title') }}" aria-label="{{ t('ui.dash.expand_title') }}">{{ ic("expand", 15) }}</button>{% endif %}
         <form method="post" action="/portal/unpin" style="margin:0;display:none" id="unpin-{{ chart.id }}">
           <input type="hidden" name="chart_id" value="{{ chart.id }}">
           <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id if dashboard_artifact else 0 }}">
         </form>
-        {% if not dashboard_artifact or dashboard_artifact.can_edit %}<button type="button" class="btn btn-xs btn-secondary dash-edit-only" style="color:var(--text-muted)"
-          onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))">{{ ic("x", 12, "qb-icon-lead") }}{{ t('ui.dash.remove') }}</button>
+        {% if _can_edit %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only" title="{{ t('ui.dash.remove') }}" aria-label="{{ t('ui.dash.remove') }}"
+          onclick="unpinChart({{ chart.id|int }}, this.closest('.chart-card'))">{{ ic("trash", 15) }}</button>
         {% endif %}
       </div>
     </div>
@@ -208,19 +210,22 @@
         {% endfor %}
       </div>
       {% elif chart.kpi %}
-      <div class="dash-kpi" style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
-        <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
-        <div class="dash-kpi-value" title="{{ chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
+      <div class="dash-kpi">
+        {# The measure, when the tile was given a name of its own ("Q2 sales" over "Net amount"). #}
+        {% set _label = chart.kpi.label or '' %}
+        {% if _label and _label|lower != (chart.title or '')|lower %}<div class="dash-kpi-label">{{ _label }}</div>{% endif %}
+        <div class="dash-kpi-main">
+          <div class="dash-kpi-value" title="{{ chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
+          {% set trend = chart.kpi.trend %}
+          {% if trend and trend.path %}
+          <svg class="qb-graphic dash-kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ t('ui.kpi.trend', span=trend.span or '') }}"><title>{{ t('ui.kpi.trend', span=trend.span or '') }}</title>{% if trend.area %}<path class="dash-kpi-spark-area" d="{{ trend.area }}"/>{% endif %}<path d="{{ trend.path }}"/>{% if trend.tail %}<path class="dash-kpi-spark-tail" d="{{ trend.tail }}"/>{% endif %}</svg>
+          {% endif %}
+        </div>
         {% set change = chart.kpi.change %}
         {% if change and change.direction %}
         {# An arrow and a sign carry the direction, never a colour alone: up is good for sales, bad for costs. #}
-        <div class="dash-kpi-change" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}→{% endif %}</span>{{ change.change if change.direction == 'flat' else (change.pct or change.change) }} <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
+        <div class="dash-kpi-change" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}→{% endif %}</span>{{ change.change if change.direction == 'flat' else (change.pct or change.change) }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
         {% endif %}
-        {% set trend = chart.kpi.trend %}
-        {% if trend and trend.path %}
-        <svg class="qb-graphic dash-kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ t('ui.kpi.trend', span=trend.span or '') }}"><title>{{ t('ui.kpi.trend', span=trend.span or '') }}</title><path d="{{ trend.path }}"/>{% if trend.tail %}<path class="dash-kpi-spark-tail" d="{{ trend.tail }}"/>{% endif %}</svg>
-        {% endif %}
-        <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
       </div>
       {% elif chart.table_rows %}
       {% set numeric = chart.table_numeric or [] %}
@@ -241,14 +246,6 @@
       {% endif %}
       {% if chart.from_cache and chart.refresh_failed_at %}<div class="chart-warning">{{ t('ui.dash.refresh_failed', since=chart.refresh_failed_at[:16], at=(chart.cache_refreshed_at or '')[:16]) }}</div>{% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
-      <div class="chart-meta">
-        <span title="{{ chart.question }}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ chart.question[:70] }}{% if chart.question|length > 70 %}…{% endif %}</span>
-        {# The badge read the STORED type. The picker sends 'auto' when no type was
-    chosen, so the card announced AUTO above a rendered area chart. The JS
-    overwrites this from the payload once the chart mounts; the server-side
-    fallback below is only what shows before that. #}
-        <span id="chart-type-badge-{{ chart.id }}" style="font-weight:var(--weight-bold);color:var(--primary);flex-shrink:0">{% if chart.chart_type and chart.chart_type != 'auto' %}{{ enum_label('charttype', chart.chart_type)|upper }}{% elif chart.kpi %}{{ enum_label('charttype','kpi')|upper }}{% elif chart.table_rows %}{{ enum_label('charttype','table')|upper }}{% else %}{{ enum_label('charttype','chart')|upper }}{% endif %}</span>
-      </div>
       {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
         <!-- type toggles and palette swatches injected by JS -->
@@ -402,14 +399,8 @@ function _redrawCard(chartId) {
     window.QBCharts.update(inst, window._dashPayloads[chartId], {grow: false});
   }
 }
-// The badge names the chart type the way the server first rendered it: the
-// translated label, upper-cased -- never the raw type code.
-function _setTypeBadge(chartId, type) {
-  const badge = document.getElementById(`chart-type-badge-${chartId}`);
-  if (badge) badge.textContent = t('ui.enum.charttype.' + type).toUpperCase();
-}
 // A type chosen in the expanded view, carried back to the card
-// behind it: the stored payload, the card's chart, its buttons, its badge,
+// behind it: the stored payload, the card's chart, its buttons,
 // and the saved chart. The card's chart was left in the old type before.
 function _syncCardFromModal(chartId, fields) {
   window._dashPayloads[chartId] = Object.assign({}, window._dashPayloads[chartId] || {}, fields);
@@ -418,7 +409,6 @@ function _syncCardFromModal(chartId, fields) {
   if (fields.chart_type) {
     cardCtrl?.querySelectorAll('.dctt-btn')
       .forEach(b => b.classList.toggle('dctt-active', b.dataset.type === fields.chart_type));
-    _setTypeBadge(chartId, fields.chart_type);
   }
   _updateChart(chartId, fields);
 }
@@ -525,7 +515,7 @@ function initDashboardGrid() {
     dashboardGrid = GridStack.init({
       column: 12,
       cellHeight: 92,
-      margin: 12,
+      margin: 8,
       float: false,
       staticGrid: !CAN_EDIT_DASHBOARD,
       handle: '.chart-drag-handle',
@@ -620,45 +610,64 @@ function mountDashChartControls(ctrlRow) {
       window._dashPayloads[chartId] = updated;
       ctrlRow.querySelectorAll('.dctt-btn').forEach(b => b.classList.toggle('dctt-active', b.dataset.type===newType));
       _redrawCard(chartId);
-      _setTypeBadge(chartId, newType);
       _updateChart(chartId, { chart_type: newType });
     });
   });
 }
 
+// Saved, or not: true when the server kept the change.
 async function _updateChart(chartId, fields) {
   try {
-    await fetch('/portal/api/update-chart', {
+    const response = await fetch('/portal/api/update-chart', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ dashboard_id: ACTIVE_DASHBOARD_ID, chart_id: chartId, ...fields }),
     });
-  } catch {}
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
-// ── Inline title editing ──────────────────────────────────────────────────────
+// ── Renaming a tile ───────────────────────────────────────────────────────────
+// The name in a box of its own: Enter or leaving the box saves it, Escape keeps the old one, and an empty box
+// changes nothing. The name was edited in place before, and its Enter and Escape answered only the first key
+// pressed (a listener added "once"), so a name typed and then Enter was never saved until the box lost focus.
 function startRenameChart(el, chartId) {
-  if (el.isContentEditable) return;
-  el.contentEditable = 'true';
-  el.focus();
-  // Select all text
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  window.getSelection().removeAllRanges();
-  window.getSelection().addRange(range);
-
-  const commit = async () => {
-    el.contentEditable = 'false';
-    const newTitle = el.textContent.trim() || el.dataset.orig;
-    if (newTitle !== el.dataset.orig) {
-      _updateChart(chartId, { title: newTitle });
+  if (!el || el.dataset.renaming) return;
+  const before = el.textContent.trim();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'chart-title-input';
+  input.value = before;
+  input.maxLength = 120;
+  input.setAttribute('aria-label', t('ui.dash.rename'));
+  el.dataset.renaming = '1';
+  el.hidden = true;
+  el.after(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async save => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.remove();
+    el.hidden = false;
+    delete el.dataset.renaming;
+    if (!save || !name || name === before) return;
+    el.textContent = name;
+    el.title = name;
+    if (!(await _updateChart(chartId, { title: name }))) {
+      el.textContent = before;
+      el.title = before;
+      window.qbToast?.notify?.({body: t('ui.dash.rename_failed'), duration: 5000});
     }
   };
-  el.dataset.orig = el.textContent.trim();
-  el.addEventListener('blur', commit, { once: true });
-  el.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-    if (e.key === 'Escape') { el.textContent = el.dataset.orig; el.blur(); }
-  }, { once: true });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
 }
 
 // ── Chart maximize modal ──────────────────────────────────────────────────────

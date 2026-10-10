@@ -62,7 +62,7 @@ def test_the_view_hides_the_editing_controls():
     css = open("static/css/dashboard.css", encoding="utf-8").read()
     block = css[css.index('.dashboard-page[data-mode="view"]'):]
     block = block[:block.index("}")]
-    for part in (".chart-drag-handle", ".dash-edit-only", ".dash-ctrl-row", ".chart-meta"):
+    for part in (".chart-drag-handle", ".dash-edit-only", ".dash-ctrl-row"):
         assert part in block, part
     assert "display: none" in block
 

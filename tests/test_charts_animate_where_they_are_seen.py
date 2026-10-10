@@ -16,8 +16,7 @@ and nothing said so. The tooltip does now, exactly where a click is answered.
 A dashboard card redrawn with a new type or palette is drawn for its own box,
 as its first drawing was -- the redraw used a wide card's layout, which
 clipped a narrow card's names. A type chosen in a card's expanded view now
-reaches the card behind it, and the card's badge names the type in the
-reader's language instead of the raw type code.
+reaches the card behind it.
 
 Every test executes the real renderer (static/js/qb-charts.js) or the page's
 own functions, with ECharts, the frame clock and the DOM stubbed at their
@@ -365,13 +364,12 @@ JSON.stringify(calls);
             "function _updateChart(id, fields) { saved.push([id, fields]); }\n"
             + lift(DASHBOARD, "function t(id, vars)") + "\n"
             + lift(DASHBOARD, "function _redrawCard(chartId)") + "\n"
-            + lift(DASHBOARD, "function _setTypeBadge(chartId, type)") + "\n"
             + lift(DASHBOARD, "function _syncCardFromModal(chartId, fields)") + "\n"
             + body)
         return json.loads(_run("portal_dashboard.html", lang, script))
 
-    @pytest.mark.parametrize("lang,label", [("en", "LINE"), ("fr", "COURBE")])
-    def test_a_type_chosen_in_the_expanded_view_reaches_the_card(self, lang, label):
+    @pytest.mark.parametrize("lang", ["en", "fr"])
+    def test_a_type_chosen_in_the_expanded_view_reaches_the_card(self, lang):
         out = self._dashboard(lang, """
 _syncCardFromModal(7, {chart_type: 'line'});
 JSON.stringify({updates: updates, badge: badge.textContent, saved: saved,
@@ -381,9 +379,7 @@ JSON.stringify({updates: updates, badge: badge.textContent, saved: saved,
         assert len(out["updates"]) == 1
         chart, payload, opts = out["updates"][0]
         assert (chart, payload["chart_type"], opts) == ("inst-7", "line", {"grow": False})
-        # Its badge names the type in the reader's language, not "LINE" in a
-        # French interface; its buttons agree; the choice is saved.
-        assert out["badge"] == label
+        # Its buttons agree; the choice is saved.
         assert out["active"] == ["line"]
         assert out["saved"] == [[7, {"chart_type": "line"}]]
 
@@ -453,20 +449,17 @@ JSON.stringify({{updates: updates.map(function (u) {{ return [u[0], u[1].chart_t
                                + lift(DASHBOARD, "function mountDashChartControls(ctrlRow)") + "\n"
                                + lift(DASHBOARD, "function openChartModal(cardEl)") + "\n" + body)
 
-    @pytest.mark.parametrize("lang,label", [("en", "LINE"), ("fr", "COURBE")])
-    def test_a_type_picked_on_the_card_redraws_it_in_that_type(self, lang, label):
+    @pytest.mark.parametrize("lang", ["en", "fr"])
+    def test_a_type_picked_on_the_card_redraws_it_in_that_type(self, lang):
         out = self._pick(lang, "card")
         assert out["updates"] == [["inst-7", "line", {"grow": False}]]
-        assert out["badge"] == label
         assert out["saved"] == [[7, {"chart_type": "line"}]]
 
-    @pytest.mark.parametrize("lang,label", [("en", "LINE"), ("fr", "COURBE")])
-    def test_a_type_picked_in_the_expanded_view_redraws_the_card_behind_it(self, lang, label):
+    @pytest.mark.parametrize("lang", ["en", "fr"])
+    def test_a_type_picked_in_the_expanded_view_redraws_the_card_behind_it(self, lang):
         out = self._pick(lang, "modal")
-        # The expanded chart, then the card behind it -- which kept its old
-        # type before, under a badge written to an attribute nothing reads.
+        # The expanded chart, then the card behind it -- which kept its old type before.
         assert out["updates"] == [["modal-chart", "line", {"grow": False}], ["inst-7", "line", {"grow": False}]]
-        assert out["badge"] == label
         assert out["cardActive"] == ["line"]
         assert out["saved"] == [[7, {"chart_type": "line"}]]
 

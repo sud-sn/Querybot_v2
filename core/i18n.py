@@ -279,10 +279,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.pin.visibility_label": {"en": "Visibility", "fr": "Visibilité"},
     "ui.pin.visibility_personal": {"en": "Personal", "fr": "Personnel"},
     "ui.pin.visibility_team": {"en": "Team draft", "fr": "Brouillon d'équipe"},
-    "ui.pin.adding_what": {
-        "en": "Adding: {title}",
-        "fr": "À ajouter : {title}",
-    },
+    # The tile's name on the dashboard: the chart's own title until the reader changes it.
+    "ui.pin.tile_name_label": {"en": "Name on the dashboard", "fr": "Nom sur le tableau de bord"},
     "ui.pin.submit": {"en": "Add chart", "fr": "Ajouter le graphique"},
     "ui.pin.submit_new": {
         "en": "Create and add",
@@ -370,13 +368,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.filter_placeholder": {"en": "Filter {field}", "fr": "Filtrer {field}"},
     "ui.dash.apply_filters": {"en": "Apply filters", "fr": "Appliquer les filtres"},
     "ui.dash.clear": {"en": "Clear", "fr": "Effacer"},
-    "ui.dash.tab_visuals": {"en": "{tab} visuals", "fr": "Visuels : {tab}"},
     "ui.dash.drag_hint": {
         "en": "Drag or resize to edit placement",
         "fr": "Faites glisser ou redimensionnez pour modifier la disposition",
     },
-    "ui.dash.live_data": {"en": "Live governed data", "fr": "Données gouvernées en direct"},
-    "ui.dash.rename_hint": {"en": "Double-click to rename", "fr": "Double-cliquez pour renommer"},
+    "ui.dash.rename": {"en": "Rename", "fr": "Renommer"},
+    "ui.dash.rename_failed": {"en": "The new name could not be saved.", "fr": "Le nouveau nom n’a pas pu être enregistré."},
     "ui.dash.drag_handle_title": {
         "en": "Drag to reorder or resize from the card corner",
         "fr": "Faites glisser pour réordonner, ou redimensionnez par le coin de la carte",
@@ -396,7 +393,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     # The cache's times are UTC (store/dashboard_store.py), and say so.
     "ui.dash.cache": {"en": "Protected cache {at} UTC", "fr": "Cache protégé {at} UTC"},
-    "ui.dash.live_refresh": {"en": "Live governed refresh", "fr": "Actualisation gouvernée en direct"},
     # A scheduled refresh that keeps failing: on the chart that still shows the
     # rows of the last one that worked, and to the dashboard's owner
     # (core/dashboard_refresh.py).
@@ -418,7 +414,6 @@ MESSAGES: dict[str, dict[str, str]] = {
               "ont échoué depuis le {since} UTC, et il n'a encore aucune donnée. La prochaine tentative aura "
               "lieu le {next} UTC.",
     },
-    "ui.dash.expand": {"en": "Expand", "fr": "Agrandir"},
     "ui.dash.expand_title": {"en": "Expand chart", "fr": "Agrandir le graphique"},
     "ui.dash.remove": {"en": "Remove", "fr": "Retirer"},
     "ui.dash.chart_failed": {"en": "Chart could not refresh", "fr": "Le graphique n'a pas pu être actualisé"},
@@ -511,8 +506,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     # ── Counts. French makes ZERO singular, English makes it plural, so these
     # cannot be one template with an inline `{% if n != 1 %}s{% endif %}` --
     # which is what the page had, and which renders "0 visuels" in French.
-    "ui.dash.rows.one": {"en": "{count} row", "fr": "{count} ligne"},
-    "ui.dash.rows.other": {"en": "{count} rows", "fr": "{count} lignes"},
     "ui.dash.visuals.one": {"en": "{count} visual", "fr": "{count} visuel"},
     "ui.dash.visuals.other": {"en": "{count} visuals", "fr": "{count} visuels"},
     # ── Server enums. Rendered with |capitalize before, which cannot translate

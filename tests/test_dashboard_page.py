@@ -258,14 +258,15 @@ class TestTheCardChrome:
         """openChartModal does `querySelector('[data-chart]'); if (!node) return;`
         so on the other three kinds this was a button that did nothing and said
         nothing."""
-        assert "⤢ Expand" in _render([_chart(chart_json='{"type":"bar"}')])
+        expand = 'onclick="openChartModal(this.closest(\'.chart-card\'))"'
+        assert expand in _render([_chart(chart_json='{"type":"bar"}')])
         for dead in (
             _chart(error="Chart could not refresh"),
             _chart(kpi={"label": "Revenue", "value": 5}, kpi_display="5"),
             _chart(chart_type="table", table_columns=["a"],
                    table_rows=[{"a": {"d": "1", "v": 1}}]),
         ):
-            assert "Expand</button>" not in _visible(_render([dead]))
+            assert expand not in _visible(_render([dead]))
 
     def _title_element(self, markup: str) -> str:
         start = markup.index('<div class="chart-card-title')
@@ -274,28 +275,23 @@ class TestTheCardChrome:
     def test_a_read_only_viewer_is_not_promised_a_rename(self):
         markup = _render([_chart(chart_json='{"type":"bar"}')], can_edit=False)
         title = self._title_element(markup)
-        assert "Double-click to rename" not in title
-        assert "ondblclick" not in title
+        assert "startRenameChart" not in title and 'title="Rename"' not in markup
         # The cursor:text affordance follows the permission too.
         assert "is-editable" not in title
 
-    def test_an_editor_still_gets_it(self):
-        title = self._title_element(_render([_chart(chart_json='{"type":"bar"}')],
-                                            can_edit=True))
-        assert "Double-click to rename" in title
-        assert "ondblclick" in title
-        assert "is-editable" in title
+    def test_an_editor_renames_from_the_pencil_or_the_name_in_edit(self):
+        markup = _render([_chart(chart_json='{"type":"bar"}')], can_edit=True)
+        title = self._title_element(markup)
+        assert "is-editable" in title and "dataset.mode === 'edit'" in title
+        pencil = re.search(r'<button[^>]*title="Rename"[^>]*>', markup).group(0)
+        assert "dash-edit-only" in pencil and "startRenameChart" in pencil
 
-    def test_the_badge_does_not_say_auto(self):
-        """The picker stores chart_type='auto' when no type was chosen, and
-        build_chart_payload then recovers a real type -- so the card announced
-        AUTO above a rendered area chart."""
-        markup = _render([_chart(chart_type="auto", chart_json='{"type":"area"}')])
-        assert ">AUTO<" not in _visible(markup)
-        assert ">CHART<" in markup
-
-    def test_a_real_stored_type_is_still_shown(self):
-        assert ">BAR<" in _render([_chart(chart_type="bar", chart_json='{"type":"bar"}')])
+    def test_a_tile_shows_its_name_never_its_question_or_a_type_badge(self):
+        """Its question ran under every tile, cut at 70 characters, beside the chart type in capitals."""
+        markup = _visible(_render([_chart(chart_type="auto", chart_json='{"type":"area"}',
+                                          question="What was net sales by store in the first half of 2026?")]))
+        assert "What was net sales" not in markup
+        assert ">AUTO<" not in markup and ">CHART<" not in markup and ">AREA<" not in markup
 
     def test_an_error_card_offers_a_next_step(self):
         markup = _render([_chart(error="That table is not available to you.",
@@ -779,13 +775,6 @@ class TestServerEnumsAreTranslatedNotCapitalised:
         assert i18n.enum_label("status", "archived", lang="fr") == "Archived"
         assert i18n.enum_label("status", "", lang="fr") == ""
 
-    def test_the_chart_badge_translates_but_keeps_the_acronym(self):
-        table = _chart(chart_type="table", table_columns=["a"],
-                       table_rows=[{"a": {"d": "1", "v": 1}}])
-        assert ">TABLEAU<" in _visible(_render([table], lang="fr"))
-        kpi = _chart(chart_type="kpi", kpi={"label": "x", "value": 1}, kpi_display="1")
-        assert ">KPI<" in _visible(_render([kpi], lang="fr"))
-
 
 class TestCountsUseTheRightPluralRule:
     """The page had the rule inline as `{% if n != 1 %}s{% endif %}`, which is
@@ -803,11 +792,15 @@ class TestCountsUseTheRightPluralRule:
         assert i18n.plural("ui.dash.visuals", 0, lang="en") == "0 visuals"
         assert i18n.plural("ui.dash.visuals", 1, lang="en") == "1 visual"
 
-    def test_it_reaches_the_rendered_row_count(self):
-        one = _visible(_render([_chart(row_count=1, chart_json='{"type":"bar"}')], lang="fr"))
-        many = _visible(_render([_chart(row_count=12, chart_json='{"type":"bar"}')], lang="fr"))
-        assert "1 ligne" in one and "1 lignes" not in one
-        assert "12 lignes" in many
+    def test_a_cut_table_says_how_much_of_it_shows_and_a_chart_counts_no_rows(self):
+        """A chart's tile said "12 rows · Live governed refresh" under its name: noise beside the chart. A table
+        cut to its first rows still says so, in the reader's language."""
+        cut = _visible(_render([_chart(chart_type="table", table_columns=["a"], table_truncated=True,
+                                       table_shown=25, row_count=40,
+                                       table_rows=[{"a": {"d": "1", "v": 1}}])], lang="fr"))
+        assert "Affichage de 25 sur 40 lignes" in cut
+        chart = _visible(_render([_chart(row_count=12, chart_json='{"type":"bar"}')], lang="fr"))
+        assert "12 lignes" not in chart and "gouvernée" not in chart
 
     def test_a_non_numeric_count_does_not_raise(self):
         """row_count comes off a database row and this runs inside a render."""
@@ -854,10 +847,9 @@ class TestTheTranslatorIsNotShadowedInTheScript:
         script = source[source.index("<script>"):]
 
         calls = re.findall(r"\bt\('ui\.enum\.charttype\.' \+ (\w+)\)", script)
-        assert len(calls) == 3, (
+        assert len(calls) == 2, (
             f"expected the inline row and the modal row to label their "
-            f"buttons, and the type badge its type, through the translator, "
-            f"found {calls}")
+            f"buttons through the translator, found {calls}")
         assert "t" not in calls, (
             "the loop variable is named `t`, which shadows the page's "
             "translator inside the template literal that calls it")
@@ -944,7 +936,7 @@ class TestTidyLayoutEndpoint:
         assert response.status_code == 200 and response.json() == {"ok": True}
         placed = {c["id"]: (c["grid_x"], c["grid_y"], c["grid_w"], c["grid_h"])
                   for c in store.list_dashboard_charts(dashboard["id"], user_id)}
-        assert placed == {ids[0]: (0, 0, 12, 3), ids[1]: (0, 3, 12, 5)}
+        assert placed == {ids[0]: (0, 0, 12, 2), ids[1]: (0, 2, 12, 5)}
 
     def test_it_cannot_tidy_someone_elses_dashboard(self):
         import os
