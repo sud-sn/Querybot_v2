@@ -1130,9 +1130,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
     async def _run_why_question(text: str, cached: dict, table_hint: str, schema_hint: str) -> None:
         """A "why" about the result on screen, answered by the workspace's engine.
 
-        ``core2``: the new core answers it, with the conversation it holds;
-        what it cannot express goes to today's analysis, then to today's
-        pipeline (_run_main_question). ``compare``: today's analysis answers
+        ``core2``: the new core answers it, with the conversation it holds,
+        and only the new core (_run_main_question). ``compare``: today's analysis answers
         and the new core's answer follows it as a preview, as for any
         question. ``legacy``: today's analysis alone. An analysis that cannot
         run falls through to an ordinary question.
@@ -1144,11 +1143,9 @@ async def ws_chat(websocket: WebSocket, account_id: str):
             async with adapter.send_lock:
                 await websocket.send_json({"type": "typing", "active": False})
             return
-        await _run_main_question(text, table_hint, schema_hint,
-                                 why_about=cached if engine == "core2" else None)
+        await _run_main_question(text, table_hint, schema_hint)
 
-    async def _run_main_question(text: str, table_hint: str, schema_hint: str, *,
-                                 why_about: dict | None = None) -> None:
+    async def _run_main_question(text: str, table_hint: str, schema_hint: str) -> None:
         """Answers one question. Runs as a background task (see the send
         loop below) so the receive loop stays free to see a "cancel"
         message mid-flight. Wrapped end-to-end in its own error handling
@@ -1158,10 +1155,6 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         such an error would propagate to the outer handler and silently
         end the whole connection; this is a strict improvement, not just
         a refactor).
-
-        ``why_about``: the question is a "why" about that result on screen,
-        put to the new core first (``core2`` mode); what it cannot express is
-        today's analysis of the result before it is an ordinary question.
         """
         bg = BackgroundTasks()
         event = adapter.make_event(text)
@@ -1190,8 +1183,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         try:
             engine = await core2_bridge.engine(account_id)
             if not await core2_bridge.answer_instead(engine, adapter, websocket, account_id, text, portal_user):
-                if why_about is None or not await _answer_why(text, why_about):
-                    await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
+                await dispatch(account_id, event, adapter, bg, portal_user=portal_user)
 
             # Run any background tasks synchronously in WebSocket context
             for task in bg.tasks:

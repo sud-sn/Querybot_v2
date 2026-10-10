@@ -4,12 +4,13 @@
   new core cannot be switched on before it has learned the database.
 * Through the real portal socket: in "compare" mode today's answer comes first
   and the new core's follows it, badged as a preview; in "core2" mode the new
-  core answers alone, and a question it cannot express goes to today's
-  pipeline; a new-core failure never costs the reader today's answer, and side
-  by side it is said on the preview card instead of the preview never coming.
+  core answers alone: a question it cannot express gets its own reply, and a
+  failure says so (tests/test_core2_mode_never_runs_todays_pipeline.py). Side
+  by side a new-core failure never costs the reader today's answer, and is said
+  on the preview card instead of the preview never coming.
 * A "why" about the answer on screen is a question like any other: in "core2"
-  mode the new core answers it first (today's analysis only for what it cannot
-  express), and side by side the new core's answer follows today's analysis.
+  mode the new core alone answers it, and side by side the new core's answer
+  follows today's analysis.
 * The new core's SQL runs through QueryBot's governed executor, whose
   production rules it must pass, and returns the reference numbers.
 * The production wiring finds the stored model, the reader's allowed tables and
@@ -548,7 +549,9 @@ def test_a_frame_that_cannot_be_sent_never_turns_todays_answer_into_an_error(lea
             raise RuntimeError("the socket is closed")
 
     asyncio.run(bridge.answer_beside(Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1}))
-    assert asyncio.run(bridge.answer_instead("core2", Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1})) is False
+    # Handled all the same: today's pipeline is never run in the new core's place (it would query the warehouse
+    # again for a reader who is gone, and put another engine's answer in the thread's history).
+    assert asyncio.run(bridge.answer_instead("core2", Adapter(), ClosedSocket(), ACCOUNT, "what is 42?", {"id": 1})) is True
 
 
 def test_a_row_policy_narrows_the_new_cores_answer_to_the_readers_rows(tmp_path, monkeypatch):

@@ -5,17 +5,18 @@ A workspace answers portal questions with one of three engines:
 * ``legacy``  - today's pipeline only (the default; nothing here runs);
 * ``compare`` - today's pipeline answers, then the new core's answer to the same
   question follows it, badged "New core (preview)", for side-by-side checking;
-* ``core2``   - the new core answers; what it cannot express (``unsupported``)
-  or fails on goes to today's pipeline, so no question is left unanswered.
+* ``core2``   - the new core answers, and only the new core: what it cannot
+  express gets its own reply saying why, and a failure or a timeout says so.
+  Nothing is handed to today's pipeline.
 
 Every new-core answer is recorded (store.log_core2_answer) for comparison, with
 a question id so the reader's thumbs reach it. In ``core2`` mode an answer is
 also kept the way today's answers are: the workspace's monthly limits are
-checked first (at a limit, today's pipeline answers and says so), and an answer
+checked first (at a limit, the reader is told the limit), and an answer
 writes an answer trace (the thread's history, the full CSV export, the audit
 link) and a query-log row (usage and limits). The new core never blocks the
 conversation: it runs in its own threads under a time limit, and any failure is
-logged and leaves today's answer standing; side by side, it is also said on a
+logged and said; side by side it leaves today's answer standing, and is said on a
 preview card, so a preview that will not come is not mistaken for one still coming.
 """
 
@@ -323,7 +324,10 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         from core.background_tasks import spawn
 
         spawn(_summarize(adapter, websocket, account_id, question, payload), name="core2-summary")
-    return sent
+    # Handled, sent or not: a frame that could not reach the reader (the socket closed) is logged by _send, and
+    # today's pipeline is not run in its place -- it would query the warehouse again for nobody, and put another
+    # engine's answer in the thread's history.
+    return True
 
 
 async def _summarize(adapter: Any, websocket: Any, account_id: str, question: str, payload: dict[str, Any]) -> None:
