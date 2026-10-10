@@ -131,9 +131,8 @@ class Conversation:
         original = llm.llm_complete
         provider = ("azure_openai", "gpt-4o", "k", {})
         with contextlib.ExitStack() as stack:
-            for module in list(__import__("sys").modules.values()):
-                if module is not None and getattr(module, "llm_complete", None) is original:
-                    stack.enter_context(patch.object(module, "llm_complete", model))
+            for module in harness.holders("llm_complete", original):
+                stack.enter_context(patch.object(module, "llm_complete", model))
             stack.enter_context(patch.object(qp, "resolve_provider", return_value=provider))
             stack.enter_context(patch.object(dispatcher, "resolve_provider", return_value=provider))
             stack.enter_context(patch.object(qp, "load_retriever", return_value=harness._Retriever()))
@@ -197,9 +196,8 @@ class SocketConversation:
         provider = ("azure_openai", "gpt-4o", "k", {})
         self._stack = contextlib.ExitStack()
         original = llm.llm_complete
-        for module in list(__import__("sys").modules.values()):
-            if module is not None and getattr(module, "llm_complete", None) is original:
-                self._stack.enter_context(patch.object(module, "llm_complete", model))
+        for module in harness.holders("llm_complete", original):
+            self._stack.enter_context(patch.object(module, "llm_complete", model))
         for module in (qp, dispatcher, wh, llm):
             if hasattr(module, "resolve_provider"):
                 self._stack.enter_context(patch.object(module, "resolve_provider", return_value=provider))

@@ -394,6 +394,22 @@ def _accept_what_the_data_vouches_for(account: str = ACCOUNT) -> None:
 
 # ── Asking ───────────────────────────────────────────────────────────────────
 
+def holders(name: str, value) -> list:
+    """Every loaded module that imported ``value`` under ``name`` itself, to be patched where it is called.
+
+    A module's own names only: getattr on a lazily loaded module asks it to load the name, and once the
+    embedding model is loaded, transformers' image processors then import torchvision, which is not installed
+    -- so a question asked after that, in the same test process, failed before it was asked."""
+    import sys
+
+    found = []
+    for module in list(sys.modules.values()):
+        names = getattr(module, "__dict__", None) if module is not None else None
+        if isinstance(names, dict) and names.get(name) is value:
+            found.append(module)
+    return found
+
+
 class _Channel:
     """The portal adapter as the pipeline sees it; every reply is kept."""
 
@@ -524,9 +540,8 @@ def ask(warehouse: Warehouse, question: str, lang: str = "en", *, account: str =
     event = PlatformEvent(account, f"harness-{lang}", f"c{_asked}", question, "portal", raw={})
     original = llm.llm_complete
     with contextlib.ExitStack() as stack:
-        for module in list(__import__("sys").modules.values()):
-            if module is not None and getattr(module, "llm_complete", None) is original:
-                stack.enter_context(patch.object(module, "llm_complete", model))
+        for module in holders("llm_complete", original):
+            stack.enter_context(patch.object(module, "llm_complete", model))
         stack.enter_context(patch.object(qp, "resolve_provider", return_value=("azure_openai", "gpt-4o", "k", {})))
         stack.enter_context(patch.object(qp, "load_retriever", return_value=_Retriever()))
         stack.enter_context(patch.object(qp, "retrieve_similar_examples", return_value=[]))
