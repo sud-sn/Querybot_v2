@@ -84,6 +84,49 @@ def list_groups(account_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def search_people_and_groups(account_id: str, text: str, *, exclude_user_id: Optional[int] = None,
+                             limit: int = 8) -> list[dict]:
+    """People and groups of one workspace whose name holds ``text``, for a reader choosing whom to share with.
+
+    Only people who can sign in (active, a password of their own -- not a Teams or Slack account), never an
+    email or any other field: a person is a name and their group, a group a name and its size. Names that
+    start with ``text`` come first. At least two letters; % and _ are letters, not wildcards.
+    """
+    from store.passwords import LEGACY_PLATFORM_PLACEHOLDER, UNUSABLE
+
+    words = str(text or "").strip()
+    if len(words) < 2:
+        return []
+    escaped = words.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").lower()
+    within, starting = f"%{escaped}%", f"{escaped}%"
+    with get_db() as conn:
+        people = conn.execute(
+            """SELECT u.id, u.name, g.name AS group_name,
+                      CASE WHEN lower(u.name) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END AS later
+                 FROM portal_user u LEFT JOIN user_group g ON g.id=u.group_id
+                WHERE u.account_id=? AND u.is_active=1 AND lower(u.name) LIKE ? ESCAPE '\\'
+                  AND u.password_hash NOT LIKE ? AND u.password_hash <> ? AND u.id <> ?
+                ORDER BY later, lower(u.name), u.id LIMIT ?""",
+            (starting, account_id, within, f"{UNUSABLE}%", LEGACY_PLATFORM_PLACEHOLDER,
+             int(exclude_user_id or 0), int(limit)),
+        ).fetchall()
+        groups = conn.execute(
+            """SELECT g.id, g.name,
+                      (SELECT COUNT(*) FROM portal_user m WHERE m.group_id=g.id AND m.is_active=1) AS members,
+                      CASE WHEN lower(g.name) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END AS later
+                 FROM user_group g
+                WHERE g.account_id=? AND lower(g.name) LIKE ? ESCAPE '\\'
+                ORDER BY later, lower(g.name), g.id LIMIT ?""",
+            (starting, account_id, within, int(limit)),
+        ).fetchall()
+    found = [{"type": "user", "id": int(r["id"]), "name": r["name"], "group": r["group_name"] or "",
+              "later": r["later"]} for r in people]
+    found += [{"type": "group", "id": int(r["id"]), "name": r["name"], "members": int(r["members"] or 0),
+               "later": r["later"]} for r in groups]
+    found.sort(key=lambda f: (f["later"], f["name"].lower(), f["type"], f["id"]))
+    return [{k: v for k, v in f.items() if k != "later"} for f in found[:limit]]
+
+
 def get_group(group_id: int) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_group WHERE id=?", (group_id,)).fetchone()

@@ -18,6 +18,7 @@ Routes:
 """
 
 import base64
+import collections
 import datetime as _dt
 import hashlib
 import hmac
@@ -25,6 +26,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -2484,6 +2486,49 @@ async def tidy_dashboard_api(request: Request, dashboard_id: int):
     if not store.tidy_dashboard_layout(dashboard_id, user["id"], user["account_id"]):
         return JSONResponse({"ok": False, "error": "Dashboard layout was not updated."}, status_code=403)
     return JSONResponse({"ok": True})
+
+
+class _Paced:
+    """At most ``most`` calls per person in any ``seconds``: a search typed letter by letter stays well
+    inside it, a script walking the workspace's names does not. One process (the portal runs one)."""
+
+    def __init__(self, most: int, seconds: float):
+        self.most, self.seconds = most, seconds
+        self._calls: dict[int, collections.deque] = {}
+        self._lock = threading.Lock()
+
+    def wait(self, user_id: int) -> float:
+        """0 when the call may go ahead (and it is counted), else the seconds until one may."""
+        now = time.monotonic()
+        with self._lock:
+            calls = self._calls.setdefault(int(user_id), collections.deque())
+            while calls and now - calls[0] >= self.seconds:
+                calls.popleft()
+            if len(calls) >= self.most:
+                return self.seconds - (now - calls[0])
+            calls.append(now)
+            if len(self._calls) > 10_000:                 # forget people who stopped typing long ago
+                for key in [k for k, v in self._calls.items() if not v or now - v[-1] >= self.seconds][:5_000]:
+                    self._calls.pop(key, None)
+            return 0.0
+
+
+_PEOPLE_SEARCH = _Paced(most=30, seconds=10.0)
+
+
+@router.get("/api/people")
+async def people_search_api(request: Request, q: str = ""):
+    """People and groups of the reader's own workspace whose name holds ``q``, to share a dashboard with:
+    a person's name and group, a group's name and size -- never an email. At least two letters, at most 8."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    wait = _PEOPLE_SEARCH.wait(user["id"])
+    if wait:
+        return JSONResponse({"ok": False, "error": "Too many searches; try again in a moment."}, status_code=429,
+                            headers={"Retry-After": str(max(1, int(wait + 0.999)))})
+    return JSONResponse({"ok": True, "results": store.search_people_and_groups(
+        user["account_id"], q[:80], exclude_user_id=user["id"])})
 
 
 def _shares_reply(dashboard: dict, user: dict) -> JSONResponse:

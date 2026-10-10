@@ -331,9 +331,10 @@ def test_the_header_is_edit_share_and_a_menu_for_the_rest():
     for item in ('/subscribe"', 'name="cadence" value="weekly"', "/portal/chat?thread=", 'id="dashTidy"',
                  "dashAboutDialog"):
         assert item in menu, item
-    dialog = markup[markup.index('id="dashShareDialog"'):]
-    assert 'action="/portal/dashboard/5/share"' in dialog
-    assert 'value="personal"' in dialog and 'value="team"' in dialog and 'id="dashShareLink"' in dialog
+    # The Share dialog, as step 2 has it: one field for people and groups, the workspace switch, the link.
+    dialog = markup[markup.index('id="dashShareDialog"'):markup.index("</dialog>", markup.index('id="dashShareDialog"'))]
+    assert re.search(r'<input[^>]*id="dashShareSearch"[^>]*role="combobox"', dialog)
+    assert re.search(r'role="switch" id="dashShareWorkspace"', dialog) and 'id="dashShareLink"' in dialog
 
 
 def test_a_reader_who_cannot_edit_sees_neither_edit_nor_share():

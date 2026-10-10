@@ -81,6 +81,25 @@
 .dash-dialog-head h2 { margin: 0; font-size: var(--font-lg); font-weight: var(--weight-semibold); }
 .dash-share-options { display: grid; gap: 10px; margin: 0; padding: 8px 20px; border: 0; }
 .dash-share-link { display: flex; gap: var(--space-2); padding: 8px 20px; }
+/* Share: one field with its suggestions, then who may open it, each change saved at once. */
+.dash-share-add { padding: 8px 20px 4px; }
+.dash-share-add .form-label { display: block; margin-bottom: 6px; font-size: var(--font-sm); font-weight: var(--weight-semibold); }
+.dash-combobox { position: relative; }
+.dash-combobox .form-input { width: 100%; }
+.dash-suggestions { position: absolute; z-index: 5; inset-inline: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
+  list-style: none; max-height: 280px; overflow: auto; background: var(--surface-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.dash-suggestion { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; }
+.dash-suggestion[aria-selected="true"] { background: var(--surface-2); outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+.dash-suggestion.is-empty { cursor: default; color: var(--text-muted); }
+.dash-share-hint { margin: 6px 0 0; font-size: var(--font-xs); color: var(--text-muted); }
+.dash-share-subtitle { margin: 10px 20px 4px; font-size: var(--font-sm); font-weight: var(--weight-semibold); }
+.dash-share-list { margin: 0; padding: 0 20px; list-style: none; }
+.dash-share-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  min-height: 44px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.dash-share-row:last-child { border-bottom: 0; }
+.dash-share-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--font-sm); overflow-wrap: anywhere; }
+.dash-share-detail { font-size: var(--font-xs); color: var(--text-muted); }
 .dash-share-link input { flex: 1; min-width: 0; }
 .dash-share-link .btn { display: inline-flex; align-items: center; gap: 6px; }
 .dash-dialog-foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 12px; padding: 14px 20px;

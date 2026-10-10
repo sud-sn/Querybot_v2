@@ -285,28 +285,40 @@
 {# Who sees it: only its owner, or everyone in the workspace -- each teammate sees every tile as their own
    access allows, since a tile is drawn again for whoever opens it. #}
 {% if dashboard_artifact.can_edit %}
-<dialog class="dash-dialog" id="dashShareDialog" aria-labelledby="dashShareTitle">
-  <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/share">
-    <div class="dash-dialog-head">
-      <h2 id="dashShareTitle">{{ t('ui.dash.share_title', name=dashboard_artifact.name) }}</h2>
-      <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+<dialog class="dash-dialog" id="dashShareDialog" aria-labelledby="dashShareTitle" data-dashboard-id="{{ dashboard_artifact.id }}">
+  {# Each change saves at once; nothing to submit. People and groups of this workspace only, by name. #}
+  <div class="dash-dialog-head">
+    <h2 id="dashShareTitle">{{ t('ui.dash.share_title', name=dashboard_artifact.name) }}</h2>
+    <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+  </div>
+  <div class="dash-share-add">
+    <label class="form-label" for="dashShareSearch">{{ t('ui.dash.share_add') }}</label>
+    <div class="dash-combobox">
+      <input class="form-input" id="dashShareSearch" type="text" role="combobox" autocomplete="off" spellcheck="false"
+             aria-autocomplete="list" aria-expanded="false" aria-controls="dashShareSuggestions"
+             aria-describedby="dashShareHint" placeholder="{{ t('ui.dash.share_add_hint') }}" maxlength="80">
+      <ul class="dash-suggestions" id="dashShareSuggestions" role="listbox" aria-label="{{ t('ui.dash.share_suggestions') }}" hidden></ul>
     </div>
-    <fieldset class="dash-share-options">
-      <legend class="sr-only">{{ t('ui.dash.share_who') }}</legend>
-      <label class="choice-card"><input type="radio" name="visibility" value="personal"{% if dashboard_artifact.visibility != 'team' %} checked{% endif %}>
-        <span class="choice-card-copy"><span class="choice-card-title">{{ t('ui.dash.share_personal') }}</span><span class="choice-card-description">{{ t('ui.dash.share_personal_body') }}</span></span></label>
-      <label class="choice-card"><input type="radio" name="visibility" value="team"{% if dashboard_artifact.visibility == 'team' %} checked{% endif %}>
-        <span class="choice-card-copy"><span class="choice-card-title">{{ t('ui.dash.share_team') }}</span><span class="choice-card-description">{{ t('ui.dash.share_team_body') }}</span></span></label>
-    </fieldset>
-    <div class="dash-share-link">
-      <input class="form-input" id="dashShareLink" readonly aria-label="{{ t('ui.dash.share_link') }}" value="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}">
-      <button type="button" class="btn btn-secondary" onclick="copyDashboardLink(this)">{{ ic("copy", 15) }}<span>{{ t('ui.dash.copy_link') }}</span></button>
-    </div>
-    <div class="dash-dialog-foot">
-      <button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">{{ t('ui.pin.cancel') }}</button>
-      <button type="submit" class="btn btn-primary">{{ t('ui.dash.share_save') }}</button>
-    </div>
-  </form>
+    <p class="dash-share-hint" id="dashShareHint">{{ t('ui.dash.share_add_help') }}</p>
+    <p class="sr-only" id="dashShareStatus" role="status" aria-live="polite"></p>
+  </div>
+  <h3 class="dash-share-subtitle" id="dashShareWhoTitle">{{ t('ui.dash.share_who') }}</h3>
+  <ul class="dash-share-list" id="dashShareList" aria-labelledby="dashShareWhoTitle">
+    <li class="dash-share-row"><span class="dash-share-name">{{ t('ui.dash.share_owner', name=user.name) }}</span></li>
+    <li class="dash-share-row">
+      <span class="dash-share-name" id="dashShareWorkspaceLabel">{{ t('ui.dash.share_team') }}<span class="dash-share-detail">{{ t('ui.dash.share_team_body') }}</span></span>
+      <button type="button" class="qb-switch {% if dashboard_artifact.visibility == 'team' %}on{% else %}off{% endif %}" role="switch" id="dashShareWorkspace"
+              aria-checked="{{ 'true' if dashboard_artifact.visibility == 'team' else 'false' }}" aria-labelledby="dashShareWorkspaceLabel">
+        <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span></button>
+    </li>
+  </ul>
+  <div class="dash-share-link">
+    <input class="form-input" id="dashShareLink" readonly aria-label="{{ t('ui.dash.share_link') }}" value="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}">
+    <button type="button" class="btn btn-secondary" onclick="copyDashboardLink(this)">{{ ic("copy", 15) }}<span>{{ t('ui.dash.copy_link') }}</span></button>
+  </div>
+  <div class="dash-dialog-foot">
+    <button type="button" class="btn btn-primary" onclick="this.closest('dialog').close()">{{ t('ui.dash.share_done') }}</button>
+  </div>
 </dialog>
 {% endif %}
 
@@ -658,8 +670,139 @@ function copyDashboardLink(button) {
   }
 }
 
+// ── Share: people and groups of this workspace, each change saved at once ──────────────
+// The field lists up to 8 names from two letters on (arrow keys and Enter pick, Escape closes the list);
+// under it, who may open the dashboard, each with Remove. Never an email: a person is a name and a group.
+function initShareDialog() {
+  const dialog = document.getElementById('dashShareDialog');
+  if (!dialog) return;
+  const id = dialog.dataset.dashboardId;
+  const base = `/portal/api/dashboard/${encodeURIComponent(id)}/shares`;
+  const input = document.getElementById('dashShareSearch');
+  const list = document.getElementById('dashShareSuggestions');
+  const people = document.getElementById('dashShareList');
+  const status = document.getElementById('dashShareStatus');
+  const workspace = document.getElementById('dashShareWorkspace');
+  let options = [], active = -1, timer = null, asked = 0, changed = false;
+
+  const say = (text, tone) => {
+    status.textContent = text;
+    window.qbToast?.notify?.({body: text, tone: tone || 'success', duration: 3500});
+  };
+  const describe = (item) => item.type === 'group'
+    ? `${t('ui.dash.share_group')} · ${plural('ui.dash.share_group_size', item.members)}`
+    : (item.group || '');
+  const closeList = () => {
+    list.hidden = true; list.innerHTML = ''; options = []; active = -1;
+    input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
+  };
+  const mark = (index) => {
+    active = index;
+    options.forEach((_, i) => list.children[i]?.setAttribute('aria-selected', i === active ? 'true' : 'false'));
+    if (active >= 0) {
+      input.setAttribute('aria-activedescendant', `dashShareOption${active}`);
+      list.children[active]?.scrollIntoView({block: 'nearest'});
+    } else input.removeAttribute('aria-activedescendant');
+  };
+  const showList = (found) => {
+    options = found;
+    list.innerHTML = found.length ? found.map((item, i) =>
+      `<li role="option" id="dashShareOption${i}" class="dash-suggestion" aria-selected="false" data-index="${i}">` +
+      `<span class="dash-share-name">${escHtmlDash(item.name)}</span>` +
+      `<span class="dash-share-detail">${escHtmlDash(describe(item))}</span></li>`).join('')
+      : `<li class="dash-suggestion is-empty" role="option" aria-disabled="true">${escHtmlDash(t('ui.dash.share_none_found'))}</li>`;
+    list.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    mark(found.length ? 0 : -1);
+    status.textContent = found.length ? plural('ui.dash.share_found', found.length) : t('ui.dash.share_none_found');
+  };
+  const render = (data) => {
+    if (!data || !data.ok) return;
+    workspace.classList.toggle('on', !!data.workspace);
+    workspace.classList.toggle('off', !data.workspace);
+    workspace.setAttribute('aria-checked', data.workspace ? 'true' : 'false');
+    people.querySelectorAll('[data-share]').forEach(row => row.remove());
+    (data.shares || []).forEach(item => {
+      const row = document.createElement('li');
+      row.className = 'dash-share-row';
+      row.dataset.share = `${item.subject_type}:${item.subject_id}`;
+      row.innerHTML = `<span class="dash-share-name">${escHtmlDash(item.name)}` +
+        `<span class="dash-share-detail">${escHtmlDash(describe({type: item.subject_type, group: item.group_name,
+          members: item.members}))}</span></span>` +
+        `<button type="button" class="btn btn-ghost btn-xs" aria-label="${escHtmlDash(t('ui.dash.share_remove_name',
+          {name: item.name}))}">${escHtmlDash(t('ui.dash.share_remove'))}</button>`;
+      row.querySelector('button').addEventListener('click', () => remove(item));
+      people.appendChild(row);
+    });
+  };
+  const send = async (method, url, body) => {
+    try {
+      const response = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {},
+                                         body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.error || t('ui.dash.share_failed'));
+      return data;
+    } catch (error) {
+      say(error.message || t('ui.dash.share_failed'), 'error');
+      return null;
+    }
+  };
+  const pick = async (item) => {
+    closeList();
+    input.value = '';
+    const data = await send('POST', base, {subject_type: item.type, subject_id: item.id});
+    if (data) { changed = true; render(data); say(t('ui.dash.shared_with_name', {name: item.name})); }
+    input.focus();
+  };
+  const remove = async (item) => {
+    const data = await send('DELETE', `${base}/${encodeURIComponent(item.subject_type)}/${encodeURIComponent(item.subject_id)}`);
+    if (data) { changed = true; render(data); say(t('ui.dash.unshared_name', {name: item.name})); input.focus(); }
+  };
+  const search = async () => {
+    const text = input.value.trim();
+    if (text.length < 2) { closeList(); return; }
+    const mine = ++asked;
+    try {
+      const response = await fetch(`/portal/api/people?q=${encodeURIComponent(text)}`, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (mine !== asked) return;                       // a later letter was typed: its answer wins
+      if (!response.ok || !data.ok) { closeList(); if (response.status === 429) status.textContent = data.error || ''; return; }
+      showList(data.results || []);
+    } catch (_) { if (mine === asked) closeList(); }
+  };
+
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 180); });
+  input.addEventListener('keydown', (e) => {
+    const open = !list.hidden && options.length;
+    if (e.key === 'ArrowDown' && open) { e.preventDefault(); mark((active + 1) % options.length); }
+    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); mark((active - 1 + options.length) % options.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (open && active >= 0) pick(options[active]); }
+    else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); closeList(); }
+  });
+  // A dialog closes on Escape: while the list is open, Escape closes the list only.
+  dialog.addEventListener('cancel', (e) => { if (!list.hidden) { e.preventDefault(); closeList(); } });
+  list.addEventListener('mousedown', (e) => e.preventDefault());       // keep the field focused while choosing
+  list.addEventListener('click', (e) => {
+    const option = e.target.closest('[data-index]');
+    if (option) pick(options[Number(option.dataset.index)]);
+  });
+  input.addEventListener('blur', () => setTimeout(closeList, 150));
+  workspace.addEventListener('click', async () => {
+    const on = workspace.getAttribute('aria-checked') !== 'true';
+    const data = await send('POST', base, {workspace: on});
+    if (data) { changed = true; render(data); say(t(on ? 'ui.dash.shared_with_workspace' : 'ui.dash.unshared_workspace')); }
+  });
+  document.getElementById('dashShareButton')?.addEventListener('click', async () => {
+    render(await send('GET', base));
+    input.focus();
+  });
+  // The header says who sees it: read again once the dialog closes on a change.
+  dialog.addEventListener('close', () => { closeList(); if (changed) window.location.reload(); });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initDashboardMenu();
+  initShareDialog();
   // The link is to the dashboard as it is seen (its tab and filters), without this visit's one-off notices.
   const shareLink = document.getElementById('dashShareLink');
   if (shareLink) {
