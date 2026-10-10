@@ -327,6 +327,41 @@ def _first_open_slot(
     return 0, max((y + h for _, y, _, h in occupied), default=0)
 
 
+def _packed(charts: list) -> list[tuple[int, int, int, int]]:
+    """Tiles laid out with no gap for the grid to pull a tile into: the headline numbers share the first row
+    evenly (four at most to a row), then the charts two to a row, a chart left alone in its row and a table
+    across the whole width. A KPI three columns wide left nine empty beside it, the grid pulled the next
+    chart up into them, and the two rows no longer lined up."""
+    kpis = [c for c in charts if str(c["chart_type"] or "").lower() == "kpi"]
+    rest = [c for c in charts if str(c["chart_type"] or "").lower() != "kpi"]
+    rects: dict[int, tuple[int, int, int, int]] = {}
+    y = 0
+    for start in range(0, len(kpis), 4):
+        row = kpis[start:start + 4]
+        width = 12 // len(row)
+        for i, chart in enumerate(row):
+            rects[int(chart["id"])] = (i * width, y, width, 3)
+        y += 3
+    waiting = None                     # a chart alone, so far, in the current row
+    for chart in rest:
+        if str(chart["chart_type"] or "").lower() == "table":
+            if waiting is not None:
+                x0, y0, _, h0 = rects[waiting]
+                rects[waiting], y, waiting = (x0, y0, 12, h0), y0 + h0, None
+            rects[int(chart["id"])] = (0, y, 12, 6)
+            y += 6
+        elif waiting is None:
+            rects[int(chart["id"])] = (0, y, 6, 5)
+            waiting = int(chart["id"])
+        else:
+            rects[int(chart["id"])] = (6, rects[waiting][1], 6, 5)
+            y, waiting = rects[waiting][1] + 5, None
+    if waiting is not None:
+        x0, y0, _, h0 = rects[waiting]
+        rects[waiting] = (x0, y0, 12, h0)
+    return [rects[int(c["id"])] for c in charts]
+
+
 def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
     """Place unlocked tiles KPI-first while respecting user-edited tiles."""
     charts = conn.execute(
@@ -338,6 +373,16 @@ def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
                      position, id""",
         (int(dashboard_id), int(user_id)),
     ).fetchall()
+    if not any(int(chart["layout_locked"] or 0) for chart in charts):
+        # Nobody has placed a tile by hand: the whole dashboard is laid out again, gap-free.
+        for position, (chart, (x, y, width, height)) in enumerate(zip(charts, _packed(charts)), start=1):
+            conn.execute(
+                """UPDATE pinned_chart
+                      SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?
+                    WHERE id=? AND user_id=?""",
+                (x, y, width, height, position, int(chart["id"]), int(user_id)),
+            )
+        return
     occupied: list[tuple[int, int, int, int]] = []
     kpi_floor = 0
     for chart in charts:
@@ -399,13 +444,22 @@ def add_chart(
             (int(dashboard_id), int(user_id), int(chart_id)),
         ).fetchone()
         version_increment = 1 if existing and int(existing["count"] or 0) > 0 else 0
+        # Added last: its place among the dashboard's own tiles, never the number it was pinned with (which
+        # counts the reader's other pins and put a new chart in among the old ones).
+        last = conn.execute(
+            """SELECT COALESCE(MAX(position), 0) AS last FROM pinned_chart
+                WHERE dashboard_id=? AND user_id=? AND id<>?""",
+            (int(dashboard_id), int(user_id), int(chart_id)),
+        ).fetchone()
         conn.execute(
             """UPDATE pinned_chart
-                  SET dashboard_id=?, data_source_id=?, dashboard_tab=?, layout_locked=0
+                  SET dashboard_id=?, data_source_id=?, dashboard_tab=?, layout_locked=0,
+                      position=CASE WHEN dashboard_id IS ? THEN position ELSE ? END
                 WHERE id=? AND user_id=?""",
             (
                 int(dashboard_id), int(data_source_id) if data_source_id else None,
-                _clean_name(tab)[:60], int(chart_id), int(user_id),
+                _clean_name(tab)[:60], int(dashboard_id), int(last["last"] or 0) + 1,
+                int(chart_id), int(user_id),
             ),
         )
         conn.execute(
@@ -586,6 +640,31 @@ def update_dashboard_layouts(
             (int(dashboard_id), int(user_id), account_id),
         )
         _snapshot_locked(conn, dashboard_id, user_id, account_id, "Layout updated")
+    return True
+
+
+def tidy_dashboard_layout(dashboard_id: int, user_id: int, account_id: str) -> bool:
+    """Lay an owned dashboard out again from scratch, gap-free (KPIs first, charts two to a row), forgetting
+    where tiles were placed by hand: the reader's way back from a layout that no longer lines up."""
+    with get_db() as conn:
+        owned = conn.execute(
+            "SELECT id FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+            (int(dashboard_id), int(user_id), account_id),
+        ).fetchone()
+        if not owned:
+            return False
+        conn.execute(
+            "UPDATE pinned_chart SET layout_locked=0 WHERE dashboard_id=? AND user_id=? AND account_id=?",
+            (int(dashboard_id), int(user_id), account_id),
+        )
+        _auto_layout_locked(conn, int(dashboard_id), int(user_id))
+        conn.execute(
+            """UPDATE dashboard_artifact
+                  SET version=version+1, status='draft', updated_at=datetime('now')
+                WHERE id=? AND user_id=? AND account_id=?""",
+            (int(dashboard_id), int(user_id), account_id),
+        )
+        _snapshot_locked(conn, dashboard_id, user_id, account_id, "Layout tidied")
     return True
 
 

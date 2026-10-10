@@ -381,6 +381,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Drag to reorder or resize from the card corner",
         "fr": "Faites glisser pour réordonner, ou redimensionnez par le coin de la carte",
     },
+    "ui.dash.tidy": {"en": "Tidy layout", "fr": "Réorganiser"},
+    "ui.dash.tidy_title": {
+        "en": "Line the tiles up again: headline numbers first, then charts two to a row",
+        "fr": "Réaligner les tuiles : les chiffres clés d’abord, puis les graphiques deux par ligne",
+    },
     "ui.dash.drag_handle_label": {
         "en": "Drag chart to reorder",
         "fr": "Déplacer le graphique pour le réordonner",

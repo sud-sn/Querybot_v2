@@ -106,6 +106,8 @@
        Edit shows them and lets the tiles move. #}
     <button type="button" class="btn" id="dashEditToggle" aria-pressed="false"
             data-label-edit="{{ t('ui.dash.edit') }}" data-label-done="{{ t('ui.dash.done') }}">{{ ic("pencil", 14) }}<span>{{ t('ui.dash.edit') }}</span></button>
+    <button type="button" class="btn btn-secondary dash-edit-only" id="dashTidy" title="{{ t('ui.dash.tidy_title') }}"
+            onclick="tidyDashboard(this)">{{ t('ui.dash.tidy') }}</button>
     {% endif %}
     {% if dashboard_subscription %}
     <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
@@ -195,9 +197,9 @@
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
       {% elif chart.kpi %}
-      <div style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
+      <div class="dash-kpi" style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
         <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
-        <div style="font-size:clamp(30px,4vw,52px);font-weight:var(--weight-bold);letter-spacing:-.04em;color:var(--text)">{{ chart.kpi_display or chart.kpi.value }}</div>
+        <div class="dash-kpi-value" title="{{ chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
         <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
       </div>
       {% elif chart.table_rows %}
@@ -474,6 +476,9 @@ function collectDashboardLayout() {
 
 function saveDashboardLayoutSoon() {
   if (!dashboardGrid || !CAN_EDIT_DASHBOARD) return;
+  if (document.querySelector('.dashboard-page')?.dataset.mode !== 'edit') return;
+  // Folded into one column (a narrow window): what it shows is not the layout, and is never saved.
+  if (dashboardGrid.getColumn() !== 12) return;
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(async () => {
     const layouts = collectDashboardLayout();
@@ -508,14 +513,30 @@ function initDashboardGrid() {
       draggable: { handle: '.chart-drag-handle' },
       resizable: { handles: 'se,e,s' },
     }, gridEl);
-    dashboardGrid.on('change', saveDashboardLayoutSoon);
-    dashboardGrid.on('dragstop resizestop', () => setTimeout(resizeDashboardCharts, 80));
+    // Saved only when the reader moves or resizes a tile. The grid's own 'change' also fires when a narrow
+    // window folds it into one column: saved then, every tile was stored two columns wide in a single
+    // stack, locked, and the dashboard no longer lined up on any screen.
+    dashboardGrid.on('dragstop resizestop', () => {
+      saveDashboardLayoutSoon();
+      setTimeout(resizeDashboardCharts, 80);
+    });
     setTimeout(resizeDashboardCharts, 120);
   } catch (_) {
     gridEl.classList.remove('grid-stack', 'is-gridstack');
     dashboardGrid = null;
     initFallbackDashboardDrag(gridEl);
   }
+}
+
+// Lines the tiles up again from scratch (KPIs first, charts two to a row); the page reloads into it.
+async function tidyDashboard(button) {
+  if (!ACTIVE_DASHBOARD_ID) return;
+  button.disabled = true;
+  try {
+    const r = await fetch(`/portal/api/dashboard/${ACTIVE_DASHBOARD_ID}/tidy`, {method: 'POST'});
+    if (r.ok) { window.location.reload(); return; }
+  } catch (_) {}
+  button.disabled = false;
 }
 
 // View is the default; Edit shows the handles, remove buttons and type

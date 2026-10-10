@@ -888,3 +888,67 @@ class TestTheTranslatorIsNotShadowedInTheScript:
         """Every innerHTML on this page was built without one."""
         source = TEMPLATE.read_text(encoding="utf-8")
         assert "function escHtmlDash(" in source
+
+
+class TestTilesMoveAndLineUp:
+    """Found on a reader's dashboard (a KPI, a bar and a line), and checked in Chromium:
+
+    * no tile could be moved: the handle is a button, and a press on its icon landed on the svg inside it,
+      which the grid ignores as a button's content;
+    * a narrow window folded the grid into one column, its 'change' was saved, and every tile was stored two
+      columns wide in one stack, locked: the dashboard no longer lined up on any screen;
+    * the KPI's number was sized by the window, not its tile, and was cut off at both ends.
+    """
+
+    def test_a_press_on_the_handles_icon_reaches_the_handle(self):
+        css = STYLESHEET.read_text(encoding="utf-8")
+        assert ".chart-drag-handle > * { pointer-events: none; }" in css
+
+    def test_the_layout_is_saved_only_when_the_reader_moves_or_resizes_a_tile(self):
+        page = TEMPLATE.read_text(encoding="utf-8")
+        assert "dashboardGrid.on('change'" not in page
+        listener = page[page.index("dashboardGrid.on('dragstop resizestop'"):][:200]
+        assert "saveDashboardLayoutSoon()" in listener
+        guard = page[page.index("function saveDashboardLayoutSoon"):][:400]
+        assert "dataset.mode !== 'edit'" in guard and "getColumn() !== 12" in guard
+
+    def test_the_headline_number_is_sized_by_its_tile(self):
+        css = STYLESHEET.read_text(encoding="utf-8")
+        assert ".dash-kpi { container-type: inline-size; }" in css
+        assert "cqw" in css[css.index(".dash-kpi-value"):][:200]
+        markup = _render([_chart(kpi={"value": 185933.03, "label": "Net amount"}, kpi_display="$185,933.03",
+                                 chart_json=None)])
+        assert 'class="dash-kpi-value" title="$185,933.03">$185,933.03<' in markup
+
+    def test_an_editor_is_offered_tidy_layout_and_a_reader_is_not(self):
+        assert 'id="dashTidy"' in _render([_chart(chart_json='{"type":"bar"}')], can_edit=True)
+        assert 'id="dashTidy"' not in _render([_chart(chart_json='{"type":"bar"}')], can_edit=False)
+
+
+class TestTidyLayoutEndpoint:
+
+    _client = TestThePublishEndpoint._client
+    _signed_in = TestThePublishEndpoint._signed_in
+
+    def test_it_lines_the_tiles_up_again(self):
+        client, store, account_id, user_id = self._signed_in()
+        dashboard = store.create_dashboard(account_id, user_id, "t", "Ops")
+        ids = [store.pin_chart(user_id=user_id, account_id=account_id, title=t, question=t,
+                               sql_query="SELECT 1", chart_type=k, db_config_id=None)
+               for t, k in (("Orders", "kpi"), ("By region", "bar"))]
+        for chart_id in ids:
+            store.add_chart_to_dashboard(dashboard["id"], chart_id, user_id, account_id)
+        store.update_dashboard_layouts(dashboard["id"], user_id, account_id,
+                                       [{"chart_id": ids[0], "x": 7, "y": 4, "w": 3, "h": 3}])
+        response = client.post(f"/portal/api/dashboard/{int(dashboard['id'])}/tidy")
+        assert response.status_code == 200 and response.json() == {"ok": True}
+        placed = {c["id"]: (c["grid_x"], c["grid_y"], c["grid_w"], c["grid_h"])
+                  for c in store.list_dashboard_charts(dashboard["id"], user_id)}
+        assert placed == {ids[0]: (0, 0, 12, 3), ids[1]: (0, 3, 12, 5)}
+
+    def test_it_cannot_tidy_someone_elses_dashboard(self):
+        import os
+        client, store, account_id, user_id = self._signed_in()
+        other_id, _ = store.create_user(account_id, "Bob", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
+        dashboard = store.create_dashboard(account_id, other_id, "t", "Theirs")
+        assert client.post(f"/portal/api/dashboard/{int(dashboard['id'])}/tidy").status_code == 403

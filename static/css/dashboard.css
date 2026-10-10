@@ -114,6 +114,13 @@
 
 .chart-drag-handle { border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: var(--weight-bold); line-height: 1; }
 .chart-drag-handle:active { cursor: grabbing; }
+/* The grid starts a drag only on the handle itself: a press on its icon (where people press) landed on the
+   svg inside the button, which the grid ignores as "a button's content", so no tile ever moved. */
+.chart-drag-handle > * { pointer-events: none; }
+/* A headline number sized by its tile, not the window: "$185,933.03" was cut off in a narrow tile. */
+.dash-kpi { container-type: inline-size; }
+.dash-kpi-value { font-size: clamp(22px, 13cqw, 52px); font-weight: var(--weight-bold); letter-spacing: -.04em;
+  color: var(--text); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .chart-drag-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .chart-canvas { height: clamp(280px, 34vh, 460px); width: 100%; border-radius: var(--radius); flex: 1; min-height: 280px; }

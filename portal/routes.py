@@ -2279,6 +2279,17 @@ async def update_chart_layout_api(request: Request):
     return JSONResponse({"ok": True})
 
 
+@router.post("/api/dashboard/{dashboard_id}/tidy")
+async def tidy_dashboard_api(request: Request, dashboard_id: int):
+    """Lay the dashboard out again, gap-free, forgetting where its tiles were placed by hand."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    if not store.tidy_dashboard_layout(dashboard_id, user["id"], user["account_id"]):
+        return JSONResponse({"ok": False, "error": "Dashboard layout was not updated."}, status_code=403)
+    return JSONResponse({"ok": True})
+
+
 @router.post("/unpin")
 async def unpin_chart(
     request: Request, chart_id: int = Form(...), dashboard_id: int = Form(0)

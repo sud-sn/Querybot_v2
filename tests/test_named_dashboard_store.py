@@ -52,7 +52,9 @@ def test_kpis_are_laid_out_before_other_visuals(dashboard_users):
     charts = store.list_dashboard_charts(dashboard["id"], owner_id)
     assert [chart["id"] for chart in charts] == [kpi_id, bar_id]
     assert charts[0]["grid_y"] == 0
-    assert charts[0]["grid_w"] == 3
+    # The headline numbers share the first row: one alone takes all of it (a third left a gap the grid
+    # pulled the next chart into).
+    assert charts[0]["grid_w"] == 12
     assert charts[1]["grid_y"] >= charts[0]["grid_h"]
 
 
@@ -99,7 +101,7 @@ def test_changing_visual_to_kpi_reflows_it_to_top(dashboard_users):
     charts = store.list_dashboard_charts(dashboard["id"], owner_id)
     assert charts[0]["id"] == second_id
     assert charts[0]["grid_y"] == 0
-    assert charts[0]["grid_w"] == 3
+    assert charts[0]["grid_w"] == 12
 
 
 def test_legacy_pins_migrate_once_into_named_dashboard(dashboard_users):
@@ -129,3 +131,57 @@ def test_dashboard_subscription_requires_view_access_and_is_user_scoped(dashboar
     private = store.create_dashboard(account_id, owner_id, "thread-e", "Owner only")
     with pytest.raises(PermissionError):
         store.subscribe_dashboard(private["id"], viewer_id, account_id)
+
+
+def _rects(dashboard_id, owner_id):
+    return {c["id"]: (c["grid_x"], c["grid_y"], c["grid_w"], c["grid_h"])
+            for c in store.list_dashboard_charts(dashboard_id, owner_id)}
+
+
+def test_tiles_are_laid_out_with_no_gap_for_the_grid_to_pull_a_tile_into(dashboard_users):
+    """A KPI, a bar and a line: the KPI across the first row, the two charts side by side below it, both rows
+    full. A KPI a quarter wide left the rest of its row empty, the grid pulled the line chart up into it, and
+    the rows no longer lined up."""
+    account_id, owner_id, _ = dashboard_users
+    dashboard = store.create_dashboard(account_id, owner_id, "thread-pack", "Packed")
+    kpi = _chart(account_id, owner_id, "kpi", "Net sales")
+    bar = _chart(account_id, owner_id, "bar", "Net sales by store")
+    line = _chart(account_id, owner_id, "line", "Monthly net sales")
+    for chart_id in (kpi, bar, line):
+        store.add_chart_to_dashboard(dashboard["id"], chart_id, owner_id, account_id)
+    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 3), bar: (0, 3, 6, 5), line: (6, 3, 6, 5)}
+
+    more = [_chart(account_id, owner_id, "kpi", f"KPI {i}") for i in range(4)]
+    table = _chart(account_id, owner_id, "table", "Top customers")
+    extra = _chart(account_id, owner_id, "bar", "Returns by store")
+    for chart_id in (*more, table, extra):
+        store.add_chart_to_dashboard(dashboard["id"], chart_id, owner_id, account_id)
+    rects = _rects(dashboard["id"], owner_id)
+    kpis = sorted(rects[c] for c in (kpi, *more))
+    assert kpis == [(0, 0, 3, 3), (0, 3, 12, 3), (3, 0, 3, 3), (6, 0, 3, 3), (9, 0, 3, 3)]
+    assert rects[bar][1] == rects[line][1] == 6 and {rects[bar][0], rects[line][0]} == {0, 6}
+    assert rects[table] == (0, 11, 12, 6)
+    assert rects[extra] == (0, 17, 12, 5)          # alone in its row: the whole width
+    cells = set()
+    for x, y, w, h in rects.values():
+        cell = {(i, j) for i in range(x, x + w) for j in range(y, y + h)}
+        assert not cells & cell, "tiles overlap"
+        cells |= cell
+    bottom = max(y + h for _, y, _, h in rects.values())
+    assert len(cells) == 12 * bottom, "a gap is left in the layout"
+
+
+def test_tidy_layout_lines_up_a_dashboard_arranged_by_hand(dashboard_users):
+    account_id, owner_id, viewer_id = dashboard_users
+    dashboard = store.create_dashboard(account_id, owner_id, "thread-tidy", "Messy")
+    kpi = _chart(account_id, owner_id, "kpi", "Orders")
+    bar = _chart(account_id, owner_id, "bar", "Orders by region")
+    for chart_id in (kpi, bar):
+        store.add_chart_to_dashboard(dashboard["id"], chart_id, owner_id, account_id)
+    assert store.update_dashboard_layouts(dashboard["id"], owner_id, account_id, [
+        {"chart_id": kpi, "x": 7, "y": 4, "w": 3, "h": 3}, {"chart_id": bar, "x": 0, "y": 9, "w": 6, "h": 5}])
+    assert not store.tidy_dashboard_layout(dashboard["id"], viewer_id, account_id)    # only its owner
+    assert _rects(dashboard["id"], owner_id)[kpi] == (7, 4, 3, 3)
+    assert store.tidy_dashboard_layout(dashboard["id"], owner_id, account_id)
+    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 3), bar: (0, 3, 12, 5)}
+    assert all(c["layout_locked"] == 0 for c in store.list_dashboard_charts(dashboard["id"], owner_id))
