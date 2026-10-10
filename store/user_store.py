@@ -775,7 +775,8 @@ def pin_chart(
             ).fetchone()
         pos = row["next"] if row else 1
         kind = str(chart_type or "bar").lower()
-        grid_w, grid_h = ((3, 2) if kind == "kpi" else ((12, 6) if kind == "table" else (6, 5)))
+        # On the dashboard's 46px rows (store/dashboard_store.py GRID_SCALE); laid out again when added to one.
+        grid_w, grid_h = ((3, 3) if kind == "kpi" else ((12, 10) if kind == "table" else (6, 10)))
         columns = max(1, 12 // grid_w)
         grid_x = ((pos - 1) % columns) * grid_w
         grid_y = ((pos - 1) // columns) * grid_h

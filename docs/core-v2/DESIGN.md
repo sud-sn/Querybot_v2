@@ -672,8 +672,35 @@ words:
 * a dashboard tile is its name and the period it counts, never the question
   it came from: the add dialog offers the chart's own name to keep or change,
   and Edit renames it (the pencil, or the name); a name the reader gave is
-  kept as written (pinned_chart.title_set). A number tile is its number, its
-  trend beside it and its change below, two grid rows tall;
+  kept as written (pinned_chart.title_set); a tile added without a name takes
+  its answer's ("Net amount and quantity by product", "Stores");
+* a dashboard reads as the approved design: Edit, Share (kept to its owner,
+  or shared with the team and published at once) and one menu for the rest
+  (follow it daily, weekly or monthly; chat with it; tidy its layout; its
+  details). Its tiles sit on 46px rows, a number card three and a chart ten;
+  a dashboard laid out on the older 92px rows is brought onto these once,
+  whoever opens it first, and a version saved on them comes back on these.
+  A card is one number: short ($543.1K, the whole its tooltip), its change
+  coloured as the design has it (▲ green, ▼ red) "vs" the period before. A
+  measure has no "lower is better" yet, so a cost that rises reads green.
+  An answer of several numbers is a card each, and a tile of several pinned
+  before that is split the first time its dashboard is opened. A chart has
+  its name on the left and what it counts on the right ("Top 6 of 9 ·
+  Jan–Mar 2026"); a single line has a wash and its lowest point named (never
+  the last period, often not over); past six members, bars run across;
+* a dashboard's filters, kept in its address so a filtered dashboard is
+  shared as it is seen: a Period (this or last month, quarter or year, the
+  year to date, the last 12 months, each counted back from where the data
+  ends) replaces the window of each tile that counts one span, and is shaded
+  on a tile over time, which keeps its range; the members of each field a
+  tile is grouped by alone (four fields at most) filter every other tile. A
+  tile that cannot take a filter is drawn without it and says which; no
+  filter renames a tile (portal/routes._view_plan);
+* every tile reaches a dashboard one way, store.add_answer: a pinned answer
+  now, and the dashboards the product builds itself later. It keeps the
+  tile's plan (display_config.core2_plan), its name, whether the reader
+  named it, and its place; the tile is drawn by running that plan again for
+  whoever opens it, under the dashboard's filters;
 * members that are amounts (an Attribute of kind number: transit days, a
   fill number) are drawn in number order; past 20 of them, and for a measure
   that adds up, in about ten equal ranges with the empty ones at zero;
@@ -710,8 +737,8 @@ words:
   before (▲/▼ and a sign, never a colour: up is good for sales, bad for
   costs; a percentage moves by points) and a trend line of the periods up to
   its own (12 months, 8 quarters, 5 years, 12 weeks, 30 days), a period not
-  over yet dashed; several numbers of one answer are a group of tiles, and
-  one dashboard tile;
+  over yet dashed; several numbers of one answer are a group of tiles in the
+  chat, and a card each on a dashboard (its trend line stays in the chat);
 * findings from the whole series: peak, trough, robust trend, spikes, partial
   periods excluded from comparisons, constant measures;
 * "How this was answered": measure definitions, date used, join path(s),

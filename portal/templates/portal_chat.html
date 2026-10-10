@@ -424,6 +424,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .dashboard-picker-name{font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-soft)}
 .dashboard-picker-name-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
 .dashboard-picker-name-row input{flex:1;min-width:0}
+.dashboard-picker-numbers{margin:0;font-size:var(--font-sm);color:var(--text-muted)}
 .dashboard-picker-kind{margin-left:auto;flex:none;font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px var(--space-2)}
 .dashboard-picker-body{padding:0 var(--space-5) var(--space-4);overflow:auto;flex:1;min-height:0}
 .dashboard-picker-switch{display:flex;gap:var(--space-1);margin-bottom:var(--space-3);padding:var(--space-1);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
@@ -921,6 +922,8 @@ body:has(.chat-page) .main { background: var(--bg); }
         <input id="dashboardTileName" class="form-input" maxlength="120" autocomplete="off">
         <span class="dashboard-picker-kind" id="dashboardPickerSubjectKind"></span>
       </div>
+      {# Several numbers: a tile each, under each number's own name. #}
+      <p class="dashboard-picker-numbers" id="dashboardPickerNumbers" hidden></p>
     </div>
     <div class="dashboard-picker-body">
       <div class="dashboard-picker-switch" role="tablist" aria-label="{{ t('ui.pin.title') }}">
@@ -1269,6 +1272,17 @@ function _renderPickerSubject(context){
   const kind = document.getElementById('dashboardPickerSubjectKind');
   if (name) { name.value = title; name.placeholder = title || t('ui.chat.artifact.default_visual'); }
   if (kind) kind.textContent = enumLabel('charttype', String(context.chart_type || 'chart').toLowerCase());
+  // Several numbers are a tile each, each under its own name: there is no one name to give them.
+  const count = Number(context.numbers || 1);
+  const numbers = document.getElementById('dashboardPickerNumbers');
+  const row = name ? name.parentNode : null;
+  if (row) row.hidden = count > 1;
+  if (numbers) {
+    numbers.hidden = count <= 1;
+    numbers.textContent = count > 1 ? t('ui.pin.numbers_note', {count: count}) : '';
+  }
+  const label = document.querySelector ? document.querySelector('label[for="dashboardTileName"]') : null;
+  if (label) label.hidden = count > 1;
 }
 
 async function openDashboardPicker(context = {}){
@@ -1341,7 +1355,8 @@ async function openDashboardPicker(context = {}){
 // What the user is asking for, or why we cannot ask for it yet.
 function _collectPinRequest(){
   if (!_dashboardAddContext) return {error: t('ui.pin.err_expired')};
-  const named = (document.getElementById('dashboardTileName')?.value || '').trim();
+  const several = Number(_dashboardAddContext.numbers || 1) > 1;
+  const named = several ? '' : (document.getElementById('dashboardTileName')?.value || '').trim();
   const own = String(_dashboardAddContext.title || '').trim();
   const payload = {
     token: _dashboardAddContext.token,
@@ -3001,7 +3016,8 @@ function addArtifactToDashboard(){
   const chart = _activeArtifactPayload.chart || {};
   openDashboardPicker({
     token: _activeArtifactPayload.pin_token || chart.pin_token,
-    title: chart.title || _activeArtifactPayload.kpi?.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || t('ui.chat.artifact.default_visual'),
+    title: chart.title || _activeArtifactPayload.kpi?.title || _activeArtifactPayload.title || _activeArtifactPayload.kpi?.label || t('ui.chat.artifact.default_visual'),
+    numbers: Array.isArray(_activeArtifactPayload.kpi?.group) ? _activeArtifactPayload.kpi.group.length : 1,
     chart_type: chart.chart_type || (_activeArtifactPayload.kpi ? 'kpi' : 'table'),
     color_palette: chart.color_palette || 'default',
     dashboard_id: DASHBOARD_ID,
@@ -3646,7 +3662,8 @@ function appendAssistantResponse(msg, opts = {}){
     const live = window._chartPayloads[chartId] || msg.chart || {};
     openDashboardPicker({
       token: dashboardToken,
-      title: live.title || msg.kpi?.title || msg.kpi?.label || msg.question || t('ui.chat.artifact.default_visual'),
+      title: live.title || msg.kpi?.title || msg.title || msg.kpi?.label || t('ui.chat.artifact.default_visual'),
+      numbers: Array.isArray(msg.kpi?.group) ? msg.kpi.group.length : 1,
       chart_type: live.chart_type || (msg.kpi ? 'kpi' : 'table'),
       color_palette: live.color_palette || 'default',
       dashboard_id: DASHBOARD_ID,
@@ -3818,7 +3835,7 @@ function appendChart(payload, opts = {}){
       const live = window._chartPayloads[chartId] || payload;
       openDashboardPicker({
         token: payload.pin_token,
-        title: live.title || payload.question || t('ui.chat.artifact.default_visual'),
+        title: live.title || payload.title || t('ui.chat.artifact.default_visual'),
         chart_type: live.chart_type || payload.chart_type || 'bar',
         color_palette: live.color_palette || 'default',
         dashboard_id: DASHBOARD_ID,

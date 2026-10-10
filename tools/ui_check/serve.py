@@ -212,6 +212,17 @@ PLANS = {
     # the first question "What you can ask" offers, followed from that page
     "net amount by store in 2026": {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["store"],
                                     "time": {"window": H1}},
+    # The approved dashboard's tiles: a number per measure, by region, by category, the top products as a table.
+    "net sales and gross amount in the second quarter of 2026": {
+        "intent": "value", "measures": ["net_amount", "gross_amount"],
+        "time": {"window": {"kind": "between", "start": "2026-04-01", "end": "2026-06-30"}}},
+    "net sales by region in 2026": {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["region.name"],
+                                    "time": {"window": H1}},
+    "net sales by category in 2026": {"intent": "breakdown", "measures": ["net_amount"],
+                                      "group_by": ["category.name"], "time": {"window": H1}},
+    "top products by net sales and quantity in 2026": {
+        "intent": "rank", "measures": ["net_amount", "quantity"], "group_by": ["product.name"],
+        "sort": [{"by": "net_amount", "desc": True}], "limit": 8, "time": {"window": H1}, "chart": "table"},
 }
 
 

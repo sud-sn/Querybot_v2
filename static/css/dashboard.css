@@ -31,25 +31,62 @@
    it. */
 /* On the page itself, as the approved design has it: the tiles are the cards. */
 .dash-header {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: var(--space-4); margin-bottom: var(--space-1);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4); margin-bottom: 0;
 }
-.dash-header h1 { font-size: var(--font-2xl); font-weight: var(--weight-bold); letter-spacing: -.01em; margin: 0 0 var(--space-1); }
+.dash-header-text { min-width: 0; }
+.dash-header h1 { font-size: 24px; font-weight: var(--weight-bold); letter-spacing: -.015em; color: var(--text); margin: 0; }
 .dash-header-meta {
-  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: 4px;
   font-size: var(--font-sm); color: var(--text-muted);
 }
-.dash-header-actions {
-  display: flex; align-items: center; gap: var(--space-2);
-  flex-wrap: wrap; justify-content: flex-end;
-}
-.dash-header-actions .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; }
-/* How often, and Subscribe, read as one control. */
-.dash-follow { display: flex; margin: 0; }
-.dash-follow select { width: auto; min-width: 100px; min-height: 36px; height: 36px; padding-top: 0; padding-bottom: 0;
-  border-right-width: 0; border-radius: var(--radius) 0 0 var(--radius); }
-.dash-follow .btn { border-radius: 0 var(--radius) var(--radius) 0; }
+/* Edit, Share and ⋯, as the design has them. */
+.dash-header-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+.dash-header-actions .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; height: 34px; }
+.dash-header-actions .btn-icon { width: 34px; }
+
+/* The ⋯ menu: everything that is not Edit or Share. */
+.dash-menu { position: relative; }
+.dash-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 300; min-width: 250px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.dash-menu-list[hidden] { display: none; }
+.dash-menu-list form { margin: 0; }
+.dash-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--radius);
+  background: transparent; color: var(--text); font: inherit; font-size: var(--font-base); text-align: left; text-decoration: none; cursor: pointer; }
+.dash-menu-item:hover, .dash-menu-item:focus-visible { background: var(--surface-3); outline: none; }
+.dash-menu-item .qb-icon, .dash-menu-label .qb-icon { color: var(--text-muted); flex: none; }
+.dash-menu-label { display: flex; align-items: center; gap: 10px; padding: 8px 10px 4px; font-size: var(--font-base); color: var(--text); }
+.dash-menu-row { display: flex; gap: 6px; padding: 2px 10px 8px 35px; flex-wrap: wrap; }
+.dash-menu-sep { height: 1px; margin: 4px 0; background: var(--line-subtle); }
+
+/* The dashboard's filters, under its header: a period, and the members of the fields its tiles are grouped by. */
+.dash-filters { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin: 0; }
+/* Each filter its name and the shared field beside it ("Period [Jan–Mar 2026]"). */
+.dash-picker { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); font-weight: var(--weight-medium);
+  color: var(--text-secondary); }
+.dash-picker .qb-icon { color: var(--text-muted); }
+.dash-picker select { width: auto; min-width: 0; max-width: 220px; min-height: 32px; height: 32px; padding-top: 0; padding-bottom: 0;
+  font-weight: var(--weight-semibold); color: var(--text); }
+.dash-picker-name { white-space: nowrap; }
+.dash-filters-clear { margin-left: 4px; font-size: var(--font-sm); font-weight: var(--weight-medium); color: var(--primary-ink); text-decoration: none; }
+.dash-filters-clear:hover { text-decoration: underline; }
 .dash-edit-hint { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
+
+/* Share, and About this dashboard: the shared native dialog's shape. */
+.dash-dialog { width: min(520px, calc(100vw - 32px)); margin: auto; padding: 0; border: 0; border-radius: var(--radius-lg);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
+.dash-dialog::backdrop { background: var(--scrim); }
+.dash-dialog-wide { width: min(760px, calc(100vw - 32px)); max-height: 82vh; overflow: auto; }
+.dash-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 18px 20px 6px; }
+.dash-dialog-head h2 { margin: 0; font-size: var(--font-lg); font-weight: var(--weight-semibold); }
+.dash-share-options { display: grid; gap: 10px; margin: 0; padding: 8px 20px; border: 0; }
+.dash-share-link { display: flex; gap: var(--space-2); padding: 8px 20px; }
+.dash-share-link input { flex: 1; min-width: 0; }
+.dash-share-link .btn { display: inline-flex; align-items: center; gap: 6px; }
+.dash-dialog-foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 12px; padding: 14px 20px;
+  border-top: 1px solid var(--line-subtle); }
+.dash-dialog .artifact-details { grid-template-columns: 1fr; margin: 4px 20px 12px; }
+.dash-dialog > .artifact-detail { margin: 0 20px 20px; }
 .dash-status {
   display: inline-flex; align-items: center; gap: var(--space-1);
   font-size: var(--font-xs); font-weight: var(--weight-bold); padding: 2px var(--space-2);
@@ -105,29 +142,31 @@
 .chart-grid.is-gridstack { display: block; min-height: 460px; }
 .chart-card { min-height: 420px; }
 .chart-grid.is-gridstack .chart-card { min-height: 0; }
-.chart-card-content { background: var(--surface); border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; transition: box-shadow var(--t-med), border-color var(--t-med); display: flex; flex-direction: column; height: 100%; }
+.chart-card-content { background: var(--surface); border: 1px solid var(--line-subtle); border-radius: 12px;
+  box-shadow: var(--shadow); overflow: hidden; transition: box-shadow var(--t-med), border-color var(--t-med); display: flex; flex-direction: column; height: 100%; }
 /* On the grid the content is placed by its insets (the grid's margin); a height of 100% as well pushed each
    tile's bottom edge into the gap below it, and the rows touched. */
 .chart-grid.is-gridstack .chart-card-content { height: auto; }
 .chart-card.dragging { opacity: .58; transform: scale(.985); border-color: var(--primary); }
 .chart-card.drag-over { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
-.chart-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
-.chart-card-heading { flex: 1; min-width: 0; }
-.chart-card-name { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
-.chart-card-actions { display: flex; gap: 2px; flex-shrink: 0; align-items: center; margin: -4px -6px 0 0; }
+/* A tile's head, as the design has it: its name on the left, "Top 7 of 12 · Jan–Mar 2026" on the right. */
+.chart-card-header { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; }
+.chart-card-name { display: flex; align-items: center; gap: var(--space-1); flex: 1 1 auto; min-width: 0; }
+.chart-card-note { flex: 0 1 auto; min-width: 0; font-size: var(--font-xs); color: var(--text-muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.chart-card-actions { display: flex; gap: 2px; flex-shrink: 0; align-items: center; margin: -4px -6px -4px 0; }
 /* A tile's own controls: quiet icon buttons (the shared ghost button), above the grid's resize strip. */
 .dash-tile-action { flex-shrink: 0; position: relative; z-index: 101; }
 /* The shared field, sized to sit where the name was. */
 .chart-title-input { flex: 1; min-width: 0; min-height: 0; font-size: var(--font-md); font-weight: var(--weight-semibold);
   padding: 2px 6px; margin: -3px 0 -3px -7px; }
 .chart-card-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.chart-card-title { font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text); line-height: 1.4;
+.chart-card-title { font-size: var(--font-md); font-weight: var(--weight-semibold); color: var(--text); line-height: 1.35;
   /* A title that names its conditions can run long: two lines at most, so the chart keeps its room. */
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 /* The name says it can be renamed only in Edit, and only to someone who may. */
 .dashboard-page[data-mode="edit"] .chart-card-title.is-editable { cursor: text; }
 .dashboard-page[data-mode="edit"] .chart-card-title.is-editable:hover { text-decoration: underline dotted var(--text-muted); text-underline-offset: 3px; }
-.chart-card-sub { font-size: var(--font-xs); color: var(--text-muted); margin-top: 2px; }
 
 .chart-drag-handle { border: 0; background: transparent; color: var(--text-muted); border-radius: var(--radius); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; cursor: grab; font-weight: var(--weight-bold); line-height: 1; }
 .chart-drag-handle:hover { background: var(--surface-3); color: var(--text); }
@@ -137,7 +176,7 @@
 .chart-drag-handle > * { pointer-events: none; }
 /* A headline number sized by its tile, not the window: "$185,933.03" was cut off in a narrow tile. */
 .dash-kpi { container-type: inline-size; }
-.dash-kpi-value { font-size: clamp(20px, 10cqw, 34px); font-weight: var(--weight-bold); letter-spacing: -.02em; line-height: 1.15;
+.dash-kpi-value { font-size: clamp(20px, 11cqw, 28px); font-weight: var(--weight-bold); letter-spacing: -.02em; line-height: 1.15; margin: 2px 0;
   color: var(--text); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .chart-drag-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
@@ -240,27 +279,25 @@
 .dashboard-page[data-mode="view"] .chart-drag-handle,
 .dashboard-page[data-mode="view"] .dash-edit-only,
 .dashboard-page[data-mode="view"] .dash-ctrl-row { display: none; }
+/* Reading, a tile's one control (expand) shows where the pointer or the keyboard is; Edit shows them all. */
+.dashboard-page[data-mode="view"] .chart-card-actions { opacity: 0; transition: opacity var(--t-fast); }
+.dashboard-page[data-mode="view"] .chart-card:hover .chart-card-actions,
+.dashboard-page[data-mode="view"] .chart-card:focus-within .chart-card-actions { opacity: 1; }
+@media (hover: none) { .dashboard-page[data-mode="view"] .chart-card-actions { opacity: 1; } }
 
-/* A KPI: its number, its trend beside it, its change against the period before below. The tile's name is its
-   heading, so the number is not named twice. The change is ink in a soft pill, never a colour for the
-   direction: up is good for sales, bad for costs. */
-.dash-kpi { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; min-width: 0; }
-.dash-kpi-main { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); min-width: 0; }
-.dash-kpi-main .dash-kpi-value { flex: none; }
-.dash-kpi-change { display: flex; align-items: center; gap: 6px; font-size: var(--font-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.dash-kpi-delta { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--surface-3);
-  color: var(--text-secondary); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
-.dash-kpi-arrow { font-size: .8em; margin-right: 4px; }
+/* A number, as the design has it: its name small above (the tile's head), its value, and its change against the
+   period before -- the arrow and the change red when down, green when up, "vs Oct–Dec 2025" quiet beside it. */
+.chart-card.is-kpi .chart-card-title { font-size: var(--font-sm); font-weight: var(--weight-medium); color: var(--text-secondary);
+  /* One line: a long name ends in an ellipsis (the whole of it its tooltip) rather than push the number out. */
+  display: block; white-space: nowrap; text-overflow: ellipsis; }
+.chart-card.is-kpi .chart-card-body { padding-top: 2px; }
+.dash-kpi { height: 100%; display: flex; flex-direction: column; justify-content: flex-start; gap: 2px; min-width: 0; }
+.dash-kpi-change { display: flex; align-items: baseline; gap: 4px; font-size: var(--font-sm); color: var(--text-muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dash-kpi-delta { display: inline-flex; align-items: baseline; gap: 4px; font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
+.dash-kpi-change.is-up .dash-kpi-delta { color: var(--success); }
+.dash-kpi-change.is-down .dash-kpi-delta { color: var(--danger); }
+.dash-kpi-change.is-flat .dash-kpi-delta { color: var(--text-muted); }
+.dash-kpi-arrow { font-size: .85em; }
 .dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); overflow: hidden; text-overflow: ellipsis; }
-/* The trend takes the room the number leaves, and gives it up first: the number is never cut. */
-.dash-kpi-spark { display: block; flex: 1 1 0; min-width: 0; max-width: 160px; height: 36px; overflow: visible; }
-.dash-kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.dash-kpi-spark .dash-kpi-spark-area { fill: color-mix(in srgb, var(--primary) 10%, transparent); stroke: none; }
-.dash-kpi-spark .dash-kpi-spark-tail { stroke-dasharray: 3 3; }
-@container (max-width: 210px) { .dash-kpi-spark { display: none; } }
-/* Several numbers of one answer, side by side with a rule between them; stacked when the tile is too narrow. */
-.dash-kpi-group { height: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); align-items: center; gap: .75rem 0; }
-.dash-kpi-cell { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; text-align: left; min-width: 0; height: auto; gap: 4px; padding: 0 16px; border-left: 1px solid var(--line-subtle); }
-.dash-kpi-cell:first-child { padding-left: 0; border-left: 0; }
-.dash-kpi-group .dash-kpi-value { font-size: clamp(18px, 12cqw, 30px); }
 .dash-kpi-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

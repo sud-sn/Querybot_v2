@@ -758,8 +758,8 @@ class TestServerEnumsAreTranslatedNotCapitalised:
     def test_status_and_visibility(self):
         markup = _visible(_render([_chart(chart_json='{"type":"bar"}')], lang="fr"))
         assert "Publié" in markup
-        assert "Équipe" in markup
-        assert ">Published<" not in markup
+        assert "Partagé avec l&#39;équipe" in markup or "Partagé avec l'équipe" in markup   # who sees it, in words
+        assert ">Published<" not in markup and "Shared with team" not in markup
 
     def test_the_refresh_schedule_agrees_in_gender(self):
         """French adjectives agree with the noun. "Actualisation quotidienne",
@@ -936,7 +936,7 @@ class TestTidyLayoutEndpoint:
         assert response.status_code == 200 and response.json() == {"ok": True}
         placed = {c["id"]: (c["grid_x"], c["grid_y"], c["grid_w"], c["grid_h"])
                   for c in store.list_dashboard_charts(dashboard["id"], user_id)}
-        assert placed == {ids[0]: (0, 0, 12, 2), ids[1]: (0, 2, 12, 5)}
+        assert placed == {ids[0]: (0, 0, 12, 3), ids[1]: (0, 3, 12, 10)}
 
     def test_it_cannot_tidy_someone_elses_dashboard(self):
         import os

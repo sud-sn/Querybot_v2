@@ -227,7 +227,11 @@ def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict
                                              "column_formats": chart.get("column_formats") or {},
                                              # The tile's name until the reader gives it another, never the question.
                                              "title": str(chart.get("title")
-                                                          or (payload.get("kpi") or {}).get("title") or "")})
+                                                          or (payload.get("kpi") or {}).get("title")
+                                                          or payload.get("title") or ""),
+                                             # Several numbers: a tile each, under these names.
+                                             "titles": [str(g.get("title") or g.get("label") or "")
+                                                        for g in (payload.get("kpi") or {}).get("group") or []]})
 
 
 async def _with_pin(account_id: str, portal_user: dict | None, question: str, payload: dict[str, Any]) -> None:

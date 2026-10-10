@@ -502,17 +502,37 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     except Exception as exc:  # noqa: BLE001 - the findings are extra; the answer stands without them
         log.warning("core2 could not work out findings for %r: %s", question, exc)
         insights = []
+    kpi = _kpi(logical, cols, raw, formats, units)
     return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
-                 insights=insights, badges=answer_badges(logical),
-                 chart=chart, kpi=_kpi(logical, cols, raw, formats, units),
+                 insights=insights, badges=answer_badges(logical), title=_answer_title(logical, cols, labels, chart, kpi),
+                 chart=chart, kpi=kpi,
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
                  model_version=model_version)
 
 
+def _answer_title(logical: Logical, cols: _Columns, labels: dict[str, str], chart: dict | None,
+                  kpi: dict | None) -> str:
+    """What the answer is called on a dashboard tile, never its question: its chart's or its number's title, and
+    for a table what it counts and by what ("Net amount and quantity by store and segment"), or, for a listing,
+    what it lists ("Stores")."""
+    if chart is not None and chart.get("title"):
+        return str(chart["title"])
+    if kpi is not None and kpi.get("title"):
+        return str(kpi["title"])
+    measures = [labels[c.name] for c in cols.of("measure")]
+    by = [_by_words(c, labels) for c in [*cols.of("attribute"), *cols.of("time"), *cols.of("period")]]
+    if measures:
+        return chart_title(logical, _listed([measures[0], *(_lower(m) for m in measures[1:])], "and"), by)
+    if by:
+        things = names.plural(by[0])
+        return chart_title(logical, things[:1].upper() + things[1:], [])
+    return ""
+
+
 def frame(question: str, *, headline: str, short_value: str = "", comparison: str = "", caveats: list[str],
-          insights: list[str] | None = None, badges: list[dict[str, str]] | None = None,
+          insights: list[str] | None = None, badges: list[dict[str, str]] | None = None, title: str = "",
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
@@ -522,6 +542,7 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
         "type": "assistant_response",
         "engine": "core2",
         "question": question,
+        "title": title,                  # the answer's name on a dashboard tile (its question is never one)
         # The portal's answer card: the value leads when there is one, the sentence otherwise.
         "answer": {"headline": headline, "short_value": short_value, "comparison": comparison,
                    "scope_badge": "", "scope_note": caveats[0] if caveats else "",
@@ -977,7 +998,8 @@ def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, s
 
     def tile(m: OutColumn) -> dict:
         value = raw[0][m.name]
-        return {"label": f"{m.label} ({unit})" if unit else m.label,
+        # Its own name too: on a dashboard each number of an answer of several is a tile of its own.
+        return {"label": f"{m.label} ({unit})" if unit else m.label, "title": chart_title(logical, m.label, [], unit or ""),
                 "value": value if _number(value) is None else _number(value),
                 "format": formats[m.name], "display_format": _digits(m),
                 "state": "missing" if _number(value) is None else "ready"}

@@ -45,7 +45,7 @@ def _snapshot_locked(conn, dashboard_id: int, user_id: int, account_id: str, sum
             key: row.get(key)
             for key in (
                 "name", "description", "status", "visibility",
-                "refresh_schedule", "filters_json", "tabs_json",
+                "refresh_schedule", "filters_json", "tabs_json", "grid_scale",
             )
         },
         "charts": [dict(chart) for chart in charts],
@@ -80,8 +80,8 @@ def create_dashboard(
         cur = conn.execute(
             """
             INSERT INTO dashboard_artifact
-                (account_id, user_id, thread_id, name, description, visibility)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (account_id, user_id, thread_id, name, description, visibility, grid_scale)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account_id,
@@ -90,6 +90,7 @@ def create_dashboard(
                 _clean_name(name),
                 str(description or "").strip()[:500],
                 visibility,
+                GRID_SCALE,
             ),
         )
         row = conn.execute(
@@ -194,10 +195,10 @@ def migrate_legacy_charts(account_id: str, user_id: int) -> dict | None:
         else:
             cur = conn.execute(
                 """INSERT INTO dashboard_artifact
-                       (account_id, user_id, thread_id, name, description)
+                       (account_id, user_id, thread_id, name, description, grid_scale)
                    VALUES (?, ?, 'legacy-import', 'My Dashboard',
-                           'Imported from charts saved before named dashboards were enabled.')""",
-                (account_id, int(user_id)),
+                           'Imported from charts saved before named dashboards were enabled.', ?)""",
+                (account_id, int(user_id), GRID_SCALE),
             )
             dashboard_id = int(cur.lastrowid)
         conn.executemany(
@@ -294,8 +295,12 @@ def get_data_source(source_id: int, user_id: int, account_id: str) -> dict | Non
     return dict(row) if row else None
 
 
-# A number tile's height on the grid: its number, its trend beside it and its change fit in two rows.
-KPI_ROWS = 2
+# The grid's rows are 46px (GRID_SCALE 2; they were 92px). A number tile is three of them (a card of about
+# 120px: its name, its number and its change), a chart or a table ten.
+GRID_SCALE = 2
+KPI_ROWS = 3
+CHART_ROWS = 10
+TABLE_ROWS = 10
 
 
 def _layout_size(chart_type: str) -> tuple[int, int]:
@@ -303,8 +308,8 @@ def _layout_size(chart_type: str) -> tuple[int, int]:
     if kind == "kpi":
         return 3, KPI_ROWS
     if kind == "table":
-        return 12, 6
-    return 6, 5
+        return 12, TABLE_ROWS
+    return 6, CHART_ROWS
 
 
 def _overlaps(candidate: tuple[int, int, int, int], occupied: list[tuple[int, int, int, int]]) -> bool:
@@ -372,14 +377,14 @@ def _packed(charts: list) -> list[tuple[int, int, int, int]]:
             if waiting is not None:
                 x0, y0, _, h0 = rects[waiting]
                 rects[waiting], y, waiting = (x0, y0, 12, h0), y0 + h0, None
-            rects[int(chart["id"])] = (0, y, 12, 6)
-            y += 6
+            rects[int(chart["id"])] = (0, y, 12, TABLE_ROWS)
+            y += TABLE_ROWS
         elif waiting is None:
-            rects[int(chart["id"])] = (0, y, 6, 5)
+            rects[int(chart["id"])] = (0, y, 6, CHART_ROWS)
             waiting = int(chart["id"])
         else:
-            rects[int(chart["id"])] = (6, rects[waiting][1], 6, 5)
-            y, waiting = rects[waiting][1] + 5, None
+            rects[int(chart["id"])] = (6, rects[waiting][1], 6, CHART_ROWS)
+            y, waiting = rects[waiting][1] + CHART_ROWS, None
     if waiting is not None:
         x0, y0, _, h0 = rects[waiting]
         rects[waiting] = (x0, y0, 12, h0)
@@ -413,7 +418,7 @@ def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
         if int(chart["layout_locked"] or 0):
             rect = (
                 int(chart["grid_x"] or 0), int(chart["grid_y"] or 0),
-                int(chart["grid_w"] or 6), int(chart["grid_h"] or 5),
+                int(chart["grid_w"] or 6), int(chart["grid_h"] or CHART_ROWS),
             )
             occupied.append(rect)
             if str(chart["chart_type"] or "").lower() == "kpi":
@@ -499,6 +504,48 @@ def add_chart(
     return True
 
 
+def add_answer(
+    dashboard_id: int,
+    user_id: int,
+    account_id: str,
+    *,
+    title: str,
+    question: str,
+    sql_query: str,
+    db_config_id: int,
+    chart_type: str,
+    display_config: dict | None = None,
+    color_palette: str = "default",
+    title_set: bool = False,
+    tab: str = "Overview",
+) -> list[int]:
+    """An answer on a dashboard, as tiles: the one way a tile is made, for an answer pinned from the chat and
+    for a dashboard built for the reader. A new-core answer's tile is drawn from its plan (display_config
+    core2_plan); an answer of several numbers is a tile per number, each under its own name. The tiles made,
+    or [] when the dashboard is not the reader's."""
+    from .user_store import pin_chart
+
+    config = dict(display_config or {})
+    kind = str(chart_type or "bar").strip().lower()
+    titles = number_titles(config) if kind == "kpi" else []
+    pieces = ([(one_number(config, i), name, False) for i, name in enumerate(titles)] if titles
+              else [(config, title, title_set)])
+    made: list[int] = []
+    # One source for the answer, its numbers' tiles sharing it (remove_chart keeps a source still in use).
+    source = create_data_source(dashboard_id, user_id, account_id, name=(str(title or "").strip() or question)[:120],
+                                question=question, sql_query=sql_query, db_config_id=db_config_id)
+    for piece, name, kept in pieces:
+        name = (str(name or "").strip() or str(title or "").strip())[:120]
+        chart_id = pin_chart(user_id=user_id, account_id=account_id, title=name, question=question,
+                             sql_query=sql_query, chart_type=kind, db_config_id=db_config_id,
+                             color_palette=color_palette, dashboard_id=dashboard_id, display_config=piece,
+                             title_set=kept)
+        if not add_chart(dashboard_id, chart_id, user_id, account_id, data_source_id=int(source["id"]), tab=tab):
+            return made
+        made.append(chart_id)
+    return made
+
+
 def remove_chart(
     dashboard_id: int, chart_id: int, user_id: int, account_id: str
 ) -> bool:
@@ -521,7 +568,12 @@ def remove_chart(
             "DELETE FROM pinned_chart WHERE id=? AND user_id=?",
             (int(chart_id), int(user_id)),
         )
-        if chart["data_source_id"]:
+        # A source the other numbers of the same answer still use (one tile per number) stays.
+        shared = chart["data_source_id"] and conn.execute(
+            "SELECT 1 FROM pinned_chart WHERE data_source_id=? AND user_id=? LIMIT 1",
+            (int(chart["data_source_id"]), int(user_id)),
+        ).fetchone()
+        if chart["data_source_id"] and not shared:
             conn.execute(
                 """DELETE FROM dashboard_data_source
                     WHERE id=? AND dashboard_id=? AND user_id=? AND account_id=?""",
@@ -604,7 +656,105 @@ def list_dashboard_charts_for_view(
     dashboard = get_dashboard_for_view(dashboard_id, viewer_user_id, account_id)
     if not dashboard:
         return []
-    return list_dashboard_charts(dashboard_id, int(dashboard["user_id"]))
+    owner = int(dashboard["user_id"])
+    if int(dashboard.get("grid_scale") or 1) < GRID_SCALE:
+        _upgrade_grid(int(dashboard_id), owner, account_id)
+    # Like the grid, a dashboard's format, brought up to date whoever opens it first.
+    split_number_groups(int(dashboard_id), owner, account_id)
+    return list_dashboard_charts(dashboard_id, owner)
+
+
+def _upgrade_grid(dashboard_id: int, owner_id: int, account_id: str) -> None:
+    """A dashboard laid out on the old 92px rows, on today's 46px ones: every tile's row and height twice as
+    many (where it was placed by hand stays where it was), then the tiles nobody placed laid out again --
+    a number tile three rows, not the six its doubled height would give it."""
+    with get_db() as conn:
+        claimed = conn.execute(
+            """UPDATE dashboard_artifact SET grid_scale=?
+                WHERE id=? AND user_id=? AND account_id=? AND grid_scale<?""",
+            (GRID_SCALE, int(dashboard_id), int(owner_id), account_id, GRID_SCALE),
+        )
+        if not claimed.rowcount:
+            return                       # another request converted it first
+        conn.execute(
+            """UPDATE pinned_chart SET grid_y=grid_y*?, grid_h=grid_h*?
+                WHERE dashboard_id=? AND user_id=?""",
+            (GRID_SCALE, GRID_SCALE, int(dashboard_id), int(owner_id)),
+        )
+        _auto_layout_locked(conn, int(dashboard_id), int(owner_id))
+
+
+def number_titles(display_config: dict) -> list[str]:
+    """The names of the numbers a new-core answer of several numbers holds, one per measure of its plan, or []
+    when it cannot be one tile per number (a measure worked out from two others)."""
+    plan = display_config.get("core2_plan") if isinstance(display_config, dict) else None
+    if not isinstance(plan, dict):
+        return []
+    measures = [str(m) for m in plan.get("measures") or []]
+    if len(measures) < 2 or plan.get("derived") or plan.get("durations"):
+        return []
+    titles = [str(t) for t in display_config.get("titles") or []]
+    if len(titles) != len(measures):
+        titles = [m.split(".")[-1].replace("_", " ").capitalize() for m in measures]
+    return titles
+
+
+def one_number(display_config: dict, index: int) -> dict:
+    """The display config of the ``index``-th number of an answer of several: its plan asks for that measure
+    alone, and its title is that number's."""
+    plan = dict(display_config["core2_plan"])
+    plan["measures"] = [plan["measures"][index]]
+    config = {k: v for k, v in display_config.items() if k not in ("titles", "core2_plan")}
+    titles = number_titles(display_config)
+    return {**config, "core2_plan": plan, "title": titles[index] if index < len(titles) else ""}
+
+
+def split_number_groups(dashboard_id: int, owner_id: int, account_id: str) -> int:
+    """A tile of several numbers (pinned before each number was its own tile) as one tile per number, where
+    the first stood; the dashboard's other tiles keep their places. How many were split."""
+    split = 0
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM pinned_chart
+                WHERE dashboard_id=? AND user_id=? AND account_id=? AND LOWER(chart_type)='kpi'
+                ORDER BY position, id""",
+            (int(dashboard_id), int(owner_id), account_id),
+        ).fetchall()
+        for row in rows:
+            try:
+                config = json.loads(row["display_config"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            titles = number_titles(config)
+            if not titles:
+                continue
+            if not conn.execute("DELETE FROM pinned_chart WHERE id=? AND user_id=?",
+                                (int(row["id"]), int(owner_id))).rowcount:
+                continue                 # another request split it first
+            columns = [k for k in row.keys() if k != "id"]
+            for index, title in enumerate(titles):
+                values = dict(row)
+                values.update(title=title[:120], title_set=0, layout_locked=0, display_config=_json(one_number(config, index)),
+                              position=int(row["position"] or 0) * 10 + index)
+                conn.execute(
+                    f"INSERT INTO pinned_chart ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+                    [values[k] for k in columns],
+                )
+            split += 1
+        if split:
+            _renumber(conn, int(dashboard_id), int(owner_id))
+            _auto_layout_locked(conn, int(dashboard_id), int(owner_id))
+            _snapshot_locked(conn, dashboard_id, owner_id, account_id, "Each number on a tile of its own")
+    return split
+
+
+def _renumber(conn, dashboard_id: int, owner_id: int) -> None:
+    rows = conn.execute(
+        "SELECT id FROM pinned_chart WHERE dashboard_id=? AND user_id=? ORDER BY position, id",
+        (dashboard_id, owner_id),
+    ).fetchall()
+    conn.executemany("UPDATE pinned_chart SET position=? WHERE id=?",
+                     [(i, int(r["id"])) for i, r in enumerate(rows, start=1)])
 
 
 def update_dashboard_layouts(
@@ -628,7 +778,7 @@ def update_dashboard_layouts(
                 x,
                 max(0, int(item.get("y") or 0)),
                 width,
-                max(2, min(12, int(item.get("h") or 5))),
+                max(2, min(40, int(item.get("h") or CHART_ROWS))),
                 max(1, int(item.get("position") or index + 1)),
                 chart_id,
             ))
@@ -1019,6 +1169,26 @@ def publish_dashboard(dashboard_id: int, user_id: int, account_id: str) -> dict 
     return get_dashboard(dashboard_id, user_id, account_id)
 
 
+def share_dashboard(dashboard_id: int, user_id: int, account_id: str, visibility: str) -> dict | None:
+    """Who sees an owned dashboard: "team" shares it, published at once; "personal" keeps it to its owner."""
+    value = str(visibility or "").strip().lower()
+    if value not in {"personal", "team"}:
+        raise ValueError("Visibility must be personal or team.")
+    with get_db() as conn:
+        cur = conn.execute(
+            f"""UPDATE dashboard_artifact
+                   SET visibility=?, {"status='published', published_at=datetime('now')," if value == "team" else ""}
+                       version=version+1, updated_at=datetime('now')
+                 WHERE id=? AND user_id=? AND account_id=?""",
+            (value, int(dashboard_id), int(user_id), account_id),
+        )
+        if not cur.rowcount:
+            return None
+        _snapshot_locked(conn, dashboard_id, user_id, account_id,
+                         "Shared with the team" if value == "team" else "Kept to its owner")
+    return get_dashboard(dashboard_id, user_id, account_id)
+
+
 def mark_dashboard_draft(
     dashboard_id: int, user_id: int, account_id: str
 ) -> dict | None:
@@ -1124,6 +1294,8 @@ def rollback_dashboard(
             return None
         snapshot = json.loads(version_row["snapshot_json"] or "{}")
         meta = snapshot.get("dashboard") or {}
+        # A version saved on the old, taller rows comes back on today's: its rows and heights twice as many.
+        stretch = GRID_SCALE // max(1, int(meta.get("grid_scale") or 1))
         conn.execute(
             """UPDATE dashboard_artifact
                   SET name=?, description=?, status='draft', visibility=?,
@@ -1150,8 +1322,9 @@ def rollback_dashboard(
                 (
                     int(dashboard_id), chart.get("data_source_id"), str(chart.get("title") or "")[:120],
                     str(chart.get("chart_type") or "bar"), str(chart.get("color_palette") or "default"),
-                    int(chart.get("position") or 0), int(chart.get("grid_x") or 0), int(chart.get("grid_y") or 0),
-                    int(chart.get("grid_w") or 6), int(chart.get("grid_h") or 5),
+                    int(chart.get("position") or 0), int(chart.get("grid_x") or 0),
+                    int(chart.get("grid_y") or 0) * stretch,
+                    int(chart.get("grid_w") or 6), int(chart.get("grid_h") or 5) * stretch,
                     str(chart.get("display_config") or "{}"), str(chart.get("dashboard_tab") or "Overview")[:60],
                     1 if chart.get("sort_enabled", 1) else 0, int(chart.get("id") or 0), int(user_id), account_id,
                 ),

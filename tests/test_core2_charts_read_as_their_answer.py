@@ -323,23 +323,42 @@ def test_a_title_the_reader_wrote_stays(fresh_store, retail):  # noqa: F811
     assert _pin(fresh_store, retail, BY_STORE, "Store sales")["title"] == "Store sales"
 
 
-def test_a_kpi_tile_shows_its_change_and_trend(fresh_store, retail):  # noqa: F811
+def test_a_kpi_tile_shows_its_change_as_the_design_has_it(fresh_store, retail):  # noqa: F811
+    """The number, and its change against the period before -- the arrow and the change coloured, "vs March
+    2026" beside it. Its trend line stays on the answer in the chat: the dashboard's cards are the design's."""
     tile = _pin(fresh_store, retail, {"intent": "value", "measures": ["net_amount"], "time": {"window": APRIL}},
                 "Net amount")
-    assert tile["kpi"]["change"]["vs"] == "March 2026" and tile["kpi"]["trend"]["path"]
+    assert tile["kpi"]["change"]["vs"] == "March 2026"
     markup = _render([_tile(**{k: tile[k] for k in ("kpi", "kpi_display")}, chart_type="kpi")])
-    assert "dash-kpi-change" in markup and "vs March 2026" in markup and ("▼" in markup or "▲" in markup)
-    assert 'class="qb-graphic dash-kpi-spark"' in markup and tile["kpi"]["trend"]["path"] in markup
+    direction = tile["kpi"]["change"]["direction"]
+    assert f"dash-kpi-change is-{direction}" in markup and "vs March 2026" in markup
+    assert ("▼" if direction == "down" else "▲") in markup
+    assert "dash-kpi-spark" not in markup
 
 
-def test_several_numbers_are_one_tile_side_by_side(fresh_store, retail):  # noqa: F811
-    tile = _pin(fresh_store, retail, {"intent": "value", "measures": ["net_amount", "cost_amount"],
-                                      "time": {"window": APRIL}}, "Two numbers")
-    assert [g["label"] for g in tile["kpi_group"]] == ["Net amount", "Cost amount"]
-    assert all(g["display"].startswith("$") for g in tile["kpi_group"])
-    markup = _render([_tile(kpi=tile["kpi"], kpi_display=tile["kpi_display"], kpi_group=tile["kpi_group"],
-                            chart_type="kpi")])
-    assert markup.count("dash-kpi-cell") == 2
+def test_several_numbers_are_a_tile_each(fresh_store, retail):  # noqa: F811
+    """"Net amount and cost in April" pinned: a tile per number, each named for its number and drawn alone."""
+    import asyncio
+    from unittest.mock import MagicMock, patch
+
+    from gateway import core2_bridge
+    from portal import routes
+
+    user = _reader(fresh_store)
+    plan = {"intent": "value", "measures": ["net_amount", "cost_amount"], "time": {"window": APRIL}}
+    token = core2_bridge._pin(user["account_id"], user, "net amount and cost in april", _ask(retail, plan))
+    request = MagicMock()
+    request.json = MagicMock(return_value=asyncio.sleep(0, result={"token": token, "new_dashboard_name": "Mine"}))
+    with patch.object(routes, "_get_portal_user", return_value=user):
+        assert json.loads(asyncio.run(routes.pin_chart_api(request)).body)["ok"] is True
+    tiles = fresh_store.list_pinned_charts(user["id"])
+    assert [(c["title"], c["chart_type"]) for c in tiles] == [("Net amount", "kpi"), ("Cost amount", "kpi")]
+    for chart in tiles:
+        assert len(json.loads(chart["display_config"])["core2_plan"]["measures"]) == 1
+        with patch("core2.service.portal_replay", _replay(retail)):
+            drawn = routes._refresh_chart(chart, {"db_type": "duckdb"}, user)
+        assert drawn["kpi_display"].startswith("$") and "kpi_group" not in drawn
+        assert not (drawn["kpi"].get("group") or [])[1:], "one number on the tile"
 
 
 def test_a_tile_of_several_numbers_gets_a_share_of_its_row_for_each():
@@ -348,5 +367,5 @@ def test_a_tile_of_several_numbers_gets_a_share_of_its_row_for_each():
     def kpi(i, measures):
         return {"id": i, "chart_type": "kpi", "display_config": json.dumps({"core2_plan": {"measures": measures}})}
     rects = _packed([kpi(1, ["a"]), kpi(2, ["a", "b", "c"]), kpi(3, ["a", "b"])])
-    assert rects[0] == (0, 0, 3, 2) and rects[1] == (3, 0, 9, 2), "one number and three share a row of four"
-    assert rects[2] == (0, 2, 12, 2), "the next two numbers start a row of their own"
+    assert rects[0] == (0, 0, 3, 3) and rects[1] == (3, 0, 9, 3), "one number and three share a row of four"
+    assert rects[2] == (0, 3, 12, 3), "the next two numbers start a row of their own"

@@ -1189,6 +1189,17 @@ async def _render_dashboard(request: Request, user: dict):
         else _compact_number(token_status.get("remaining"))
     )
 
+    # The dashboard's own filters (the bar under its header): a period, and members of the fields its tiles
+    # are grouped by. In the address, so a filtered dashboard can be shared as it is seen.
+    period = str(request.query_params.get("period") or "")
+    chosen = [(key[2:200], str(value)[:200]) for key, value in request.query_params.items()
+              if key.startswith("f.") and str(value).strip()]
+    view = {
+        "period": period if period in DASH_PERIODS else "",
+        # Four at most, as the bar offers: each one is a filter on every tile.
+        "members": dict(chosen[:DASH_MEMBER_FILTERS]),
+    }
+
     # Refresh all pinned charts — re-execute SQL against live DB
     rendered_charts = []
     db_cfg = None
@@ -1205,8 +1216,18 @@ async def _render_dashboard(request: Request, user: dict):
                 for index, item in enumerate(dashboard_filters)
                 if isinstance(item, dict)
             },
+            view=view,
         )
         rendered_charts.append(chart_data)
+
+    # The member filters on offer: each field a tile is grouped by alone, with that tile's members (the first
+    # tile for a field wins), at most four of them.
+    groupings: list[dict] = []
+    for chart_data in rendered_charts:
+        grouping = chart_data.get("grouping")
+        if grouping and grouping["field"] not in {g["field"] for g in groupings} and len(groupings) < DASH_MEMBER_FILTERS:
+            groupings.append({**grouping, "selected": view["members"].get(grouping["field"], "")})
+    has_core2 = any(_pin_display_config(c).get("core2_plan") for c in charts)
 
     return _resp(request, "portal_dashboard.html", {
         "user":          user,
@@ -1225,6 +1246,10 @@ async def _render_dashboard(request: Request, user: dict):
         "dashboard_tabs": dashboard_tabs,
         "selected_tab": selected_tab,
         "dashboard_subscription": dashboard_subscription,
+        "dash_view":     view,
+        "dash_periods":  list(DASH_PERIODS) if has_core2 else [],
+        "dash_groupings": groupings,
+        "dash_filtered": bool(view["period"] or view["members"]),
         "welcome":       request.query_params.get("welcome") == "1",
         # Its tiles were drawn on this request: the header says when.
         "drawn_at":      (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1244,8 +1269,10 @@ def _refresh_chart(
     *,
     filters: list[dict] | None = None,
     filter_values: dict[str, str] | None = None,
+    view: dict | None = None,
 ) -> dict:
-    """Re-execute stored SQL and prepare interactive chart data."""
+    """Re-execute stored SQL and prepare interactive chart data. ``view``: the dashboard's period and member
+    filters, for a new-core tile (_view_plan)."""
     result = dict(chart)
     result["chart_json"] = None
     result["error"] = None
@@ -1271,7 +1298,7 @@ def _refresh_chart(
     except (TypeError, ValueError):
         display = {}
     if isinstance(display, dict) and display.get("core2_plan"):
-        return _refresh_core2_tile(chart, result, user, display["core2_plan"], filters=filters)
+        return _refresh_core2_tile(chart, result, user, display["core2_plan"], filters=filters, view=view)
 
     try:
         from core.compliance.governed_query import execute_governed_query
@@ -1482,8 +1509,107 @@ def _numeric_columns(rows: list[dict], columns: list[str], formats: dict[str, An
     return out
 
 
+# The dashboard's member filters: the fields its tiles are grouped by, four at most.
+DASH_MEMBER_FILTERS = 4
+
+# The dashboard's Period filter: each a window as a plan writes one, resolved by the new core from where the
+# data ends (core2/resolve/time.py): "last quarter" on data that ends in June is January to March.
+DASH_PERIODS: dict[str, dict] = {
+    "this_month": {"kind": "this", "unit": "month"},
+    "last_month": {"kind": "previous", "unit": "month"},
+    "this_quarter": {"kind": "this", "unit": "quarter"},
+    "last_quarter": {"kind": "previous", "unit": "quarter"},
+    "this_year": {"kind": "to_date", "unit": "year"},
+    "last_year": {"kind": "previous", "unit": "year"},
+    "last_12_months": {"kind": "last", "unit": "month", "n": 12, "include_current": True},
+}
+
+
+def _view_plan(plan: dict, view: dict | None) -> tuple[dict, list[str]]:
+    """A tile's plan under the dashboard's filters, and the member filters applied to it.
+
+    The period replaces the window of a tile that counts one span (a number, a breakdown, a ranking); a tile
+    over time keeps its own range and shows the period shaded. A member filter ("Region: North") narrows every
+    tile but one grouped by that field, which keeps all its members (it is where the filter's choices come
+    from)."""
+    import copy
+
+    view = view or {}
+    out = copy.deepcopy(plan)
+    period = DASH_PERIODS.get(str(view.get("period") or ""))
+    if period:
+        time_spec = out.setdefault("time", {}) if out.get("time") is None else out["time"]
+        if isinstance(time_spec, dict) and not time_spec.get("grain"):
+            time_spec["window"] = dict(period)
+    applied: list[str] = []
+    groups = {str(g) for g in out.get("group_by") or []}
+    for field, value in (view.get("members") or {}).items():
+        if field in groups or not value:
+            continue
+        out.setdefault("filters", []).append({"field": field, "op": "in", "values": [value]})
+        applied.append(field)
+    return out, applied
+
+
+def _shaded_period(view: dict | None, shape: dict | None) -> dict | None:
+    """The span the Period filter chose, on a chart over time: shaded on it, its own range kept."""
+    period = DASH_PERIODS.get(str((view or {}).get("period") or ""))
+    if not period or not shape or ((shape.get("chart_spec") or {}).get("x") or {}).get("role") != "temporal":
+        return None
+    from core2.plan.ir import Window
+    from core2.resolve.time import resolve_window
+
+    stamps = sorted(str(r.get(shape.get("x_key")) or "")[:10] for r in shape.get("rows") or [])
+    try:
+        last = _dt.date.fromisoformat(stamps[-1]) if stamps else None
+    except ValueError:
+        last = None
+    try:
+        span = resolve_window(Window(**period), today=_dt.date.today(), last_data=last)
+    except Exception:  # noqa: BLE001 - a band is extra: the chart stands without it
+        return None
+    if span.start is None or span.end is None:
+        return None
+    return {"start": span.start.isoformat(), "end": span.end.isoformat()}
+
+
+def _kpi_compact(value: Any, fmt: str | None) -> str:
+    """A number on a dashboard tile as the design writes it: $543.1K, 2,551, 38.0%. Its full value is the
+    tile's tooltip. Amounts from a thousand and counts from a hundred thousand are shortened."""
+    from core.response_builder import _CURRENCY_SYMBOLS, _format_number, _normalise_result_format, _number_format
+
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    kind = _normalise_result_format(fmt)
+    if kind == "percentage":
+        return _format_number(num, fmt, {"fraction_digits": 1})
+    if kind == "currency" and abs(num) >= 1000:
+        spec = _number_format()
+        amount = _compact_number(abs(num))
+        symbol = _CURRENCY_SYMBOLS.get("USD", "$")
+        text = (f"{amount}{spec['currency_gap']}{symbol.strip()}" if spec["currency_after"] else f"{symbol}{amount}")
+        return f"-{text}" if num < 0 else text
+    if kind not in ("currency",) and abs(num) >= 100_000:
+        return _compact_number(num)
+    return _format_number(num, fmt)
+
+
+_NAMING_WORDS = ("name", "description", "desc")   # never "code" or "title": "Postal code", "Job title"
+
+
+def _field_word(field: str) -> str:
+    """A field as the reader thinks of it: "Region", not "Region name" or "region.name"."""
+    words = str(field or "").replace(".", " ").replace("_", " ").split()
+    while len(words) > 1 and words[-1].lower() in _NAMING_WORDS:
+        words.pop()
+    text = " ".join(words)
+    return text[:1].upper() + text[1:]
+
+
 def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
-                        filters: list[dict] | None = None) -> dict:
+                        filters: list[dict] | None = None, view: dict | None = None) -> dict:
     """A pinned new-core answer, drawn by running its plan again (core2.service.portal_replay).
 
     The tile keeps the answer's own shape -- a comparison stays a dumbbell, measures in two
@@ -1492,8 +1618,17 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     """
     from core2.service import portal_replay
 
+    question = str(chart.get("question") or "")
+    viewed, narrowed = _view_plan(plan, view)
     try:
-        payload = portal_replay(user["account_id"], plan, user, question=str(chart.get("question") or ""))
+        payload = portal_replay(user["account_id"], viewed, user, question=question)
+        if viewed != plan and payload.get("data") is None:
+            # Filters this tile's data cannot take (no way to reach that field from it): drawn without them.
+            payload = portal_replay(user["account_id"], plan, user, question=question)
+            names = ([_field_word(f) for f in narrowed]
+                     + (["Period"] if viewed.get("time") != plan.get("time") else []))
+            result["filter_warnings"] = [f"The {name} filter does not apply to this tile." for name in names]
+            narrowed = []
     except Exception as exc:  # noqa: BLE001 - one tile failing must not take the dashboard with it
         log.warning("Pinned new-core answer %s could not be drawn: %s", chart.get("id"), exc, exc_info=True)
         result["error"] = "This chart could not be refreshed."
@@ -1508,6 +1643,16 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         result["filter_warnings"] = ["Dashboard filters do not apply to this tile yet: it is drawn from its "
                                      "answer's own question."]
     data = payload.get("data") or {}
+    # What the dashboard's member filters can offer: the members of the field this tile is grouped by alone.
+    groups = [str(g) for g in plan.get("group_by") or [] if not str(g).startswith("time:")]
+    shape_x = (payload.get("chart") or {}).get("x_key")
+    if len(groups) == 1 and shape_x and ((payload.get("chart") or {}).get("chart_spec") or {}).get(
+            "x", {}).get("role") != "temporal":
+        members = sorted({str(r.get(shape_x)) for r in data.get("rows") or []
+                          if r.get(shape_x) not in (None, "", "Unknown")})[:100]
+        if len(members) >= 2:
+            label = str((data.get("header_labels") or {}).get(shape_x) or "")
+            result["grouping"] = {"field": groups[0], "values": members, "label": _field_word(label or groups[0])}
     rows = data.get("rows") or []
     result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
     # The tile says what period it counts ("April 2026 vs March 2026"), as its answer did.
@@ -1517,10 +1662,15 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     shape = payload.get("chart")
     # A tile pinned while its title was only the measure ("Net amount") reads as its answer now does ("Net amount
     # by store"); a title the reader wrote stays as written.
-    fresh = str((shape or {}).get("title") or (payload.get("kpi") or {}).get("title") or "")
+    fresh = str((shape or {}).get("title") or (payload.get("kpi") or {}).get("title") or payload.get("title") or "")
     pinned = str(chart.get("title") or "")
-    if pinned and not chart.get("title_set") and fresh.startswith(
-            tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))):
+    # A tile named by its question (a table, or a tile pinned before answers had names) takes the answer's name.
+    question = str(chart.get("question") or "").strip()
+    by_question = bool(question) and pinned.strip() in (question, question[:50].strip(), question[:120].strip())
+    # A tile the dashboard's filters narrowed keeps its name: "for region North" is the filter bar's to say, and
+    # an answer's title under a filter names it.
+    if fresh and pinned and not chart.get("title_set") and (by_question or (not narrowed and fresh.startswith(
+            tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))))):
         result["title"] = fresh
     if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):
         from core.response_builder import _format_number
@@ -1528,11 +1678,8 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         kpi = payload.get("kpi")
         if kpi:
             result["kpi"] = kpi
-            result["kpi_display"] = _format_number(kpi.get("value"), kpi.get("format"))
-            # Several numbers of one answer, side by side in the tile.
-            result["kpi_group"] = [{"label": str(g.get("label") or ""),
-                                    "display": _format_number(g.get("value"), g.get("format"))}
-                                   for g in kpi.get("group") or [] if isinstance(g, dict)]
+            result["kpi_display"] = _kpi_compact(kpi.get("value"), kpi.get("format"))
+            result["kpi_full"] = _format_number(kpi.get("value"), kpi.get("format"))
     elif kind == "table" or not shape:
         from core.response_builder import _format_display_value
         from core.schema_enrichment import display_label
@@ -1558,6 +1705,17 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             drawn["chart_type"] = kind
         drawn["color_palette"] = chart.get("color_palette") or "default"
         drawn["chart_id"] = chart["id"]
+        # On a tile: a single line has a light wash and its low point named (static/js/qb-charts.js), and the
+        # dashboard's period is shaded on a chart over time.
+        drawn["tile"] = True
+        band = _shaded_period(view, drawn)
+        if band:
+            drawn["highlight"] = band
+        # "Top 10 of 34" beside the period, when the rest were folded into one bar.
+        other = drawn.get("other") or {}
+        if other.get("count") and not other.get("ranges"):
+            shown = sum(1 for r in drawn.get("rows") or [] if r.get(drawn.get("x_key")) != other.get("label"))
+            result["top_note"] = i18n_t("ui.dash.top_of", shown=shown, total=shown + int(other["count"]))
         result["chart_json"] = json.dumps(drawn)
     store.update_chart_refreshed(chart["id"])
     return result
@@ -1637,6 +1795,22 @@ async def portal_dashboard_publish(request: Request, dashboard_id: int):
     return RedirectResponse(
         f"/portal/dashboard?dashboard_id={int(dashboard_id)}", status_code=303
     )
+
+
+@router.post("/dashboard/{dashboard_id}/share")
+async def portal_dashboard_share(request: Request, dashboard_id: int, visibility: str = Form("personal")):
+    """Share a dashboard with the team (published for them at once), or keep it to its owner. Each teammate
+    sees every tile as their own access allows: a tile is drawn again for whoever opens it."""
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    try:
+        shared = store.share_dashboard(int(dashboard_id), user["id"], user["account_id"], visibility)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Share with your team, or keep it to yourself.")
+    if not shared:
+        raise HTTPException(status_code=404, detail="Only the dashboard's owner can share it.")
+    return RedirectResponse(f"/portal/dashboard?dashboard_id={int(dashboard_id)}&shared=1", status_code=303)
 
 
 @router.post("/dashboard/{dashboard_id}/subscribe")
@@ -2075,26 +2249,15 @@ async def pin_confirm_submit(
         return RedirectResponse("/portal/dashboard?error=expired", status_code=303)
     own = _own_title(pin_data)
     item_title = title.strip()[:120] or own or pin_data["question"][:50]
-    source = store.create_data_source(
-        target["id"], user["id"], user["account_id"], name=item_title,
-        question=pin_data["question"], sql_query=pin_data["sql_query"],
-        db_config_id=pin_data["db_config_id"],
-    )
-    chart_id = store.pin_chart(
-        user_id=user["id"],
-        account_id=pin_data["account_id"],
+    store.add_answer_to_dashboard(
+        int(target["id"]), user["id"], user["account_id"],
         title=item_title,
         question=pin_data["question"],
         sql_query=pin_data["sql_query"],
-        chart_type=pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
-        dashboard_id=int(target["id"]),
+        chart_type=pin_data["chart_type"],
         display_config=_pin_display_config(pin_data),
         title_set=bool(title.strip()) and title.strip()[:120] != own,
-    )
-    store.add_chart_to_dashboard(
-        target["id"], chart_id, user["id"], user["account_id"],
-        data_source_id=source["id"],
     )
     return RedirectResponse(
         f'/portal/dashboard?dashboard_id={int(target["id"])}&added=1', status_code=303
@@ -2223,35 +2386,17 @@ async def pin_chart_api(request: Request):
             {"ok": False, "code": "expired_token",
              "error": "This result has expired. Run it again."}, status_code=400)
     item_title = title or _own_title(pin_data) or pin_data["question"][:50]
-    source = store.create_data_source(
-        dashboard_id,
-        user["id"],
-        user["account_id"],
-        name=item_title,
-        question=pin_data["question"],
-        sql_query=pin_data["sql_query"],
-        db_config_id=pin_data["db_config_id"],
-    )
-    chart_id = store.pin_chart(
-        user_id=user["id"],
-        account_id=pin_data["account_id"],
+    if not store.add_answer_to_dashboard(
+        dashboard_id, user["id"], user["account_id"],
         title=item_title,
         question=pin_data["question"],
         sql_query=pin_data["sql_query"],
-        chart_type=type_override or pin_data["chart_type"],
         db_config_id=pin_data["db_config_id"],
-        color_palette=palette_override,
-        dashboard_id=dashboard_id,
+        chart_type=type_override or pin_data["chart_type"],
         display_config=_pin_display_config(pin_data),
+        color_palette=palette_override,
         # Named in the add dialog: the reader's name stays, whatever the answer calls itself later.
         title_set=bool(payload.get("named")) and bool(title),
-    )
-    if not store.add_chart_to_dashboard(
-        dashboard_id,
-        chart_id,
-        user["id"],
-        user["account_id"],
-        data_source_id=int(source["id"]),
         tab=str(payload.get("tab") or "Overview"),
     ):
         # TERMINAL, not transient. store.add_chart returns False only when the

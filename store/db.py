@@ -1245,6 +1245,9 @@ def _run_migrations() -> None:
         ("dashboard_artifact", "filters_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("dashboard_artifact", "tabs_json", "TEXT NOT NULL DEFAULT '[\"Overview\"]'"),
         ("dashboard_artifact", "last_refreshed_at", "TEXT DEFAULT NULL"),
+        # The grid's row height: 1 = the 92px rows tiles were laid out on, 2 = the 46px rows of today (a
+        # dashboard laid out on the old rows is converted the first time it is opened).
+        ("dashboard_artifact", "grid_scale", "INTEGER NOT NULL DEFAULT 1"),
         # A scheduled refresh that fails is recorded, tried again later and
         # told to the owner (store.mark_source_cache_error).
         ("dashboard_source_cache", "failed_at", "TEXT DEFAULT NULL"),

@@ -12,8 +12,9 @@ and a dashboard that looks refined, as the approved design did.
   untouched tile pinned under the measure alone still is;
 * renaming: Enter or leaving the box saves, Escape keeps the old name, an empty box changes nothing, and
   a name the server would not save goes back to the old one;
-* a number tile: its number whole, its trend beside it with a wash beneath, its change in a pill; the
-  measure's own name only when the tile was given another;
+* a number tile, as the plan's cards: its number, its change coloured with its arrow and "vs" the period
+  before; the measure's own name only when the tile was given another (its trend line stays in the chat,
+  where the wash under it still closes on its foot);
 * tiles keep the grid's gap between them on every side.
 
 Invented data only.
@@ -167,11 +168,13 @@ KPI = {"label": "Net amount", "value": 185933.03,
        "trend": {**sparkline([150.0, 170.0, 160.0, 190.0, 186.0]), "span": "Dec 2025 – Apr 2026"}}
 
 
-def test_a_number_tile_is_its_number_its_trend_and_its_change():
-    markup = _visible(_render([_chart(title="Net amount", chart_type="kpi", kpi=KPI, kpi_display="$185,933.03")]))
-    assert 'class="dash-kpi-value" title="$185,933.03">$185,933.03<' in markup
-    assert 'class="dash-kpi-spark-area"' in markup and KPI["trend"]["area"] in markup
-    assert 'class="dash-kpi-delta"' in markup and "-4.6%" in markup and "vs March 2026" in markup
+def test_a_number_tile_is_its_number_and_its_change():
+    markup = _visible(_render([_chart(title="Net amount", chart_type="kpi", kpi=KPI, kpi_display="$185.9K",
+                                      kpi_full="$185,933.03")]))
+    assert 'class="dash-kpi-value" title="$185,933.03">$185.9K<' in markup
+    assert "dash-kpi-change is-down" in markup and 'class="dash-kpi-delta"' in markup
+    assert "4.6%" in markup and "-4.6%" not in markup, "the arrow says which way: the change is written plain"
+    assert "vs March 2026" in markup and "dash-kpi-spark" not in markup
     assert 'class="dash-kpi-label"' not in markup, "the tile's name is the number's name"
     assert "Single-value result" not in markup
 

@@ -140,7 +140,7 @@ def _rects(dashboard_id, owner_id):
 
 def test_tiles_are_laid_out_with_no_gap_for_the_grid_to_pull_a_tile_into(dashboard_users):
     """A KPI, a bar and a line: the KPI across the first row, the two charts side by side below it, both rows
-    full. A KPI a quarter wide left the rest of its row empty, the grid pulled the line chart up into it, and
+    full (on 46px rows: a number three of them, a chart ten). A KPI a quarter wide left the rest of its row empty, the grid pulled the line chart up into it, and
     the rows no longer lined up."""
     account_id, owner_id, _ = dashboard_users
     dashboard = store.create_dashboard(account_id, owner_id, "thread-pack", "Packed")
@@ -149,7 +149,7 @@ def test_tiles_are_laid_out_with_no_gap_for_the_grid_to_pull_a_tile_into(dashboa
     line = _chart(account_id, owner_id, "line", "Monthly net sales")
     for chart_id in (kpi, bar, line):
         store.add_chart_to_dashboard(dashboard["id"], chart_id, owner_id, account_id)
-    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 2), bar: (0, 2, 6, 5), line: (6, 2, 6, 5)}
+    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 3), bar: (0, 3, 6, 10), line: (6, 3, 6, 10)}
 
     more = [_chart(account_id, owner_id, "kpi", f"KPI {i}") for i in range(4)]
     table = _chart(account_id, owner_id, "table", "Top customers")
@@ -158,10 +158,10 @@ def test_tiles_are_laid_out_with_no_gap_for_the_grid_to_pull_a_tile_into(dashboa
         store.add_chart_to_dashboard(dashboard["id"], chart_id, owner_id, account_id)
     rects = _rects(dashboard["id"], owner_id)
     kpis = sorted(rects[c] for c in (kpi, *more))
-    assert kpis == [(0, 0, 3, 2), (0, 2, 12, 2), (3, 0, 3, 2), (6, 0, 3, 2), (9, 0, 3, 2)]
-    assert rects[bar][1] == rects[line][1] == 4 and {rects[bar][0], rects[line][0]} == {0, 6}
-    assert rects[table] == (0, 9, 12, 6)
-    assert rects[extra] == (0, 15, 12, 5)          # alone in its row: the whole width
+    assert kpis == [(0, 0, 3, 3), (0, 3, 12, 3), (3, 0, 3, 3), (6, 0, 3, 3), (9, 0, 3, 3)]
+    assert rects[bar][1] == rects[line][1] == 6 and {rects[bar][0], rects[line][0]} == {0, 6}
+    assert rects[table] == (0, 16, 12, 10)
+    assert rects[extra] == (0, 26, 12, 10)         # alone in its row: the whole width
     cells = set()
     for x, y, w, h in rects.values():
         cell = {(i, j) for i in range(x, x + w) for j in range(y, y + h)}
@@ -183,5 +183,5 @@ def test_tidy_layout_lines_up_a_dashboard_arranged_by_hand(dashboard_users):
     assert not store.tidy_dashboard_layout(dashboard["id"], viewer_id, account_id)    # only its owner
     assert _rects(dashboard["id"], owner_id)[kpi] == (7, 4, 3, 3)
     assert store.tidy_dashboard_layout(dashboard["id"], owner_id, account_id)
-    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 2), bar: (0, 2, 12, 5)}
+    assert _rects(dashboard["id"], owner_id) == {kpi: (0, 0, 12, 3), bar: (0, 3, 12, 10)}
     assert all(c["layout_locked"] == 0 for c in store.list_dashboard_charts(dashboard["id"], owner_id))

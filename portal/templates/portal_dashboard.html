@@ -86,41 +86,57 @@
    table-access card, under a permanently generic "Dashboards" h1 -- the page
    was organised around the account rather than around the thing you opened. #}
 <header class="dash-header">
-  <div>
+  <div class="dash-header-text">
     <h1>{{ dashboard_artifact.name }}</h1>
-    {# Who sees it and when its numbers were drawn; the version is in the
-       revision history below. #}
+    {# Who sees it and when its numbers were drawn; the versions are under ⋯. #}
     <div class="dash-header-meta">
       {# Draft or published matters only to a dashboard the team shares. #}
-      {% if dashboard_artifact.visibility == 'team' %}<span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span>{% endif %}
-      <span>{{ enum_label('visibility', dashboard_artifact.visibility) }}</span>
+      {% if dashboard_artifact.visibility == 'team' %}<span class="dash-status {% if _is_draft %}is-draft{% else %}is-published{% endif %}">{{ enum_label('status', dashboard_artifact.status) }}</span><span>{{ t('ui.dash.shared_with_team') }}</span>
+      {% else %}<span>{{ enum_label('visibility', dashboard_artifact.visibility) }}</span>{% endif %}
       {# UTC from the server; the page writes it in the reader's own time. #}
       {% if drawn_at %}<span aria-hidden="true">·</span><span data-drawn-at="{{ drawn_at }}">{{ t('ui.dash.updated_at', at=drawn_at[11:16] ~ ' UTC') }}</span>{% endif %}
       {% if dashboard_artifact.refresh_schedule and dashboard_artifact.refresh_schedule != 'manual' %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>{% endif %}
       {% if not _editable %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.read_only') }}</span>{% endif %}
     </div>
   </div>
+  {# As the approved design has it: Edit, Share, and everything else under ⋯. #}
   <div class="dash-header-actions">
     {% if _editable and charts %}
     {# View is the default: no handles, no remove buttons, no type switches.
        Edit shows them and lets the tiles move. #}
     <button type="button" class="btn" id="dashEditToggle" aria-pressed="false"
-            data-label-edit="{{ t('ui.dash.edit') }}" data-label-done="{{ t('ui.dash.done') }}">{{ ic("pencil", 14) }}<span>{{ t('ui.dash.edit') }}</span></button>
-    <button type="button" class="btn btn-secondary dash-edit-only" id="dashTidy" title="{{ t('ui.dash.tidy_title') }}"
-            onclick="tidyDashboard(this)">{{ t('ui.dash.tidy') }}</button>
+            data-label-edit="{{ t('ui.dash.edit') }}" data-label-done="{{ t('ui.dash.done') }}">{{ ic("pencil", 15) }}<span>{{ t('ui.dash.edit') }}</span></button>
     {% endif %}
-    {% if dashboard_subscription %}
-    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe" style="margin:0">
-      <button class="btn btn-secondary" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</button>
-    </form>
-    {% else %}
-    <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" class="dash-follow">
-      <select name="cadence" class="form-input" aria-label="{{ t('ui.dash.cadence_label') }}"><option value="daily">{{ enum_label('cadence','daily') }}</option><option value="weekly">{{ enum_label('cadence','weekly') }}</option><option value="monthly">{{ enum_label('cadence','monthly') }}</option></select>
-      <input type="hidden" name="channel" value="in_app">
-      <button class="btn btn-secondary" type="submit">{{ ic("bell", 14) }}<span>{{ t('ui.dash.subscribe') }}</span></button>
-    </form>
+    {% if _editable %}
+    <button type="button" class="btn btn-primary" id="dashShareButton" aria-haspopup="dialog" aria-controls="dashShareDialog"
+            onclick="document.getElementById('dashShareDialog').showModal()">{{ ic("share", 15) }}<span>{{ t('ui.dash.share') }}</span></button>
     {% endif %}
-    <a href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}" class="btn btn-primary">{{ ic("chat", 14) }}<span>{{ t('ui.dash.chat_with') }}</span></a>
+    <div class="dash-menu">
+      <button type="button" class="btn btn-ghost btn-icon" id="dashMoreButton" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="dashMoreMenu" aria-label="{{ t('ui.dash.more') }}" title="{{ t('ui.dash.more') }}">{{ ic("more", 18) }}</button>
+      <div class="dash-menu-list" id="dashMoreMenu" role="menu" aria-labelledby="dashMoreButton" hidden>
+        {# Sent to the reader as it changes: once a day, a week or a month. #}
+        {% if dashboard_subscription %}
+        <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe">
+          <button class="dash-menu-item" role="menuitem" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ ic("bell", 15) }}<span>{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</span></button>
+        </form>
+        {% else %}
+        <div class="dash-menu-label" id="dashFollowLabel">{{ ic("bell", 15) }}<span>{{ t('ui.dash.subscribe') }}</span></div>
+        <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" class="dash-menu-row" role="group" aria-labelledby="dashFollowLabel">
+          <input type="hidden" name="channel" value="in_app">
+          {% for cadence in ('daily', 'weekly', 'monthly') %}<button class="btn btn-secondary btn-xs" role="menuitem" type="submit" name="cadence" value="{{ cadence }}">{{ enum_label('cadence', cadence) }}</button>{% endfor %}
+        </form>
+        {% endif %}
+        <div class="dash-menu-sep" role="separator"></div>
+        <a class="dash-menu-item" role="menuitem" href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}">{{ ic("chat", 15) }}<span>{{ t('ui.dash.chat_with') }}</span></a>
+        {% if _editable and charts %}
+        <button class="dash-menu-item" role="menuitem" type="button" id="dashTidy" title="{{ t('ui.dash.tidy_title') }}"
+                onclick="tidyDashboard(this)">{{ ic("layout-grid", 15) }}<span>{{ t('ui.dash.tidy') }}</span></button>
+        {% endif %}
+        <button class="dash-menu-item" role="menuitem" type="button" aria-haspopup="dialog" aria-controls="dashAboutDialog"
+                onclick="document.getElementById('dashAboutDialog').showModal()">{{ ic("info", 15) }}<span>{{ t('ui.dash.about') }}</span></button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -143,6 +159,30 @@
 
 {% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="{{ t('ui.dash.tabs_label') }}">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
 
+{# The dashboard's own filters, as the approved design has them: a period, and the members of the fields its
+   tiles are grouped by. Every new-core tile is drawn again under them (portal/routes.py _view_plan). #}
+{% if dash_periods %}
+<form class="dash-filters" method="get" action="/portal/dashboard" id="dashFilters" aria-label="{{ t('ui.dash.filters_label') }}">
+  <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id }}"><input type="hidden" name="tab" value="{{ selected_tab }}">
+  <label class="dash-picker{% if dash_view.period %} is-set{% endif %}">{{ ic("calendar", 15) }}<span class="dash-picker-name">{{ t('ui.dash.period') }}</span>
+    <select name="period" class="form-input form-input-sm" onchange="this.form.submit()">
+      <option value="">{{ t('ui.dash.period.own') }}</option>
+      {% for key in dash_periods %}<option value="{{ key }}"{% if dash_view.period == key %} selected{% endif %}>{{ t('ui.dash.period.' ~ key) }}</option>{% endfor %}
+    </select>
+  </label>
+  {% for grouping in dash_groupings %}
+  <label class="dash-picker{% if grouping.selected %} is-set{% endif %}"><span class="dash-picker-name">{{ grouping.label }}</span>
+    <select name="f.{{ grouping.field }}" class="form-input form-input-sm" onchange="this.form.submit()">
+      <option value="">{{ t('ui.dash.all') }}</option>
+      {% for value in grouping['values'] %}<option value="{{ value }}"{% if grouping.selected == value %} selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endfor %}
+  {% if dash_filtered %}<a class="dash-filters-clear" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ selected_tab|urlencode }}">{{ t('ui.dash.clear') }}</a>{% endif %}
+  <noscript><button class="btn btn-secondary btn-sm" type="submit">{{ t('ui.dash.apply_filters') }}</button></noscript>
+</form>
+{% endif %}
+
 {% if dashboard_filters %}
 <form class="dashboard-controls" method="get" action="/portal/dashboard">
   <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id }}"><input type="hidden" name="tab" value="{{ selected_tab }}">
@@ -157,28 +197,28 @@
 <div class="chart-grid">
   {% for chart in charts %}
   {% set grid_x = chart.grid_x if chart.grid_x is defined and chart.grid_x is not none else (loop.index0 % 2) * 6 %}
-  {% set grid_y = chart.grid_y if chart.grid_y is defined and chart.grid_y is not none else (loop.index0 // 2) * 5 %}
+  {% set grid_y = chart.grid_y if chart.grid_y is defined and chart.grid_y is not none else (loop.index0 // 2) * 10 %}
   {% set grid_w = chart.grid_w if chart.grid_w is defined and chart.grid_w is not none else 6 %}
-  {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else (2 if chart.kpi else 5) %}
-  <div class="chart-card grid-stack-item" style="--tile:{{ loop.index0 }}" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
+  {% set grid_h = chart.grid_h if chart.grid_h is defined and chart.grid_h is not none else (3 if chart.kpi else 10) %}
+  <div class="chart-card grid-stack-item{% if chart.kpi and not chart.error %} is-kpi{% endif %}" style="--tile:{{ loop.index0 }}" data-chart-id="{{ chart.id }}" gs-id="{{ chart.id }}" gs-x="{{ grid_x }}" gs-y="{{ grid_y }}" gs-w="{{ grid_w }}" gs-h="{{ grid_h }}">
     <div class="chart-card-content grid-stack-item-content">
     <div class="chart-card-header">
       {# A tile is its name: the question it came from is not shown. Its owner names it when adding it and can
          rename it in Edit (the pencil, or a click on the name). #}
       {% set _can_edit = dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}
-      <div class="chart-card-heading">
-        <div class="chart-card-name">
-          <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}" title="{{ chart.title }}"
-               {% if _can_edit %}onclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
-               id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
-          {% if _can_edit %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only" title="{{ t('ui.dash.rename') }}" aria-label="{{ t('ui.dash.rename') }}"
-            onclick="startRenameChart(document.getElementById('chart-title-{{ chart.id|int }}'), {{ chart.id|int }})">{{ ic("pencil", 14) }}</button>{% endif %}
-        </div>
-        {# The period the tile counts; a table says how much of it shows; a tile kept from its last refresh says when. #}
-        {% set _sub = chart.subtitle or (t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) if chart.table_truncated else '') %}
-        {% set _cache = t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') if chart.from_cache else '' %}
-        {% if _sub or _cache %}<div class="chart-card-sub">{{ _sub }}{% if _sub and _cache %} · {% endif %}{{ _cache }}</div>{% endif %}
+      <div class="chart-card-name">
+        <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}" title="{{ chart.title }}"
+             {% if _can_edit %}onclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
+             id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
+        {% if _can_edit %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only" title="{{ t('ui.dash.rename') }}" aria-label="{{ t('ui.dash.rename') }}"
+          onclick="startRenameChart(document.getElementById('chart-title-{{ chart.id|int }}'), {{ chart.id|int }})">{{ ic("pencil", 14) }}</button>{% endif %}
       </div>
+      {# Beside the name, as the design has it: "Top 7 of 12 · Jan–Mar 2026"; a table says how much of it shows; a
+         tile kept from its last refresh says when. #}
+      {% set _sub = chart.subtitle or (t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) if chart.table_truncated else '') %}
+      {% set _cache = t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') if chart.from_cache else '' %}
+      {% set _note = [chart.top_note or '', _sub, _cache]|select|join(' · ') %}
+      {% if _note %}<div class="chart-card-note">{{ _note }}</div>{% endif %}
       <div class="chart-card-actions">
         {% if _can_edit %}<button type="button" class="chart-drag-handle" draggable="false" title="{{ t('ui.dash.drag_handle_title') }}" aria-label="{{ t('ui.dash.drag_handle_label') }}">{{ ic("grip", 16) }}</button>{% endif %}
         {# Only a card that HAS a chart node can expand: openChartModal does
@@ -199,32 +239,18 @@
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
-      {% elif chart.kpi and chart.kpi_group and chart.kpi_group|length > 1 %}
-      {# Several numbers of one answer ("net amount and cost in April"), side by side. #}
-      <div class="dash-kpi-group" style="--kpi-count:{{ chart.kpi_group|length }}">
-        {% for g in chart.kpi_group %}
-        <div class="dash-kpi dash-kpi-cell">
-          <div class="dash-kpi-label">{{ g.label }}</div>
-          <div class="dash-kpi-value" title="{{ g.display }}">{{ g.display }}</div>
-        </div>
-        {% endfor %}
-      </div>
       {% elif chart.kpi %}
+      {# A number as the design has it: its value, and its change against the period before -- the arrow and the
+         change coloured (red down, green up), "vs Oct–Dec 2025" beside it; the exact value is its tooltip. #}
       <div class="dash-kpi">
         {# The measure, when the tile was given a name of its own ("Q2 sales" over "Net amount"). #}
         {% set _label = chart.kpi.label or '' %}
         {% if _label and _label|lower != (chart.title or '')|lower %}<div class="dash-kpi-label">{{ _label }}</div>{% endif %}
-        <div class="dash-kpi-main">
-          <div class="dash-kpi-value" title="{{ chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
-          {% set trend = chart.kpi.trend %}
-          {% if trend and trend.path %}
-          <svg class="qb-graphic dash-kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ t('ui.kpi.trend', span=trend.span or '') }}"><title>{{ t('ui.kpi.trend', span=trend.span or '') }}</title>{% if trend.area %}<path class="dash-kpi-spark-area" d="{{ trend.area }}"/>{% endif %}<path d="{{ trend.path }}"/>{% if trend.tail %}<path class="dash-kpi-spark-tail" d="{{ trend.tail }}"/>{% endif %}</svg>
-          {% endif %}
-        </div>
+        <div class="dash-kpi-value" title="{{ chart.kpi_full or chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
         {% set change = chart.kpi.change %}
         {% if change and change.direction %}
-        {# An arrow and a sign carry the direction, never a colour alone: up is good for sales, bad for costs. #}
-        <div class="dash-kpi-change" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}→{% endif %}</span>{{ change.change if change.direction == 'flat' else (change.pct or change.change) }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
+        {% set _moved = (change.change if change.direction == 'flat' else (change.pct or change.change))|replace('+', '')|replace('-', '') %}
+        <div class="dash-kpi-change is-{{ change.direction }}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
         {% endif %}
       </div>
       {% elif chart.table_rows %}
@@ -272,19 +298,54 @@
 {# Provenance is a footnote to the charts, not a two-column block above
    them: it used to be the third thing on the page while the charts were
    the fifth. #}
+{# Who sees it: only its owner, or everyone in the workspace -- each teammate sees every tile as their own
+   access allows, since a tile is drawn again for whoever opens it. #}
+{% if dashboard_artifact.can_edit %}
+<dialog class="dash-dialog" id="dashShareDialog" aria-labelledby="dashShareTitle">
+  <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/share">
+    <div class="dash-dialog-head">
+      <h2 id="dashShareTitle">{{ t('ui.dash.share_title', name=dashboard_artifact.name) }}</h2>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+    </div>
+    <fieldset class="dash-share-options">
+      <legend class="sr-only">{{ t('ui.dash.share_who') }}</legend>
+      <label class="choice-card"><input type="radio" name="visibility" value="personal"{% if dashboard_artifact.visibility != 'team' %} checked{% endif %}>
+        <span class="choice-card-copy"><span class="choice-card-title">{{ t('ui.dash.share_personal') }}</span><span class="choice-card-description">{{ t('ui.dash.share_personal_body') }}</span></span></label>
+      <label class="choice-card"><input type="radio" name="visibility" value="team"{% if dashboard_artifact.visibility == 'team' %} checked{% endif %}>
+        <span class="choice-card-copy"><span class="choice-card-title">{{ t('ui.dash.share_team') }}</span><span class="choice-card-description">{{ t('ui.dash.share_team_body') }}</span></span></label>
+    </fieldset>
+    <div class="dash-share-link">
+      <input class="form-input" id="dashShareLink" readonly aria-label="{{ t('ui.dash.share_link') }}" value="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}">
+      <button type="button" class="btn btn-secondary" onclick="copyDashboardLink(this)">{{ ic("copy", 15) }}<span>{{ t('ui.dash.copy_link') }}</span></button>
+    </div>
+    <div class="dash-dialog-foot">
+      <button type="button" class="btn btn-secondary" onclick="this.closest('dialog').close()">{{ t('ui.pin.cancel') }}</button>
+      <button type="submit" class="btn btn-primary">{{ t('ui.dash.share_save') }}</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
+{# Where its numbers come from, its versions and the workspace's usage: under ⋯, not in the way. #}
+<dialog class="dash-dialog dash-dialog-wide" id="dashAboutDialog" aria-labelledby="dashAboutTitle">
+  <div class="dash-dialog-head">
+    <h2 id="dashAboutTitle">{{ t('ui.dash.about') }}</h2>
+    <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+  </div>
 <section class="artifact-details" aria-label="{{ t('ui.dash.provenance_label') }}">
-  <details class="artifact-detail"><summary>{{ t('ui.dash.sources', count=dashboard_sources|length) }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ enum_label('source', source.source_type) }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>{{ t('ui.dash.no_sources') }}</span></div>{% endfor %}</div></details>
+  <details class="artifact-detail" open><summary>{{ t('ui.dash.sources', count=dashboard_sources|length) }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ enum_label('source', source.source_type) }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>{{ t('ui.dash.no_sources') }}</span></div>{% endfor %}</div></details>
   {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:var(--weight-bold)">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
 </section>
 
 {# The account's own numbers are context for the artifact above, not the
    headline. On the library view below they lead, because there they ARE
    the subject. #}
-<details class="artifact-detail" style="margin-bottom:1rem"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
+<details class="artifact-detail"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
 
 {{ workspace_usage(user, charts, monthly_count, query_status, token_status, allowed_tables, t, plural) }}
 
 </div></details>
+</dialog>
 {% else %}
 <div class="page-header">
   <h1>{{ t('ui.dash.title') }}</h1>
@@ -514,7 +575,7 @@ function initDashboardGrid() {
   try {
     dashboardGrid = GridStack.init({
       column: 12,
-      cellHeight: 92,
+      cellHeight: 46,
       margin: 8,
       float: false,
       staticGrid: !CAN_EDIT_DASHBOARD,
@@ -567,7 +628,63 @@ function setDashboardMode(editing) {
   setTimeout(resizeDashboardCharts, 60);
 }
 
+// ── The ⋯ menu: subscribe, chat, tidy, about ─────────────────────────────────
+// A menu button: Enter or a click opens it on its first item, the arrow keys move through it, Escape closes it
+// and gives focus back, a click elsewhere or Tab away closes it.
+function initDashboardMenu() {
+  const button = document.getElementById('dashMoreButton');
+  const menu = document.getElementById('dashMoreMenu');
+  if (!button || !menu) return;
+  const items = () => Array.from(menu.querySelectorAll('[role="menuitem"]'));
+  const close = refocus => {
+    menu.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    if (refocus) button.focus();
+  };
+  const open = () => {
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    const first = items()[0];
+    if (first) first.focus();
+  };
+  button.addEventListener('click', () => (menu.hidden ? open() : close(false)));
+  document.addEventListener('click', e => {
+    if (!menu.hidden && !menu.contains(e.target) && !button.contains(e.target)) close(false);
+  });
+  menu.addEventListener('click', e => { if (e.target.closest('[role="menuitem"]')) close(false); });
+  menu.addEventListener('keydown', e => {
+    const list = items();
+    const at = list.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); list[(at + 1) % list.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); list[(at - 1 + list.length) % list.length].focus(); }
+    else if (e.key === 'Tab') close(false);
+  });
+}
+
+// The Share dialog's link, whole, and copied on request.
+function copyDashboardLink(button) {
+  const input = document.getElementById('dashShareLink');
+  if (!input) return;
+  const done = () => window.qbToast?.notify?.({body: t('ui.dash.link_copied'), tone: 'success', duration: 3000});
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(done, () => input.select());
+  } else {
+    input.select();
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+  initDashboardMenu();
+  // The link is to the dashboard as it is seen (its tab and filters), without this visit's one-off notices.
+  const shareLink = document.getElementById('dashShareLink');
+  if (shareLink) {
+    const link = new URL(window.location.href);
+    ['shared', 'added', 'subscribed', 'unsubscribed', 'welcome', 'error'].forEach(key => link.searchParams.delete(key));
+    Array.from(link.searchParams.entries()).forEach(([key, value]) => { if (!value) link.searchParams.delete(key); });
+    if (!link.searchParams.get('dashboard_id')) link.href = new URL(shareLink.value, window.location.origin).href;
+    shareLink.value = link.href;
+  }
   document.querySelectorAll('[data-drawn-at]').forEach(el => {
     const at = new Date(el.dataset.drawnAt);
     if (!isNaN(at)) el.textContent = t('ui.dash.updated_at', {at: at.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})});

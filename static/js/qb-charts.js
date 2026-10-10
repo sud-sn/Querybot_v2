@@ -367,6 +367,36 @@
     return points;
   }
 
+  // ── On a dashboard tile ───────────────────────────────────────────────────
+  // The lowest point of a single line, named ("Low $168.0K") below it -- never on a line that does not dip.
+  function lowPoint(values, labels, written, c) {
+    // The last period is left out: it is often not over yet, and its end label says its value already. The
+    // label sits above the point, clear of the axis's own labels under a low near the foot.
+    let at = -1;
+    values.slice(0, -1).forEach((v, i) => { if (v != null && (at < 0 || v < values[at])) at = i; });
+    if (at < 0 || values.filter(v => v != null).length < 4) return [];
+    // Near either edge the label runs inward, clear of the axis's labels and of the end label.
+    const align = at < values.length / 4 ? 'left' : (at >= values.length * 3 / 4 ? 'right' : 'center');
+    return [{coord: [labels[at], values[at]], symbol: 'circle', symbolSize: 7,
+             itemStyle: {color: c.surface, borderColor: c.ink2, borderWidth: 2},
+             label: {show: true, position: 'top', distance: 8, align, color: c.ink2, fontSize: 12, fontWeight: 600,
+                     fontFamily: c.font, formatter: () => t('ui.chart.low_point', {value: written(values[at])})}}];
+  }
+  // The span the dashboard's Period filter chose, shaded on a chart over time: the periods from its start up
+  // to (not including) its end.
+  function tileBand(payload, rows, xKey, labels, c) {
+    const span = payload && payload.highlight;
+    if (!span || !span.start || !span.end) return null;
+    const days = rows.map(r => String((r && r[xKey]) || '').slice(0, 10));
+    const first = days.findIndex(d => d >= span.start && d < span.end);
+    let last = -1;
+    days.forEach((d, i) => { if (d >= span.start && d < span.end) last = i; });
+    if (first < 0) return null;
+    // The zoom's own wash, fainter: a band behind the line, never a colour of its own.
+    return {silent: true, itemStyle: {color: 'rgba(42,120,214,0.08)'},
+            data: [[{xAxis: labels[first]}, {xAxis: labels[last]}]]};
+  }
+
   // ── Maps ──────────────────────────────────────────────────────────────────
   // The United States as its maps are drawn: the lower 48 on a conic equal-area projection, Alaska and
   // Hawaii as insets below them (the arrangement of d3-geo's geoAlbersUsa, written out here: three conic
@@ -565,7 +595,9 @@
     // phone): past that, the bars are squeezed to slivers and the ranking cannot be read.
     const nameWidth = Math.round(Math.min(180, Math.max(96, ((layout && layout.width) || 600) / 3)));
     const longLabels = maxLabel > 14;
-    const manyLabels = labels.length > 9;
+    // A dashboard tile is half a page wide: past six members its columns crowd their names, so it lists them as
+    // bars, as the approved design does (five regions as columns, nine categories as bars).
+    const manyLabels = labels.length > (payload && payload.tile ? 6 : 9);
     const labelFmt = v => { const s = String(v == null ? '' : v); return s.length > 22 ? s.slice(0, 21) + '…' : s; };
     const monthNumbers = temporal && MONTH_COLUMN_RE.test(String(xKey || ''))
       && labels.every(v => /^\d{1,2}$/.test(v) && Number(v) >= 1 && Number(v) <= 12);
@@ -1383,9 +1415,15 @@
         if (option.grid && !Array.isArray(option.grid)) option.grid.top = (Number(option.grid.top) || 0) + 18;
         if (option.xAxis && !Array.isArray(option.xAxis)) option.xAxis.boundaryGap = true;
       }
+      // On a dashboard tile, as the approved design draws it: a single line has a light wash beneath it and its
+      // lowest point named, and the dashboard's chosen period is shaded (its own range is kept).
+      const onTile = Boolean(payload && payload.tile) && single && type === 'line';
+      const band = tileBand(payload, rows, xKey, labels, c);
       option.series = yKeys.map((k, i) => {
         const values = rows.map(r => num(r && r[k]));
         const color = otherName && k === otherName ? c.muted : colors[i % colors.length];
+        const marks = i === 0 ? annotationMarkPoints(payload, labels, values) : [];
+        if (onTile && i === 0) marks.push(...lowPoint(values, labels, v => valueFmt(v, k, true), c));
         return {
           name: k, type: 'line', data: values,
           smooth: smooth ? 0.35 : false,
@@ -1400,11 +1438,13 @@
           emphasis: {focus: single ? 'none' : 'series', lineStyle: {width: 2}},
           // An area is a wash under the line, not a block; under several
           // lines it is fainter still, or the washes tint each other into mud.
-          areaStyle: type === 'area' ? {color, opacity: single ? 0.10 : 0.06} : undefined,
+          areaStyle: type === 'area' ? {color, opacity: single ? 0.10 : 0.06}
+            : (onTile ? {color, opacity: 0.07} : undefined),
           // A single line says its latest value at its end.
           endLabel: single && !pointLabels ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 6,
                                               formatter: p => valueFmt(p.value, k, true)} : undefined,
-          markPoint: i === 0 ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
+          markPoint: i === 0 ? {silent: true, data: marks} : undefined,
+          markArea: i === 0 && band ? band : undefined,
         };
       });
       return option;
