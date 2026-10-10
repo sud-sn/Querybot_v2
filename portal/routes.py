@@ -1513,6 +1513,12 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     result["subtitle"] = next((str(b.get("text") or "") for b in badges if b.get("kind") == "period"), "")
     kind = str(chart.get("chart_type") or "")
     shape = payload.get("chart")
+    # A tile pinned while its title was only the measure ("Net amount") reads as its answer now does ("Net amount
+    # by store"); a title the reader wrote stays as written.
+    fresh = str((shape or {}).get("title") or (payload.get("kpi") or {}).get("title") or "")
+    pinned = str(chart.get("title") or "")
+    if pinned and fresh.startswith(tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))):
+        result["title"] = fresh
     if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):
         from core.response_builder import _format_number
 
@@ -1520,6 +1526,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         if kpi:
             result["kpi"] = kpi
             result["kpi_display"] = _format_number(kpi.get("value"), kpi.get("format"))
+            # Several numbers of one answer, side by side in the tile.
+            result["kpi_group"] = [{"label": str(g.get("label") or ""),
+                                    "display": _format_number(g.get("value"), g.get("format"))}
+                                   for g in kpi.get("group") or [] if isinstance(g, dict)]
     elif kind == "table" or not shape:
         from core.response_builder import _format_display_value
         from core.schema_enrichment import display_label

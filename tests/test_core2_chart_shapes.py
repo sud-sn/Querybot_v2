@@ -78,7 +78,7 @@ def test_every_measure_asked_for_is_drawn(retail):
     chart = _chart(retail, {"intent": "breakdown", "measures": ["net_amount", "cost_amount"],
                             "group_by": ["store"], "time": {"window": H1}})
     assert set(chart["y_keys"]) == {"net_amount", "cost_amount"}
-    assert chart["title"] == "Net amount and cost amount"
+    assert chart["title"] == "Net amount and cost amount by store"
     assert chart["facets"] == [], "two amounts of money share one axis"
 
 

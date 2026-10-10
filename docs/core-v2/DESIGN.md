@@ -665,6 +665,24 @@ words:
 * chart from the intent: trend → line (date order); rank/breakdown → bars
   sorted; share → bars (pie only for ≤ 6 parts); compare → bars with change;
   value → number tile;
+* a chart's title is what it counts and by what, with the conditions ("Net
+  amount by store, for segment Retail"), never its period (a tile's subtitle
+  says that, and moves on with "last month"); a tile pinned under the
+  measure alone takes it when it is drawn again;
+* members that are amounts (an Attribute of kind number: transit days, a
+  fill number) are drawn in number order; past 20 of them, and for a measure
+  that adds up, in about ten equal ranges with the empty ones at zero;
+* past 12 members, a measure that adds up draws the 10 largest and the rest
+  as one "Other (n)" bar when it is no longer than the longest bar; when it
+  is, the chart says what the rest add up to instead. A line per member
+  keeps 6, or 5 and "Other" on the same rule. The rest is drawn in a
+  neutral ink and opens nothing; the table keeps every row;
+* a number tile for a bounded window carries its change against the period
+  before (▲/▼ and a sign, never a colour: up is good for sales, bad for
+  costs; a percentage moves by points) and a trend line of the periods up to
+  its own (12 months, 8 quarters, 5 years, 12 weeks, 30 days), a period not
+  over yet dashed; several numbers of one answer are a group of tiles, and
+  one dashboard tile;
 * findings from the whole series: peak, trough, robust trend, spikes, partial
   periods excluded from comparisons, constant measures;
 * "How this was answered": measure definitions, date used, join path(s),

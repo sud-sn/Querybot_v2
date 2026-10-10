@@ -60,6 +60,7 @@ class OutColumn:
     grain: str | None = None        # for the period
     flag: bool = False              # a yes/no grouping (its two members are a thing and its opposite)
     numbered: bool = False          # its members are numbers (fill number 0, GL account 4000), said with its name
+    ordinal: bool = False           # its members are amounts (transit days, fill number): drawn in number order
 
 
 @dataclass
@@ -286,6 +287,11 @@ class _Compiler:
         attribute = self.model.attributes.get(slug) if slug else None
         return attribute is not None and attribute.kind in ("number", "identifier")
 
+    def _ordinal(self, slug: str | None) -> bool:
+        """Are the attribute ``slug``'s members amounts (3 days, fill number 2), not codes that only name a thing?"""
+        attribute = self.model.attributes.get(slug) if slug else None
+        return attribute is not None and attribute.kind == "number"
+
     def _flag(self, slug: str | None) -> bool:
         """Is the attribute ``slug`` a yes/no flag (its members a thing and its opposite)?"""
         attribute = self.model.attributes.get(slug) if slug else None
@@ -509,7 +515,8 @@ class _Compiler:
             columns.append(OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
                                      grain=g.grain if g.kind == "period" else None,
                                      flag=self._flag(getattr(g, "attribute", None)),
-                                     numbered=self._numbered(getattr(g, "attribute", None))))
+                                     numbered=self._numbered(getattr(g, "attribute", None)),
+                                     ordinal=self._ordinal(getattr(g, "attribute", None))))
         for m in q.measures:
             key = m.measure.key if m.measure else None
             columns.append(OutColumn(m.name, m.label, "measure", m.format, key))

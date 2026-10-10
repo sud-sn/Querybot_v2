@@ -88,7 +88,10 @@ def _status(case: dict[str, Any], payload: dict[str, Any], warehouse: DuckDBWare
         return "asked", str(payload["answer"]["headline"])[:160]
     if len(warehouse.log) == ran_before:
         return "no_query", str(payload["answer"]["headline"])[:160]
-    got = warehouse.query(warehouse.log[-1])
+    # The answer's own query: a KPI runs more after it (the period before, its trend line). A "why" or a
+    # forecast keeps its several queries in one text, never run as one: its last query, as before.
+    own = str((payload.get("trust") or {}).get("sql") or "")
+    got = warehouse.query(own if own in warehouse.log[ran_before:] else warehouse.log[-1])
     expected = reference.query(case["reference_sql"])
     diff = same_rows(expected.columns, expected.rows, got.columns, got.rows,
                      order_matters=bool(expect.get("order_matters")))

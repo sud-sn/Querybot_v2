@@ -51,8 +51,9 @@ def _ask(model, con, plan: dict, **kw) -> tuple[dict, DuckDBWarehouse]:
     return answer_question(f"q {named}".strip(), services, Session()), warehouse
 
 
-def _same(reference, sql: str, warehouse: DuckDBWarehouse) -> str:
-    want, ran = reference.query(sql), warehouse.query(warehouse.log[-1])
+def _same(reference, sql: str, warehouse: DuckDBWarehouse, payload: dict) -> str:
+    # The answer's own query: a KPI runs more after it (the period before, its trend line).
+    want, ran = reference.query(sql), warehouse.query(payload["trust"]["sql"])
     return same_rows(want.columns, want.rows, ran.columns, ran.rows, order_matters=False)
 
 
@@ -79,7 +80,7 @@ def test_stock_on_hand_is_answered_per_unit_never_added_across_units(inventory):
     payload, warehouse = _ask(model, con, ON_HAND)
     per_unit = (f"SELECT i.unit_of_measure, SUM(b.on_hand_qty) FROM daily_balances b "
                 f"LEFT JOIN items i ON i.item_id = b.item_id WHERE {LATEST} GROUP BY 1")
-    assert not _same(reference, per_unit, warehouse)
+    assert not _same(reference, per_unit, warehouse, payload)
     headline = payload["answer"]["headline"]
     for unit, total in reference.query(per_unit).rows:
         assert fmt(total, 'number', unit=unit) in headline, headline     # "3,858 (unit M)", "34,118 EA"
@@ -95,12 +96,12 @@ def test_a_breakdown_keeps_units_apart_and_draws_the_unit_most_items_are_in(inve
     payload, warehouse = _ask(model, con, {**ON_HAND, "intent": "breakdown", "group_by": ["warehouse.name"]})
     assert not _same(reference, f"SELECT w.warehouse_name, i.unit_of_measure, SUM(b.on_hand_qty) "
                                 f"FROM daily_balances b LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id "
-                                f"LEFT JOIN items i ON i.item_id = b.item_id WHERE {LATEST} GROUP BY 1, 2", warehouse)
+                                f"LEFT JOIN items i ON i.item_id = b.item_id WHERE {LATEST} GROUP BY 1, 2", warehouse, payload)
     data, chart = payload["data"], payload["chart"]
     unit = next(h for h in data["headers"] if {r[h] for r in data["rows"]} <= {"EA", "BOX", "M", "Unknown"})
     name, value = chart["x_key"], chart["y_keys"][0]
     # EA: the unit of 42 of the 60 items, so of most stock rows.
-    assert chart["title"].endswith("(EA)") and any("Only EA is drawn" in w for w in chart["chart_warnings"])
+    assert chart["title"] == "On hand quantity (EA) by warehouse, at the last snapshot" and any("Only EA is drawn" in w for w in chart["chart_warnings"])
     assert {r[name]: r[value] for r in chart["rows"]} == {r[name]: r[value] for r in data["rows"] if r[unit] == "EA"}
     assert " EA" in payload["answer"]["headline"] and "of the total" not in payload["answer"]["headline"]
     assert any("counted in 3 units" in c for c in payload["coverage_caveats"])
@@ -114,12 +115,13 @@ def test_a_question_that_names_the_unit_is_answered_as_asked(inventory):
                                            "group_by": ["warehouse.name", "item.unit_of_measure"]})
     assert not _same(reference, f"SELECT w.warehouse_name, i.unit_of_measure, SUM(b.on_hand_qty) "
                                 f"FROM daily_balances b LEFT JOIN warehouses w ON w.warehouse_id = b.warehouse_id "
-                                f"LEFT JOIN items i ON i.item_id = b.item_id WHERE {LATEST} GROUP BY 1, 2", warehouse)
+                                f"LEFT JOIN items i ON i.item_id = b.item_id WHERE {LATEST} GROUP BY 1, 2", warehouse,
+                     by_unit)
     assert len(by_unit["data"]["headers"]) == 3 and not by_unit["coverage_caveats"]
     one, warehouse = _ask(model, con, {**ON_HAND, "filters": [
         {"field": "item.unit_of_measure", "op": "eq", "values": ["M"]}]})
     assert not _same(reference, f"SELECT SUM(b.on_hand_qty) FROM daily_balances b JOIN items i "
-                                f"ON i.item_id = b.item_id WHERE {LATEST} AND i.unit_of_measure = 'M'", warehouse)
+                                f"ON i.item_id = b.item_id WHERE {LATEST} AND i.unit_of_measure = 'M'", warehouse, one)
     assert one["kpi"] is not None
 
 
@@ -127,9 +129,9 @@ def test_a_reader_who_may_not_use_the_unit_gets_the_total_with_a_note(inventory)
     con, model, reference = inventory
     allowed = {k for k, t in model.tables.items() if t.name != "items"}
     payload, warehouse = _ask(model, con, ON_HAND, allowed_tables=allowed)
-    assert not _same(reference, f"SELECT SUM(b.on_hand_qty) FROM daily_balances b WHERE {LATEST}", warehouse)
+    assert not _same(reference, f"SELECT SUM(b.on_hand_qty) FROM daily_balances b WHERE {LATEST}", warehouse, payload)
     assert any("adds up different units" in n for n in payload["trust"]["date_context"])
-    assert "items" not in warehouse.log[-1].lower()
+    assert "items" not in payload["trust"]["sql"].lower()
 
 
 # ── rankings of periods ────────────────────────────────────────────────────

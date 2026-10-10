@@ -216,6 +216,7 @@ class Logical:
     window: Range
     compare: Range | None = None
     sort: list[tuple[str, bool]] = field(default_factory=list)
+    sort_asked: bool = False            # the question named its order (not the default by the first measure)
     limit: int | None = None
     share: bool = False
     having: list[Pred] = field(default_factory=list)
@@ -1286,7 +1287,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not add up "
                      "across its groups (an average or a ratio): no share of a total is worked out.")
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
-                   sort=sort, limit=limit, share=share, having=having, notes=_unique(notes),
+                   sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, having=having,
+                   notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
                    expected=expected, data_last=last if plan.time.grain else None, conditions=conditions)

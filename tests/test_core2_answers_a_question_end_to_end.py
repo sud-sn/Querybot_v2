@@ -79,7 +79,7 @@ def test_every_golden_question_comes_out_with_the_reference_numbers(name, case_i
     assert set(payload["answer"]) >= {"headline", "short_value", "comparison", "scope_note"}
     assert payload["answer"]["headline"] and payload["data"]["total_rows"] >= 1, payload["answer"]
     json.dumps(payload)     # the frame crosses a websocket as it is: no Decimal, no date objects
-    ran = warehouse.query(warehouse.log[-1])
+    ran = warehouse.query(payload["trust"]["sql"])   # a KPI runs more after it: the period before, its trend
     expected = reference.query(case["reference_sql"])
     diff = same_rows(expected.columns, expected.rows, ran.columns, ran.rows,
                      order_matters=bool((case.get("expect") or {}).get("order_matters")))

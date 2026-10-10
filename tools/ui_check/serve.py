@@ -186,6 +186,14 @@ PLANS = {
                                                  "time": {"window": {"kind": "between", "start": "2025-01-01",
                                                                      "end": "2025-12-31"}}},
     "list the stores": {"intent": "list", "group_by": ["store"]},
+    # past a dozen members: the ten largest and the rest as one bar; a line per store: five and the rest
+    "net sales by customer in the first half of 2026": {"intent": "breakdown", "measures": ["net_amount"],
+                                                        "group_by": ["customer.name"], "time": {"window": H1}},
+    "net sales by store by month in 2026": {"intent": "trend", "measures": ["net_amount"], "group_by": ["store"],
+                                            "time": {"grain": "month", "window": H1}},
+    # members that are amounts, in equal ranges
+    "order lines by list price": {"intent": "breakdown", "measures": ["number_of_order_lines"],
+                                  "group_by": ["product.list_price"]},
     "net sales by product in 2026": {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["product.name"],
                                      "time": {"window": H1}},
     "how many customers ordered in april": {"intent": "count", "measures": ["number_of_customers"],

@@ -327,6 +327,19 @@ def _first_open_slot(
     return 0, max((y + h for _, y, _, h in occupied), default=0)
 
 
+def _numbers_in(chart) -> int:
+    """How many numbers a KPI tile shows: one, or each measure of a new-core answer that asked for several."""
+    try:
+        raw = chart["display_config"]
+    except (IndexError, KeyError):
+        return 1
+    try:
+        plan = (json.loads(raw or "{}") or {}).get("core2_plan") or {}
+    except (TypeError, ValueError, AttributeError):
+        return 1
+    return max(1, min(4, len(plan.get("measures") or []) if isinstance(plan, dict) else 1))
+
+
 def _packed(charts: list) -> list[tuple[int, int, int, int]]:
     """Tiles laid out with no gap for the grid to pull a tile into: the headline numbers share the first row
     evenly (four at most to a row), then the charts two to a row, a chart left alone in its row and a table
@@ -336,11 +349,18 @@ def _packed(charts: list) -> list[tuple[int, int, int, int]]:
     rest = [c for c in charts if str(c["chart_type"] or "").lower() != "kpi"]
     rects: dict[int, tuple[int, int, int, int]] = {}
     y = 0
-    for start in range(0, len(kpis), 4):
-        row = kpis[start:start + 4]
-        width = 12 // len(row)
+    # A tile of several numbers side by side takes a share of its row for each of them.
+    rows: list[list] = []
+    for chart in kpis:
+        if not rows or sum(_numbers_in(c) for c in rows[-1]) + _numbers_in(chart) > 4:
+            rows.append([])
+        rows[-1].append(chart)
+    for row in rows:
+        slots, x = sum(_numbers_in(c) for c in row), 0
         for i, chart in enumerate(row):
-            rects[int(chart["id"])] = (i * width, y, width, 3)
+            width = 12 - x if i == len(row) - 1 else 12 * _numbers_in(chart) // slots
+            rects[int(chart["id"])] = (x, y, width, 3)
+            x += width
         y += 3
     waiting = None                     # a chart alone, so far, in the current row
     for chart in rest:
@@ -365,7 +385,7 @@ def _packed(charts: list) -> list[tuple[int, int, int, int]]:
 def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
     """Place unlocked tiles KPI-first while respecting user-edited tiles."""
     charts = conn.execute(
-        """SELECT id, chart_type, position, grid_x, grid_y, grid_w, grid_h,
+        """SELECT id, chart_type, position, grid_x, grid_y, grid_w, grid_h, display_config,
                   COALESCE(layout_locked, 0) AS layout_locked
              FROM pinned_chart
             WHERE dashboard_id=? AND user_id=?

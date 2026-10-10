@@ -4287,6 +4287,18 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.count": {"en": "Count", "fr": "Nombre"},
     "ui.chart.value": {"en": "Value", "fr": "Valeur"},
     "ui.chart.category": {"en": "Category", "fr": "Catégorie"},
+    "ui.kpi.vs": {
+        "en": "vs {period}",
+        "fr": "par rapport à {period}",
+    },
+    "ui.kpi.trend": {
+        "en": "Trend, {span}",
+        "fr": "Tendance, {span}",
+    },
+    "ui.kpi.was": {
+        "en": "{change} · {period}: {before}",
+        "fr": "{change} · {period} : {before}",
+    },
     "ui.chart.other_bucket": {
         "en": "Other ({count})",
         "fr": "Autres ({count})",

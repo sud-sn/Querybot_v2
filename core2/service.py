@@ -26,7 +26,7 @@ from typing import Any
 
 from core2 import ids
 from core2.bootstrap import names
-from core2.answer.builder import build_answer
+from core2.answer.builder import _period_badge, against, build_answer, sparkline
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
 from core2.answer.forecast import answer_forecast
@@ -40,6 +40,7 @@ from core2.plan.planner import Complete, Outcome, Turn, plan_question
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed,
                                 quoted_spans, which_end)
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
+from core2.resolve.time import Range, label as period_label, periods
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
 log = logging.getLogger("querybot.core2")
@@ -526,7 +527,10 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if shown is not None:
         shown.extend(_members_shown(logical, payload))
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
-    drill = drills(plan, logical, payload, model, services.allowed_tables) if payload.get("chart") else None
+    chart = payload.get("chart") or {}
+    # A bar that is a range of amounts ("5–10") is no member a click could open.
+    drill = drills(plan, logical, payload, model, services.allowed_tables) \
+        if chart and not (chart.get("other") or {}).get("ranges") else None
     if drill:
         payload["chart"]["drill"] = drill
     context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
@@ -595,6 +599,9 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
     rows = (payload.get("data") or {}).get("rows") or []
     if len(rows) != 1 or _found_nothing(payload):
         return ""
+    kpi = payload.get("kpi") if isinstance(payload.get("kpi"), dict) else None
+    if kpi is not None:
+        _trend(plan, services, ctx, warehouse, logical, kpi)
     before = plan.model_copy(update={"intent": "compare", "time": plan.time.model_copy(
         update={"compare": Compare(kind="previous_period")})})
     try:
@@ -612,7 +619,76 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
     said = str((moved.get("answer") or {}).get("comparison") or "")
     if not said or said.startswith("nothing"):
         return ""
+    prior = next((c for c in compiled.columns if c.role == "prior"), None)
+    names = [n.casefold() for n in result.columns]
+    if kpi is not None and prior is not None and len(result.rows) == 1 and prior.name.casefold() in names:
+        change = against(kpi.get("value"), result.rows[0][names.index(prior.name.casefold())], prior.format,
+                         _period_badge(compared.compare))
+        if change is not None:
+            kpi["change"] = change
     return f"{said[:1].upper()}{said[1:]}, the period before."
+
+
+_TRAILING = {"day": 30, "week": 12, "month": 12, "quarter": 8, "year": 5}   # periods a KPI's trend line shows
+
+
+def _trend(plan: Plan, services: Services, ctx: Context, warehouse: Guarded, logical: Any, kpi: dict) -> None:
+    """A KPI's trend line, from one more small query: the periods up to and including its own (the last 12
+    months for a month), or, for a window that is no one period ("Jan–Jun"), the months or days inside it. A
+    failure costs the line, never the answer."""
+    from core2.resolve.time import add_units, unit_start
+
+    start, end = logical.window.start, logical.window.end
+    role = logical.parts[0].date.role if logical.parts and logical.parts[0].date else None
+    if start is None or end is None or role is None or role.first is None or plan.time.window.fiscal:
+        return
+    last = role.last or ctx.today
+    grain = None
+    for unit in ("day", "week", "month", "quarter", "year"):
+        following = add_units(unit_start(start, unit), unit, 1)
+        if unit_start(start, unit) == start and (end == following or start < end < following and end > last):
+            grain = unit                  # one whole period, or the current one to date
+            break
+    partial = end - dt.timedelta(days=1) > last     # the data stops inside the last period: it is not whole yet
+    if grain is not None:
+        first = max(add_units(start, grain, 1 - _TRAILING[grain]), unit_start(role.first, grain))
+        window = Window(kind="between", start=first, end=end - dt.timedelta(days=1))
+    elif (end - start).days > 62:
+        grain, window = "month", Window(kind="between", start=start, end=end - dt.timedelta(days=1))
+    elif (end - start).days >= 7:
+        grain, window = "day", Window(kind="between", start=start, end=end - dt.timedelta(days=1))
+    else:
+        return
+    trailing = plan.model_copy(update={"intent": "trend", "sort": [], "limit": None,
+                                       "time": plan.time.model_copy(update={"grain": grain, "window": window})})
+    try:
+        series = resolve(trailing, services.model, replace(ctx, split_units=services.split_units))
+        compiled = compile_query(series, services.model, warehouse.dialect)
+        result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
+    except Exception as exc:  # noqa: BLE001 - the KPI stands without its trend line
+        log.warning("core2 could not draw the trend of %r: %s", kpi.get("label"), exc)
+        return
+    names = [n.casefold() for n in result.columns]
+    period = next((c for c in compiled.columns if c.role == "period"), None)
+    measure = next((c for c in compiled.columns if c.role == "measure"), None)
+    if period is None or measure is None or period.name.casefold() not in names \
+            or measure.name.casefold() not in names or len(result.rows) > 400:
+        return
+    at, of = names.index(period.name.casefold()), names.index(measure.name.casefold())
+    found = {str(row[at])[:10]: row[of] for row in result.rows}
+    starts = periods(Range(window.start, end), grain)
+    values = [_amount(found.get(d.isoformat())) for d in starts]
+    drawn = sparkline(values, partial=partial)
+    if drawn:
+        kpi["trend"] = {**drawn, "grain": grain,
+                        "span": f"{period_label(starts[0], grain)} – {period_label(starts[-1], grain)}"}
+
+
+def _amount(value: Any) -> float | None:
+    try:
+        return None if value is None or isinstance(value, bool) else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # Words that point at something rather than name it, and nothing more: "lowest", "the first one", "that

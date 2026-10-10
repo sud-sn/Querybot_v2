@@ -465,9 +465,9 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     headline = _headline(logical, cols, raw, records, partial, units)
     short_value, comparison = _lead(logical, cols, raw, units)
     drawn = [r for r, plain in zip(records, raw) if not units.mixed or units.key(plain) == units.main]
-    chart = _chart(logical, cols, drawn, formats, labels, display, gaps=bool(gaps))
-    if chart is not None and units.main and units.main != "Unknown":
-        chart["title"] = f"{chart['title']} ({units.main})"
+    unit = units.main if units.main and units.main != "Unknown" else ""
+    chart = _chart(logical, cols, drawn, formats, labels, display, gaps=bool(gaps), unit=unit)
+    if chart is not None and unit:
         if units.mixed:
             chart["chart_warnings"] = [*chart["chart_warnings"], f"Only {units.main} is drawn: the other "
                                        f"{units.count - 1} units are in the table."]
@@ -925,19 +925,183 @@ def _digits(column: OutColumn) -> dict:
 
 
 def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, str], units: _Units) -> dict | None:
+    """One number, or a few in one row ("net amount, cost and margin in Q2"): a tile each, side by side. The
+    first leads (its label, value and format are the KPI's own); ``group`` holds every one of them."""
     measures = cols.of("measure")
-    if len(raw) != 1 or cols.of("period") or cols.of("attribute") or len(measures) != 1 or logical.compare:
-        return None
-    m = measures[0]
-    value = raw[0][m.name]
+    if len(raw) != 1 or cols.of("period") or cols.of("attribute") or not 1 <= len(measures) <= 4 or logical.compare:
+        return None                       # five numbers and more read as a table
     unit = units.of(raw[0])
-    return {"label": f"{m.label} ({unit})" if unit else m.label,
-            "value": value if _number(value) is None else _number(value),
-            "format": formats[m.name], "display_format": _digits(m),
-            "state": "missing" if _number(value) is None else "ready", "note": scope_words(logical)[1]}
+
+    def tile(m: OutColumn) -> dict:
+        value = raw[0][m.name]
+        return {"label": f"{m.label} ({unit})" if unit else m.label,
+                "value": value if _number(value) is None else _number(value),
+                "format": formats[m.name], "display_format": _digits(m),
+                "state": "missing" if _number(value) is None else "ready"}
+    tiles = [tile(m) for m in measures]
+    named = _listed([measures[0].label, *(_lower(m.label) for m in measures[1:])], "and")
+    kpi = {**tiles[0], "note": scope_words(logical)[1], "title": chart_title(logical, named, [], unit or "")}
+    if len(tiles) > 1:
+        kpi["group"] = tiles
+    return kpi
+
+
+def against(now: Any, then: Any, format_: str, before: str) -> dict | None:
+    """A KPI against the period before, as its tile says it: "▲ +4.0% vs March 2026" (the amount, "+$1,200.00",
+    and the earlier value beside it). A percentage moves by points, never by a percent of itself."""
+    a, b = _number(now), _number(then)
+    if a is None or b is None:
+        return None
+    by = a - b
+    points = format_ in ("percent", "percentage")
+    was = fmt(b, format_)
+    if (f"{abs(by):,.1f}" == "0.0") if points else _moved(by, None, format_, None) == "unchanged":
+        return {"direction": "flat", "change": "unchanged", "pct": "", "vs": before, "before": was}
+    ratio = by / abs(b) if b and not points else None
+    return {"direction": "up" if by > 0 else "down", "change": f"{by:+,.1f} pts" if points else _signed(by, format_),
+            "pct": f"{ratio * 100:+.1f}%" if ratio is not None else "", "vs": before, "before": was}
+
+
+def sparkline(values: list[float | None], *, partial: bool = False, width: int = 120,
+              height: int = 32) -> dict[str, str] | None:
+    """SVG paths for a KPI's trend in a ``width`` x ``height`` box (drawn stretched to its tile): a gap where a
+    period has no value. ``partial``: the last period is not over yet, so its segment is ``tail`` (drawn dashed,
+    a dip that is only a month not finished). None when fewer than three periods have a value."""
+    known = [v for v in values if v is not None]
+    if len(known) < 3:
+        return None
+    lo, hi = min(known), max(known)
+    pad = 2.0
+    step = (width - 2 * pad) / max(1, len(values) - 1)
+
+    def at(i: int, v: float) -> str:
+        return f"{pad + i * step:.1f},{height / 2 if hi == lo else pad + (hi - v) / (hi - lo) * (height - 2 * pad):.1f}"
+    split = partial and len(values) >= 2 and values[-1] is not None and values[-2] is not None
+    path, pen = [], "M"
+    for i, v in enumerate(values[:-1] if split else values):
+        if v is None:
+            pen = "M"
+            continue
+        path.append(f"{pen}{at(i, v)}")
+        pen = "L"
+    n = len(values) - 1
+    tail = f"M{at(n - 1, values[-2])} L{at(n, values[-1])}" if split else ""   # type: ignore[arg-type]
+    return {"path": " ".join(path), "tail": tail}
 
 
 MAX_SLICES = 10     # members a pie or donut is offered for (under the renderer's 12, so no "Other" slice)
+MOST_BARS = 12      # members a bar chart draws one bar each; past it, the largest TOP_BARS and one "Other" bar
+TOP_BARS = 10
+MOST_LINES = 6      # members a chart over time draws one line each; past it, the largest TOP_LINES and "Other"
+TOP_LINES = 5
+
+
+def chart_title(logical: Logical, measure: str, by: list[str], unit: str = "") -> str:
+    """What a chart shows, and what the dashboard tile pinned from it is called: "Net amount by store",
+    "Quantity (EA) by warehouse and month, for item group Bolts". Never its period: a tile's subtitle says
+    that, and it moves on with a window like "last month" while the title stays."""
+    order = {"activity": 0}
+    kept = [c for c in sorted(logical.conditions, key=lambda c: order.get(c.kind, 1))
+            if c.kind not in ("by", "date")]
+    activity = [w for w in (condition_words(c) for c in kept if c.kind == "activity") if w]
+    rest = [w for w in (condition_words(c) for c in kept if c.kind != "activity") if w]
+    title = " ".join([measure + (f" ({unit})" if unit else ""), *activity])
+    if by:
+        title += " by " + _listed(by, "and")
+    return f"{title}, {', '.join(rest)}" if rest else title
+
+
+def _by_words(c: OutColumn, labels: dict[str, str]) -> str:
+    """A grouping as a chart's title names it: "store" (from "Store name"), "month", "fiscal quarter"."""
+    if c.role == "period":
+        return (c.grain or "period").replace("_", " ")
+    return _thing(labels[c.name])
+
+
+def _adds(logical: Logical, name: str) -> bool:
+    """Do the groups' values of the measure column ``name`` add up to a whole (so the rest can be one "Other")?"""
+    o = next((o for o in logical.measures if o.name == name), None)
+    return o is not None and adds_up(o)
+
+
+def _in_number_order(rows: list[dict], x: str) -> list[dict]:
+    """Members that are amounts (3 days, fill number 2) in their own order, like a histogram's: a member
+    that is no number (empty, "Unknown") last."""
+    def key(r: dict) -> tuple[int, float]:
+        try:
+            return 0, float(str(r[x]).replace(",", ""))
+        except ValueError:
+            return 1, 0.0
+    return sorted(rows, key=key)
+
+
+MOST_AMOUNTS = 20   # members that are amounts drawn one bar each; past it, about ten equal ranges (a histogram)
+
+
+def _binned(rows: list[dict], x: str, ys: list[str], share: str | None = None,
+            bins: int = 10) -> tuple[list[dict], str] | None:
+    """Members that are amounts (146 list prices) put in about ``bins`` equal ranges, each the sum of its
+    members, so the chart shows how they spread; ranges with nothing in them are drawn as zero. None when the
+    members are not all numbers. The table keeps every member."""
+    import math as _math
+
+    def value(r: dict) -> float | None:
+        try:
+            return float(str(r[x]).replace(",", ""))
+        except ValueError:
+            return None
+    pairs = [(v, r) for r in rows for v in [value(r)] if v is not None]
+    unknown = [r for r in rows if value(r) is None]       # "Unknown": no amount, drawn last on its own
+    if len(pairs) < 2 or len(unknown) > 1:
+        return None
+    lo, hi = min(v for v, _ in pairs), max(v for v, _ in pairs)
+    if hi <= lo:
+        return None
+    raw = (hi - lo) / bins
+    scale = 10 ** _math.floor(_math.log10(raw))
+    step = next(m * scale for m in (1, 2, 2.5, 5, 10) if m * scale >= raw)
+    whole = all(float(v).is_integer() for v, _ in pairs)
+    if whole:
+        step = max(1.0, float(_math.ceil(step)))
+    first = _math.floor(lo / step) * step
+    count = int((hi - first) / step + 1e-9) + 1
+    keys = [*ys, *([share] if share else [])]
+    # Each value by the range it falls in, counted in steps (0.6 is in 0.6–0.8, never in 0.4–0.6 by a rounding).
+    at = [min(count - 1, int((v - first) / step + 1e-9)) for v, _ in pairs]
+    out = []
+    for i in range(count):
+        a, b = round(first + i * step, 10), round(first + (i + 1) * step, 10)
+        inside = [r for (_, r), k in zip(pairs, at) if k == i]
+        name = f"{a:,g}–{b - 1:,g}" if whole and step > 1 else (f"{a:,g}" if whole else f"{a:,g}–{b:,g}")
+        out.append({x: name, **{k: sum(r.get(k) or 0.0 for r in inside) for k in keys}})
+    out += unknown
+    said = (f"Grouped in ranges of {step:,g}." if whole else
+            f"Grouped in ranges of {step:,g}: each takes in its first value, not its last.")
+    return out, said
+
+
+def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None, *, format_: str,
+          things: str) -> tuple[list[dict], dict | None, str]:
+    """The ``keep`` largest rows (by the first measure, in the order they came in), and the rest added up: one
+    "Other (n)" bar when it is no longer than the longest bar drawn, so the chart shows the whole; said under the
+    chart when it is ("the other 230 customers add up to $796.7K, 81% of the total"), where a bar twenty times
+    the others would squeeze them to slivers. The table keeps every row."""
+    ranked = sorted(range(len(rows)), key=lambda i: -abs(rows[i].get(ys[0]) or 0.0))
+    kept, rest = [rows[i] for i in sorted(ranked[:keep])], [rows[i] for i in ranked[keep:]]
+
+    def total(key: str, among: list[dict]) -> float | None:
+        values = [r.get(key) for r in among if r.get(key) is not None]
+        return sum(values) if values else None
+    label = f"Other ({len(rest):,})"
+    rest_total = total(ys[0], rest) or 0.0
+    if abs(rest_total) <= max(abs(r.get(ys[0]) or 0.0) for r in kept):
+        other = {x: label, **{y: total(y, rest) for y in ys}, **({share: total(share, rest)} if share else {})}
+        return [*kept, other], {"label": label, "count": len(rest)}, ""
+    whole = rest_total + (total(ys[0], kept) or 0.0)
+    part = f", {rest_total / whole * 100:.0f}% of the total" if whole > 0 and all(
+        (r.get(ys[0]) or 0) >= 0 for r in rows) else ""
+    return kept, None, (f"Showing the {keep} largest: the other {len(rest):,} {things} add up to "
+                        f"{fmt(rest_total, format_)}{part}. Every one is in the table.")
 
 
 def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date]) -> list[dict]:
@@ -953,7 +1117,7 @@ def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date])
 
 
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
-           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False) -> dict | None:
+           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "") -> dict | None:
     measures = cols.of("measure")
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     if not measures or len(records) < 2 or logical.intent == "list":
@@ -975,7 +1139,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     elif periods:
         x, ys, kind = periods[0], [c.name for c in measures], "line"
         if members:   # one line per member
-            return _pivot(logical, periods[0], members[0], m, records, formats, labels, display)
+            return _pivot(logical, periods[0], members[0], m, records, formats, labels, display, unit=unit)
     elif members:
         # Every measure asked for is drawn: one of a unit shares a plot, another unit gets a panel.
         x, ys = members[0], [c.name for c in measures]
@@ -1009,6 +1173,24 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         rows.sort(key=lambda r: str(r[x.name]))     # a time axis runs forward, whatever order the table is in
         if gaps:
             rows = _with_gaps(rows, x.name, ys, logical.expected)
+    other: dict | None = None
+    warnings: list[str] = []
+    in_order = kind == "bar" and not temporal and not ranked and x.ordinal and not logical.limit \
+        and not logical.sort_asked
+    if in_order:
+        rows = _in_number_order(rows, x.name)       # 0, 1, 2 ... days: the shape of the spread, not a ranking
+        binned = _binned(rows, x.name, ys, share.name if share is not None else None) \
+            if len(rows) > MOST_AMOUNTS and all(_adds(logical, y) for y in ys) else None
+        if binned is not None:
+            rows, said = binned
+            warnings.append(said)
+            other = {"label": "", "count": 0, "ranges": True}     # its bars are ranges, never one member to open
+    elif kind == "bar" and not temporal and not ranked and compare is None and len(rows) > MOST_BARS \
+            and all(_adds(logical, y) for y in ys):
+        rows, other, said = _fold(rows, x.name, ys, TOP_BARS, share.name if share is not None else None,
+                                  format_=m.format, things=names.plural(_thing(labels[x.name])))
+        if said:
+            warnings.append(said)
     facets: list[list[str]] = []
     if len(ys) > 1 and kind == "bar" and compare is None:
         by_unit: dict[str, list[str]] = {}
@@ -1030,40 +1212,60 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     else:
         renderable = ["bar", "pie", "donut"] if parts else ["bar"]
         allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked else ["bar"]
-    return {"title": labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and"),
-            "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows,
+    measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and")
+    return {"title": chart_title(logical, measure, [_by_words(c, labels) for c in [*members, *periods]], unit),
+            "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
             "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
             "renderable_types": renderable, "allowed_types": allowed, "recommended_type": kind,
             "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
-            "intent": logical.intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
+            "x_order": "number" if in_order else "", "intent": logical.intent, "grouped_by": None,
+            "forecast_meta": None, "chart_warnings": warnings}
 
 
 def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn, records: list[dict],
-           formats: dict[str, str], labels: dict[str, str], display: dict[str, dict]) -> dict:
+           formats: dict[str, str], labels: dict[str, str], display: dict[str, dict], *, unit: str = "") -> dict:
     totals: dict[str, float] = {}
     for r in records:
         key = "Unknown" if r[member.name] is None else str(r[member.name])
-        totals[key] = totals.get(key, 0.0) + (_number(r[m.name]) or 0.0)
-    series = [k for k, _ in sorted(totals.items(), key=lambda kv: -kv[1])][:8]
+        totals[key] = totals.get(key, 0.0) + abs(_number(r[m.name]) or 0.0)
+    ranked = [k for k, _ in sorted(totals.items(), key=lambda kv: -kv[1])]
+    # Past a handful of lines the chart is a tangle: the largest, and the rest added up as one "Other" line
+    # when the measure adds up across members (a sum, a count) and that line stays within the others' range
+    # (seven stores added up would flatten five to the floor); the largest alone, said so, otherwise.
+    folded = len(ranked) > MOST_LINES and _adds(logical, m.name)
+    other = {"label": f"Other ({len(ranked) - TOP_LINES:,})", "count": len(ranked) - TOP_LINES} if folded else None
     by_period: dict[str, dict] = {}
     for r in records:
         key = "Unknown" if r[member.name] is None else str(r[member.name])
-        if key not in series:
-            continue
         row = by_period.setdefault(str(r[period.name]), {period.name: str(r[period.name])})
-        row[key] = _number(r[m.name])
-    rows = [by_period[k] for k in sorted(by_period)]
+        value = _number(r[m.name])
+        if key in ranked[:MOST_LINES]:
+            row[key] = value
+        if other is not None and key not in ranked[:TOP_LINES] and value is not None:
+            row[other["label"]] = (row.get(other["label"]) or 0.0) + value
+    if other is not None:
+        peak = max((abs(row.get(other["label"]) or 0.0) for row in by_period.values()), default=0.0)
+        top = max((abs(row.get(k) or 0.0) for row in by_period.values() for k in ranked[:TOP_LINES]), default=0.0)
+        if peak > top:
+            other = None
+    series = [*ranked[:TOP_LINES], other["label"]] if other is not None else ranked[:MOST_LINES]
+    for row in by_period.values():
+        for key in [k for k in row if k != period.name and k not in series]:
+            del row[key]
+    rows = [{**{s: None for s in series}, **by_period[k]} for k in sorted(by_period)]
     roles: dict[str, dict] = {period.name: {"column": period.name, "label": labels[period.name], "role": "temporal"}}
     for s in series:
         roles[s] = {"column": s, "label": s, "role": "measure", "format": formats[m.name]}
-    return {"title": f"{labels[m.name]} by {_thing(labels[member.name])}", "chart_type": "line",
-            "x_key": period.name, "y_keys": series, "rows": rows,
+    return {"title": chart_title(logical, labels[m.name], [_by_words(member, labels), _by_words(period, labels)],
+                                 unit),
+            "chart_type": "line", "x_key": period.name, "y_keys": series, "rows": rows, "other": other,
             "x_style": (display.get(period.name) or {}).get("style", ""), "column_roles": roles,
             "column_formats": {s: formats[m.name] for s in series}, "renderable_types": ["line", "bar", "area"],
             "allowed_types": ["line", "bar", "area"], "recommended_type": "line",
             "chart_spec": {"x": {"column": period.name, "role": "temporal"}, "column_roles": roles},
             "intent": logical.intent, "grouped_by": member.name, "grouped_measure": m.name,
-            "forecast_meta": None, "chart_warnings": [] if len(totals) <= 8 else [
-                f"Showing the 8 largest of {len(totals)} {labels[member.name].lower()} values."]}
+            "forecast_meta": None, "chart_warnings": [] if other is not None or len(totals) <= MOST_LINES else [
+                f"Showing the {MOST_LINES} largest of {len(totals)} {names.plural(_thing(labels[member.name]))}: "
+                "every one is in the table."]}

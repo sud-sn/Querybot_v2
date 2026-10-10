@@ -37,6 +37,8 @@ FUNCTIONS = [
     "function _followingHtml(msg)",
     "function _answerTiles(msg)",
     "function _answerTilesHtml(tiles)",
+    "function _kpiChangeHtml(change)",
+    "function _kpiTrendHtml(trend)",
     "function _shortAmount(value, fmt, spec = {})",
     "function _tileValue(value, fmt, spec = {}, column = '')",
     "function _answerChartTitle(chart)",

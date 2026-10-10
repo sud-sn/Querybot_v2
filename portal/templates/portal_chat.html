@@ -609,6 +609,12 @@ body:has(.chat-page) .main { background: var(--bg); }
 .kpi-value.long { font-size: var(--font-xl); }
 .kpi-exact { font-size: var(--font-xs); color: var(--text-muted); margin-bottom: 2px; overflow-wrap: anywhere; }
 .kpi-note { font-size: var(--font-sm); color: var(--text-muted); }
+.kpi-change { font-size: var(--font-sm); color: var(--text-secondary); font-weight: var(--weight-semibold); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-arrow { font-size: .8em; margin-right: 4px; }
+.kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); }
+.kpi-spark { display: block; width: 100%; height: 32px; margin: 8px 0 2px; overflow: visible; }
+.kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.kpi-spark .kpi-spark-tail { stroke-dasharray: 3 3; }
 /* A metric the reader made in this chat: how it is counted, and that it is theirs until their admin keeps it. */
 .own-metric { border: 1px dashed color-mix(in srgb, var(--primary) 45%, var(--line)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--primary) 4%, var(--surface)); padding: 12px 14px; display: grid; gap: 6px; }
 .own-metric-title { font-size: var(--font-xs); font-weight: var(--weight-bold); color: var(--primary); display: flex; align-items: center; gap: 6px; }
@@ -2063,6 +2069,9 @@ function _drillChoices(payload, params) {
   const xKey = payload.x_key;
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
   if (xKey && rows.length && !rows.some(r => String(r[xKey] ?? '') === raw)) return [];
+  // "Other (230)" adds up the members past the largest: no one member to open.
+  const other = String((payload.other || {}).label || '');
+  if (other && (raw === other || String((params && params.seriesName) || '') === other)) return [];
   let member = '', period = '';
   if (drill.on === 'period') {
     period = (window.QBCharts && window.QBCharts.periodLabel)
@@ -2981,7 +2990,7 @@ function addArtifactToDashboard(){
   const chart = _activeArtifactPayload.chart || {};
   openDashboardPicker({
     token: _activeArtifactPayload.pin_token || chart.pin_token,
-    title: chart.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || t('ui.chat.artifact.default_visual'),
+    title: chart.title || _activeArtifactPayload.kpi?.title || _activeArtifactPayload.kpi?.label || _activeArtifactPayload.question || t('ui.chat.artifact.default_visual'),
     chart_type: chart.chart_type || (_activeArtifactPayload.kpi ? 'kpi' : 'table'),
     color_palette: chart.color_palette || 'default',
     dashboard_id: DASHBOARD_ID,
@@ -3033,7 +3042,14 @@ function _answerTiles(msg) {
     const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
     let note = (msg.answer || {}).comparison || kpi.note || '';
     if (period && note.replace(/^(in|on) /, '') === period.text) note = '';
-    return [{label: kpi.label || '', ..._tileValue(kpi.value, kpi.format, kpi.display_format || {}), note}];
+    // Several numbers in one row ("net amount and cost in April"): a tile each, side by side.
+    if (Array.isArray(kpi.group) && kpi.group.length > 1) {
+      return kpi.group.map((g, i) => ({label: g.label || '',
+                                       ..._tileValue(g.value, g.format, g.display_format || {}),
+                                       note: i === 0 ? note : ''}));
+    }
+    return [{label: kpi.label || '', ..._tileValue(kpi.value, kpi.format, kpi.display_format || {}), note,
+             change: kpi.change || null, trend: kpi.trend || null}];
   }
   const data = msg.data || {};
   const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -3086,8 +3102,28 @@ function _answerTilesHtml(tiles) {
     `<div class="kpi-tile"><div class="kpi-label">${escHtml(tile.label)}</div>`
     + `<div class="kpi-value${size(tile.value)}"${tile.exact ? ` title="${escHtml(tile.exact)}"` : ''}>${escHtml(tile.value)}</div>`
     + (tile.exact ? `<div class="kpi-exact">${escHtml(tile.exact)}</div>` : '')
+    + _kpiChangeHtml(tile.change)
+    + _kpiTrendHtml(tile.trend)
     + (tile.note ? `<div class="kpi-note">${escHtml(tile.note)}</div>` : '')
     + `</div>`).join('')}</div>`;
+}
+// Against the period before: an arrow and a sign carry the direction, never a colour alone -- and no green or
+// red, since up is good for sales and bad for costs. The amount and the earlier value are in its tooltip.
+function _kpiChangeHtml(change) {
+  if (!change || !change.direction) return '';
+  const arrow = {up: '▲', down: '▼'}[change.direction] || '→';
+  const main = change.direction === 'flat' ? change.change : (change.pct || change.change);
+  const tip = t('ui.kpi.was', {change: change.change, period: change.vs, before: change.before});
+  return `<div class="kpi-change" title="${escHtml(tip)}"><span class="kpi-arrow" aria-hidden="true">${arrow}</span>`
+    + `${escHtml(main)} <span class="kpi-vs">${escHtml(t('ui.kpi.vs', {period: change.vs}))}</span></div>`;
+}
+// The periods up to this one, as a line: its last segment dashed while that period is not over.
+function _kpiTrendHtml(trend) {
+  if (!trend || !trend.path) return '';
+  const label = t('ui.kpi.trend', {span: trend.span || ''});
+  return `<svg class="qb-graphic kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="${escHtml(label)}">`
+    + `<title>${escHtml(label)}</title><path d="${escHtml(trend.path)}"/>`
+    + (trend.tail ? `<path class="kpi-spark-tail" d="${escHtml(trend.tail)}"/>` : '') + `</svg>`;
 }
 
 function _answerChartTitle(chart) {
@@ -3596,7 +3632,7 @@ function appendAssistantResponse(msg, opts = {}){
     const live = window._chartPayloads[chartId] || msg.chart || {};
     openDashboardPicker({
       token: dashboardToken,
-      title: live.title || msg.kpi?.label || msg.question || t('ui.chat.artifact.default_visual'),
+      title: live.title || msg.kpi?.title || msg.kpi?.label || msg.question || t('ui.chat.artifact.default_visual'),
       chart_type: live.chart_type || (msg.kpi ? 'kpi' : 'table'),
       color_palette: live.color_palette || 'default',
       dashboard_id: DASHBOARD_ID,

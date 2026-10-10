@@ -172,7 +172,8 @@
            ondblclick, so a team viewer was told to double-click to rename and
            nothing happened. #}
         <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}"
-             {% if _can_edit %}title="{{ t('ui.dash.rename_hint') }}" ondblclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
+             title="{{ chart.title }}{% if _can_edit %} · {{ t('ui.dash.rename_hint') }}{% endif %}"
+             {% if _can_edit %}ondblclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
              id="chart-title-{{ chart.id }}">{{ chart.title }}</div>
         <div class="chart-card-sub">{% if chart.subtitle %}{{ chart.subtitle }}{% elif chart.table_truncated %}{{ t('ui.dash.showing_of', shown=chart.table_shown, total=chart.row_count) }}{% else %}{{ plural('ui.dash.rows', chart.row_count) }}{% endif %} · {% if chart.from_cache %}{{ t('ui.dash.cache', at=chart.cache_refreshed_at[:16] if chart.cache_refreshed_at else '') }}{% else %}{{ t('ui.dash.live_refresh') }}{% endif %}</div>
       </div>
@@ -196,10 +197,29 @@
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      {% elif chart.kpi and chart.kpi_group and chart.kpi_group|length > 1 %}
+      {# Several numbers of one answer ("net amount and cost in April"), side by side. #}
+      <div class="dash-kpi-group" style="--kpi-count:{{ chart.kpi_group|length }}">
+        {% for g in chart.kpi_group %}
+        <div class="dash-kpi dash-kpi-cell">
+          <div class="dash-kpi-label">{{ g.label }}</div>
+          <div class="dash-kpi-value" title="{{ g.display }}">{{ g.display }}</div>
+        </div>
+        {% endfor %}
+      </div>
       {% elif chart.kpi %}
       <div class="dash-kpi" style="height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:1rem">
         <div style="font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-muted);margin-bottom:.45rem">{{ chart.kpi.label or chart.title }}</div>
         <div class="dash-kpi-value" title="{{ chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
+        {% set change = chart.kpi.change %}
+        {% if change and change.direction %}
+        {# An arrow and a sign carry the direction, never a colour alone: up is good for sales, bad for costs. #}
+        <div class="dash-kpi-change" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}→{% endif %}</span>{{ change.change if change.direction == 'flat' else (change.pct or change.change) }} <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
+        {% endif %}
+        {% set trend = chart.kpi.trend %}
+        {% if trend and trend.path %}
+        <svg class="qb-graphic dash-kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ t('ui.kpi.trend', span=trend.span or '') }}"><title>{{ t('ui.kpi.trend', span=trend.span or '') }}</title><path d="{{ trend.path }}"/>{% if trend.tail %}<path class="dash-kpi-spark-tail" d="{{ trend.tail }}"/>{% endif %}</svg>
+        {% endif %}
         <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.45rem">{{ chart.kpi.note or 'Single-value result' }}</div>
       </div>
       {% elif chart.table_rows %}

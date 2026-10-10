@@ -82,7 +82,7 @@ def test_two_roles_are_asked_about_by_name_and_the_reply_is_followed():
     assert sorted(c["question"] for c in asked["follow_up_suggestions"]) == roles
     assert all(r in asked["answer"]["headline"] for r in roles)
     answered = answer_question(roles[1], services, session)
-    sql = warehouse.log[-1]
+    sql = answered["trust"]["sql"]
     assert len(ai.sent) == 1          # the reply completed the waiting plan by code: no second AI call
     assert answered["plan"]["via"] == {customer: roles[1]}
     got = warehouse.query(sql)

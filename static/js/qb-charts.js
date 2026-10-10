@@ -421,7 +421,8 @@
           : r => yKeys.reduce((s, k) => s + Math.abs(num(r && r[k]) || 0), 0);
         const ranked = rows.slice().sort((a, b) => size(b) - size(a));
         const head = ranked.slice(0, cap);
-        if (cmp) head.sort((a, b) => rows.indexOf(a) - rows.indexOf(b));
+        // Members that are amounts (0, 1, 2 ... days) keep their own order, as a histogram's bars do.
+        if (cmp || (payload && payload.x_order === 'number')) head.sort((a, b) => rows.indexOf(a) - rows.indexOf(b));
         if (type === 'pie' || type === 'donut') {
           const rest = ranked.slice(cap).reduce((s, r) => s + (num(r && r[yKey]) || 0), 0);
           head.push({[xKey]: t('ui.chart.other_bucket', {count: global.qbNum(truncatedFrom - cap)}), [yKey]: rest});
@@ -1192,6 +1193,8 @@
     // ── Line / area ────────────────────────────────────────────────────────
     if (type === 'line' || type === 'area') {
       const single = yKeys.length === 1;
+      // The members past the largest, added up as one line: drawn in a neutral ink, not a series hue.
+      const otherName = payload && payload.other ? String(payload.other.label || '') : '';
       option.tooltip = Object.assign(tooltipBase(c), {
         trigger: 'axis',
         // The crosshair finds the period; the reader never has to land on a
@@ -1201,7 +1204,7 @@
       });
       option.series = yKeys.map((k, i) => {
         const values = rows.map(r => num(r && r[k]));
-        const color = colors[i % colors.length];
+        const color = otherName && k === otherName ? c.muted : colors[i % colors.length];
         return {
           name: k, type: 'line', data: values,
           // Straight segments: a smoothed curve bulges past the data and draws
@@ -1279,6 +1282,9 @@
         (horizontal ? option.xAxis : option.yAxis).boundaryGap = [`${Math.ceil(share * 100)}%`, '8%'];
       }
     }
+    // The members past the largest, added up as one "Other (n)" bar: a neutral ink, so it reads as the rest.
+    const otherLabel = payload && payload.other && payload.other.label ? String(payload.other.label) : '';
+    const otherAt = !multi && otherLabel ? labels.indexOf(otherLabel) : -1;
     option.series = yKeys.map((k, i) => {
       const color = colors[i % colors.length];
       const values = rows.map(r => num(r && r[k]));
@@ -1296,9 +1302,10 @@
         // A plain value unless the bar needs its own styling: a variance's
         // direction colour, or a rounded end and a label on the far side of
         // the baseline for a value below zero.
-        data: values.map(v => ((delta || (v != null && v < 0)) ? {
+        data: values.map((v, at) => ((delta || (v != null && v < 0) || at === otherAt) ? {
           value: v,
-          itemStyle: {color: delta ? (v != null && v < 0 ? c.bad : c.good) : color, borderRadius: end(v)},
+          itemStyle: {color: delta ? (v != null && v < 0 ? c.bad : c.good) : (at === otherAt ? c.muted : color),
+                      borderRadius: end(v)},
           label: {position: place(v)},
         } : v)),
         // Bars -> the value at the tip; columns -> on the cap. A bar below

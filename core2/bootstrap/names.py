@@ -106,8 +106,10 @@ def plural(phrase: str) -> str:
     """'order line' -> 'order lines', 'category' -> 'categories', 'address' -> 'addresses'."""
     head, _, word = phrase.rpartition(" ")
     lower = word.lower()
-    if not word or lower.endswith(("rows", "data", "staff", "people")):
-        out = word
+    if not word or lower.endswith(("rows", "data", "staff", "people", "hours", "minutes", "weeks", "months",
+                                   "years", "seconds")) or (len(lower) > 3 and lower.endswith("ys")
+                                                            and lower[-3] in "aeiou"):
+        out = word          # already a plural: "typical transit days", never "dayses"
     elif lower.endswith("sis") and len(lower) > 4:      # diagnosis -> diagnoses, analysis -> analyses
         out = word[:-2] + "es"
     elif lower.endswith("y") and len(lower) > 1 and lower[-2] not in "aeiou":
