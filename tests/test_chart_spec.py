@@ -1115,10 +1115,10 @@ class TestAPassthroughPayloadCanActuallyBeSent(unittest.TestCase):
         from decimal import Decimal
 
         return [
-            {"PERIOD": "2026-01", "REVENUE": Decimal("44430302.60"),
+            {"PERIOD": "2026-01", "REVENUE": Decimal("31415926.53"),
              "is_forecast": False, "forecast_value": None},
             {"PERIOD": "2026-07", "REVENUE": None, "is_forecast": True,
-             "forecast_value": Decimal("45000000.00"), "AS_OF": date(2026, 6, 30)},
+             "forecast_value": Decimal("31622776.60"), "AS_OF": date(2026, 6, 30)},
         ]
 
     def test_the_payload_survives_json_dumps(self):
