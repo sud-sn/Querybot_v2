@@ -10,6 +10,26 @@
   {% if saved %}<div class="alert alert-success">{{ t('ui.notif.saved') }}</div>{% endif %}
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
+  {# What the reader was told: a dashboard shared with them, a follow's update, a refresh that failed. #}
+  <section class="card notice-list" style="margin-bottom:1.5rem" aria-labelledby="noticeRecentTitle">
+    <div class="card-header"><h2 id="noticeRecentTitle" style="font-size:var(--font-md);margin:0">{{ t('ui.notif.recent') }}</h2></div>
+    <div class="card-body">
+      {% if notices %}
+      <ul class="notice-items">
+        {% for n in notices %}
+        <li class="notice-item{% if not n.read_at %} is-new{% endif %}">
+          <div class="notice-title">{% if n.link %}<a href="{{ n.link }}">{{ n.title }}</a>{% else %}{{ n.title }}{% endif %}{% if not n.read_at %} <span class="badge badge-info">{{ t('ui.notif.new') }}</span>{% endif %}</div>
+          {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
+          <div class="notice-when" data-notice-at="{{ (n.created_at or '')[:19] }}">{{ (n.created_at or '')[:16] }} UTC</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="notice-empty">{{ t('ui.notif.recent_empty') }}</p>
+      {% endif %}
+    </div>
+  </section>
+
   <div class="card" style="margin-bottom:1.5rem">
     <div class="card-header"><h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.your_alerts') }}</h2></div>
     <div class="card-body" style="padding:1rem">
@@ -137,4 +157,11 @@
     </div>
   </div>
 </div>
+<script>
+// Each notice's time in the reader's own time zone (the server keeps UTC).
+document.querySelectorAll('[data-notice-at]').forEach(function (el) {
+  var at = new Date(String(el.dataset.noticeAt).replace(' ', 'T') + 'Z');
+  if (!isNaN(at)) el.textContent = at.toLocaleString(document.documentElement.lang || [], {dateStyle: 'medium', timeStyle: 'short'});
+});
+</script>
 {% endblock %}

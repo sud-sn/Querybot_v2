@@ -162,8 +162,9 @@ def _tell_the_owner(source: dict, owner: dict, failure: dict) -> None:
     is tried again. Its failures were logged and nothing else.
 
     Once per dashboard for a run of failures, however many of its sources
-    fail. A notice no channel delivered is not counted as told: the next
-    failure tries again.
+    fail. The notice is kept on the owner's Notifications page, so it reaches
+    them whether or not they were online; it is also shown at once on a page
+    they have open, and sent to Teams when they use it.
     """
     import asyncio
 
@@ -190,15 +191,18 @@ def _tell_the_owner(source: dict, owner: dict, failure: dict) -> None:
         next=str(failure["next_attempt_at"])[:16],
     )
     try:
-        delivered = asyncio.run(send_proactive_notification(str(source["account_id"]), int(owner["id"]), message))
+        store.add_notice(str(source["account_id"]), int(owner["id"]), "dashboard_refresh_failed", message, "",
+                         f"/portal/dashboard?dashboard_id={int(source.get('dashboard_id') or 0)}")
     except Exception as exc:
+        store.release_owner_notice(source, claim)          # not kept: the next failure tries again
         log.warning("Dashboard source %s: its owner could not be told the refresh is failing: %s",
                     source.get("id"), exc)
-        delivered = False
-    if not delivered:
-        store.release_owner_notice(source, claim)
-        log.warning("Dashboard source %s: no channel reached its owner (user %s); the next failure tells them",
-                    source.get("id"), owner.get("id"))
+        return
+    try:
+        asyncio.run(send_proactive_notification(str(source["account_id"]), int(owner["id"]), message))
+    except Exception as exc:  # noqa: BLE001 - kept on the Notifications page; the live copy is extra
+        log.warning("Dashboard source %s: the owner's notice is kept but was not shown live: %s",
+                    source.get("id"), exc)
 
 
 def run_due_dashboard_refreshes() -> dict:

@@ -1959,8 +1959,12 @@ async def notifications_page(request: Request):
     my_subscriptions = {
         s["report_id"]: s for s in report_store.list_subscriptions(user_id=user["id"])
     }
+    # What the reader was told, newest first; opening the page reads them.
+    notices = store.list_notices(account_id, user["id"])
+    store.mark_notices_read(account_id, user["id"])
     return _resp(request, "portal_notifications.html", {
         "user": user,
+        "notices": notices,
         "alerts": my_alerts,
         "reports": reports,
         "my_reports": my_reports,
@@ -2576,7 +2580,37 @@ async def add_dashboard_share_api(request: Request, dashboard_id: int):
     if not shared:
         return JSONResponse({"ok": False, "error": "That person or group is not in this workspace, or the "
                              "dashboard is not yours to share."}, status_code=404)
-    return _shares_reply(store.get_dashboard(dashboard_id, user["id"], user["account_id"]), user)
+    dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+    if isinstance(shared, dict) and shared.get("created"):
+        await _tell_shared(dashboard, user, shared["subject_type"], shared["subject_id"])
+    return _shares_reply(dashboard, user)
+
+
+async def _tell_shared(dashboard: dict, owner: dict, subject_type: str, subject_id: int) -> None:
+    """Whoever a new share reaches is told, in their own language, with a link: "Ada shared Sales overview
+    with you". A notice that fails never undoes the share."""
+    from core.i18n import t as _say
+    from core.notices import tell_async
+
+    group = store.get_group(int(subject_id)) if subject_type == "group" else None
+    for person in store.share_recipients(owner["account_id"], subject_type, int(subject_id), owner["id"]):
+        lang = person.get("lang") or "en"
+        try:
+            await tell_async(
+                owner["account_id"], int(person["id"]), "dashboard_shared",
+                _say("notice.shared.title", lang=lang, owner=owner.get("name") or "", name=dashboard.get("name") or ""),
+                _say("notice.shared.group_body", lang=lang, group=group.get("name") or "") if group else "",
+                f"/portal/dashboard?dashboard_id={int(dashboard['id'])}")
+        except Exception as exc:  # noqa: BLE001 - the share stands; the notice is extra
+            log.warning("Could not tell user %s about dashboard %s: %s", person.get("id"), dashboard.get("id"), exc)
+
+
+@router.get("/api/notices/unread")
+async def unread_notices_api(request: Request):
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    return JSONResponse({"ok": True, "unread": store.unread_notice_count(user["account_id"], user["id"])})
 
 
 @router.delete("/api/dashboard/{dashboard_id}/shares/{subject_type}/{subject_id}")

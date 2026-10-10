@@ -24,15 +24,15 @@ class PortalDeliveryTests(unittest.TestCase):
 
     def test_broadcasts_to_portal_hub_with_message_and_chart(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),
             patch("store.get_conversation_ref_for_user", return_value=None),
         ):
             _run(notify.send_proactive_notification("acct1", 42, "hello", chart={"chart_type": "bar"}))
 
-        hub.broadcast_to_user.assert_called_once()
-        args, _ = hub.broadcast_to_user.call_args
+        hub.deliver.assert_called_once()
+        args, _ = hub.deliver.call_args
         self.assertEqual(args[0], 42)
         payload = args[1]
         self.assertEqual(payload["type"], "notification")
@@ -42,7 +42,7 @@ class PortalDeliveryTests(unittest.TestCase):
 
     def test_portal_failure_does_not_raise_and_teams_still_attempted(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock(side_effect=Exception("socket gone"))
+        hub.deliver = AsyncMock(side_effect=Exception("socket gone"))
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),
             patch("store.get_conversation_ref_for_user", return_value=None) as mock_lookup,
@@ -63,7 +63,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_no_pending_record_skips_teams_silently(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),
             patch("store.get_conversation_ref_for_user", return_value=None),
@@ -74,7 +74,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_pending_without_service_url_skips_teams(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending(conversation_ref="{}")
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),
@@ -86,7 +86,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_no_active_teams_platform_skips_send(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending()
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),
@@ -99,7 +99,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_sends_message_and_chart_through_teams_adapter(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending()
         adapter_instance = MagicMock()
         adapter_instance.send_message = AsyncMock()
@@ -122,7 +122,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_no_chart_skips_send_chart_call(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending()
         adapter_instance = MagicMock()
         adapter_instance.send_message = AsyncMock()
@@ -138,7 +138,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_teams_send_failure_does_not_raise(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending()
         adapter_instance = MagicMock()
         adapter_instance.send_message = AsyncMock(side_effect=Exception("network error"))
@@ -152,7 +152,7 @@ class TeamsDeliveryTests(unittest.TestCase):
 
     def test_malformed_conversation_ref_json_skips_teams(self):
         hub = MagicMock()
-        hub.broadcast_to_user = AsyncMock()
+        hub.deliver = AsyncMock()
         pending = self._pending(conversation_ref="not-json")
         with (
             patch("core.portal_notifications.portal_notification_hub", hub),

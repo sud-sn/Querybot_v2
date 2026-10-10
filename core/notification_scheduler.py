@@ -20,6 +20,7 @@ def run_due_notifications_once() -> None:
     wrapped so one failing check never blocks the others."""
     from core.alert_engine import run_due_alert_checks
     from core.report_engine import run_due_report_digests
+    from core.dashboard_follow import run_due_follows
     from core.dashboard_refresh import run_due_dashboard_refreshes
 
     try:
@@ -36,6 +37,11 @@ def run_due_notifications_once() -> None:
         run_due_dashboard_refreshes()
     except Exception as exc:
         log.warning("run_due_dashboard_refreshes failed: %s", exc)
+
+    try:
+        run_due_follows()
+    except Exception as exc:
+        log.warning("run_due_follows failed: %s", exc)
 
 
 async def scheduled_notification_loop(poll_seconds: int = 60) -> None:

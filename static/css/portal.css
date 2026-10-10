@@ -345,6 +345,13 @@ body { background: var(--bg); }
 
 .portal-sidebar-spacer { flex: 1 1 auto; min-height: 4px; }
 .portal-sidebar-notifications { flex: 0 0 auto; }
+/* Unread notices beside the Notifications link: a number, never a colour alone. */
+.portal-sidebar-notifications .portal-sidebar-count {
+  margin-inline-start: auto; min-width: 20px; padding: 0 6px; border-radius: var(--radius-pill);
+  background: var(--primary); color: var(--on-primary); font-size: var(--font-xs); font-weight: var(--weight-bold);
+  line-height: 20px; text-align: center;
+}
+.portal-sidebar-notifications .portal-sidebar-count[hidden] { display: none; }
 .portal-sidebar-footer { flex: 0 0 auto; padding-top: 9px; border-top: 1px solid var(--sidebar-border); }
 .portal-user-card {
   min-width: 0;
@@ -591,3 +598,13 @@ body:not(:has(.portal-app-shell)) .main {
   html:not([data-motion="off"]) .grid-stack-item > .grid-stack-item-content {
     animation: qb-rise .45s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--tile, 0) * 45ms); }
 }
+
+/* Notifications: what the reader was told, newest first; the unread ones marked "New". */
+.notice-items { margin: 0; padding: 0; list-style: none; }
+.notice-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.notice-item:last-child { border-bottom: 0; }
+.notice-item.is-new .notice-title { font-weight: var(--weight-semibold); }
+.notice-title { font-size: var(--font-sm); color: var(--text); overflow-wrap: anywhere; }
+.notice-body { margin-top: 2px; font-size: var(--font-sm); color: var(--text-soft); white-space: pre-line; }
+.notice-when { margin-top: 4px; font-size: var(--font-xs); color: var(--text-muted); }
+.notice-empty { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }

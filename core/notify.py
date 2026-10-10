@@ -48,7 +48,7 @@ async def _send_via_portal(
 ) -> bool:
     try:
         from core.portal_notifications import portal_notification_hub
-        delivered = await portal_notification_hub.broadcast_to_user(int(user_id), {
+        delivered = await portal_notification_hub.deliver(int(user_id), {
             "type": "notification",
             "account_id": account_id,
             "message": message,

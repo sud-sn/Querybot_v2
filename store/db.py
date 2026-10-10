@@ -1248,6 +1248,8 @@ def _run_migrations() -> None:
         # The grid's row height: 1 = the 92px rows tiles were laid out on, 2 = the 46px rows of today (a
         # dashboard laid out on the old rows is converted the first time it is opened).
         ("dashboard_artifact", "grid_scale", "INTEGER NOT NULL DEFAULT 1"),
+        # When a follow last sent its update (core/dashboard_follow.py): the next is due a cadence later.
+        ("dashboard_subscription", "last_sent_at", "TEXT"),
         # A scheduled refresh that fails is recorded, tried again later and
         # told to the owner (store.mark_source_cache_error).
         ("dashboard_source_cache", "failed_at", "TEXT DEFAULT NULL"),
@@ -1480,6 +1482,7 @@ def _run_migrations() -> None:
         _ensure_core2_tables(conn)
         _ensure_llm_usage_tables(conn)
         _ensure_dashboard_share_table(conn)
+        _ensure_portal_notice_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1733,6 +1736,27 @@ def _ensure_join_types_are_sql(conn: sqlite3.Connection) -> None:
     """
     conn.execute(
         "UPDATE entity_relationships SET join_type='LEFT' WHERE UPPER(join_type)='OUTER'"
+    )
+
+
+def _ensure_portal_notice_table(conn: sqlite3.Connection) -> None:
+    """What a reader is told in the portal (a dashboard shared with them, a follow's update, a refresh that
+    failed): kept, so it reaches them on the Notifications page even when they were not online."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS portal_notice (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT    NOT NULL REFERENCES client(account_id) ON DELETE CASCADE,
+            user_id    INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            kind       TEXT    NOT NULL,
+            title      TEXT    NOT NULL,
+            body       TEXT    NOT NULL DEFAULT '',
+            link       TEXT    NOT NULL DEFAULT '',
+            created_at TEXT    DEFAULT (datetime('now')),
+            read_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_portal_notice_user ON portal_notice(account_id, user_id, id DESC);
+        """
     )
 
 

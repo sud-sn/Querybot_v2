@@ -916,6 +916,41 @@ def unsubscribe_dashboard(
     return bool(cur.rowcount)
 
 
+def list_active_follows() -> list[dict]:
+    """Every active follow of a person who can sign in, with their language: core/dashboard_follow.py picks the
+    ones due."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT s.id, s.dashboard_id, s.account_id, s.user_id, s.cadence, s.created_at, s.last_sent_at,
+                      u.lang
+                 FROM dashboard_subscription s
+                 JOIN portal_user u ON u.id=s.user_id AND u.account_id=s.account_id
+                WHERE s.status='active' AND u.is_active=1
+                ORDER BY s.id""",
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def claim_follow(follow_id: int, previous: str | None, sent_at: str) -> bool:
+    """Mark a follow sent at ``sent_at`` if no one else did since ``previous``: two schedulers never send the
+    same update twice."""
+    with get_db() as conn:
+        if previous is None:
+            cur = conn.execute("UPDATE dashboard_subscription SET last_sent_at=? WHERE id=? AND last_sent_at IS NULL",
+                               (sent_at, int(follow_id)))
+        else:
+            cur = conn.execute("UPDATE dashboard_subscription SET last_sent_at=? WHERE id=? AND last_sent_at=?",
+                               (sent_at, int(follow_id), previous))
+    return bool(cur.rowcount)
+
+
+def release_follow(follow_id: int, sent_at: str, previous: str | None) -> None:
+    """An update that was claimed but not sent: due again at the next run."""
+    with get_db() as conn:
+        conn.execute("UPDATE dashboard_subscription SET last_sent_at=? WHERE id=? AND last_sent_at=?",
+                     (previous, int(follow_id), sent_at))
+
+
 # A failed scheduled refresh is tried again five minutes later, then after
 # twice as long each time it fails again, and never less often than the
 # dashboard's own cadence.
@@ -1259,14 +1294,33 @@ def add_dashboard_share(dashboard_id: int, owner_id: int, account_id: str, subje
                                  (int(subject_id), account_id)).fetchone()
         if not found:
             return None
+        created = False
         if not (subject_type == "user" and int(subject_id) == int(owner_id)):
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO dashboard_share (dashboard_id, account_id, subject_type, subject_id, created_by)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(dashboard_id, subject_type, subject_id) DO NOTHING""",
                 (int(dashboard_id), account_id, subject_type, int(subject_id), int(owner_id)),
             )
-    return {"dashboard_id": int(dashboard_id), "subject_type": subject_type, "subject_id": int(subject_id)}
+            created = bool(cur.rowcount)
+    return {"dashboard_id": int(dashboard_id), "subject_type": subject_type, "subject_id": int(subject_id),
+            "created": created}
+
+
+def share_recipients(account_id: str, subject_type: str, subject_id: int, owner_id: int) -> list[dict]:
+    """Who a new share reaches, to be told: the person, or the group's active members; never the owner."""
+    with get_db() as conn:
+        if subject_type == "group":
+            rows = conn.execute(
+                """SELECT id, lang FROM portal_user WHERE account_id=? AND group_id=? AND is_active=1 AND id<>?""",
+                (account_id, int(subject_id), int(owner_id)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, lang FROM portal_user WHERE account_id=? AND id=? AND is_active=1 AND id<>?",
+                (account_id, int(subject_id), int(owner_id)),
+            ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def remove_dashboard_share(dashboard_id: int, owner_id: int, account_id: str, subject_type: str,

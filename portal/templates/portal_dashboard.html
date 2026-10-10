@@ -349,8 +349,17 @@
 </div>
 
 {% if not dashboard_artifact and dashboards %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=dashboards|length) }}</span></div>
-<div class="dashboard-library">{% for item in dashboards %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_by', owner=item.owner_name or '') }}{% elif item.visibility == 'team' %}{{ t('ui.dash.shared_with_workspace') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endfor %}</div>
+{# Your own dashboards, then the ones shared with you, each naming its owner. #}
+{% set _mine = dashboards|selectattr('can_edit')|list %}{% set _shared = dashboards|rejectattr('can_edit')|list %}
+{% macro library_item(item) %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_by', owner=item.owner_name or '') }}{% elif item.visibility == 'team' %}{{ t('ui.dash.shared_with_workspace') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endmacro %}
+{% if _mine %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=_mine|length) }}</span></div>
+<div class="dashboard-library">{% for item in _mine %}{{ library_item(item) }}{% endfor %}</div>
+{% endif %}
+{% if _shared %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin:1.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.shared_with_you') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=_shared|length) }}</span></div>
+<div class="dashboard-library">{% for item in _shared %}{{ library_item(item) }}{% endfor %}</div>
+{% endif %}
 {% else %}
 <div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
 {% endif %}

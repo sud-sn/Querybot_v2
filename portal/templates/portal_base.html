@@ -263,6 +263,8 @@ window.qbEnumLabel = function (group, value) {
     <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}" {% if '/notifications' in request.url.path %}aria-current="page"{% endif %}>
       {{ ic("bell", 17) }}
       <span>{{ t('ui.shell.notifications') }}</span>
+      {# Unread notices: filled by the page script, and as each one arrives. #}
+      <span class="portal-sidebar-count" id="noticeCount" hidden></span>
     </a>
 
     <footer class="portal-sidebar-footer">
@@ -435,6 +437,30 @@ window.qbEnumLabel = function (group, value) {
       tone:level==='blocked'?'danger':(level==='warning'?'warning':'info'), duration:7000});
   }
 
+  // A notice (a dashboard shared, a follow's update): shown at once, kept on the Notifications page.
+  function showUnread(count){
+    var el=document.getElementById('noticeCount');
+    if(!el) return;
+    var n=Math.max(0, Number(count)||0);
+    el.hidden=!n;
+    el.textContent=n>99?'99+':String(n);
+    el.setAttribute('aria-label', window.qbPlural('ui.shell.unread_notices', n));
+  }
+  function handleNotice(msg){
+    var title=String(msg.title||msg.message||'');
+    if(!title) return;
+    var link=String(msg.link||'');
+    window.qbToast.notify({title:title, body:String(msg.body||''), tone:'info', duration:9000,
+      action: link.indexOf('/portal/')===0 ? {label: window.qbT('ui.shell.notice_open'), href: link} : null});
+    if(msg.unread!=null) showUnread(msg.unread); else pollUnread();
+  }
+  async function pollUnread(){
+    try{
+      var resp=await fetch('/portal/api/notices/unread',{credentials:'same-origin'});
+      if(resp.ok){ var data=await resp.json(); showUnread(data.unread); }
+    }catch(_){}
+  }
+
   function handleSemanticMessage(msg,fromPoll){
     if(!msg||msg.type!=='semantic_feedback_reviewed') return;
     var key=msg.feedback_id+':'+msg.status;
@@ -506,6 +532,7 @@ window.qbEnumLabel = function (group, value) {
       try{
         var msg = JSON.parse(event.data);
         if(msg.type === 'system_message') handleSystemMessage(msg);
+        else if(msg.type === 'notice' || msg.type === 'notification') handleNotice(msg);
         else handleSemanticMessage(msg,false);
       }catch(_){}
     };
@@ -515,6 +542,7 @@ window.qbEnumLabel = function (group, value) {
 
   document.addEventListener('DOMContentLoaded',function(){
     connectSocket();
+    pollUnread();
     pollReviewed();
     pollQueryLimit();
     window.setInterval(pollReviewed,30000);

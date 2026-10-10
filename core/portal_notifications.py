@@ -18,8 +18,12 @@ class PortalNotificationHub:
         self._by_account: dict[str, set[WebSocket]] = defaultdict(set)
         self._meta: dict[WebSocket, tuple[str, int]] = {}
         self._lock = asyncio.Lock()
+        # The server's own loop, where the sockets live: a scheduled job runs in a worker thread with a loop
+        # of its own, and a socket written to from another loop fails (and was then dropped as stale).
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self, websocket: WebSocket, *, account_id: str, user_id: int) -> None:
+        self._loop = asyncio.get_running_loop()
         await websocket.accept()
         async with self._lock:
             self._by_user[int(user_id)].add(websocket)
@@ -40,6 +44,28 @@ class PortalNotificationHub:
         async with self._lock:
             targets = list(self._by_user.get(int(user_id), set()))
         return await self._broadcast(targets, payload)
+
+    async def deliver(self, user_id: int, payload: dict[str, Any]) -> int:
+        """``broadcast_to_user`` from any loop: on the server's own, directly; from another (a worker
+        thread's), handed to the server's loop and awaited. 0 when no page is open (or no loop yet)."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return 0
+        if asyncio.get_running_loop() is loop:
+            return await self.broadcast_to_user(user_id, payload)
+        future = asyncio.run_coroutine_threadsafe(self.broadcast_to_user(user_id, payload), loop)
+        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=10)
+
+    def deliver_from_thread(self, user_id: int, payload: dict[str, Any]) -> int:
+        """``deliver`` for code with no loop of its own (a scheduled job's worker thread)."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return 0
+        try:
+            return asyncio.run_coroutine_threadsafe(self.broadcast_to_user(user_id, payload), loop).result(timeout=10)
+        except Exception as exc:  # noqa: BLE001 - a notice is kept either way; the live copy is extra
+            log.warning("Live notice to user %s was not sent: %s", user_id, exc)
+            return 0
 
     async def broadcast_to_account(self, account_id: str, payload: dict[str, Any]) -> int:
         async with self._lock:

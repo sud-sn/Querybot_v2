@@ -297,19 +297,21 @@ class TestTheOwner:
         assert dashboard.told == []
         assert _cache(dashboard)["failure_count"] == 2
 
-    def test_one_away_is_told_at_a_later_failure(self, dashboard):
-        """A nightly refresh fails while the owner has no page open: the
-        notice was marked as told when the failure was counted, before it was
-        sent, and reached no one."""
+    def test_one_away_is_told_on_their_notifications_page(self, dashboard):
+        """A nightly refresh fails while the owner has no page open. The notice used to be sent only live,
+        so it reached no one and waited for a later failure; it is now kept, and the owner reads it on their
+        Notifications page whenever they come back -- once, with a link to the dashboard."""
         dashboard.owner["online"] = False
         dashboard.warehouse["down"] = True
         _fail(dashboard)
         _fail(dashboard)
-        assert (dashboard.told, _cache(dashboard)["owner_notified_at"]) == ([], None)
+        assert dashboard.told == [] and _cache(dashboard)["owner_notified_at"]
+        (kept,) = store.list_notices(dashboard.account_id, dashboard.owner_id)
+        assert "2 attempts in a row" in kept["title"] and kept["read_at"] is None
+        assert kept["link"] == f"/portal/dashboard?dashboard_id={dashboard.board['id']}"
         dashboard.owner["online"] = True
         _fail(dashboard)
-        ((_, _, message),) = dashboard.told
-        assert "3 attempts in a row" in message
+        assert dashboard.told == [] and len(store.list_notices(dashboard.account_id, dashboard.owner_id)) == 1
 
     def test_one_claim_of_the_notice(self, dashboard):
         """Two refreshes failing at once claim the notice once."""
