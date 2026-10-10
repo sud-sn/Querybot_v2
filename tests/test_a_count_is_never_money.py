@@ -74,8 +74,8 @@ class TestTheAnswer:
         assert "$" not in json.dumps(answer, ensure_ascii=False)
 
     def test_an_amount_is_still_money(self):
-        rows = [{"PROVINCE": "ON", "INVENTORY_COST": 7338871.86}, {"PROVINCE": "BC", "INVENTORY_COST": 17171.03}]
-        assert _card(rows, "Inventory cost by province")["answer"]["headline"] == "ON leads at $7,338,871.86."
+        rows = [{"PROVINCE": "ON", "INVENTORY_COST": 6421587.34}, {"PROVINCE": "BC", "INVENTORY_COST": 15402.27}]
+        assert _card(rows, "Inventory cost by province")["answer"]["headline"] == "ON leads at $6,421,587.34."
 
 
 class TestTheName:

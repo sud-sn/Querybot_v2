@@ -235,7 +235,7 @@ class TestTheTwoHalvesOfTheProductAgree:
 
 class TestAFollowUpsOwnWindowBeatsTheOneItInherits:
     """Live on 32dc59b: "revenue YTD" then "revenue MTD" in one thread returned
-    $44,430,302.60 twice — the year's total reported as the month's, at High
+    $41,268,915.20 twice — the year's total reported as the month's, at High
     confidence 100/100, with the banner narrating "this year" on a month
     question.
 

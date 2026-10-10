@@ -197,7 +197,7 @@ class TestTheCompiledPlanCarriesTheRealFormula:
 
 class TestAnExplicitBreakdownBeatsTheWindow:
     """Found live. "What is my revenue by month this year" returned ONE row —
-    $44,430,302.60 labelled 2026-01-01 — where it should return one per month.
+    $41,268,915.20 labelled 2026-01-01 — where it should return one per month.
 
     requested_temporal_grain read the WINDOW's unit first and returned early, so
     for "this year" it answered "year" and the compiler bucketed by year. The

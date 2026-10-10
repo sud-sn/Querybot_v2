@@ -472,10 +472,10 @@ class TestAPeriodIsALabelNotAnAmount:
     def test_the_whole_table_renders_periods_cleanly(self):
         from core.result_renderer import _rows_to_table
 
-        table = _rows_to_table([{"PERIOD": 2025, "REVENUE": 89345610.51},
-                                {"PERIOD": 2026, "REVENUE": 44430302.60}])
+        table = _rows_to_table([{"PERIOD": 2025, "REVENUE": 81206377.45},
+                                {"PERIOD": 2026, "REVENUE": 41268915.20}])
         assert "2025" in table and "2,025" not in table
-        assert "$89,345,610.51" in table
+        assert "$81,206,377.45" in table
 
 
 class TestTheForecastChartDoesNotFlattenItsOwnBand:

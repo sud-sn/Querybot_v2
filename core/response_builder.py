@@ -631,7 +631,7 @@ def narrative_period_labels(labels: list, grain: str = "", column: str = "") -> 
     Periods reach the user through THREE paths, not two: the rendered table,
     the KPI headline, and the sentences written about the series. The first
     two go through the display formatter; narration did not, so the same
-    answer said "2026-06 closed at $7.4M" in its headline and "trended flat
+    answer said "2026-06 closed at $5.8M" in its headline and "trended flat
     from 2026-01-01 to 2026-06-01" three lines below it.
 
     ``grain`` is the grain the question asked for (requested_period_grain),
@@ -2571,7 +2571,7 @@ def _per_unit_answer(
     from core.units_of_measure import is_quantity_measure, is_unit_column, per_unit_totals, rows_per_unit
 
     # One unit's total is that total, not a leader: "units sold last 6 months"
-    # came back in one unit and was headed "Unknown leads at 939,315.50".
+    # came back in one unit and was headed "Unknown leads at 812,406.25".
     single = (len(rows) == 1 and is_unit_column(unit_col)
               and is_quantity_measure(value_col, str(value_fmt or "")))
     if not single and not rows_per_unit(rows, unit_col, value_col, question, measure_format=str(value_fmt or "")):
@@ -2736,7 +2736,7 @@ def build_answer(
         value_fmt = column_formats.get(value_col)
         # A quantity's totals, one per unit of measure, are listed, not
         # ranked: "What is our total stock on hand?" was headed "FT leads at
-        # 32,402", "19,251 above the next result" -- feet ahead of eaches.
+        # 28,640", "17,335 above the next result" -- feet ahead of eaches.
         per_unit = _per_unit_answer(rows, label_col, value_col, question, value_fmt, format_value, scope)
         if per_unit:
             return per_unit

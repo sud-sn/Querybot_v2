@@ -181,10 +181,10 @@ class TestTheForecastBlockExecutes:
         """The exact series the server returned, which produced nothing at all
         because of the NameError: 2025-01 to 2026-06 of the sample tenant's
         revenue."""
-        values = [7379419.76, 6867159.02, 7548077.20, 7307544.65, 7523942.04,
-                  7381519.76, 7670171.04, 7710319.55, 7444167.07, 7639739.52,
-                  7332990.06, 7540560.84, 7489655.63, 6903766.55, 7639510.50,
-                  7367087.16, 7590724.34, 7439558.42]
+        values = [6248310.42, 5921744.18, 6389055.70, 6175410.33, 6330982.61,
+                  6201447.95, 6452190.08, 6478036.27, 6264118.54, 6417302.69,
+                  6150876.12, 6338245.90, 6296711.36, 5874402.81, 6421598.04,
+                  6187234.55, 6379640.17, 6258117.49]
         env, recorded = self._run(self._months(values))
         rows = env["rows"]
         projected = [r for r in rows if r.get("is_forecast")]

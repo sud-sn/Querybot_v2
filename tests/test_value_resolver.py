@@ -902,7 +902,7 @@ class ZeroMatchDiagnosticIsExplainedNotReportedTests(unittest.TestCase):
     def test_an_ordinary_answer_is_never_diverted(self):
         """Rows matched, so nothing is being explained away."""
         self.assertFalse(self._diverts(
-            [{"MatchedRows": 334, "Revenue": 3959025.04}],
+            [{"MatchedRows": 334, "Revenue": 2718281.83}],
             "SELECT COUNT(*) AS MatchedRows FROM CUS_DMS WHERE CUS_NM = 'Nobody At All'",
         ))
 

@@ -6,7 +6,7 @@ rows that CAME BACK — core/insight.py builds ``category_breakdown["total"]``
 from the collapsed result, not from the population. On a ``TOP 5`` that
 denominator is the top-5 subtotal, so the card said:
 
-    "redacted segment leads at $3,959,025.04 (20.2% of total) across 5
+    "redacted segment leads at $3,412,880.15 (20.2% of total) across 5
      customer names."
     "Volume is spread across the field — no single entry exceeds 20%;
      broadly diversified."

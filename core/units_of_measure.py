@@ -251,7 +251,7 @@ def per_unit_totals(
     Largest first for the reader, and in a set order: a query grouped by unit
     returns them in none, and a headline names three and folds the rest into
     "and 9 more" -- by name those three could be 0 BG, 3 BX and 1 CD, with
-    32,402 FT among the rest. The order ranks nothing: the card says each total
+    28,640 FT among the rest. The order ranks nothing: the card says each total
     is in its own unit, and none is ahead of another. Equal totals go by name,
     and the rows with no unit last.
 
@@ -279,8 +279,8 @@ def rows_per_unit(
 
     A total of a quantity is read per unit, so "what is our total stock on
     hand?" comes back as a row of feet, one of eaches, one of metres. Each is a
-    total in its own unit and none is ahead of another: 32,402 feet do not lead
-    13,151 eaches, are not 19,251 above them, and are no share of a total of
+    total in its own unit and none is ahead of another: 28,640 feet do not lead
+    11,305 eaches, are not 17,335 above them, and are no share of a total of
     both. A reader who asks which unit holds the most is answered as asked, and
     money -- a quantity times a cost -- adds up across units, so is ranked too.
     """
