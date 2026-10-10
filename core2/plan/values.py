@@ -209,7 +209,8 @@ _HIGH = {"highest", "largest", "biggest"}
 # "That division": the one member of that field the answer on screen showed.
 _THAT = re.compile(r"\b(that|this)\s+([a-z]+)\b", re.IGNORECASE)
 
-Shown = tuple  # (attribute slug, stored value or None, the answer's number for it or None)
+Shown = tuple  # (attribute slug, stored value or None, the answer's number for it or None,
+#                 and optionally the row's members of the answer's other groupings, by attribute slug)
 
 
 def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[ValueMatch]:
@@ -220,8 +221,10 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
     filter on and came back as a placeholder, and "which division does the lowest one belong to?"
     was filtered on a profit centre called "lowest". By place ("the first one", "the second
     warehouse", "the last one"), by value ("the lowest one", "the highest one"), or as the one member
-    of a field the answer showed ("that division"). Only where the words name a row ("one", or the
-    field's own noun, never "the first quarter"), and never over a member the question names itself.
+    the answer showed ("that one") or of a field it showed ("that division", in whichever of its
+    groupings). Only where
+    the words name a row ("one", or the field's own noun, never "the first quarter"), and never over
+    a member the question names itself.
     """
     if not shown:
         return []
@@ -249,10 +252,18 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
             continue
         pick = (max if m.group(1).lower() in _HIGH else min)(numbered, key=lambda s: s[2])
         out.append(ValueMatch(m.group(0), m.start(), m.end(), pick[0], pick[1]))
-    members = {s[1] for s in shown if s[1] is not None}
+    # Every field of the answer and its members: the first grouping's, and those of the others on its rows.
+    fields: dict[str, set[str]] = {shown[0][0]: {s[1] for s in shown if s[1] is not None}}
+    for s in shown:
+        for attribute, value in (s[3] if len(s) > 3 and isinstance(s[3], dict) else {}).items():
+            fields.setdefault(attribute, set()).update([value] if value is not None else [])
     for m in _THAT.finditer(question):
-        if m.group(2).lower() in words and len(members) == 1 and free(m):
-            out.append(ValueMatch(m.group(0), m.start(), m.end(), shown[0][0], next(iter(members))))
+        noun = m.group(2).lower()
+        # "that one": the one member of the answer's first grouping; "that division": of the field so named.
+        named = ([(shown[0][0], fields[shown[0][0]])] if noun in ("one", "1") and len(fields[shown[0][0]]) == 1 else
+                 [(a, v) for a, v in fields.items() if noun in _field_words(a) and len(v) == 1])
+        if len(named) == 1 and free(m):
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), named[0][0], next(iter(named[0][1]))))
     return sorted(out, key=lambda v: v.start)
 
 

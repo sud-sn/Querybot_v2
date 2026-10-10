@@ -354,15 +354,19 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         found = _visible(services.index.quoted(question), model, services.allowed_tables)
         hidden = [] if services.values_allowed else _visible(services.index.match(question), model,
                                                              services.allowed_tables)
-        reading = Reading(forced, "the reader said so") if forced else _read(question, last, model, found)
+        # "Break the first one down", "monthly sales for that division in 2026": the member of the answer on
+        # screen the words point at. A turn that points at one follows that answer, however much else it says.
+        pointed = _visible(placed(question, last.shown, found), model, services.allowed_tables) \
+            if last is not None and last.shown else []
+        reading = (Reading(forced, "the reader said so") if forced else
+                   Reading("refine", "it points at a member of the answer on screen") if pointed else
+                   _read(question, last, model, found))
         if reading.kind == "unsure" and last is not None and last.plan is not None:
             session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
             return _which_question(question, last)
         matches = found
-        if reading.kind != "new" and last is not None and last.shown:
-            # "Break the first one down": the member in that place of the answer on screen.
-            matches = sorted([*found, *_visible(placed(question, last.shown, found), model, services.allowed_tables)],
-                             key=lambda m: m.start)
+        if reading.kind != "new" and pointed:
+            matches = sorted([*found, *pointed], key=lambda m: m.start)
         # A new question is planned on its own: nothing of the answer before it can leak in.
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
@@ -497,17 +501,23 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
 
 
 def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> list[tuple]:
-    """The members of an answer's first grouping, in the order shown: (attribute slug, stored value, its number)."""
-    group = next((g for g in logical.groups if g.kind == "attribute" and g.attribute
-                  and g.name != logical.unit_group), None)
-    if group is None or any(g.kind == "period" for g in logical.groups):
+    """The members of an answer's first grouping, in the order shown: (attribute slug, stored value, its number,
+    the row's members of its other groupings by attribute slug, for "that division" of a second grouping)."""
+    groups = [g for g in logical.groups if g.kind == "attribute" and g.attribute and g.name != logical.unit_group]
+    if not groups or any(g.kind == "period" for g in logical.groups):
         return []
+    group = groups[0]
     measure = next((o.name for o in logical.measures if not o.hidden), None)
+
+    def member(value: Any) -> str | None:
+        return None if value in (None, "", "Unknown") else str(value)
+
     out: list[tuple] = []
     for row in (payload.get("export_rows") or (payload.get("data") or {}).get("rows") or [])[:most]:
         value, number = row.get(group.name), row.get(measure) if measure else None
-        out.append((group.attribute, None if value in (None, "", "Unknown") else str(value),
-                    number if isinstance(number, (int, float)) and not isinstance(number, bool) else None))
+        out.append((group.attribute, member(value),
+                    number if isinstance(number, (int, float)) and not isinstance(number, bool) else None,
+                    {g.attribute: member(row.get(g.name)) for g in groups[1:]}))
     return out
 
 

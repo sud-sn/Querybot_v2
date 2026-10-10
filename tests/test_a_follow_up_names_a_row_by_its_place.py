@@ -142,6 +142,43 @@ def test_that_region_is_the_one_region_the_answer_on_screen_showed():
     assert placed("net sales for that month", shown, []) == []                   # not the field's noun
 
 
+def test_a_long_question_that_points_at_a_row_still_follows_the_answer(retail):
+    """"Show monthly net amount for the first one in the first half of 2026" names a measure, a split and a period,
+    which alone reads as a new question: planned afresh, the AI was never handed the store it points at."""
+    first, then, tails = _converse(retail, "Show monthly net amount for the first one in the first half of 2026")
+    leader = _stores(first)[0]
+    assert f'"the first one" -> ' in tails[1] and f'= "{leader}"' in tails[1], tails[1]
+    assert "PREVIOUS PLAN" in tails[1], "it follows the answer on screen"
+    assert then["plan"]["filters"][0]["values"] == [leader]
+
+
+def test_that_division_is_found_in_whichever_grouping_shows_it():
+    """"Which division does the lowest one belong to?" shows the profit centre with its division: "that
+    division" in the next question is the division of that row, though the division is the second grouping."""
+    one = [("profit_centre.name", "PC 7", 3.1, {"division.name": "Industrial"})]
+    found = placed("quarterly gross profit for that division", one, [])
+    assert [(m.text, m.attribute, m.value) for m in found] == [("that division", "division.name", "Industrial")]
+    same = [*one, ("profit_centre.name", "PC 9", 4.0, {"division.name": "Industrial"})]
+    assert [m.value for m in placed("and that division?", same, [])] == ["Industrial"]
+    two = [*one, ("profit_centre.name", "PC 9", 4.0, {"division.name": "Retail"})]
+    assert placed("and that division?", two, []) == []                         # which one: not guessed
+    assert [(m.text, m.value) for m in placed("monthly gross profit for that one", one, [])] == \
+        [("that one", "PC 7")]
+    assert placed("monthly gross profit for that one", two, []) == []          # which one: not guessed
+
+
+def test_that_region_of_a_store_on_screen_narrows_the_next_answer(retail):
+    """The region is the answer's second grouping: pointed at, it filters, and is not taken out as a word of
+    the question the reader did not quote."""
+    top = {**TOP, "group_by": ["store", "region.name"], "limit": 1}
+    first, then, tails = _converse(retail, "net amount for that region by category", first_plan=top)
+    region = first["data"]["rows"][0]
+    region = next(v for k, v in region.items() if "region" in k)
+    assert f'"that region" -> region.name = "{region}"' in tails[1], tails[1]
+    assert then["plan"]["filters"] == [{"field": "region.name", "op": "eq", "values": [region]}]
+    assert not any("Not narrowed" in n for n in then["trust"]["date_context"])
+
+
 def test_words_that_point_at_a_row_are_never_refused_as_a_missing_name(retail):
     """The AI wrote the reference into the filter itself: the reply asks which, never "no store called 'lowest'"."""
     first, _, _ = _converse(retail, "q")

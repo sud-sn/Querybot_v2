@@ -93,7 +93,7 @@ def test_the_words_find_the_ledger_account(ledger):
 
 
 def test_the_rule_tells_the_planner_to_take_the_reading_that_answers():
-    assert "A name in VALUE\n   MATCHES can also be what a measure measures" in RULES
+    assert "A name in VALUE MATCHES can also be what a measure measures" in " ".join(RULES.split())
     assert "otherwise use the measure" in RULES
 
 

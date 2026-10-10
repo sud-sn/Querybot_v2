@@ -62,7 +62,8 @@ class TestTheChromeIsTranslated:
 
     def test_the_composer(self):
         markup = unescaped(render(lang="fr"))
-        assert 'placeholder="Posez n\'importe quelle question sur vos données…"' in markup
+        assert ('placeholder="Posez n\'importe quelle question sur vos données… Mettez un nom entre « guillemets » '
+                'pour vous y limiter"') in markup
         assert 'aria-label="Envoyer le message"' in markup
 
     def test_the_artifact_pane(self):

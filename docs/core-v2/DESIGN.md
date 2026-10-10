@@ -478,8 +478,11 @@ prompt and substituted back after planning: the AI never sees a member value.
 matched members and became filters ("available stock" on a stock status
 AVAILABLE, "open orders" on an order status OPEN). Only text the reader puts in
 quotes (`"North"`, `“North”`, `« Nord »`, `'North'`) is matched and offered to
-the AI as a member; the members of the answer on screen ("the first one") and
-the filters of the conversation's earlier answers stay available. After
+the AI as a member; the members of the answer on screen ("the first one",
+"that one", "that division" in whichever of its groupings shows one) and the
+filters of the conversation's earlier answers stay available. A turn that
+points at a member on screen follows that answer however long it is ("show
+monthly sales for the first one in 2026"). After
 planning, a filter whose member is one of the question's own unquoted words is
 taken out, the answer says so, and its first chip is the same question with the
 name in quotes. A code the AI chose for what the question means, not one of its
