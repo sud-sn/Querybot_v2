@@ -367,6 +367,25 @@ def same_text(a: exp.Expression, b: exp.Expression, dialect: str, raw_types: tup
     return exp.EQ(this=a, expression=b)
 
 
+_UNPADDED = {"snowflake": "LTRIM(TRIM(__X__), '0')", "duckdb": "LTRIM(TRIM(__X__), '0')",
+             "oracle": "LTRIM(TRIM(__X__), '0')",
+             "tsql": "SUBSTRING(LTRIM(RTRIM(__X__)), PATINDEX('%[^0]%', LTRIM(RTRIM(__X__)) + '.'), 4000)"}
+
+
+def same_number(text: exp.Expression, number: exp.Expression, dialect: str) -> exp.Expr:
+    """A code kept as text ('0007') against a whole-number key (7).
+
+    Both are compared as text without leading zeros: a code that is no number then
+    matches nothing, where a cast would stop the whole query, and no warehouse has a
+    safe cast that all four read alike.
+    """
+    left, right = _fill(_UNPADDED[dialect], dialect, text), _fill(_UNPADDED[dialect], dialect, as_text(number, dialect))
+    if dialect == "tsql":
+        left = exp.Collate(this=left, expression=exp.Var(this="DATABASE_DEFAULT"))
+        right = exp.Collate(this=right, expression=exp.Var(this="DATABASE_DEFAULT"))
+    return exp.EQ(this=left, expression=right)
+
+
 def render(expression: exp.Expression, dialect: str) -> str:
     """Print an expression for ``dialect`` and make sure the dialect can read it back."""
     sql = expression.sql(dialect=dialect)

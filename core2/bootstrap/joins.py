@@ -9,7 +9,11 @@ when nothing better exists, and named in the answer); one that fails is dropped.
 
 Small whole-number keys (1, 2, 3 ...) sit inside many tables' keys at once, so a
 value-only candidate must also cover most of its target (a column with 12 values
-pointing at a 12-row table, not at a 240-row one) or spread over its range.
+pointing at a 12-row table, not at a 240-row one) or spread over its range. Counts,
+minutes and line numbers are runs of whole numbers too: a run of every number in a
+stretch is a reference only when it reaches the target's newest key or uses nearly
+all of them, and a small table (under 30 members) must be mostly used. A backup copy
+of a table (DEVICES_BAK beside DEVICES) is never what a column points at.
 When one column still verifies against two tables equally well, neither is
 trusted: both are proposed and the choice goes to the review queue.
 """
@@ -80,8 +84,24 @@ def _compatible(a: str, b: str) -> bool:
     return (a in numeric and b in numeric) or a == b == "text" or a == b == "date"
 
 
+def text_and_number(a: str, b: str) -> bool:
+    """A code kept as text ('0007') on one side, a whole-number key (7) on the other."""
+    return {a, b} == {"text", "integer"}
+
+
 _HIERARCHY = {"parent", "prnt", "par", "mgr", "manager", "reports", "rpt", "supervisor", "head", "rollup",
-              "roll", "up", "sup", "lead", "owner"}
+              "roll", "up", "sup", "lead", "owner", "uplink", "upln", "upstream", "upstrm"}
+# Words that make a column a figure about the thing it names, not a pointer at it: QTY_PRESCRIBED,
+# TOTAL_CUSTOMERS, AVG_ORDER.
+_FIGURE_WORDS = {"qty", "quantity", "cnt", "count", "total", "tot", "sum", "avg", "average", "amt", "amount", "pct",
+                 "percent"}
+# A table's own number beside its key: BOOKING_NUMBER beside BOOKING_ID.
+_NUMBER_WORDS = {"number", "nr"}
+# A copy of a table, kept beside it: DEVICES_BAK, ORDERS_OLD, CUSTOMERS_20240101.
+_COPY_WORDS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp", "archive", "archived", "arch",
+               "prev", "previous", "save", "saved"}
+SMALL_TARGET = 30          # members: below this, values alone must use most of them
+RUN = 0.9                  # share of a stretch's whole numbers a column holds for it to be a run of numbers
 
 
 def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, list[str]]:
@@ -98,12 +118,25 @@ def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, 
             return score, []
     for target, score in ((k, 0.85), (u, 0.8)):
         if target and names.ends_with(a, target) and len(a) > len(target):
-            return score, a[: len(a) - len(target)]
+            role = a[: len(a) - len(target)]
+            if set(role) & _FIGURE_WORDS:
+                return 0.0, []      # QTY_PRESCRIBED is how much was prescribed, not the prescriber
+            return score, role
+    words = names.tokens(from_column)
+    keyed = bool(words) and words[-1] in names.KEY_SUFFIXES
     for target, score in ((k, 0.8), (u, 0.75)):
-        # The role after the name: ABC_CLASS_VOLUME_KEY points at ABC_CLASS as its "volume" role.
-        if target and len(a) > len(target) and all(names.same_word(x, y) for x, y in zip(a, target)):
+        # The role after the name: ABC_CLASS_VOLUME_KEY points at ABC_CLASS as its "volume" role. Only a key
+        # says so: RENTAL_DURATION and VISITS_INCLUDED are figures about rentals and visits.
+        if keyed and target and len(a) > len(target) and all(names.same_word(x, y) for x, y in zip(a, target)):
             return score, a[len(target):]
     return 0.0, []
+
+
+def run_of_numbers(a: ColumnProfile) -> bool:
+    """Every whole number of a stretch, or nearly: 30, 31 ... 299 minutes; lines 1, 2, 3, 4."""
+    if a.min_num is None or a.max_num is None or a.distinct < 3:
+        return False
+    return a.distinct >= RUN * (a.max_num - a.min_num + 1)
 
 
 def _value_plausible(a: ColumnProfile, k: ColumnProfile, *, a_type: str, k_is_dimension: bool) -> tuple[bool, float]:
@@ -112,7 +145,10 @@ def _value_plausible(a: ColumnProfile, k: ColumnProfile, *, a_type: str, k_is_di
     Dense surrogate keys (1..N) contain every whole number in their range, so
     sitting inside the range proves little. A value-only candidate must use most
     of its target's members, or a good share of a dimension's members when it is
-    a whole-number column.
+    a whole-number column; most of a small table's members (any column of small
+    numbers fits inside 1..6); and when it is a run of numbers (minutes 30..299,
+    lines 1..4), reach the target's newest key or use nearly every one: counts and
+    measures stop wherever they stop, references reach the members that exist.
     """
     if a.distinct < 2 or k.distinct < 2:
         return False, 0.0
@@ -120,8 +156,12 @@ def _value_plausible(a: ColumnProfile, k: ColumnProfile, *, a_type: str, k_is_di
     if a.distinct > k.distinct * 1.05 + 5:
         return False, coverage
     enough = coverage >= 0.5 or (coverage >= 0.2 and a_type == "integer" and k_is_dimension)
+    if k.distinct < SMALL_TARGET and coverage < 0.7:
+        enough = False
     if a.min_num is not None and k.min_num is not None and a.max_num is not None and k.max_num is not None:
         if a.max_num < k.min_num or a.min_num > k.max_num:
+            return False, coverage
+        if run_of_numbers(a) and a.max_num < k.max_num and coverage < 0.9:
             return False, coverage
         return enough, coverage
     if a.max_len is not None and k.max_len is not None:
@@ -147,7 +187,10 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
         fa = exp.column(D.ident(from_column, d), table="f")
         tk = exp.column(D.ident(to_column, d), table="t")
         raws = ((src.column(from_column) or _NO_COLUMN).raw_type, (tgt.column(to_column) or _NO_COLUMN).raw_type)
-        return D.same_text(fa, tk, d, raws) if src.type_of(from_column) == "text" else exp.EQ(this=fa, expression=tk)
+        kinds = (src.type_of(from_column), tgt.type_of(to_column))
+        if text_and_number(*kinds):
+            return D.same_number(fa, tk, d) if kinds[0] == "text" else D.same_number(tk, fa, d)
+        return D.same_text(fa, tk, d, raws) if kinds[0] == "text" else exp.EQ(this=fa, expression=tk)
 
     def count_if(condition: exp.Expr) -> exp.Expression:
         return exp.Sum(this=exp.Case(ifs=[exp.If(this=condition, true=one.copy())], default=exp.Literal.number(0)))
@@ -197,11 +240,14 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     # A table's other unique keys (a circuit code beside the service id): pointed at only by a column
     # of the same name, or one the database declares; values alone would find them by accident.
     alternates: set[tuple[str, str]] = set()
+    copies = _copies(inventory)
     for key, table in inventory.tables.items():
         if key in calendars:
             cal = calendars[key]
             targets.append((key, cal.key_column or cal.date_column))
             continue
+        if key in copies:
+            continue    # links point at the table itself, not at its copy; a declared one still stands
         primary = keys[key].primary_key
         for unique in keys[key].unique_columns:
             kind = table.type_of(unique)
@@ -214,7 +260,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # accident: a warehouse's profit-centre code is unique in a small
                 # warehouse table, and still the profit centre's, not the warehouse's.
                 words = names.tokens(unique)
-                if not (words and words[-1] in names.KEY_SUFFIXES):
+                if not (words and words[-1] in names.KEY_SUFFIXES | _NUMBER_WORDS):
                     continue   # a unique name or title is what a member is called, not what points at it
                 if profiles[key].rows < 20 or not _names_its_table(unique, table.name):
                     if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
@@ -240,8 +286,9 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if src is None or tgt is None or len(fk.columns) != len(fk.ref_columns):
             continue
         pairs = [(_named(src, a), _named(tgt, b)) for a, b in zip(fk.columns, fk.ref_columns)]
-        if any(a is None or b is None for a, b in pairs) \
-                or not all(_compatible(src.type_of(a), tgt.type_of(b)) for a, b in pairs):  # type: ignore[arg-type]
+        if any(a is None or b is None for a, b in pairs) or not all(
+                _compatible(src.type_of(a), tgt.type_of(b)) or text_and_number(src.type_of(a), tgt.type_of(b))
+                for a, b in pairs):  # type: ignore[arg-type]
             continue
         (first, to_first), *rest = pairs
         score, role = name_score(first, tgt.name, to_first)  # type: ignore[arg-type]
@@ -261,6 +308,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         # (interface name + device) is an ordinary column of the key, free to point at its own table.
         sequence_columns = {c for alt in tkeys.alternate_keys for c in alt[1:]
                             if profiles[key].columns[c].distinct < profiles[key].columns[alt[0]].distinct}
+        sequence_columns |= set(tkeys.line_numbers)
         for column in table.columns:
             a = profiles[key].columns[column.name]
             own_key = column.name in tkeys.primary_key and len(tkeys.primary_key) == 1
@@ -277,16 +325,22 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     continue
                 if (key, column.name, to_table, to_column) in candidates:
                     continue          # declared, and already a candidate
-                if not _compatible(column.data_type, inventory.tables[to_table].type_of(to_column)):
+                to_type = inventory.tables[to_table].type_of(to_column)
+                mixed = text_and_number(column.data_type, to_type)
+                if not (_compatible(column.data_type, to_type) or mixed):
                     continue
                 ident = (key, column.name, to_table, to_column)
                 is_declared = (key, names_norm(column.name), to_table, names_norm(to_column)) in declared
                 score, role = name_score(column.name, inventory.tables[to_table].name, to_column)
-                if (to_table, to_column) in alternates and not (is_declared or score >= 0.95):
-                    continue          # another unique column of the table: named the same, or declared
+                if mixed and not (is_declared or score >= 0.9):
+                    continue          # a code kept as text ('0007') points at a number key when the names say so
                 k = profiles[to_table].columns[to_column]
                 plausible, coverage = _value_plausible(a, k, a_type=column.data_type,
                                                        k_is_dimension=to_table in dimension_like)
+                if (to_table, to_column) in alternates and not (
+                        is_declared or score >= 0.95 or plausible and column.data_type == "text"):
+                    continue          # another unique column of the table: named the same, declared, or a code
+                                      # whose values are its codes (tested: every row must find one)
                 to_calendar = to_table in calendars
                 if to_calendar:
                     # Date keys are recognised by shape, whatever their names: a day key
@@ -318,6 +372,30 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                                                 from_unique=column.name in tkeys.unique_columns,
                                                 to_alternate=(to_table, to_column) in alternates)
 
+    # A document and its line, named alike in another table (a claim's prescription and fill number): one
+    # link of two columns, never two links to half a key each. Only a document's lines: a day and an item
+    # key a balance, and a movement on that day of that item is not one of its lines.
+    for to_key, target in inventory.tables.items():
+        lines = set(keys[to_key].line_numbers)
+        for key_columns in [keys[to_key].primary_key, *keys[to_key].alternate_keys]:
+            if len(key_columns) != 2 or key_columns[1] not in lines or to_key in copies:
+                continue
+            for key, table in inventory.tables.items():
+                pairs = [(next((c.name for c in table.columns if not names.opaque(c.name)
+                                and names.tokens(c.name) == names.tokens(column)
+                                and (_compatible(c.data_type, target.type_of(column))
+                                     or text_and_number(c.data_type, target.type_of(column)))), None), column)
+                         for column in key_columns]
+                (first, to_first), rest = pairs[0], pairs[1:]
+                if key == to_key or first is None or any(f is None for f, _ in rest):
+                    continue
+                if (key, first, to_key, to_first) in candidates:
+                    continue          # declared
+                a, k = profiles[key].columns[first], profiles[to_key].columns[to_first]
+                candidates[(key, "+".join(f for f, _ in pairs), to_key, "+".join(t for _, t in pairs))] = JoinFinding(
+                    key, first, to_key, to_first, name_score=1.0, to_alternate=True,
+                    coverage=min(1.0, a.distinct / k.distinct) if k.distinct else 0.0, also=rest)  # type: ignore[arg-type]
+
     ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.name_score, -f.coverage, f.ident))
     tested = ranked[:max_tests]
     placeholder_of = {key: cal.placeholders for key, cal in calendars.items()}
@@ -346,12 +424,33 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             f.evidence.append(Evidence(kind="name_match", weight=f.name_score,
                                        detail=f"the names match ({f.from_column} -> {f.to_column})"))
         distinct = profiles[f.from_table].columns[f.from_column].distinct
-        if not (f.declared or f.name_score) and f.unmatched_values > 0.2 * distinct:
+        members = profiles[f.to_table].columns[f.to_column].distinct
+        value_only = not (f.declared or f.name_score)
+        if value_only and f.unmatched_values > 0.2 * distinct:
             # Values alone, and a fifth of them found nowhere (seats 10, 15, 20 and 25 against six plans):
             # the numbers only happen to overlap. A real link's strays are a few deleted members.
             f.trust = "rejected"
             f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
                 f"{f.unmatched_values:,} of its {distinct:,} values are found nowhere: the numbers only overlap")))
+        elif f.also and not f.declared and f.match_rate < VERIFIED:
+            # A key of two columns named alike in both tables: only where every row finds its line. A fill
+            # with no claim is no fault of the fill; the claim is what points at the fill.
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                "not every row finds its line, and no one declared the link")))
+        elif value_only and f.to_alternate and f.match_rate < VERIFIED:
+            # Another table's own code, by its values alone: two tables' postal codes share a few.
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                "not every row finds one, and nothing but the values says it is a link")))
+        elif value_only and not f.to_calendar and f.match_rate < VERIFIED \
+                and distinct - f.unmatched_values < 0.9 * members:
+            # Values alone, and some rows find nothing: only a column using nearly every member is the
+            # members' own, with a few deleted or not yet loaded. Refills allowed 0..11 use five of 18 pharmacists.
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                f"{f.non_null - round(f.match_rate * f.non_null):,} rows find nothing, and nothing but the values "
+                "says it is a link")))
         elif f.match_rate >= VERIFIED:
             f.trust = "verified"
         elif f.declared and f.match_rate >= PROPOSED:
@@ -393,6 +492,21 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     return sorted(kept, key=lambda f: f.ident)
 
 
+def _copies(inventory: Inventory) -> set[str]:
+    """Tables kept as a copy of another: named as it is, with a word or a date saying it is a copy."""
+    by_name: dict[tuple[str, ...], str] = {}
+    for key, table in inventory.tables.items():
+        by_name.setdefault(tuple(names.singular(t) for t in names.tokens(table.name)), key)
+    out = set()
+    for key, table in inventory.tables.items():
+        words = [names.singular(t) for t in names.tokens(table.name)]
+        marks = [t for t in words if t in _COPY_WORDS or t.isdigit()]
+        rest = tuple(t for t in words if t not in _COPY_WORDS and not t.isdigit())
+        if marks and rest and by_name.get(rest, key) != key:
+            out.add(key)
+    return out
+
+
 def _named(table: InvTable, name: str) -> str | None:
     """The table's column of that name, as the table spells it."""
     wanted = names_norm(name)
@@ -404,7 +518,10 @@ def names_norm(name: str) -> str:
 
 
 def _names_its_table(column: str, table: str) -> bool:
+    """CUSTOMER_ID, or BOOKING_NUMBER, on the table it is named for."""
     core, own = names.core_column(column), names.core_table(table)
+    while len(core) > 1 and core[-1] in _NUMBER_WORDS:
+        core = core[:-1]
     return bool(core) and len(core) == len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
 
 

@@ -91,6 +91,16 @@ def column_sql(model: SemanticModel, key: str, table: exp.Identifier | str | Non
     return exp.Trim(this=joined)
 
 
+def equal_keys(model: SemanticModel, left: exp.Expression, left_key: str, right: exp.Expression, right_key: str,
+               dialect: str) -> exp.Expr:
+    """The two sides of a link equal: a code kept as text ('0007') against a number key (7) compared without
+    leading zeros (D.same_number), anything else as it is."""
+    a, b = model.columns[left_key].data_type, model.columns[right_key].data_type
+    if {a, b} == {"text", "integer"}:
+        return D.same_number(left, right, dialect) if a == "text" else D.same_number(right, left, dialect)
+    return exp.EQ(this=left, expression=right)
+
+
 class _Compiler:
     def __init__(self, logical: Logical, model: SemanticModel, dialect: str):
         self.q = logical
@@ -120,7 +130,7 @@ class _Compiler:
         return table
 
     def on(self, j: Joined) -> exp.Expr:
-        keys = [exp.EQ(this=self.col(left, lc), expression=self.col(j.alias, rc)) for left, lc, rc in j.on]
+        keys = [equal_keys(self.model, self.col(left, lc), lc, self.col(j.alias, rc), rc, self.d) for left, lc, rc in j.on]
         kept = [self.predicate(self.col(j.alias, column), op, list(values), column) for column, op, values in j.conds]
         return exp.and_(*keys, *kept)
 
@@ -440,7 +450,8 @@ class _Compiler:
         inner = exp.select(exp.Max(this=self.stored_date(inner_use))).from_(self.table(part.table, "ls"))
         if on_calendar:
             j = next(j for j in part.joins if j.alias == use.alias)
-            on = exp.and_(*[exp.EQ(this=self.col("ls", lc), expression=self.col("lsd", rc)) for _, lc, rc in j.on])
+            on = exp.and_(*[equal_keys(self.model, self.col("ls", lc), lc, self.col("lsd", rc), rc, self.d)
+                            for _, lc, rc in j.on])
             inner = inner.join(self.table(j.table, "lsd"), on=on, join_type="inner")
         if any(u is use for u, _ in part.date_ranges):
             inner = inner.where(self.window_condition(inner_use))

@@ -196,6 +196,8 @@ def type_problems(model: SemanticModel, spec: LinkSpec) -> list[str]:
     out = []
     for f, t in spec.pairs:
         a, b = model.columns[f], model.columns[t]
+        if {a.data_type, b.data_type} == {"text", "integer"}:
+            continue      # a code kept as text ('0007') is compared with a number key (7) without its leading zeros
         if _FAMILY.get(a.data_type) != _FAMILY.get(b.data_type):
             out.append(f"{a.name} is {_FAMILY.get(a.data_type, a.data_type)} and {b.name} is "
                        f"{_FAMILY.get(b.data_type, b.data_type)}: they may never be equal.")
@@ -242,7 +244,7 @@ def _count_when(condition: exp.Expr) -> exp.Expression:
 
 
 def _link_counts(model: SemanticModel, spec: LinkSpec, warehouse: Any, conditions: list[ColumnFilter]) -> dict:
-    from core2.compile.compiler import row_conditions
+    from core2.compile.compiler import equal_keys, row_conditions
 
     d = warehouse.dialect
     keys = [D.ident(f"k{i}", d) for i in range(len(spec.pairs))]
@@ -252,8 +254,8 @@ def _link_counts(model: SemanticModel, spec: LinkSpec, warehouse: Any, condition
     if kept:
         targets = targets.where(exp.and_(*kept))
     targets = targets.group_by(*[_col(model, "t", t, d) for _, t in spec.pairs])
-    on = exp.and_(*[exp.EQ(this=_col(model, "f", f, d), expression=exp.column(k, table=exp.to_identifier("m")))
-                    for (f, _), k in zip(spec.pairs, keys)])
+    on = exp.and_(*[equal_keys(model, _col(model, "f", f, d), f, exp.column(k, table=exp.to_identifier("m")), t, d)
+                    for (f, t), k in zip(spec.pairs, keys)])
     n = exp.column(D.ident("n", d), table=exp.to_identifier("m"))
     has_key = exp.and_(*[exp.not_(exp.Is(this=_col(model, "f", f, d), expression=exp.Null())) for f, _ in spec.pairs])
     query = exp.select(

@@ -22,7 +22,7 @@ from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
-from core2.bootstrap.keys import TableKeys, infer_keys
+from core2.bootstrap.keys import TableKeys, infer_keys, series_key
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
 from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
 from core2.bootstrap.quality import find_quality
@@ -126,6 +126,15 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
                            workers=options.workers)
     journal.step("Finding the dates each table is about")
     dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
+    for key, candidates in dates.items():
+        # Readings taken again and again (an interface's counters every 15 minutes): the column that, with the
+        # time, identifies each one, whatever links say (with no name to match, they may be wrong). It counts
+        # nothing, and the counters run within it.
+        stamp = next((c.column for c in candidates if c.is_default and c.granularity == "timestamp"), None)
+        if stamp:
+            series = series_key(warehouse, inventory.tables[key], profiles[key], stamp)
+            if series:
+                keys[key].alternate_keys.append([series, stamp])
     journal.step("Sorting tables into events, snapshots and lists; finding the measures")
     classified = classify_tables(inventory, profiles, keys, calendars, joins, dates)
     kinds = {key: kind for key, (kind, _) in classified.items()}
@@ -138,17 +147,20 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     same = check_arithmetic(warehouse, inventory, profiles, measures, pointing)
     stamped = {key: c.column for key, cs in dates.items() for c in cs
                if c.is_default and c.granularity == "timestamp" and kinds.get(key) == "fact"}
-    about = {}
+    # What each reading is of: the reading series first (the counters run within it), then every link.
+    about = {key: [alt[0] for alt in keys[key].alternate_keys if alt[1:] == [when]][:1] for key, when in stamped.items()}
     for j in joins:
-        if j.trust != "rejected" and not j.to_calendar and j.from_table in stamped:
-            about.setdefault(j.from_table, []).append(j.from_column)
+        if j.trust != "rejected" and not j.to_calendar and j.from_table in stamped \
+                and j.from_column not in about[j.from_table]:
+            about[j.from_table].append(j.from_column)
     find_counters(warehouse, inventory, profiles, {k: v.primary_key for k, v in keys.items()}, about, stamped,
                   measures)
     # A document's figure written on each of its lines (refills per prescription, freight per order): averaged.
     documents = {}
     for k, v in keys.items():
         dated = next((c.column for c in dates.get(k, []) if c.is_default), None)
-        doc = next((alt[0] for alt in v.alternate_keys if len(alt) == 2), None) or (
+        dated_columns = {c.column for c in dates.get(k, [])}
+        doc = next((alt[0] for alt in v.alternate_keys if len(alt) == 2 and alt[1] not in dated_columns), None) or (
             v.primary_key[0] if len(v.primary_key) == 2 and inventory.tables[k].type_of(v.primary_key[1]) == "integer"
             else None)
         if doc and dated:

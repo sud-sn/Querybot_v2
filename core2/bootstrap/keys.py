@@ -5,7 +5,7 @@ set is searched among key-like columns: single columns first (from exact distinc
 counts, verified when the count was estimated), then pairs and triples whose
 distinct counts could cover the rows, verified with a duplicate-group count.
 Alternate keys (a document number plus a line number) are looked for too: they
-tell a line number from a measure.
+tell a line number from a measure, and from a reference to a small table.
 """
 
 from __future__ import annotations
@@ -31,6 +31,9 @@ class TableKeys:
     primary_key: list[str] = field(default_factory=list)
     unique_columns: list[str] = field(default_factory=list)
     alternate_keys: list[list[str]] = field(default_factory=list)
+    # Columns numbering each document's rows (a line in each booking, a fill of each prescription), in the
+    # key or beside it: they count within the document and point at no table.
+    line_numbers: list[str] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
 
 
@@ -57,13 +60,18 @@ _SEQUENCE_WORDS = {"no", "nbr", "num", "number", "seq", "sequence", "line", "ln"
                    "rnwl", "fill", "installment", "instalment", "revision", "rev", "step"}
 
 
-def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool:
+def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str, *, values: int = 0,
+              gapless: bool = False) -> bool:
     """Is ``seq`` a running number within each ``doc``, as a line number is in each order or a fill number
     in each prescription? It starts again at 1 in (nearly) every doc, or it runs without a gap in (nearly)
     every doc of several rows, wherever it starts (a prescription's fills seen from its fifth on).
 
     A department number beside a nearly unique name is unique with it by chance: it starts at 1
     only for the names in department 1, and the names with several rows are too few to say it runs.
+    Nor does a column whose every value sits in most docs (``values`` of them): every item 1..N on
+    each day of a daily balance is a list of items, not each day's lines. ``gapless`` asks for the
+    run without a gap even where it starts at 1: playlist 1 holds nearly every track, and a track's
+    playlists are still not its lines.
     """
     d = warehouse.dialect
     s = exp.column(D.ident(seq, d))
@@ -78,16 +86,69 @@ def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str) -> bool
     runs = exp.and_(several.copy(), exp.EQ(this=D.add(D.sub(exp.column("x"), exp.column("m")), 1),
                                           expression=exp.column("n")))
     one = exp.Literal.number(1)
+    every = exp.EQ(this=exp.column("n"), expression=exp.Literal.number(max(values, 2)))
     query = exp.select(when(exp.EQ(this=exp.column("m"), expression=one.copy()), one.copy()),
                        exp.Count(this=one.copy()), when(several, one.copy()), when(runs, one.copy()),
-                       when(several.copy(), exp.column("n")), exp.Sum(this=exp.column("n"))).from_(inner.subquery("g"))
+                       when(several.copy(), exp.column("n")), exp.Sum(this=exp.column("n")),
+                       when(every, one.copy())).from_(inner.subquery("g"))
     sql = query.sql(dialect=d).replace("__SRC__", D.table_sql(table.database, table.schema, table.name, d))
     got = attempt(warehouse, f"the line-number check on {table.name} ({doc}, {seq})",
-                  lambda: warehouse.query(sql).rows[0], (0, 0, 0, 0, 0, 0))
-    started, groups, multi, running, multi_rows, rows = (int(v or 0) for v in got)
-    if groups and started >= 0.9 * groups:
+                  lambda: warehouse.query(sql).rows[0], (0, 0, 0, 0, 0, 0, 0))
+    started, groups, multi, running, multi_rows, rows, full = (int(v or 0) for v in got)
+    if values and full >= 0.5 * max(groups, 1):
+        return False
+    if groups and started >= 0.9 * groups and not gapless:
         return True
     return multi > 0 and running >= 0.9 * multi and multi_rows >= 0.3 * max(rows, 1)
+
+
+def _numbers_lines(table: InvTable, profile: TableProfile, column: str) -> bool:
+    """Could ``column`` number the lines of a document: a small whole number from 0 or 1, or named so."""
+    p = profile.columns[column]
+    return table.type_of(column) == "integer" \
+        and (p.min_num in (0, 1) or bool(set(names.tokens(column)) & _SEQUENCE_WORDS)) \
+        and 1 < p.distinct <= 1000 and (p.max_num or 0) <= 10000
+
+
+def _lines_in_key(warehouse: Warehouse, table: InvTable, profile: TableProfile, result: TableKeys) -> None:
+    """A key of several columns, one a document: the column numbering each document's rows. The key's own
+    (a booking's line number) or one beside it (a prescription's fill number, where the fill's date was
+    found unique with the prescription first). The number runs without a gap in each document, and the
+    two identify the row on their own: a period, a warehouse and an item key a balance, and the
+    warehouse numbers nothing within the period."""
+    columns = profile.columns
+    key = result.primary_key
+    for doc in key:
+        if table.type_of(doc) not in ("text", "integer"):
+            continue
+        for seq in [*key, *(c.name for c in table.columns if c.name not in key)]:
+            if seq == doc or not _numbers_lines(table, profile, seq) or columns[seq].distinct >= columns[doc].distinct:
+                continue
+            if sorted(key) != sorted([doc, seq]) and (columns[doc].distinct * columns[seq].distinct < profile.rows
+                                                      or _duplicates(warehouse, table, [doc, seq])):
+                continue
+            if _restarts(warehouse, table, doc, seq, values=columns[seq].distinct, gapless=True):
+                result.line_numbers = [seq]
+                if seq not in key:
+                    result.alternate_keys = [[doc, seq]]
+                return
+
+
+def series_key(warehouse: Warehouse, table: InvTable, profile: TableProfile, stamp: str) -> str | None:
+    """What each reading of a timestamped table is of: the column that, with the time, identifies a row (an
+    interface's counters every 15 minutes), when no link says so. Fewest values first: the device, before a
+    reading that happens to be unique at each time."""
+    rows = profile.rows
+    if profile.columns[stamp].distinct > rows / 3:
+        return None    # one row at each time, or nearly (orders): nothing is read again and again
+    found = sorted((p.distinct, c.name) for c in table.columns
+                   if c.name != stamp and table.type_of(c.name) in ("integer", "text")
+                   and (p := profile.columns[c.name]).non_null == rows and 3 <= p.distinct <= rows / 10
+                   and not (p.pattern or "").startswith("flag"))
+    for _, name in found[:3]:
+        if not _duplicates(warehouse, table, [name, stamp]):
+            return name
+    return None
 
 
 def _key_like(table: InvTable, profile: TableProfile) -> list[str]:
@@ -150,11 +211,7 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
         docs = [c.name for c in table.columns if c.name not in unique
                 and rows / 1000 < profile.columns[c.name].distinct < rows
                 and table.type_of(c.name) in ("text", "integer")]
-        seqs = [c.name for c in table.columns if c.name not in unique
-                and table.type_of(c.name) == "integer"
-                and (profile.columns[c.name].min_num in (0, 1) or set(names.tokens(c.name)) & _SEQUENCE_WORDS)
-                and 1 < profile.columns[c.name].distinct <= 1000
-                and (profile.columns[c.name].max_num or 0) <= 10000]
+        seqs = [c.name for c in table.columns if c.name not in unique and _numbers_lines(table, profile, c.name)]
         found: list[list[str]] = []
         for doc, seq in itertools.product(docs, seqs):
             if doc == seq or len(found) >= 1:
@@ -164,6 +221,9 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
             if not _duplicates(warehouse, table, [doc, seq]) and _restarts(warehouse, table, doc, seq):
                 found.append([doc, seq])
         result.alternate_keys = found
+        result.line_numbers = [alt[1] for alt in found if profile.columns[alt[1]].distinct < profile.columns[alt[0]].distinct]
+        if len(result.primary_key) > 1 and not found:
+            _lines_in_key(warehouse, table, profile, result)
         return result
 
     # No single-column key: the smallest combination that identifies each row.
@@ -196,4 +256,5 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
         result.primary_key = found[0]
         result.evidence.append(Evidence(kind="uniqueness", weight=0.8,
                                         detail=f"{', '.join(found[0])} together identify each row"))
+        _lines_in_key(warehouse, table, profile, result)
     return result

@@ -186,6 +186,8 @@ def _lookup_statuses(warehouse: Warehouse, inventory: Inventory, profiles: dict[
                 or kinds.get(j.to_table) not in ("dimension", "other") or not 2 <= profiles[j.to_table].rows <= _LOOKUP_ROWS:
             continue
         lookup = inventory.tables[j.to_table]
+        if {inventory.tables[j.from_table].type_of(j.from_column), lookup.type_of(j.to_column)} == {"text", "integer"}:
+            continue      # a code kept as text ('0003') against a number key: no filter on the fact reads both alike
         if j.to_table not in members:
             texts = [c.name for c in lookup.columns if c.data_type == "text" and c.name != j.to_column
                      and (profiles[j.to_table].columns[c.name].avg_len or 0) <= _LOOKUP_LABEL_LEN
