@@ -110,8 +110,8 @@ class MemberIndex:
                 continue
             stored = str(value)
             key = normalise(stored)
-            if not key or len(key) < 2:
-                continue
+            if not key:
+                continue       # a one-letter code ("A") is kept: it names a member only when it is quoted
             entries = self.names.setdefault(key, [])
             if (attribute, stored) not in entries:
                 entries.append((attribute, stored))
@@ -152,8 +152,10 @@ class MemberIndex:
                     continue
                 start, end = words[i][1], words[i + size - 1][2]
                 key = normalise(question[start:end])
-                if key.isdigit() and len(key) < 3:
+                if key.isdigit() and len(key) < 3 and not explicit:
                     continue   # "top 5" is not member "5"
+                if len(key) < 2 and not explicit:
+                    continue   # "a" is not class "A": one letter names a member only in quotes
                 entries = self._entries(key)
                 if key in COMMON_WORDS and not explicit:
                     written = question[start:end]
@@ -173,7 +175,13 @@ class MemberIndex:
         ("stock", "open", "available") are never read as one."""
         found: list[ValueMatch] = []
         for start, end in quoted_spans(question):
-            for m in self.match(question[start:end], explicit=True):
+            text = question[start:end]
+            # The whole text first: a name with punctuation the words leave out ("A-ITEMS, 60%"), or one letter.
+            whole = self._entries(normalise(text))
+            if whole:
+                found += [ValueMatch(text, start, end, attribute, value) for attribute, value in whole]
+                continue
+            for m in self.match(text, explicit=True):
                 found.append(replace(m, start=m.start + start, end=m.end + start))
         return sorted(found, key=lambda m: (m.start, m.attribute))
 
@@ -209,12 +217,44 @@ _HIGH = {"highest", "largest", "biggest"}
 _THAT = re.compile(r"\b(that|this)\s+([a-z]+)\b", re.IGNORECASE)
 # "this year", "that month": a period, never a member on screen, whatever the answer was grouped by.
 _PERIOD_NOUNS = {"year", "month", "quarter", "week", "day", "half", "period", "time", "fiscal", "season"}
+# "In the top group", "within the largest division": a row of the answer on screen, named by its field after a
+# preposition. Without one ("show the top store in March", "the largest customers") it asks for a ranking.
+_END_OF = re.compile(r"\b(?:in|for|of|within|from|at|on|to|about|inside|under|across)\s+(the\s+"
+                     r"(top|bottom|highest|largest|biggest|lowest|smallest)\s+([a-z]+))\b", re.IGNORECASE)
+# "The number one customer": the first row.
+_NUMBER_ONE = re.compile(r"\b(?:the\s+)?(?:number\s+one|no\.?\s*1|#\s*1)\s+([a-z]+)\b", re.IGNORECASE)
+# "The warehouse that grew the most", "the biggest mover": the row by its change, on an answer that compares.
+_BY_CHANGE = re.compile(r"\b(?:the\s+)?([a-z]+)\s+(?:that|which)\s+(grew|rose|increased|went\s+up|gained|fell|dropped|"
+                        r"declined|decreased|went\s+down|lost|changed|moved)\s+(?:the\s+)?most\b", re.IGNORECASE)
+_MOVER = re.compile(r"\bthe\s+biggest\s+(mover|riser|gainer|faller|loser|increase|rise|drop|fall|decrease|change)\b",
+                    re.IGNORECASE)
+_UP = {"grew", "rose", "increased", "went up", "gained", "riser", "gainer", "increase", "rise"}
+_DOWN = {"fell", "dropped", "declined", "decreased", "went down", "lost", "faller", "loser", "drop", "fall", "decrease"}
+# "Its revenue": the one member on screen, or the one the answer named first when it was asked "which ... most".
+_ITS = re.compile(r"\bits\b", re.IGNORECASE)
+# "The worst one", "the best supplier": which end that is depends on the measure, so the reader is asked.
+_BEST_WORST = re.compile(r"\b(?:the\s+)?(best|worst)\s+([a-z]+)\b", re.IGNORECASE)
+# "For the best supplier", "the number one customer's revenue": named by its field, a row of the answer on screen
+# only after a preposition or as an owner; "which is the best supplier in 2024?" asks for a ranking.
+_PREP_BEFORE = re.compile(r"\b(?:in|for|of|within|from|at|on|to|about|inside|under|across|with|by)\s*$", re.IGNORECASE)
+
+
+def _a_row(question: str, m: re.Match, noun: str) -> bool:
+    """Do these words, ending in ``noun``, name a row of the answer on screen rather than ask for a ranking?"""
+    return (noun in ("one", "1") or bool(_PREP_BEFORE.search(question[:m.start()]))
+            or question[m.end():].startswith(("'s", "\u2019s")))
 
 Shown = tuple  # (attribute slug, stored value or None, the answer's number for it or None,
-#                 and optionally the row's members of the answer's other groupings, by attribute slug)
+#                 optionally the row's members of the answer's other groupings by attribute slug,
+#                 and optionally the row's change, on an answer that compares two periods)
 
 
-def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[ValueMatch]:
+def _number(s: Shown, at: int) -> float | None:
+    value = s[at] if len(s) > at else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader: bool = False) -> list[ValueMatch]:
     """"The first one", "the lowest one", "that division": a member of the answer on screen.
 
     ``shown`` is that answer's members in the order shown, as (attribute slug, stored value,
@@ -223,8 +263,11 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
     was filtered on a profit centre called "lowest". By place ("the first one", "the second
     warehouse", "the last one"), by value ("the lowest one", "the highest one"), or as the one member
     the answer showed ("that one") or of a field it showed ("that division", in whichever of its
-    groupings). Only where the words name a row ("one", or the field's own noun, never "the first
-    quarter" or "this year"), and never over a member the question names itself.
+    groupings). Also "in the top group", "within the largest division", "the number one customer", "the
+    warehouse that grew the most" and "the biggest mover" (by the change, on an answer that compares), and
+    "its" (the one member on screen, or the first one when ``leader``: the answer was asked which comes
+    first, "which group changed the most?"). Only where the words name a row ("one", or the field's own
+    noun, never "the first quarter" or "this year"), and never over a member the question names itself.
     """
     if not shown:
         return []
@@ -246,11 +289,37 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
         attribute, value = shown[place][0], shown[place][1]
         if value is not None:
             out.append(ValueMatch(m.group(0), m.start(), m.end(), attribute, value))
-    numbered = [s for s in shown if s[1] is not None and len(s) > 2 and isinstance(s[2], (int, float))]
+    for m in _NUMBER_ONE.finditer(question):
+        if m.group(1).lower() in nouns and _a_row(question, m, m.group(1).lower()) and free(m) \
+                and shown[0][1] is not None:
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), shown[0][0], shown[0][1]))
+    numbered = [s for s in shown if s[1] is not None and _number(s, 2) is not None]
     for m in _BY_VALUE.finditer(question):
         if not numbered or not free(m):
             continue
         pick = (max if m.group(1).lower() in _HIGH else min)(numbered, key=lambda s: s[2])
+        out.append(ValueMatch(m.group(0), m.start(), m.end(), pick[0], pick[1]))
+    for m in _END_OF.finditer(question):
+        word, noun = m.group(2).lower(), m.group(3).lower()
+        if noun not in words or not free(m):
+            continue
+        if word in ("top", "bottom"):
+            pick = shown[0 if word == "top" else -1]
+        elif numbered:
+            pick = (max if word in _HIGH else min)(numbered, key=lambda s: s[2])
+        else:
+            continue
+        if pick[1] is not None:
+            out.append(ValueMatch(m.group(1), m.start(1), m.end(1), pick[0], pick[1]))
+    changed = [s for s in shown if s[1] is not None and _number(s, 4) is not None]
+    for m, noun, way in [*((m, m.group(1).lower(), " ".join(m.group(2).lower().split()))
+                           for m in _BY_CHANGE.finditer(question)),
+                         *((m, "mover", m.group(1).lower()) for m in _MOVER.finditer(question))]:
+        if not changed or (noun != "mover" and noun not in nouns) or not _a_row(question, m, noun) or not free(m):
+            continue
+        key = ((lambda s: _number(s, 4)) if way in _UP else (lambda s: -_number(s, 4)) if way in _DOWN
+               else (lambda s: abs(_number(s, 4))))
+        pick = max(changed, key=key)
         out.append(ValueMatch(m.group(0), m.start(), m.end(), pick[0], pick[1]))
     # Every field of the answer and its members: the first grouping's, and those of the others on its rows.
     fields: dict[str, set[str]] = {shown[0][0]: {s[1] for s in shown if s[1] is not None}}
@@ -266,7 +335,29 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
                  [(a, v) for a, v in fields.items() if noun in _field_words(a) and len(v) == 1])
         if len(named) == 1 and free(m):
             out.append(ValueMatch(m.group(0), m.start(), m.end(), named[0][0], next(iter(named[0][1]))))
+    first = fields[shown[0][0]]
+    for m in _ITS.finditer(question):
+        if not free(m):
+            continue
+        if len(first) == 1:
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), shown[0][0], next(iter(first))))
+        elif leader and shown[0][1] is not None:
+            out.append(ValueMatch(m.group(0), m.start(), m.end(), shown[0][0], shown[0][1]))
     return sorted(out, key=lambda v: v.start)
+
+
+def which_end(question: str, shown: list[Shown], taken: list[ValueMatch]) -> tuple[str, str, str] | None:
+    """"The worst one", "the best supplier": a row at one end of the answer on screen, but which end depends on
+    what is measured (most rejections is the worst, most revenue the best). The phrase and the members at the
+    two ends, for the reader to say which; None when the question says no such thing."""
+    if len({s[1] for s in shown if s[1] is not None}) < 2 or shown[0][1] is None or shown[-1][1] is None:
+        return None
+    nouns = {"one", "1"} | _field_words(shown[0][0])
+    for m in _BEST_WORST.finditer(question):
+        overlaps = any(t.start < m.end() and m.start() < t.end for t in taken)
+        if m.group(2).lower() in nouns and _a_row(question, m, m.group(2).lower()) and not overlaps:
+            return m.group(0), str(shown[0][1]), str(shown[-1][1])
+    return None
 
 
 def listable(model: SemanticModel) -> list[str]:

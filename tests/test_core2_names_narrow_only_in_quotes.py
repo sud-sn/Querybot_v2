@@ -199,3 +199,17 @@ def test_the_questions_after_a_why_or_a_forecast_keep_their_members_in_quotes(re
     payload = _ask(retail, Recorded(ahead), f'forecast net sales for "{CUSTOMER}"')[0]
     chips = [s["question"] for s in payload.get("follow_up_suggestions") or []]
     assert chips and all(f'"{CUSTOMER}"' in q for q in chips), chips
+
+
+def test_a_quoted_name_is_found_whole_with_its_punctuation_and_one_letter_codes_too():
+    """"A-ITEMS, 60%" was never found (its comma and % are not words), and a one-letter code was never kept, so
+    class "A" could not be named at all. In quotes both are found; unquoted, a single letter is still no name."""
+    index = MemberIndex()
+    index.add("abc_class.class_code", ["A", "B", "NO_VALUE"])
+    index.add("abc_class.class_description", ["A-ITEMS, 60%", "B-ITEMS, 24%"])
+    found = index.quoted('Which stock status holds the most value in class "A-ITEMS, 60%"?')
+    assert [(m.attribute, m.value, m.text) for m in found] == [("abc_class.class_description", "A-ITEMS, 60%",
+                                                                 "A-ITEMS, 60%")]
+    assert [(m.attribute, m.value) for m in index.quoted('value in class "A"')] == [("abc_class.class_code", "A")]
+    assert index.match("a value in class A") == [] and index.quoted("a value in class A") == []
+    assert index.stored("abc_class.class_code", "a") == "A"

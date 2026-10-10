@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from core2.plan.values import MemberIndex, ValueMatch, placed
+from core2.plan.values import MemberIndex, ValueMatch, placed, which_end
 from core2.service import Services, Session, answer_question
 
 TODAY = dt.date(2026, 6, 15)
@@ -198,3 +198,108 @@ def test_words_that_point_at_a_row_are_never_refused_as_a_missing_name(retail):
     assert re.search(r'there is no store( name)? called "Top Value Stores"', then["answer"]["headline"]), \
         then["answer"]["headline"]
     assert "compare that answer with the other period" not in said
+
+
+# ── by its field, by its change, "its", and "the worst one" ─────────────────
+
+WAREHOUSES = [("warehouse.name", "Docks", 100.0, {}, 50.0), ("warehouse.name", "Airport", 300.0, {}, -80.0),
+              ("warehouse.name", "Harbour", 200.0, {}, 20.0)]
+
+
+@pytest.mark.parametrize("question, phrase, member", [
+    ("How many items in the top warehouse cost more than $1,000 each?", "the top warehouse", "Docks"),
+    ("Monthly stock for the bottom warehouse", "the bottom warehouse", "Harbour"),
+    ("Within the largest warehouse, which items hold the most?", "the largest warehouse", "Airport"),
+    ("Compare the number one warehouse's stock with last year", "the number one warehouse", "Docks"),
+    ("What drove the increase in the warehouse that grew the most?", "the warehouse that grew the most", "Docks"),
+    ("and the one that fell the most?", "the one that fell the most", "Airport"),
+    ("Show the monthly stock of the biggest mover in 2026", "the biggest mover", "Airport"),
+])
+def test_a_row_is_named_by_its_field_its_end_or_its_change(question, phrase, member):
+    assert [(m.text, m.value) for m in placed(question, WAREHOUSES, [])] == [(phrase, member)]
+
+
+@pytest.mark.parametrize("question", [
+    "Show the top warehouse in March",                   # a ranking of March, not the row on screen
+    "Show the warehouse that grew the most in 2024",
+    "Who was the biggest mover in Q3?",
+    "Who is the number one warehouse in 2024?",
+    "Within the largest customers, which items sold?",   # not the answer's field
+])
+def test_a_ranking_asked_afresh_is_not_a_row_on_screen(question):
+    assert placed(question, WAREHOUSES, []) == []
+
+
+def test_the_change_of_a_row_is_needed_to_find_the_one_that_grew_the_most():
+    plain = [s[:3] for s in WAREHOUSES]                  # an answer that compares nothing
+    assert placed("the one that grew the most by month", plain, []) == []
+
+
+def test_its_is_the_one_member_or_the_one_the_answer_was_asked_for():
+    question = "Was the change in its revenue driven by price or by volume?"
+    assert placed(question, WAREHOUSES, []) == []                               # three rows: which one?
+    assert [m.value for m in placed(question, WAREHOUSES, [], leader=True)] == ["Docks"]
+    assert [m.value for m in placed(question, WAREHOUSES[1:2], [])] == ["Airport"]
+
+
+def test_which_question_names_a_leader():
+    from core2.service import _names_a_leader
+
+    assert _names_a_leader("Which group's price changed the most compared with 2025?")
+    assert _names_a_leader("Which customer type got the most discount?")
+    assert not _names_a_leader("Which 10 warehouses have the least available stock?")
+    assert not _names_a_leader("Show the top 5 stores by net sales")
+    assert not _names_a_leader("What is our average selling price by item group?")
+
+
+def test_the_worst_one_is_asked_never_guessed():
+    assert which_end("Show the monthly rejected quantity for the worst one", WAREHOUSES, []) == \
+        ("the worst one", "Docks", "Harbour")
+    assert which_end("monthly stock for the best warehouse", WAREHOUSES, []) == ("the best warehouse", "Docks", "Harbour")
+    assert which_end("Which is the best warehouse in 2024?", WAREHOUSES, []) is None     # a ranking asked afresh
+    assert which_end("the worst one", WAREHOUSES[:1], []) is None                         # one row: nothing to ask
+
+
+def test_the_worst_one_asks_which_end_and_the_reply_narrows_the_question(retail):
+    """"Show net amount by category for the worst one": most or least net amount? The reader picks, and the
+    question is answered for that store, in quotes, as a follow-up of the answer on screen."""
+    from core2.warehouse.runner import DuckDBWarehouse
+
+    built, model = retail
+    tails: list[str] = []
+
+    def planner(stable: str, tail: str) -> str:
+        tails.append(tail)
+        if len(tails) == 1:
+            return json.dumps(TOP)
+        handed = re.findall(r'-> (\S+) = "([^"]+)"', tail)
+        return json.dumps({"kind": "query", "intent": "breakdown", "measures": ["net_amount"], "group_by": ["category"],
+                           "time": {"window": H1}, "follow_up": "refine",
+                           "filters": [{"field": handed[0][0], "op": "eq", "values": [handed[0][1]]}]})
+
+    index = MemberIndex()
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=planner, index=index, today=TODAY)
+    session = Session()
+    first = answer_question("Which 5 stores sold the most?", services, session)
+    stores = _stores(first)
+    index.add("store.name", stores)
+    asked = answer_question("Show net amount by category for the worst one", services, session)
+    assert asked["clarify"]["options"] == [stores[0], stores[-1]], asked["clarify"]
+    assert len(tails) == 1, "nothing is planned until the reader says which"
+    then = answer_question(stores[-1], services, session)
+    assert f'= "{stores[-1]}"' in tails[1] and "PREVIOUS PLAN" in tails[1], tails[1]
+    assert then["plan"]["filters"][0]["values"] == [stores[-1]]
+
+
+def test_the_one_that_grew_the_most_is_read_from_the_comparison_on_screen(retail):
+    compared = {**TOP, "intent": "compare", "limit": None, "sort": [{"by": "change", "desc": False}],
+                "time": {"window": H1, "compare": {"kind": "window", "window": {"kind": "between", "start": "2025-01-01",
+                                                                                 "end": "2025-06-30"}}}}
+    first, then, tails = _converse(retail, "net amount by category for the store that grew the most",
+                                   first_plan=compared)
+    rows = first["data"]["rows"]
+    grew = max(rows, key=lambda r: r["net_amount_change"])
+    store = next(v for k, v in grew.items() if isinstance(v, str))
+    assert rows[0] is not grew, "the answer lists the biggest drop first: the place says nothing"
+    assert f'"the store that grew the most" -> store.name = "{store}"' in tails[1], tails[1]
+    assert then["plan"]["filters"][0]["values"] == [store]

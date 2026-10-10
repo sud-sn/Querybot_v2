@@ -176,6 +176,9 @@ def test_a_reply_to_a_question_asked_back_keeps_the_conversation(retail):
     ("What were refunds by return reason last quarter?", "new"),
     ("What are the same-store sales by region this year?", "new"),  # "same-store" points at nothing
     ("New question: only North", "new"),
+    ("Which items explain the change?", "refine"),                   # the change the answer on screen shows
+    ("What products are behind this drop in the second half of 2025?", "refine"),
+    ("Which items drove net sales in 2025 by region?", "new"),       # no change on screen is named
 ])
 def test_what_the_words_say(retail, question, kind):
     from core2.plan.followup import read_turn

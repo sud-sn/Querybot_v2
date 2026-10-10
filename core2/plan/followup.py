@@ -50,6 +50,10 @@ _DISPLAY = re.compile(
     r"\b(?:as an?\s+(?:pie|bar|line|donut|doughnut|ring|table|chart|area|graph)|as a share|share of (?:the )?total|"
     r"as a percent(?:age)? of (?:the )?total|chart it|plot it|graph it|just the table)\b", re.IGNORECASE)
 _WHY = re.compile(r"^\s*(?:why|what\s+(?:drove|caused|explains|is behind)|how come|what changed)\b", re.IGNORECASE)
+# "Which items explain the change?", "what is behind this drop": about the change the answer on screen shows.
+_BEHIND = re.compile(r"\b(?:explain|explains|explained|drove|drive|drives|caused|cause|causes|behind|account\s+for|"
+                     r"accounts\s+for)\s+(?:the|this|that)\s+(?:change|increase|decrease|drop|rise|fall|growth|"
+                     r"decline|difference|gap|jump|dip|move|movement)\b", re.IGNORECASE)
 _ASKS = re.compile(r"^\s*(?:what|what's|whats|which|who|whom|how|when|where|show|list|give|tell|compare|is|are|do|does|"
                    r"did|can|could|find|get|count)\b", re.IGNORECASE)
 _ABOUT_DATA = re.compile(r"^\s*(?:what\s+(?:data|information|tables)|what can i ask|what do you (?:have|know)|"
@@ -163,6 +167,8 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         return Reading("refine", "it says how to show the answer on screen")
     if _WHY.match(question) and (short or pointing):
         return Reading("refine", "it asks why the answer on screen is what it is")
+    if _BEHIND.search(question):
+        return Reading("refine", "it asks what is behind the change on screen")
     if _POINTS_FIRST.match(question) or short and pointing:
         return Reading("refine", "it points at the answer on screen")
     if _POINTS_AT_MEMBERS.search(question):

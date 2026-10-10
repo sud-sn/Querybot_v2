@@ -478,11 +478,21 @@ prompt and substituted back after planning: the AI never sees a member value.
 matched members and became filters ("available stock" on a stock status
 AVAILABLE, "open orders" on an order status OPEN). Only text the reader puts in
 quotes (`"North"`, `“North”`, `« Nord »`, `'North'`) is matched and offered to
-the AI as a member; the members of the answer on screen ("the first one",
-"that one", "that division" in whichever of its groupings shows one) and the
-filters of the conversation's earlier answers stay available. A turn that
-points at a member on screen follows that answer however long it is ("show
-monthly sales for the first one in 2026"). After
+the AI as a member; the whole quoted text is looked up first, so a name with
+punctuation ("A-ITEMS, 60%") or a one-letter code ("A") is found, which an
+unquoted word never is. The members of the answer on screen stay available
+when the words point at one: by place ("the first one", "in the top group",
+"the number one customer"), by value ("the lowest one", "within the largest
+division"), by change on an answer that compares ("the warehouse that grew
+the most", "the biggest mover"), "that one", "that division" (in whichever
+grouping shows one), and "its" (the one member, or the one a "which ... the
+most?" answer named). A field's noun points at the screen only after a
+preposition or as an owner: "which is the top store in March?" asks for a
+ranking. "The worst one" or "the best supplier" is never guessed: the reader
+is asked which end of the answer they mean, and the question is answered
+again with that member in quotes. A turn that points at a member on screen,
+or asks what explains the change on it, follows that answer however long it
+is; the filters of the conversation's earlier answers stay available. After
 planning, a filter whose member is one of the question's own unquoted words is
 taken out, the answer says so, and its first chip is the same question with the
 name in quotes. A code the AI chose for what the question means, not one of its

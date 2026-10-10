@@ -37,7 +37,8 @@ from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticMod
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
-from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed, quoted_spans
+from core2.plan.values import (Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed,
+                                quoted_spans, which_end)
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
@@ -45,6 +46,7 @@ log = logging.getLogger("querybot.core2")
 
 HISTORY = 3          # turns of the conversation the planner sees
 FOLLOW_UP = "follow_up"                                   # Pending.field: is it about the answer above, or new?
+END = "end"                                               # Pending.field: "the worst one": which end of the answer
 ABOVE, AFRESH = "About the answer above", "A new question"
 MAX_ROWS = 5000
 
@@ -74,6 +76,7 @@ class Pending:
     options: list[str]
     masked: Masked | None = None
     question: str = ""               # FOLLOW_UP: the question waiting to be read one way or the other
+    phrase: str = ""                 # END: the words that point at an end of the answer ("the worst one")
 
 
 @dataclass
@@ -158,6 +161,25 @@ def _clarification(question: str, clarify: Clarify) -> dict[str, Any]:
         text = clarify.question
     return _frame(question, text, clarify={"about": clarify.about, "question": clarify.question, "options": options},
                   follow_up_suggestions=[{"label": o, "question": o} for o in options])
+
+
+# "Which group's price changed the most?": the answer names one member, its first row ("its revenue" is that
+# member's). Not "which 10 warehouses ...": a list, where "its" names none.
+_LEADER = re.compile(r"^\s*(?:which|what|who)\b(?!\s+\d)[^?]*\b(?:most|least|highest|lowest|largest|biggest|"
+                     r"smallest|top|best|worst)\b", re.IGNORECASE)
+
+
+def _names_a_leader(question: str) -> bool:
+    return bool(_LEADER.match(question or "")) and not re.search(r"\b(?:top|bottom|first|last)\s+\d+\b", question,
+                                                                 re.IGNORECASE)
+
+
+def _which_end(question: str, phrase: str, first: str, last: str) -> dict[str, Any]:
+    """Asked for "the worst one": whether that is the most or the least depends on what is measured."""
+    text = f'Which one do you mean by "{phrase}": {first}, first in the answer above, or {last}, last in it?'
+    return _frame(question, text, kind="which_end", clarify={"about": "member", "question": text,
+                                                             "options": [first, last]},
+                  follow_up_suggestions=[{"label": o, "question": o} for o in (first, last)])
 
 
 def _which_question(question: str, last: Turn) -> dict[str, Any]:
@@ -331,6 +353,12 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         if way is not None:      # the reader said which they meant: their question, read that way
             return _answer_question(pending.question, services, session, question_id=question_id, forced=way)
         pending = None           # a question of its own instead
+    if pending is not None and pending.field == END:
+        end = choose(question, pending.options)
+        if end is not None:      # the member they meant, in quotes where the words pointed: their question again
+            asked = pending.question.replace(pending.phrase, f'"{end}"', 1)
+            return _answer_question(asked, services, session, question_id=question_id, forced="refine")
+        pending = None
     if forced is None and NEW_PREFIX.match(question) and NEW_PREFIX.sub("", question, count=1).strip():
         question, forced = NEW_PREFIX.sub("", question, count=1).strip(), "new"
     last = session.turns[-1] if session.turns else None
@@ -356,8 +384,13 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                                              services.allowed_tables)
         # "Break the first one down", "monthly sales for that division in 2026": the member of the answer on
         # screen the words point at. A turn that points at one follows that answer, however much else it says.
-        pointed = _visible(placed(question, last.shown, found), model, services.allowed_tables) \
-            if last is not None and last.shown else []
+        pointed = _visible(placed(question, last.shown, found, leader=_names_a_leader(last.question)), model,
+                           services.allowed_tables) if last is not None and last.shown else []
+        end = which_end(question, last.shown, [*found, *pointed]) if last is not None and last.shown \
+            and last.plan is not None and forced != "new" else None
+        if end is not None:
+            session.pending = Pending(last.plan, END, [end[1], end[2]], question=question, phrase=end[0])  # type: ignore[arg-type]
+            return _which_end(question, *end)
         reading = (Reading(forced, "the reader said so") if forced else
                    Reading("refine", "it points at a member of the answer on screen") if pointed else
                    _read(question, last, model, found))
@@ -502,12 +535,14 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
 
 def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> list[tuple]:
     """The members of an answer's first grouping, in the order shown: (attribute slug, stored value, its number,
-    the row's members of its other groupings by attribute slug, for "that division" of a second grouping)."""
+    the row's members of its other groupings by attribute slug, for "that division" of a second grouping, and its
+    change on an answer that compares two periods, for "the one that grew the most")."""
     groups = [g for g in logical.groups if g.kind == "attribute" and g.attribute and g.name != logical.unit_group]
     if not groups or any(g.kind == "period" for g in logical.groups):
         return []
     group = groups[0]
     measure = next((o.name for o in logical.measures if not o.hidden), None)
+    change = f"{measure}_change" if measure else None
 
     def member(value: Any) -> str | None:
         return None if value in (None, "", "Unknown") else str(value)
@@ -515,9 +550,11 @@ def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> li
     out: list[tuple] = []
     for row in (payload.get("export_rows") or (payload.get("data") or {}).get("rows") or [])[:most]:
         value, number = row.get(group.name), row.get(measure) if measure else None
+        moved = row.get(change) if change else None
         out.append((group.attribute, member(value),
                     number if isinstance(number, (int, float)) and not isinstance(number, bool) else None,
-                    {g.attribute: member(row.get(g.name)) for g in groups[1:]}))
+                    {g.attribute: member(row.get(g.name)) for g in groups[1:]},
+                    moved if isinstance(moved, (int, float)) and not isinstance(moved, bool) else None))
     return out
 
 
