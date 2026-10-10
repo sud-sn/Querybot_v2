@@ -11,8 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -146,14 +148,57 @@ def mask_as_discovered(model: SemanticModel, inventory: Inventory | None) -> Non
                 column.values_allowed = False
 
 
+# The model each workspace answers with, kept between questions and dashboard tiles: it was read and parsed
+# again for every one. Kept per workspace and database with its stamp -- the latest version, every admin
+# decision, discovery's file -- and built again when any of them changes. At most ANSWERING_KEPT workspaces.
+ANSWERING_KEPT = 64
+_ANSWERING: OrderedDict[tuple[str, int], tuple[tuple, SemanticModel]] = OrderedDict()
+_ANSWERING_LOCK = threading.Lock()
+
+
+def _answering_stamp(account_id: str, client: dict[str, Any]) -> tuple | None:
+    import store
+
+    made_of = store.core2_model_stamp(account_id, client.get("db_config_id"))
+    if made_of is None:
+        return None
+    path = schema_path(account_id, client)
+    try:
+        found = path.stat()
+        discovery = (found.st_mtime_ns, found.st_size)
+    except OSError:
+        discovery = None
+    # Which store it came from: one process can be pointed at another (a test's own database).
+    where = os.environ.get("QUERYBOT_DB_PATH") or os.environ.get("DB_PATH") or ""
+    return made_of, str(path), discovery, where
+
+
 def answering_model(account_id: str, client: dict[str, Any]) -> SemanticModel | None:
-    """The model questions are answered with: the latest, the admin's decisions, and discovery's masking now."""
+    """The model questions are answered with: the latest, the admin's decisions, and discovery's masking now.
+
+    Shared by every question and tile of the workspace until one of those changes: read it, never change it
+    (a reader's own metric is answered on a copy, core2.plan.own_metric.with_own)."""
+    stamp = _answering_stamp(account_id, client)
+    if stamp is None:
+        return None
+    key = (account_id, int(client.get("db_config_id") or 0))
+    with _ANSWERING_LOCK:
+        kept = _ANSWERING.get(key)
+        if kept is not None and kept[0] == stamp:
+            _ANSWERING.move_to_end(key)
+            return kept[1]
     model = load_model(account_id, client.get("db_config_id"))
     if model is not None:
         try:
             mask_as_discovered(model, discovered(account_id, client))
         except Exception as exc:  # noqa: BLE001 - the masking Learn read still holds
             log.warning("core2: discovery's masking for %s could not be read: %s", account_id, exc)
+            return model          # not kept: the masking is read again for the next question
+        with _ANSWERING_LOCK:
+            _ANSWERING[key] = (stamp, model)
+            _ANSWERING.move_to_end(key)
+            while len(_ANSWERING) > ANSWERING_KEPT:
+                _ANSWERING.popitem(last=False)
     return model
 
 

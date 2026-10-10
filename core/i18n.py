@@ -4143,6 +4143,9 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     # Shown when a status frame carries no stage the page recognises.
     "ui.chat.stage_generic": {"en": "Working on your answer", "fr": "Traitement de votre réponse"},
+    "ui.chat.in_line": {"en": "Your question is in line", "fr": "Votre question est dans la file"},
+    "ui.chat.in_line_detail": {"en": "Other questions are being answered; yours starts as soon as one finishes.",
+                               "fr": "D'autres questions sont en cours ; la vôtre commence dès que l'une se termine."},
     "ui.chat.stage_generic_detail": {
         "en": "Preparing a trusted response.", "fr": "Préparation d'une réponse fiable.",
     },

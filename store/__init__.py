@@ -175,7 +175,7 @@ from store.semantic_compile_store import (
     get_semantic_contract_version,
 )
 from store.core2_store import (
-    save_core2_model, load_core2_model, list_core2_model_versions,
+    save_core2_model, load_core2_model, list_core2_model_versions, core2_model_stamp,
     set_core2_override, delete_core2_override, list_core2_overrides,
     start_core2_build, finish_core2_build, latest_core2_build, add_core2_build_line, core2_runner,
     get_query_engine, set_query_engine, log_core2_answer, get_core2_answer_plan, list_core2_answers, set_core2_import_report,
@@ -314,7 +314,7 @@ __all__ = [
     "get_semantic_compiler_summary","get_semantic_conflict",
     "resolve_semantic_conflict","list_semantic_contract_versions",
     "get_semantic_contract_version",
-    "save_core2_model","load_core2_model","list_core2_model_versions",
+    "save_core2_model","load_core2_model","list_core2_model_versions","core2_model_stamp",
     "set_core2_override","delete_core2_override","list_core2_overrides",
     "start_core2_build","finish_core2_build","latest_core2_build","add_core2_build_line","core2_runner",
     "get_query_engine","set_query_engine","log_core2_answer","get_core2_answer_plan","list_core2_answers","set_core2_import_report",

@@ -23,12 +23,15 @@ preview card, so a preview that will not come is not mistaken for one still comi
 from __future__ import annotations
 
 import asyncio
+import collections
 import concurrent.futures
 import functools
 import json
 import logging
+import os
 import time
 import uuid
+import weakref
 from typing import Any
 
 log = logging.getLogger("querybot.core2")
@@ -37,10 +40,68 @@ TIMEOUT_SECONDS = 120.0
 PREVIEW_BADGE = "New core (preview)"
 MAX_KEPT_FRAME = 2_000_000      # characters of a kept answer; a larger one is reopened from its rows
 
+
+def _threads() -> int:
+    """The new core's answering threads in this process: QUERYBOT_CORE2_THREADS, 16 unless set, 4 to 32."""
+    try:
+        wanted = int(os.environ.get("QUERYBOT_CORE2_THREADS") or 16)
+    except ValueError:
+        log.warning("QUERYBOT_CORE2_THREADS is not a number; the new core answers with 16 threads")
+        wanted = 16
+    return min(max(wanted, 4), 32)
+
+
+THREADS = _threads()
+# One workspace's questions take at most a quarter of the threads at once: a workspace asking many questions
+# together waits in its own line, and never keeps another workspace's question from starting.
+PER_WORKSPACE = max(2, THREADS // 4)
+# How long a question waits in line before the reader is told to ask again. Waiting is not answering: the
+# answering limit (TIMEOUT_SECONDS) starts when a thread takes the question.
+WAIT_LIMIT_SECONDS = 300.0
+
 # The new core's own threads. Today's pipeline runs its warehouse queries on the
-# default pool; a slow AI or warehouse call here ties up these instead. A question
-# that finds them all busy waits within the same time limit, and today's answer stands.
-_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="core2")
+# default pool; a slow AI or warehouse call here ties up these instead.
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=THREADS, thread_name_prefix="core2")
+
+
+class _Line:
+    """The fair line to the new core's threads, in one event loop: a place for each workspace (at most
+    PER_WORKSPACE of its questions at once), then one of the THREADS. Both wake their waiters first come,
+    first served. A place is given back when the thread finishes, not when the reader stops waiting: a
+    question that ran past its time still holds its thread until it returns."""
+
+    def __init__(self) -> None:
+        self.threads = asyncio.Semaphore(THREADS)
+        self.workspaces: collections.defaultdict[str, asyncio.Semaphore] = collections.defaultdict(
+            lambda: asyncio.Semaphore(PER_WORKSPACE))
+
+    def free(self, account_id: str) -> bool:
+        return not self.workspaces[account_id].locked() and not self.threads.locked()
+
+    async def enter(self, account_id: str) -> None:
+        mine = self.workspaces[account_id]
+        await mine.acquire()
+        try:
+            await self.threads.acquire()
+        except BaseException:
+            mine.release()
+            raise
+
+    def leave(self, account_id: str) -> None:
+        self.threads.release()
+        self.workspaces[account_id].release()
+
+
+# A line per event loop: asyncio's semaphores belong to the loop that first waits on them.
+_LINES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _Line] = weakref.WeakKeyDictionary()
+
+
+def _line() -> _Line:
+    loop = asyncio.get_running_loop()
+    line = _LINES.get(loop)
+    if line is None:
+        line = _LINES[loop] = _Line()
+    return line
 
 
 async def engine(account_id: str) -> str:
@@ -73,21 +134,56 @@ def _over_limit(account_id: str, lang: str = "en") -> str:
 
 
 async def _answer(account_id: str, question: str, portal_user: dict | None, session_key: str,
-                  mode: str, question_id: str) -> tuple[str, dict[str, Any] | None]:
-    """How the new core did (answered, replied, unsupported, timeout, failed) and its frame, if any."""
+                  mode: str, question_id: str, *, waiting: Any = None) -> tuple[str, dict[str, Any] | None]:
+    """How the new core did (answered, replied, unsupported, timeout, busy, failed) and its frame, if any.
+
+    The question takes its place in the fair line first; ``waiting`` (a coroutine function) is awaited once
+    when it has to wait, to tell the reader. The answering limit starts when a thread takes it."""
     from core2.service import portal_answer
 
     start = time.perf_counter()
     status, payload = "failed", None
+    line = _line()
+    entered = False
     try:
-        work = functools.partial(portal_answer, account_id, question, portal_user, session_key=session_key,
-                                 question_id=question_id)
-        payload = await asyncio.wait_for(asyncio.get_running_loop().run_in_executor(_POOL, work), TIMEOUT_SECONDS)
+        if line.free(account_id):
+            # Room in both: taken here and now, before any other question looks (no wait, so no task switch).
+            await line.enter(account_id)
+        else:
+            if waiting is not None:
+                try:
+                    await waiting()
+                except Exception as exc:     # noqa: BLE001 - the notice is a courtesy; the question still waits
+                    log.warning("core2 could not tell a reader of %s that their question is in line: %s",
+                                account_id, exc)
+            await asyncio.wait_for(line.enter(account_id), WAIT_LIMIT_SECONDS)
+        entered = True
+        loop = asyncio.get_running_loop()
+        try:
+            work = _POOL.submit(functools.partial(portal_answer, account_id, question, portal_user,
+                                                  session_key=session_key, question_id=question_id))
+        except BaseException:
+            line.leave(account_id)       # no thread took it: its place goes back now
+            raise
+
+        def done(_: concurrent.futures.Future) -> None:
+            try:
+                loop.call_soon_threadsafe(line.leave, account_id)
+            except RuntimeError:     # the loop has closed: its line went with it
+                pass
+
+        work.add_done_callback(done)
+        payload = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(work)), TIMEOUT_SECONDS)
         status = ("unsupported" if payload.get("unsupported") else
                   "answered" if payload.get("data") else "replied")
     except asyncio.TimeoutError:
-        status = "timeout"
-        log.warning("core2 took over %.0fs on a question for %s", TIMEOUT_SECONDS, account_id)
+        if entered:
+            status = "timeout"
+            log.warning("core2 took over %.0fs on a question for %s", TIMEOUT_SECONDS, account_id)
+        else:
+            status = "busy"
+            log.warning("core2 was too busy to start a question for %s within %.0fs", account_id,
+                        WAIT_LIMIT_SECONDS)
     except Exception as exc:     # noqa: BLE001 - logged loudly; today's answer stands
         log.warning("core2 failed on a question for %s: %s", account_id, exc, exc_info=True)
     try:
@@ -305,8 +401,18 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         await _send(adapter, websocket, {"type": "message", "role": "assistant", "content": over})
         return True
     start = time.perf_counter()
+
+    async def in_line() -> None:
+        from core.i18n import t
+
+        lang = str((portal_user or {}).get("lang") or "en")
+        await _send(adapter, websocket, {"type": "status", "stage": "queued",
+                                         "label": t("ui.chat.in_line", lang=lang),
+                                         "detail": t("ui.chat.in_line_detail", lang=lang)})
+
     status, payload = await _answer(account_id, question, portal_user,
-                                    _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id)
+                                    _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id,
+                                    waiting=in_line)
     if payload is None:
         await _send(adapter, websocket, _could_not(question, status, question_id, beside=False))
         return True
@@ -386,6 +492,7 @@ def _not_todays_result(adapter: Any) -> None:
 
 _COULD_NOT = {
     "timeout": "The new core did not answer this within {seconds:.0f} seconds.",
+    "busy": "Too many questions are being answered right now for this one to start.",
     "failed": "The new core stopped with an error on this question; the service log has the details.",
 }
 

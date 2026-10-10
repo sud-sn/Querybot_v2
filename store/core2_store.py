@@ -70,6 +70,26 @@ def list_core2_model_versions(account_id: str, db_config_id: int | None) -> list
     return [{"version": int(r["version"]), "built_at": r["built_at"], "source_hash": r["source_hash"]} for r in rows]
 
 
+def core2_model_stamp(account_id: str, db_config_id: int | None) -> tuple | None:
+    """What the model questions are answered with is made of, cheaply: the latest version (and when it was
+    built) and every admin decision on it. None before the first Learn. Equal stamps, equal models."""
+    import hashlib
+
+    db_id = int(db_config_id or 0)
+    with get_db() as conn:
+        latest = conn.execute("""SELECT version, built_at FROM core2_model WHERE account_id = ? AND db_config_id = ?
+                                 ORDER BY version DESC LIMIT 1""", (account_id, db_id)).fetchone()
+        if not latest:
+            return None
+        decisions = conn.execute("""SELECT object_key, field, value_json FROM core2_override
+                                    WHERE account_id = ? AND db_config_id = ? ORDER BY object_key, field""",
+                                 (account_id, db_id)).fetchall()
+    digest = hashlib.sha256()
+    for row in decisions:
+        digest.update(json.dumps([row["object_key"], row["field"], row["value_json"]]).encode())
+    return int(latest["version"]), str(latest["built_at"] or ""), len(decisions), digest.hexdigest()
+
+
 def set_core2_override(account_id: str, db_config_id: int | None, object_key: str, field: str, value: Any, *,
                        author: str = "admin", note: str = "") -> None:
     with get_db() as conn:
