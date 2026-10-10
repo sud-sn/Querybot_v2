@@ -837,7 +837,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         # insight on the 6 there are), and said apart when it would have led.
         named = [i for i in range(len(raw)) if shown[i][g.name] not in (None, "", "Unknown")]
         # Only a member with something to show leads instead: where every member has nothing ("X leads with 0;
-        # 95,895 has no item group"), the rows with none are the answer, as they were.
+        # 1,200 have no category"), the rows with none are the answer, as they were.
         if not named or not any((_number(raw[i][m.name]) or 0) > 0 for i in named):
             named = list(range(len(raw)))
         best = max(named, key=lambda i: _number(raw[i][m.name]) or float("-inf"))
@@ -953,7 +953,7 @@ def _led_by_period(logical: Logical, period: OutColumn, member: OutColumn, m: Ou
 
 
 def _valued(value: str, column: OutColumn) -> str:
-    """A value beside what it is: "$7.73M gross profit"; "9.5 days from order to invoice", never "days days"."""
+    """A value beside what it is: "$2.40M gross profit"; "9.5 days from order to invoice", never "days days"."""
     label = _lower(column.label)
     if column.format == "days" and label.startswith("days "):
         return f"{value} {label[5:]}"
@@ -1171,7 +1171,7 @@ def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None,
           things: str) -> tuple[list[dict], dict | None, str]:
     """The ``keep`` largest rows (by the first measure, in the order they came in), and the rest added up: one
     "Other (n)" bar when it is no longer than the longest bar drawn, so the chart shows the whole; said under the
-    chart when it is ("the other 230 customers add up to $796.7K, 81% of the total"), where a bar twenty times
+    chart when it is ("the other 180 customers add up to $520.0K, 64% of the total"), where a bar twenty times
     the others would squeeze them to slivers. The table keeps every row."""
     ranked = sorted(range(len(rows)), key=lambda i: -abs(rows[i].get(ys[0]) or 0.0))
     kept, rest = [rows[i] for i in sorted(ranked[:keep])], [rows[i] for i in ranked[keep:]]

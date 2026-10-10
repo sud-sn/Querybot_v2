@@ -7,7 +7,7 @@ card read those rows as a ranking -- "FT leads at 1,250", "1,030 above the next
 result" -- and for units sold went on to "FT holds 91.1% of the total" and "FT
 alone holds 91% of the total — a single point of dependency": 380 feet ahead of
 37 eaches, and a share of a total that adds the two. On the sample tenant the
-total stock on hand was headed "FT leads at 32,402." in both languages.
+total stock on hand was headed "FT leads at 28,640." in both languages.
 
 Each row is a total in its own unit, and none is ahead of another. The card
 lists them by the unit's name and says they are not added together, and the
@@ -108,10 +108,10 @@ class TestTheCard:
 
     def test_three_units_are_listed_and_the_rest_counted(self):
         rows = [{"UNT_OF_MSR": unit, "STOCK_ON_HAND": value}
-                for unit, value in (("ME", 1067.8), ("EA", 13151.0), ("FT", 32402.0), ("BX", 3.0), ("PK", 7.0))]
+                for unit, value in (("ME", 1184.6), ("EA", 11305.0), ("FT", 28640.0), ("BX", 3.0), ("PK", 7.0))]
         card = _card(rows, "What is our total stock on hand?")
         assert card["headline"] == (
-            "Stock On Hand by unit of measure: 32,402 FT, 13,151 EA, 1,067.80 ME and 2 more.")
+            "Stock On Hand by unit of measure: 28,640 FT, 11,305 EA, 1,184.60 ME and 2 more.")
 
     @pytest.mark.parametrize("question,lang,headline", [
         ("What is our month-end stock on hand?", "en", "Month End Stock On Hand by unit of measure: 605 FT and 220 EA."),

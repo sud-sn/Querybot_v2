@@ -275,7 +275,7 @@ def measures_are_semi_additive(measure_fields: list[dict] | None) -> bool:
 
     which resolved to ITM_BAL_PRD_FCT.BAL_VAL_AMT -- a periodic snapshot -- and
     summed it across every month on file. The answer came back at 13,557,410
-    against a true 815,497: sixteen times over, at full confidence, with a
+    against a true 742,318: sixteen times over, at full confidence, with a
     clean bill of health. "stockholding" simply is not "stock" to a word-
     boundary regex, and there was no metric to consult.
 

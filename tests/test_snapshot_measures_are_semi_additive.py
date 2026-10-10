@@ -234,7 +234,7 @@ class TestTheColumnDecidesNotTheWording(unittest.TestCase):
         what is my stockholding value by warehouse
         Halifax Branch Store   13,557,410      High confidence 100/100
 
-    The true figure is 815,497. It summed a periodic snapshot across every
+    The true figure is 742,318. It summed a periodic snapshot across every
     month on file -- sixteen times over -- with no repair retry and nothing in
     the answer suggesting a problem. The identical question phrased "inventory
     value by warehouse" produced correct SQL with a MAX-period filter.

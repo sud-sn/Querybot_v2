@@ -505,7 +505,7 @@ class NarrationShowsTheSamePeriodAsTheTableTests(unittest.TestCase):
     """Periods reach the user through THREE paths, not two.
 
     Live on the sample tenant, 2026-09-02: one answer's KPI headline read
-    "2026-06 closed at $7,439,558.42" while its Key insights, three lines
+    "2026-06 closed at $6,947,211.80" while its Key insights, three lines
     below, read "trended flat 0.7% from 2026-01-01 to 2026-06-01". The table
     and KPI go through the display formatter via column_formats; the sentences
     written ABOUT the series never did.

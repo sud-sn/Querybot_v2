@@ -1,8 +1,8 @@
 """An answer reads cleanly whatever its size: tiles, tables, summaries and charts, on a desk or a phone.
 
 A sweep of answers on an inventory workspace found the figures drawn but hard to read:
-- a stock value of $7,356,042.88 overflowed its tile and was cut off ("$7,356,042.8…");
-- a metric's percent change was formatted as money ("-$99.83") because the column carried the
+- a stock value of $6,284,715.39 overflowed its tile and was cut off ("$7,356,042.8…");
+- a metric's percent change was formatted as money ("-$99.84") because the column carried the
   metric's name and so its currency format;
 - a single row was summarised as a range ("1 record, ranges from ... to ..., avg ...");
 - when the new core handed a question back to today's pipeline the reader was not told why;
@@ -33,31 +33,31 @@ def test_a_long_amount_is_drawn_short_with_the_exact_amount_under_it():
     msg = {"data": {"headers": ["INVENTORY_VALUE", "INVENTORY_VALUE_PRIOR", "INVENTORY_VALUE_CHANGE", "ITEMS"],
                     "column_formats": {"INVENTORY_VALUE": "currency", "INVENTORY_VALUE_PRIOR": "currency",
                                        "INVENTORY_VALUE_CHANGE": "currency", "ITEMS": "number"},
-                    "rows": [{"INVENTORY_VALUE": 7356042.88, "INVENTORY_VALUE_PRIOR": 412500.5,
-                              "INVENTORY_VALUE_CHANGE": -4399219.03, "ITEMS": 1250000}]}}
+                    "rows": [{"INVENTORY_VALUE": 6284715.39, "INVENTORY_VALUE_PRIOR": 412500.5,
+                              "INVENTORY_VALUE_CHANGE": -3906123.94, "ITEMS": 1250000}]}}
     tiles = _tiles(msg)
     assert [(t["value"], t["exact"]) for t in tiles] == [
-        ("$7.36M", "$7,356,042.88"), ("$412,500.50", ""), ("-$4.4M", "-$4,399,219.03"), ("1.25M", "1,250,000")]
+        ("$6.28M", "$6,284,715.39"), ("$412,500.50", ""), ("-$3.91M", "-$3,906,123.94"), ("1.25M", "1,250,000")]
 
 
 def test_a_metrics_percent_change_is_a_percentage_not_its_money():
     from core.response_builder import build_column_formats
 
-    rows = [{"INVENTORY_VALUE": 7356.04, "INVENTORY_VALUE_PRIOR": 4406575.07, "INVENTORY_VALUE_CHANGE": -4399219.03,
-             "INVENTORY_VALUE_PERCENT_CHANGE": -99.83, "MARGIN_PCT": 12.5, "REGION": "East"}]
+    rows = [{"INVENTORY_VALUE": 6284.72, "INVENTORY_VALUE_PRIOR": 3912408.66, "INVENTORY_VALUE_CHANGE": -3906123.94,
+             "INVENTORY_VALUE_PERCENT_CHANGE": -99.84, "MARGIN_PCT": 12.5, "REGION": "East"}]
     formats = build_column_formats(rows, {"metrics": [{"name": "Inventory value", "result_format": "currency",
                                                        "metric_name": "inventory_value"}]})
     assert formats["INVENTORY_VALUE"] == formats["INVENTORY_VALUE_CHANGE"] == "currency"
     assert formats["INVENTORY_VALUE_PERCENT_CHANGE"] == formats["MARGIN_PCT"] == "percentage"
     tile = _tiles({"data": {"headers": ["INVENTORY_VALUE_CHANGE", "INVENTORY_VALUE_PERCENT_CHANGE"],
                             "column_formats": formats, "rows": [rows[0]]}})
-    assert tile[1]["value"] == "-99.83%"
+    assert tile[1]["value"] == "-99.84%"
 
 
 def test_one_row_has_no_range_to_tell():
     from core.response_builder import _listing_summary
 
-    one = [{"WAREHOUSE": "North", "INVENTORY_VALUE": 7356.04}]
+    one = [{"WAREHOUSE": "North", "INVENTORY_VALUE": 6284.72}]
     ctx = {"numeric_cols": ["INVENTORY_VALUE"]}
     assert _listing_summary(one, ctx, {"INVENTORY_VALUE": "currency"}, lambda v, c: f"${v:,.2f}") == ""
     two = one + [{"WAREHOUSE": "South", "INVENTORY_VALUE": 100.0}]
@@ -68,13 +68,13 @@ def test_one_row_of_figures_is_answered_by_its_figure_not_by_a_row_count():
     # The answer the inventory workspace drew: one row, a metric against its earlier value.
     from core.response_builder import build_assistant_response
 
-    rows = [{"INVENTORY_VALUE": 7356042.88, "INVENTORY_VALUE_PRIOR": 4406575.07,
-             "INVENTORY_VALUE_CHANGE": 2949467.81, "INVENTORY_VALUE_PERCENT_CHANGE": 66.93}]
+    rows = [{"INVENTORY_VALUE": 6284715.39, "INVENTORY_VALUE_PRIOR": 3912408.66,
+             "INVENTORY_VALUE_CHANGE": 2372306.73, "INVENTORY_VALUE_PERCENT_CHANGE": 60.64}]
     payload = build_assistant_response(
         question="What is our inventory value compared with the last snapshot?", rows=rows, sql="SELECT 1",
         duration_ms=5, display_context={"metrics": [{"name": "Inventory value", "result_format": "currency",
                                                      "metric_name": "inventory_value"}]})
-    assert payload["answer"]["headline"] == "Inventory Value: $7,356,042.88."
+    assert payload["answer"]["headline"] == "Inventory Value: $6,284,715.39."
     assert payload["insight_summary"] == ""
     assert payload["data"]["column_formats"]["INVENTORY_VALUE_PERCENT_CHANGE"] == "percentage"
 

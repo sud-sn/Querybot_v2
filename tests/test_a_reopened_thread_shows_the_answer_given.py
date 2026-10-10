@@ -37,11 +37,11 @@ from tests.js_lift import function as lift
 
 PLAN = {"intent": "trend", "measures": ["purchased_quantity"], "group_by": [], "time": {"grain": "quarter"}}
 ROWS = [{"quarter": "2026-Q1", "qty": 58000}, {"quarter": "2026-Q2", "qty": 458},
-        {"quarter": "2026-Q3", "qty": 24615}]
+        {"quarter": "2026-Q3", "qty": 21830}]
 CHARTED = {
     "type": "assistant_response", "engine": "core2", "question": "q",
-    "answer": {"headline": "Purchased quantity fell from 58,000 EA in Q1 2026 to 24,615 EA in Q3 2026.",
-               "short_value": "24,615 EA", "comparison": "", "scope_badge": "", "scope_note": "",
+    "answer": {"headline": "Purchased quantity fell from 58,000 EA in Q1 2026 to 21,830 EA in Q3 2026.",
+               "short_value": "21,830 EA", "comparison": "", "scope_badge": "", "scope_note": "",
                "badges": [{"kind": "period", "text": "2026"}]},
     "result_scope": {"badge": "", "note": ""},
     "chart": {"title": "Purchased quantity (EA)", "chart_type": "line", "x_key": "quarter", "y_keys": ["qty"],

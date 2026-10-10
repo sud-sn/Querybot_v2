@@ -81,9 +81,9 @@ def _drawn(payload: dict, expression: str):
     return json.loads(_build("portal_chat.html", "en", payload, f"JSON.stringify({expression})"))
 
 
-SHARED = {"rows": [{"CUSTOMER": "Rideau Valley Trading 20", "REVENUE": 1327838.92, "SHARE": 2.99},
-                   {"CUSTOMER": "Prairie Mechanical 40", "REVENUE": 1320180.5, "SHARE": 2.97},
-                   {"CUSTOMER": "Sunset Coast Hardware 60", "REVENUE": 1319193.44, "SHARE": 2.97}],
+SHARED = {"rows": [{"CUSTOMER": "Rideau Valley Trading 20", "REVENUE": 1286402.75, "SHARE": 2.99},
+                   {"CUSTOMER": "Prairie Mechanical 40", "REVENUE": 1279355.2, "SHARE": 2.97},
+                   {"CUSTOMER": "Sunset Coast Hardware 60", "REVENUE": 1272860.11, "SHARE": 2.97}],
           "x_key": "CUSTOMER", "y_keys": ["REVENUE"], "chart_type": "bar", "share_key": "SHARE",
           "column_formats": {"REVENUE": "currency", "SHARE": "percentage"},
           "column_roles": {"CUSTOMER": {"column": "CUSTOMER", "role": "dimension", "label": "Customer"},
@@ -94,9 +94,9 @@ SHARED = {"rows": [{"CUSTOMER": "Rideau Valley Trading 20", "REVENUE": 1327838.9
 
 
 def test_each_bar_says_its_share_beside_its_value_and_in_its_tooltip():
-    drawn = _drawn(SHARED, "{label: opt.series[0].label.formatter({value: 1327838.92, dataIndex: 0}),"
+    drawn = _drawn(SHARED, "{label: opt.series[0].label.formatter({value: 1286402.75, dataIndex: 0}),"
                            " series: opt.series.length, rich: Object.keys(opt.series[0].label.rich || {}),"
-                           " tip: opt.tooltip.formatter({name: 'Rideau Valley Trading 20', value: 1327838.92,"
+                           " tip: opt.tooltip.formatter({name: 'Rideau Valley Trading 20', value: 1286402.75,"
                            " dataIndex: 0, color: '#2a78d6'})}")
     assert drawn["series"] == 1                            # one measure, one axis
     assert re.fullmatch(r"\{v\|\$1\.3M\}\{s\|  ·  3(\.0)?\s?%\}", drawn["label"]), drawn["label"]
@@ -107,8 +107,8 @@ def test_each_bar_says_its_share_beside_its_value_and_in_its_tooltip():
 def test_on_a_narrow_card_the_share_is_in_the_tooltip_alone():
     # A phone: the bars would be squeezed to make room for the longer label.
     drawn = _drawn(SHARED, "(function () { var o = QBCharts.buildOption(" + json.dumps(SHARED) + ", {width: 340, height: 400});"
-                           " return {label: o.series[0].label.formatter({value: 1327838.92, dataIndex: 0}),"
-                           " tip: o.tooltip.formatter({name: 'x', value: 1327838.92, dataIndex: 0, color: '#2a78d6'})}; })()")
+                           " return {label: o.series[0].label.formatter({value: 1286402.75, dataIndex: 0}),"
+                           " tip: o.tooltip.formatter({name: 'x', value: 1286402.75, dataIndex: 0, color: '#2a78d6'})}; })()")
     assert drawn["label"] == "$1.3M" and "Share of revenue" in drawn["tip"]
 
 
@@ -122,7 +122,7 @@ def test_a_column_says_its_share_under_its_value():
 
 def test_without_a_share_the_label_is_the_value_alone():
     payload = {k: v for k, v in SHARED.items() if k != "share_key"}
-    label = _drawn(payload, "opt.series[0].label.formatter({value: 1327838.92, dataIndex: 0})")
+    label = _drawn(payload, "opt.series[0].label.formatter({value: 1286402.75, dataIndex: 0})")
     assert label == "$1.3M"
 
 

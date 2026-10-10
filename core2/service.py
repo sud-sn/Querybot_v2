@@ -585,7 +585,7 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
                     logical: Any, payload: dict[str, Any]) -> str:
     """One number for a period: how it compares with the period before, from one more small query.
 
-    "Gross profit in Q2 2026: $8.51M" says nothing of whether that is good; the
+    "Gross profit in Q2 2026: $4.20M" says nothing of whether that is good; the
     period before is the first thing a reader checks. Only for a single value of a
     bounded period that is not already a comparison; a failure costs the finding,
     never the answer.

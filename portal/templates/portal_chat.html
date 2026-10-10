@@ -3096,7 +3096,7 @@ function _answerTiles(msg) {
                             note: ''}));
 }
 
-// An amount of a million or more, drawn short in its tile ("$7.36M"); the exact amount goes under it.
+// An amount of a million or more, drawn short in its tile ("$6.28M"); the exact amount goes under it.
 // Empty when the amount is short enough already, or is not an amount.
 function _shortAmount(value, fmt, spec = {}) {
   if (!['currency', 'number', 'integer'].includes(fmt) || value === null || value === undefined || value === '') return '';

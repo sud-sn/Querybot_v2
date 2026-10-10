@@ -3,8 +3,8 @@
 "Revenue, cost of goods sold and gross profit by item group in 2025" was
 headlined with the revenue of the leading group alone: the two other measures
 asked for were in the table only. The leader's other values follow its first:
-"X leads with $20.33M (23% of the total), and $12.61M cost of goods sold and
-$7.73M gross profit, across 5 item groups".
+"X leads with $6.00M (30% of the total), and $3.60M cost of goods sold and
+$2.40M gross profit, across 5 item groups".
 """
 
 from __future__ import annotations

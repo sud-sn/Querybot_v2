@@ -13,7 +13,7 @@ else:
   axis. "stock on hand for the North Depot warehouse" was drawn along the one
   warehouse it was filtered to, as one row of a heatmap.
 * "stock on hand by warehouse" was headed "Returned 19 rows for ...", "units
-  sold last 6 months" -- one row, in no unit -- "Unknown leads at 939,315.50",
+  sold last 6 months" -- one row, in no unit -- "Unknown leads at 812,406.25",
   and a blank unit labelled "Unknown" for the reader was listed as a unit
   called UNKNOWN.
 * "just the top 5" of a breakdown kept the first five rows it was listed in.
@@ -186,9 +186,9 @@ class TestTheHeadline:
         assert " FT" not in _headline(rows, "inventory value by warehouse")
 
     def test_one_units_total_is_not_a_leader(self):
-        rows = [{"UNT_OF_MSR": None, "UNITS_SOLD": 939315.5}]
+        rows = [{"UNT_OF_MSR": None, "UNITS_SOLD": 812406.25}]
 
-        assert _headline(rows, "units sold last 6 months") == "Units Sold by unit of measure: 939,315.50 with no unit."
+        assert _headline(rows, "units sold last 6 months") == "Units Sold by unit of measure: 812,406.25 with no unit."
 
     def test_a_unit_labelled_unknown_is_no_unit(self):
         from core.units_of_measure import unit_of

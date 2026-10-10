@@ -41,7 +41,7 @@ class TestTheServerReadsTheMarkerOnce:
     @pytest.mark.parametrize("text,state", [
         ("❌ Monthly query limit reached (500/500).", "failed"),
         ("  ❓ Which date do you mean?", "needs_input"),
-        ("Net sales were $3.06M, up 4.2% on the previous month.", ""),
+        ("Net sales were $2.84M, up 4.2% on the previous month.", ""),
         ("", ""),
         (None, ""),
     ])
@@ -75,9 +75,9 @@ class TestTheWebChatReceivesIt:
         assert payload["state"] == "needs_input"
 
     def test_an_answer_carries_no_state(self):
-        payload = _sent("Net sales were $3.06M.")
+        payload = _sent("Net sales were $2.84M.")
         assert "state" not in payload
-        assert payload["content"] == "Net sales were $3.06M."
+        assert payload["content"] == "Net sales were $2.84M."
 
 
 def _run_state(msg: dict) -> str:

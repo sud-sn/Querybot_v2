@@ -172,7 +172,7 @@ def test_the_measure_a_ranking_is_ranked_by_leads_it(shop):
 
 
 def test_rows_with_no_member_still_lead_when_no_member_has_anything(shop):
-    """Where every member has nothing ("X leads with 0; 95,895 has no item group"), the rows with none are the
+    """Where every member has nothing ("X leads with 0; 1,200 have no category"), the rows with none are the
     answer, as they were."""
     plan = {"intent": "breakdown", "measures": ["amount"], "group_by": ["product.category"], "time": Y2025,
             "filters": [{"field": "product.name", "op": "in", "values": ["Product 1", "Product 2"]}]}

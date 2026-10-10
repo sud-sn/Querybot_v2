@@ -2,7 +2,7 @@
 
 On a test server, "average delay from requested to confirmed delivery in 2025"
 was answered "1.0 days": right for the Wholesale customers the conversation had
-been about, read as everyone's (whose average is 0.006 days). "5,356 invoice
+been about, read as everyone's (whose average is 0.006 days). "4,812 invoice
 lines in 2025" was right for those invoiced more than 10 days after ordering,
 and read as all of them. The conditions were in the notes only.
 
@@ -19,7 +19,7 @@ offered all carry them, worded as a reader says them:
 * a grouping reached through a named link: "Customer name (Ship to customer)";
 * "why" and forecast answers too.
 
-Counts are shown whole (5,356, never 5,356.00) and days to a tenth.
+Counts are shown whole (4,812, never 4,812.00) and days to a tenth.
 """
 
 from __future__ import annotations
