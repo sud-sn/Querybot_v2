@@ -368,3 +368,93 @@ def test_a_members_own_code_tells_them_apart_though_its_count_was_estimated(shop
         "SELECT t.tag_code, SUM(s.sale_amount) FROM sales s JOIN product_tags pt ON pt.product_id = s.product_id "
         "JOIN tags t ON t.tag_id = pt.tag_id GROUP BY 1").fetchall()}
     assert _rows(payload) == pytest.approx(want)
+
+
+# ── access ────────────────────────────────────────────────────────────────
+
+
+def test_a_reader_without_the_bridge_table_is_refused(shop):
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, ResolveError, resolve
+
+    _, model = shop
+    granted = {t.key for t in model.tables.values() if t.name != "product_tags"}
+    for plan in ({"intent": "breakdown", "measures": ["sale_amount"], "group_by": [_entity(model, "tags")]},
+                 {"intent": "value", "measures": ["sale_amount"],
+                  "filters": [{"field": _attribute(model, "tags", "tag_name"), "op": "eq", "values": ["Vegan"]}]}):
+        with pytest.raises(ResolveError) as refused:
+            resolve(Plan.model_validate(plan), model, Context(today=TODAY, allowed_tables=granted))
+        assert refused.value.kind == "denied", refused.value
+
+
+def test_a_row_rule_on_the_tags_reaches_inside_the_filter_across_the_bridge(tmp_path, monkeypatch):
+    """The governed warehouse narrows every table a query reads, the one inside the EXISTS too: a reader
+    kept to the diet tags asks for sales tagged Organic or Local, and only Organic can match."""
+    import types
+
+    import sqlglot
+
+    import store
+    import store.crypto
+    from core.compliance import governed_query as gq
+    from core.compliance import sql_guard
+    from core.compliance.models import PolicyContext
+    from core.schema import load_known_tables
+    from core2.bootstrap.service import build_workspace, load_model
+    from core2.compile.compiler import compile_query
+    from core2.plan.ir import Plan
+    from core2.resolve.resolver import Context, resolve
+    from core2.warehouse import querybot
+    from core2.warehouse.governed import GovernedWarehouse
+    from tests.test_core2_learned_page_shows_what_was_learned import _Connection, _schema_file
+
+    con = _warehouse()
+    names = [r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()]
+    built = types.SimpleNamespace(con=con, tables={t: t for t in names}, declared_pks={}, declared_fks=[])
+    path = str(tmp_path / "querybot.db")
+    monkeypatch.setenv("QUERYBOT_DB_PATH", path)
+    monkeypatch.setenv("DB_PATH", path)
+    monkeypatch.setattr(store.crypto, "KEY_FILE", tmp_path / ".key")
+    store.init_db()
+    account = "acct-core2-bridge-policy"
+    store.upsert_client(account, "web")
+    store.save_compliance_profile(account, mode="standard")
+    db_id = store.save_db_config("azure_sql", "shop", {"server": "s", "database": "d", "user": "u", "password": "p"})
+    store.update_client_meta(account, db_config_id=db_id)
+    schema_dir = tmp_path / "clients" / account / "schema"
+    store.update_client_state(account, "READY", {"schema_dir": str(schema_dir)})
+    _schema_file(built, schema_dir)
+    monkeypatch.setattr(querybot, "QueryBotWarehouse", lambda db_type, credentials, **kw: _Connection(con))
+    build_workspace(account)
+    store.replace_row_policies(account, 0, [{
+        "name": "diet tags only", "subject_type": "user", "subject_id": "7", "table_fqn": "TAGS",
+        "condition": {"field": "tag_group", "operator": "=", "value": "Diet"}}])
+
+    def run_query(credentials, db_type, sql, max_rows=200):
+        cursor = con.cursor()
+        cursor.execute(sqlglot.transpile(sql, read="tsql", write="duckdb")[0])
+        columns = [d[0] for d in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchmany(max_rows)]
+
+    monkeypatch.setattr(gq, "run_query", run_query)
+    model = load_model(account, db_id)
+    tag = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "tag_name")
+    logical = resolve(Plan.model_validate({"kind": "query", "intent": "value", "measures": ["sale_amount"],
+                                           "filters": [{"field": tag, "op": "in", "values": ["Organic", "Local"]}]}),
+                      model, Context(today=TODAY))
+    compiled = compile_query(logical, model, "tsql")
+    assert "EXISTS" in compiled.sql.upper()
+    governed = GovernedWarehouse(account, {"id": 7, "role": "analyst"}, store.get_db_config(db_id),
+                                 known_tables=load_known_tables(str(schema_dir)))
+    got = float(governed.query(compiled.sql, max_rows=compiled.row_cap).rows[0][0])
+
+    def matching(tags: str) -> float:
+        return float(con.execute(
+            "SELECT SUM(sale_amount) FROM sales s WHERE EXISTS (SELECT 1 FROM product_tags pt JOIN tags t "
+            f"ON t.tag_id = pt.tag_id WHERE pt.product_id = s.product_id AND t.tag_name IN ({tags}))").fetchone()[0])
+
+    assert got == pytest.approx(matching("'Organic'"))
+    assert matching("'Organic'") < matching("'Organic', 'Local'"), "the rule must narrow something here"
+    rewritten, applied = sql_guard.inject_row_policies(compiled.sql, "azure_sql",
+                                                       PolicyContext(account_id=account, user_id="7"))
+    assert applied and "tag_group" in rewritten
