@@ -1,43 +1,55 @@
 {% extends "client_base.html" %}
 {% from "macros.html" import breadcrumb, alert, empty_state %}
 {% from "icons.html" import ic %}
-{% block title %}Users — {{ client.client_name }}{% endblock %}
+{% block title %}People — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
     {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
-    {"label": "Users",     "href": ""},
+    {"label": "People",     "href": ""},
 ]) }}
 {% endblock %}
 {% block content %}
-
+{% set _attest = attestations or {} %}
+{% set _active = users|selectattr("is_active","equalto",1)|list|length %}
+{% set _temp = users|selectattr("is_temp_pw")|selectattr("is_active","equalto",1)|list|length %}
+{% set _cleared = namespace(n=0, soon=0) %}
+{% for u in users %}{% set a = _attest.get(u.id|string) %}{% if a and a.status == "signed" %}{% set _cleared.n = _cleared.n + 1 %}{% if a.renew_soon %}{% set _cleared.soon = _cleared.soon + 1 %}{% endif %}{% endif %}{% endfor %}
+{% set _errors = {
+    "attestation_user_required": "Choose who signed the attestation.",
+    "attestation_scope_required": "Tick at least one kind of personal data the attestation covers.",
+    "attestation_document_type": "The signed document must be a PDF, PNG or JPG file.",
+    "attestation_document_size": "The signed document must be smaller than 5 MB.",
+} %}
 
 <div class="page-header">
   <div class="page-header-body">
-    <h1>User management</h1>
-    <p>Create portal users, assign groups, and manage access for <strong>{{ client.client_name }}</strong>.</p>
+    <h1>People</h1>
+    <p>Who can sign in to <strong>{{ client.client_name }}</strong>, the tables their group may read{% if regulated %},
+      and who is cleared to see people's data as stored{% endif %}.</p>
+  </div>
+  <div class="page-header-actions">
+    <button type="button" class="btn btn-primary" id="addPersonBtn">{{ ic("plus", 15) }} Add person</button>
   </div>
 </div>
 
 {# The workspace's own sign-in link: it fills the workspace in, so a reader
    types only their email and password. #}
 {% set _sign_in_link = request.base_url ~ "portal/login?workspace=" ~ (client.account_id|urlencode) %}
-<div class="card sign-in-link-card">
-  <div class="card-body">
-    <div class="sign-in-link-label">Sign-in link for this workspace</div>
-    <div class="sign-in-link-row">
-      <code class="sign-in-link-code" id="signInLink">{{ _sign_in_link }}</code>
-      <button type="button" class="btn btn-secondary btn-xs" onclick="copySignInLink(this)" title="Copy the sign-in link">
-        {{ ic("copy", 13) }} Copy
-      </button>
-    </div>
-    <p class="form-note">Send it with a new user's temporary password: the workspace is filled in for them.</p>
-  </div>
+<div class="pp-link">
+  <span class="pp-link-label">{{ ic("link", 14) }} Sign-in link</span>
+  <code class="sign-in-link-code" id="signInLink">{{ _sign_in_link }}</code>
+  <button type="button" class="btn btn-secondary btn-xs" onclick="copySignInLink(this)" title="Copy the sign-in link">
+    {{ ic("copy", 13) }} Copy
+  </button>
+  <span class="pp-link-note">Send it with a new person's temporary password: the workspace is filled in for them.</span>
 </div>
 
-{% if error %}{{ alert(message=error, type="error", icon_name="x-circle") }}{% endif %}
-{% if saved and not new_user %}{{ alert(message="Changes saved.", type="success", icon_name="check-circle") }}{% endif %}
+{% if error %}{{ alert(message=_errors.get(error, error), type="error", icon_name="x-circle") }}{% endif %}
+{% if saved == "attestation" %}{{ alert(message="Attestation recorded: their answers show people's data as stored, within what it covers.", type="success", icon_name="check-circle") }}
+{% elif saved == "attestation_revoked" %}{{ alert(message="Attestation revoked: from their next question, people's data is masked again, and answers they were shown before are not shown again as they were.", type="success", icon_name="check-circle") }}
+{% elif saved and not new_user %}{{ alert(message="Changes saved.", type="success", icon_name="check-circle") }}{% endif %}
 
 {# ── Temp-password reveal (one-time) ── #}
 {% if saved and new_user and temp_pw %}
@@ -73,159 +85,151 @@
 </div>
 {% endif %}
 
-{# ── Add user form ── #}
-<div class="card">
-  <div class="card-header"><h2>Add new user</h2></div>
-  <div class="card-body">
-    <form method="post" action="/admin/clients/{{ client.account_id }}/users/create"
-          id="createUserForm" novalidate>
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="cu_name">Full name <span class="text-danger">*</span></label>
-          <input type="text" id="cu_name" name="name" required placeholder="Jane Smith">
-        </div>
-        <div class="form-group">
-          <label for="cu_email">Work email <span class="text-danger">*</span></label>
-          <input type="email" id="cu_email" name="email" required placeholder="jane@company.com">
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="cu_group">Group</label>
-          <select id="cu_group" name="group_id">
-            <option value="">— no group yet —</option>
-            {% for g in groups %}
-            <option value="{{ g.id }}">{{ g.name }}</option>
-            {% endfor %}
-          </select>
-          <p class="form-note">Users with no group have no table access.</p>
-        </div>
-        <div class="form-group">
-          <label for="cu_role">Role</label>
-          <select id="cu_role" name="role">
-            <option value="analyst" selected>Analyst — assigned tables only</option>
-            <option value="admin">Admin — all tables, no restrictions</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="form-divider">
-        <span>Password</span>
-      </div>
-      <div class="info-banner" style="margin-bottom:.75rem">
-        {{ ic("info", 14) }}
-        <div>
-          <strong>Leave blank</strong> — a temporary password is generated; the user chooses their own at first sign-in.<br>
-          <strong>Set a password</strong> — tick the box below to have the user choose their own at first sign-in, so only they know it.
-        </div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="cu_pw">Password <span class="text-muted" style="font-weight:var(--weight-regular)">(optional, min 8 chars)</span></label>
-          <div class="input-reveal-wrap">
-            <input type="password" id="cu_pw" name="password"
-                   placeholder="Leave blank to auto-generate"
-                   autocomplete="new-password" minlength="8"
-                   oninput="validatePwMatch()">
-            <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
-          </div>
-        </div>
-        <div class="form-group">
-          <label for="cu_pw2">Confirm password</label>
-          <div class="input-reveal-wrap">
-            <input type="password" id="cu_pw2" name="confirm_password"
-                   placeholder="Repeat password"
-                   autocomplete="new-password"
-                   oninput="validatePwMatch()">
-            <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw2" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
-          </div>
-          <p class="form-note" id="pwMatchMsg" style="display:none"></p>
-        </div>
-      </div>
-
-      <label class="checkbox-line" for="cu_must_change">
-        <input type="checkbox" id="cu_must_change" name="must_change" value="1" checked>
-        Ask them to choose their own password at first sign-in
-      </label>
-
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary" id="createUserBtn">Create user</button>
-      </div>
-    </form>
-  </div>
+{% if users %}
+{# ── At a glance ── #}
+<div class="pp-stats" role="list">
+  <div class="pp-stat" role="listitem"><span class="pp-stat-n">{{ users|length }}</span><span class="pp-stat-l">People</span></div>
+  <div class="pp-stat" role="listitem"><span class="pp-stat-n">{{ _active }}</span><span class="pp-stat-l">Active</span></div>
+  <div class="pp-stat" role="listitem"><span class="pp-stat-n">{{ _temp }}</span><span class="pp-stat-l">Waiting to choose a password</span></div>
+  {% if regulated %}
+  <div class="pp-stat" role="listitem"><span class="pp-stat-n">{{ _cleared.n }}</span><span class="pp-stat-l">Cleared to see people's data</span></div>
+  <div class="pp-stat{% if _cleared.soon %} pp-stat-warn{% endif %}" role="listitem"><span class="pp-stat-n">{{ _cleared.soon }}</span><span class="pp-stat-l">Clearance to renew within 30 days</span></div>
+  {% endif %}
 </div>
 
-{# ── User list ── #}
-{% if users %}
-<div class="card">
-  <div class="card-header">
-    <h2>Portal users ({{ users|length }})</h2>
-    <span class="text-xs text-muted">{{ users|selectattr("is_active","equalto",1)|list|length }} active</span>
+{# ── Find someone ── #}
+<div class="pp-toolbar" role="search">
+  <label class="pp-search">
+    {{ ic("search", 15) }}
+    <span class="sr-only">Find a person</span>
+    <input type="search" id="ppSearch" placeholder="Find by name or email" autocomplete="off">
+  </label>
+  <div class="pp-filters" role="group" aria-label="Show">
+    <button type="button" class="pp-chip is-on" data-filter="all" aria-pressed="true">Everyone</button>
+    <button type="button" class="pp-chip" data-filter="active" aria-pressed="false">Active</button>
+    <button type="button" class="pp-chip" data-filter="inactive" aria-pressed="false">Inactive</button>
+    <button type="button" class="pp-chip" data-filter="temp" aria-pressed="false">Temporary password</button>
+    {% if regulated %}
+    <button type="button" class="pp-chip" data-filter="cleared" aria-pressed="false">Cleared</button>
+    <button type="button" class="pp-chip" data-filter="not-cleared" aria-pressed="false">Not cleared</button>
+    {% endif %}
   </div>
+  {% if groups %}
+  <label class="pp-group-filter">
+    <span class="sr-only">Group</span>
+    <select id="ppGroup" class="form-input form-input-sm">
+      <option value="">Every group</option>
+      {% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+      <option value="none">No group</option>
+    </select>
+  </label>
+  {% endif %}
+</div>
+
+{# ── Everyone ── #}
+<div class="card pp-card">
   <div class="qb-table-wrap" style="border:none;border-radius:0">
-    <table class="qb-table">
+    <table class="qb-table pp-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Email</th>
+          <th>Person</th>
           <th>Group</th>
           <th>Role</th>
-          <th>Chat</th>
-          <th>Status</th>
+          <th>Sign-in</th>
+          {% if regulated %}<th>People's data</th>{% endif %}
           <th><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="ppRows">
         {% for u in users %}
-        <tr class="{% if not u.is_active %}row-inactive{% endif %}">
-          <td class="font-bold">{{ u.name }}</td>
-          <td class="text-sm text-muted">{{ u.email }}</td>
-          <td>
-            {% if u.group_name %}
-              <span class="badge badge-blue">{{ u.group_name }}</span>
-            {% else %}
-              <span class="text-xs text-muted">no group</span>
-            {% endif %}
+        {% set a = _attest.get(u.id|string) %}
+        {% set _state = (a.status if a else "none") %}
+        <tr class="{% if not u.is_active %}row-inactive{% endif %}"
+            data-name="{{ (u.name or '')|lower }}" data-email="{{ (u.email or '')|lower }}"
+            data-active="{{ 1 if u.is_active else 0 }}" data-temp="{{ 1 if (u.is_temp_pw and u.is_active) else 0 }}"
+            data-group="{{ u.group_id or 'none' }}" data-cleared="{{ 1 if _state == 'signed' else 0 }}">
+          <td data-label="Person">
+            <div class="pp-person">
+              <span class="pp-avatar" aria-hidden="true">{{ ((u.name or u.email or '?')|trim)[:1]|upper }}</span>
+              <span class="pp-who">
+                <span class="pp-name">{{ u.name }}</span>
+                <span class="pp-email">{{ u.email }}</span>
+              </span>
+            </div>
           </td>
-          <td>
+          <td data-label="Group">
+            <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
+                  class="inline-form" data-no-loading>
+              <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()"
+                      aria-label="Group for {{ u.name or u.email }}">
+                <option value="">no group</option>
+                {% for g in groups %}
+                <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+          </td>
+          <td data-label="Role">
             <span class="badge {% if u.role == 'admin' %}badge-amber{% else %}badge-indigo{% endif %}">{{ u.role }}</span>
           </td>
-          <td>
-            {% if u.zoom_user_id %}
-              <span class="text-success text-sm flex-center gap-1">{{ ic("check-circle", 13) }} linked</span>
-            {% elif client.portal_only %}
-              <span class="text-sm text-muted">portal only</span>
-            {% else %}
-              <span class="text-sm text-muted">not yet</span>
-            {% endif %}
-          </td>
-          <td>
+          <td data-label="Sign-in">
             <span class="badge {% if u.is_active %}badge-green{% else %}badge-gray{% endif %}">
               {{ 'Active' if u.is_active else 'Inactive' }}
             </span>
             {% if u.is_temp_pw and u.is_active %}
-              <span class="badge badge-amber" style="margin-left:3px">Temp pw</span>
+              <span class="badge badge-amber">Temp pw</span>
+            {% endif %}
+            {% if u.zoom_user_id %}
+              <span class="pp-sub">{{ ic("check-circle", 12) }} chat linked</span>
+            {% elif not client.portal_only %}
+              <span class="pp-sub">chat not linked yet</span>
             {% endif %}
           </td>
-          <td>
-            <div class="row-actions">
-              {# Group quick-change #}
-              <form method="post"
-                    action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
-                    class="inline-form" data-no-loading>
-                <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()"
-                        aria-label="Group for {{ u.name or u.email }}">
-                  <option value="">no group</option>
-                  {% for g in groups %}
-                  <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>
-                  {% endfor %}
-                </select>
+          {% if regulated %}
+          <td data-label="People's data">
+            {% if _state == "signed" %}
+              <span class="badge {% if a.renew_soon %}badge-amber{% else %}badge-green{% endif %}">
+                {{ ic("lock", 12) }} Cleared</span>
+              <span class="pp-sub">{% if a.expires_at %}until {{ a.expires_at[:10] }}{% if a.renew_soon %} · renew soon{% endif %}{% else %}no end date{% endif %}
+                · {{ "every data class" if a.scope == "*" else a.scope|replace(",", ", ") }}</span>
+              {% if a.document_name %}
+              <a class="pp-sub pp-doc" href="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ a.id }}/document"
+                 title="SHA-256 {{ a.document_sha256 }}">{{ ic("download", 12) }} {{ a.document_name }}</a>
+              {% endif %}
+            {% elif _state == "expired" %}
+              <span class="badge badge-red">Expired</span>
+              <span class="pp-sub">ended {{ a.expires_at[:10] }}: masked</span>
+            {% elif _state == "revoked" %}
+              <span class="badge badge-gray">Revoked</span>
+              <span class="pp-sub">masked</span>
+            {% else %}
+              <span class="badge badge-gray">Not cleared</span>
+              <span class="pp-sub">sees it masked</span>
+            {% endif %}
+            <div class="pp-clear-actions">
+              <button type="button" class="btn btn-ghost btn-xs"
+                      aria-label="{{ 'Renew clearance' if _state in ('signed', 'expired') else 'Record attestation' }} for {{ u.name }}"
+                      data-attest-user="{{ u.id }}" data-user-name="{{ u.name }}" data-user-email="{{ u.email }}">
+                {{ ic("lock", 13) }} {{ 'Renew' if _state in ('signed', 'expired') else 'Record attestation' }}</button>
+              {% if _state == "signed" %}
+              <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation/{{ a.id }}/revoke"
+                    class="inline-form">
+                <input type="hidden" name="back" value="users">
+                <button type="submit" class="btn btn-ghost btn-xs text-danger" aria-label="Revoke clearance for {{ u.name }}"
+                  data-confirm-title="Revoke this attestation?" data-confirm="{{ u.name }} will see people's data masked again from their next question, and answers shown to them before are not shown again as they were." data-confirm-label="Revoke">
+                  {{ ic("x-circle", 13) }} Revoke</button>
               </form>
+              {% endif %}
+            </div>
+          </td>
+          {% endif %}
+          <td class="pp-actions-cell">
+            <div class="row-actions">
               {# Reset password: opens the reset dialog below. The name travels in a
                  data attribute, never inside a script. #}
-              <button type="button" class="btn btn-ghost btn-xs btn-icon qb-tip" data-tip="Reset password" aria-label="Reset password"
+              <button type="button" class="btn btn-ghost btn-xs btn-icon qb-tip" data-tip="Reset password" aria-label="Reset password for {{ u.name }}"
                       data-reset-user="{{ u.id }}" data-user-name="{{ u.name }}" data-user-email="{{ u.email }}">
-                {{ ic("refresh", 13) }}
+                {{ ic("key", 14) }}
               </button>
               {# Toggle active #}
               <form method="post"
@@ -236,7 +240,7 @@
                         data-tip="{{ 'Deactivate' if u.is_active else 'Activate' }}"
                         aria-label="{{ 'Deactivate' if u.is_active else 'Activate' }} {{ u.name }}"
                         style="color:{% if u.is_active %}var(--warning){% else %}var(--success){% endif %}">
-                  {% if u.is_active %}{{ ic("eye-off", 13) }}{% else %}{{ ic("eye", 13) }}{% endif %}
+                  {% if u.is_active %}{{ ic("eye-off", 14) }}{% else %}{{ ic("eye", 14) }}{% endif %}
                 </button>
               </form>
               {# Delete #}
@@ -245,7 +249,7 @@
                     id="del-user-{{ u.id }}">
                 <button type="submit" class="btn btn-ghost btn-xs btn-icon qb-tip text-danger" data-tip="Delete user" aria-label="Delete {{ u.name }}"
                   data-confirm-title="Delete user?" data-confirm="Delete {{ u.name }}? This removes their portal access and any pinned charts." data-confirm-label="Delete user">
-                  {{ ic("trash", 13) }}
+                  {{ ic("trash", 14) }}
                 </button>
               </form>
             </div>
@@ -254,6 +258,7 @@
         {% endfor %}
       </tbody>
     </table>
+    <p class="qb-table-empty" id="ppNone" hidden>No one matches.</p>
   </div>
 </div>
 {% else %}
@@ -261,15 +266,88 @@
   <div class="card-body">
     {{ empty_state(
         icon_name="users",
-        title="No users yet",
-        body="Create your first portal user using the form above."
+        title="No one yet",
+        body="Add the first person who will ask questions in this workspace."
     ) }}
+    <div class="pp-empty-action"><button type="button" class="btn btn-primary" data-open-add>{{ ic("plus", 15) }} Add person</button></div>
   </div>
 </div>
 {% endif %}
 
+{# ── Add a person ── #}
+<dialog id="addDialog" class="pp-dialog pp-dialog-wide" aria-labelledby="addDialogTitle">
+  <form method="post" action="/admin/clients/{{ client.account_id }}/users/create"
+        id="createUserForm" novalidate>
+    <h3 id="addDialogTitle">Add person</h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="cu_name">Full name <span class="text-danger">*</span></label>
+        <input type="text" id="cu_name" name="name" required placeholder="Jane Smith">
+      </div>
+      <div class="form-group">
+        <label for="cu_email">Work email <span class="text-danger">*</span></label>
+        <input type="email" id="cu_email" name="email" required placeholder="jane@company.com">
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="cu_group">Group</label>
+        <select id="cu_group" name="group_id">
+          <option value="">— no group yet —</option>
+          {% for g in groups %}
+          <option value="{{ g.id }}">{{ g.name }}</option>
+          {% endfor %}
+        </select>
+        <p class="form-note">People with no group have no table access.</p>
+      </div>
+      <div class="form-group">
+        <label for="cu_role">Role</label>
+        <select id="cu_role" name="role">
+          <option value="analyst" selected>Analyst — assigned tables only</option>
+          <option value="admin">Admin — all tables, no restrictions</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-divider"><span>Password</span></div>
+    <p class="form-note pp-pw-note"><strong>Leave blank</strong> and a temporary password is made, shown once; they choose their
+      own at first sign-in. <strong>Set one</strong> and tick the box to have them choose their own at first sign-in, so only they know it.</p>
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="cu_pw">Password <span class="text-muted" style="font-weight:var(--weight-regular)">(optional, min 8 chars)</span></label>
+        <div class="input-reveal-wrap">
+          <input type="password" id="cu_pw" name="password"
+                 placeholder="Leave blank to auto-generate"
+                 autocomplete="new-password" minlength="8"
+                 oninput="validatePwMatch()">
+          <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="cu_pw2">Confirm password</label>
+        <div class="input-reveal-wrap">
+          <input type="password" id="cu_pw2" name="confirm_password"
+                 placeholder="Repeat password"
+                 autocomplete="new-password"
+                 oninput="validatePwMatch()">
+          <button type="button" class="input-reveal-btn" data-qb-reveal="cu_pw2" aria-pressed="false" aria-label="Show password">{{ ic("eye", 15) }}</button>
+        </div>
+        <p class="form-note" id="pwMatchMsg" style="display:none"></p>
+      </div>
+    </div>
+    <label class="checkbox-line" for="cu_must_change">
+      <input type="checkbox" id="cu_must_change" name="must_change" value="1" checked>
+      Ask them to choose their own password at first sign-in
+    </label>
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary" id="createUserBtn">Create user</button>
+    </div>
+  </form>
+</dialog>
+
 {# ── Reset dialog ── #}
-<dialog id="resetDialog" class="reset-dialog" aria-labelledby="resetDialogTitle">
+<dialog id="resetDialog" class="pp-dialog reset-dialog" aria-labelledby="resetDialogTitle">
   <form method="post" id="resetDialogForm">
     <h3 id="resetDialogTitle">Reset password</h3>
     <p class="text-sm text-muted" id="resetDialogWho"></p>
@@ -299,164 +377,240 @@
   </form>
 </dialog>
 
+{% if regulated %}
+{# ── Record a signed attestation ── #}
+<dialog id="attestDialog" class="pp-dialog" aria-labelledby="attestDialogTitle">
+  <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation"
+        enctype="multipart/form-data" id="attestForm">
+    <h3 id="attestDialogTitle">Record a signed attestation</h3>
+    <p class="text-sm text-muted" id="attestDialogWho"></p>
+    <input type="hidden" name="portal_user_id" id="attestUser">
+    <input type="hidden" name="back" value="users">
+    <div class="form-group">
+      <label for="at_type">What they signed</label>
+      <select id="at_type" name="attestation_type">
+        <option value="confidentiality">Confidentiality agreement</option>
+        <option value="hipaa_workforce">HIPAA workforce training</option>
+        <option value="access_authorization">Access authorization</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="at_term">Valid for</label>
+      <select id="at_term" name="valid_months">
+        <option value="3">3 months</option>
+        <option value="6">6 months</option>
+        <option value="12" selected>12 months</option>
+        <option value="24">24 months</option>
+        <option value="">No end date</option>
+      </select>
+      <p class="form-note">When it ends they see people's data masked again; the page shows who to renew a month ahead.</p>
+    </div>
+    <fieldset class="pp-scope">
+      <legend>What it covers</legend>
+      <label><input type="radio" name="scope_all" value="1" checked data-scope-all> Every kind of personal data</label>
+      <label><input type="radio" name="scope_all" value="0" data-scope-all> Only these:</label>
+      <div class="pp-scope-list" id="attestScopes" hidden>
+        <label><input type="checkbox" name="scope" value="PII"> Personal details (names, contacts)</label>
+        <label><input type="checkbox" name="scope" value="PHI"> Health information</label>
+        <label><input type="checkbox" name="scope" value="PCI"> Payment card data</label>
+      </div>
+    </fieldset>
+    <div class="form-group">
+      <label for="at_ref">Document reference <span class="text-muted" style="font-weight:var(--weight-regular)">(optional)</span></label>
+      <input id="at_ref" name="document_ref" placeholder="HR system or document store reference">
+    </div>
+    <div class="form-group">
+      <label for="at_doc">Signed document <span class="text-muted" style="font-weight:var(--weight-regular)">(optional: PDF, PNG or JPG, under 5 MB)</span></label>
+      <input type="file" id="at_doc" name="document" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg">
+      <p class="form-note">Kept with the attestation, with its SHA-256, so the copy can be proved unchanged.</p>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary">Record attestation</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
 {# ── Recent account changes ── #}
 {% if events %}
-<div class="card">
-  <div class="card-header"><h2>Recent account changes</h2></div>
+<details class="card pp-fold">
+  <summary class="card-header"><h2>Recent account changes</h2>{{ ic("chevron-down", 16) }}</summary>
   <div class="qb-table-wrap" style="border:none;border-radius:0">
     <table class="qb-table">
       <thead><tr><th>When (UTC)</th><th>User</th><th>Change</th><th>By</th></tr></thead>
       <tbody>
         {% for e in events %}
         <tr>
-          <td class="text-sm text-muted">{{ e.created_at }}</td>
-          <td class="text-sm">{{ e.user_email }}</td>
-          <td class="text-sm">{{ e.action_label }}{% if e.detail %} — {{ e.detail }}{% endif %}</td>
-          <td class="text-sm text-muted">{{ e.actor }}{% if e.actor_ip %} · {{ e.actor_ip }}{% endif %}</td>
+          <td class="text-sm text-muted" data-label="When (UTC)">{{ e.created_at }}</td>
+          <td class="text-sm" data-label="User">{{ e.user_email }}</td>
+          <td class="text-sm" data-label="Change">{{ e.action_label }}{% if e.detail %} — {{ e.detail }}{% endif %}</td>
+          <td class="text-sm text-muted" data-label="By">{{ e.actor }}{% if e.actor_ip %} · {{ e.actor_ip }}{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-</div>
+</details>
 {% endif %}
 
 {# ── How it works ── #}
-<div class="card">
-  <div class="card-header"><h2>How user access works</h2></div>
+<details class="card pp-fold">
+  <summary class="card-header"><h2>How access works</h2>{{ ic("chevron-down", 16) }}</summary>
   <div class="card-body text-sm" style="line-height:1.9">
     {% if client.portal_only %}
-    <strong>1. Create user</strong> — set a password or leave blank to auto-generate a temporary one. Share credentials securely.<br>
-    <strong>2. User logs in</strong> — user goes to <code>/portal/login</code>, enters account ID, email, and password. If a temp password was set, they'll choose a new one first.<br>
-    <strong>3. Assign group</strong> — use the group dropdown above. They immediately inherit that group's table access.<br>
-    <strong>4. Access enforced</strong> — every query and the KB viewer respects their group restrictions.
+    <strong>1. Add a person</strong> — set a password or leave it blank to make a temporary one. Share it securely.<br>
+    <strong>2. They sign in</strong> — at the sign-in link above, with their email and password. With a temporary password they choose their own first.<br>
+    <strong>3. Their group</strong> — sets the tables they may read, from the moment it changes.<br>
+    <strong>4. Access enforced</strong> — every question and the knowledge base keep to their group.
     {% else %}
-    <strong>1. Create user</strong> — temp password shown once. Share it securely.<br>
-    <strong>2. User accesses</strong> — user messages the bot or logs in at <code>/portal/login</code>.<br>
-    <strong>3. Chat identity linked</strong> — clicking the bot's registration link links their chat identity to their portal account.<br>
-    <strong>4. Assign group</strong> — use the group dropdown above to grant table access.<br>
-    <strong>5. Access enforced</strong> — in chat, table restrictions apply to every query; in portal, their dashboard and KB viewer show only allowed tables.
+    <strong>1. Add a person</strong> — the temporary password is shown once. Share it securely.<br>
+    <strong>2. They ask</strong> — in chat, or at the sign-in link above.<br>
+    <strong>3. Chat linked</strong> — the bot's registration link ties their chat identity to their account.<br>
+    <strong>4. Their group</strong> — sets the tables they may read.<br>
+    <strong>5. Access enforced</strong> — in chat and in the portal, every question keeps to their group.
     {% endif %}
+    {% if regulated %}<br><strong>People's data</strong> — names, contact details and health data are shown masked unless
+    the person has a signed attestation recorded here that covers them; each time they see such data as stored,
+    it is written to the compliance log. Revoked or ended, the masking returns from their next question.{% endif %}
   </div>
-</div>
+</details>
 
 <style>
+/* ── Sign-in link strip ── */
+.pp-link { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 1rem; padding: .6rem .85rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.pp-link-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-xs);
+  font-weight: var(--weight-semibold); color: var(--text-secondary); }
+.pp-link-note { font-size: var(--font-xs); color: var(--text-muted); flex-basis: 100%; }
+.sign-in-link-code { font-family: var(--font-mono, monospace); font-size: var(--font-sm); color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); padding: 3px 10px; border-radius: var(--radius-sm);
+  overflow-wrap: anywhere; min-width: 0; }
+/* ── At a glance ── */
+.pp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 1rem; }
+.pp-stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem .9rem;
+  display: flex; flex-direction: column; gap: 2px; }
+.pp-stat-n { font-size: var(--font-xl); font-weight: var(--weight-bold); color: var(--text-strong); line-height: 1.2; }
+.pp-stat-l { font-size: var(--font-xs); color: var(--text-muted); }
+.pp-stat-warn { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+.pp-stat-warn .pp-stat-n { color: var(--warning-strong, var(--warning)); }
+/* ── Toolbar ── */
+.pp-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: .75rem; }
+.pp-search { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 10px; color: var(--text-muted); }
+.pp-search input { border: 0; background: transparent; padding: 8px 0; flex: 1; min-width: 0; color: var(--text);
+  font-size: var(--font-sm); outline: none; }
+.pp-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); }
+.pp-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.pp-chip { border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: 999px;
+  padding: 0 12px; min-height: 32px; font-size: var(--font-xs); cursor: pointer; }
+.pp-chip:hover { border-color: var(--border-strong, var(--text-muted)); }
+.pp-chip.is-on { background: var(--primary); border-color: var(--primary); color: var(--text-inverse); }
+.pp-chip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* ── People ── */
+.pp-card { overflow: hidden; }
+.pp-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pp-avatar { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center;
+  justify-content: center; font-weight: var(--weight-bold); font-size: var(--font-sm);
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface)); color: var(--primary); }
+.pp-who { display: flex; flex-direction: column; min-width: 0; }
+.pp-name { font-weight: var(--weight-semibold); color: var(--text-strong); overflow-wrap: anywhere; }
+.pp-email { font-size: var(--font-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.pp-sub { display: flex; align-items: center; gap: 4px; font-size: var(--font-xs); color: var(--text-muted); margin-top: 3px; }
+.pp-doc { color: var(--primary); text-decoration: none; }
+.pp-doc:hover { text-decoration: underline; }
+.pp-table td { vertical-align: middle; }
+.pp-clear-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; margin-left: -8px; }
+.pp-clear-actions .btn { display: inline-flex; align-items: center; gap: 4px; }
+.pp-table .badge { display: inline-flex; align-items: center; gap: 4px; }
+.pp-actions-cell { width: 1%; white-space: nowrap; }
+.row-inactive { opacity: .55; }
+.row-actions { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; justify-content: flex-end; }
+.row-actions .btn-icon { min-width: 32px; min-height: 32px; }
+.inline-form { display: inline-flex; }
+.select-xs { width: auto; max-width: 180px; }
+.pp-empty-action { display: flex; justify-content: center; margin-top: -1.5rem; padding-bottom: 1rem; }
+/* ── Folded sections ── */
+.pp-fold { margin-top: 1rem; }
+.pp-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
+.pp-fold > summary::-webkit-details-marker { display: none; }
+.pp-fold > summary .qb-icon { color: var(--text-muted); transition: transform .15s ease; }
+.pp-fold[open] > summary .qb-icon { transform: rotate(180deg); }
+/* ── Dialogs ── */
+.pp-dialog { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 460px;
+  width: calc(100% - 32px); max-height: calc(100dvh - 32px); overflow: auto; margin: auto; inset: 0;
+  background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: var(--shadow-lg, 0 12px 32px rgba(0,0,0,.18)); }
+.pp-dialog [id$="DialogWho"] { margin: 0 0 1rem; }
+.pp-dialog-wide { max-width: 640px; }
+.pp-dialog::backdrop { background: color-mix(in srgb, var(--shadow-tint) 45%, transparent); }
+.pp-dialog h3 { margin: 0 0 .35rem; }
+.pp-dialog .form-actions { position: sticky; bottom: -1.25rem; background: inherit; padding: .75rem 0 .25rem; margin-top: .5rem; }
+.pp-scope { border: 0; padding: 0; margin: .25rem 0 .75rem; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
+.pp-scope legend { font-weight: var(--weight-semibold); font-size: var(--font-sm); margin-bottom: 4px; }
+.pp-scope-list { display: flex; flex-direction: column; gap: 6px; padding-left: 1.5rem; }
+.pp-pw-note { margin-bottom: .5rem; }
+.reset-choice { border: 0; padding: 0; margin: .75rem 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
+.checkbox-line { display: flex; align-items: center; gap: 8px; font-size: var(--font-sm); margin-top: .5rem; }
+.form-divider { display: flex; align-items: center; gap: .6rem; margin: 1.1rem 0 .5rem; font-size: var(--font-xs);
+  font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); }
+.form-divider::before, .form-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 /* ── Temp-password banner ── */
-.temp-pw-box {
-  background: color-mix(in srgb, var(--success) 10%, var(--surface));
-  border: 1.5px solid color-mix(in srgb, var(--success) 30%, transparent);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  margin-bottom: 1.25rem;
-}
-.temp-pw-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: .75rem;
-}
+.temp-pw-box { background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  border: 1.5px solid color-mix(in srgb, var(--success) 30%, transparent); border-radius: var(--radius);
+  padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+.temp-pw-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: .75rem; }
 .temp-pw-icon { color: var(--success); margin-top: 1px; }
 .temp-pw-title { font-weight: var(--weight-bold); font-size: var(--font-sm); color: var(--text); }
 .temp-pw-sub { font-size: var(--font-sm); color: var(--text-muted); margin-top: 2px; }
 .temp-pw-body { display: flex; flex-direction: column; gap: .5rem; }
-.sign-in-link-card { margin-bottom: 1rem; }
-.sign-in-link-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-secondary); margin-bottom: 6px; }
-.sign-in-link-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.sign-in-link-code {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-sm);
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  overflow-wrap: anywhere;
+.temp-pw-code-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.temp-pw-code { font-family: var(--font-mono, monospace); font-size: var(--font-xl); font-weight: var(--weight-bold);
+  color: var(--success); letter-spacing: .06em; background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent); padding: 4px 14px; border-radius: var(--radius-sm);
+  overflow-wrap: anywhere; }
+.temp-pw-meta { display: flex; align-items: center; gap: 6px; font-size: var(--font-xs); color: var(--text-muted); flex-wrap: wrap; }
+/* ── Narrow screens: each person a card ── */
+@media (max-width: 760px) {
+  .pp-table thead { display: none; }
+  .pp-table, .pp-table tbody { display: block; width: 100%; }
+  .pp-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px;
+    border-bottom: 1px solid var(--border); padding: .6rem .85rem; }
+  .pp-table tbody tr[hidden] { display: none; }
+  .pp-table tbody td { display: block; border: 0; padding: .3rem 0; min-width: 0; }
+  .pp-table td[data-label="Person"], .pp-table td.pp-actions-cell { grid-column: 1 / -1; }
+  .pp-table td[data-label]:not([data-label="Person"])::before { content: attr(data-label); display: block;
+    font-size: var(--font-xs); color: var(--text-muted); margin-bottom: 2px; }
+  .pp-actions-cell { width: 100%; }
+  .row-actions { justify-content: flex-start; gap: 6px; }
+  .row-actions .btn-icon { min-width: 44px; min-height: 44px; }
+  .pp-chip { min-height: 44px; }
+  .select-xs { max-width: 100%; }
 }
-.temp-pw-code-wrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.temp-pw-code {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-xl);
-  font-weight: var(--weight-bold);
-  color: var(--success);
-  letter-spacing: .06em;
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
-  padding: 4px 14px;
-  border-radius: var(--radius-sm);
-}
-.temp-pw-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--font-xs);
-  color: var(--text-muted);
-  flex-wrap: wrap;
-}
-/* ── Info banner ── */
-.info-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
-  border-radius: var(--radius-sm);
-  padding: .6rem .85rem;
-  font-size: var(--font-sm);
-  color: var(--text);
-  line-height: 1.65;
-}
-.info-banner svg { color: var(--primary); flex-shrink: 0; margin-top: 1px; }
-/* ── Row inactive ── */
-.row-inactive { opacity: .5; }
-/* ── Row actions ── */
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex-wrap: nowrap;
-}
-/* ── Tiny inline select ── */
-.inline-form { display: inline-flex; }
-.select-xs { width: auto; }
-/* ── Form divider ── */
-.form-divider {
-  display: flex;
-  align-items: center;
-  gap: .6rem;
-  margin: 1.1rem 0 .75rem;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  text-transform: uppercase;
-  letter-spacing: .07em;
-  color: var(--text-muted);
-}
-.form-divider::before,.form-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-/* ── badge-indigo ── */
-/* ── Must-change checkbox and the reset dialog ── */
-.checkbox-line { display: flex; align-items: center; gap: 8px; font-size: var(--font-sm); margin-top: .5rem; }
-.reset-dialog { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 440px; width: calc(100% - 32px); background: var(--surface-raised, var(--surface)); color: var(--text); }
-.reset-dialog::backdrop { background: color-mix(in srgb, var(--shadow-tint) 45%, transparent); }
-.reset-dialog h3 { margin: 0 0 .25rem; }
-.reset-choice { border: 0; padding: 0; margin: .75rem 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
 </style>
 
 <script>
-/* The reset dialog: one form, pointed at the user whose button opened it. */
 (function () {
   var accountId = {{ (client.account_id or '')|tojson }};
+
+  function open(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+  }
+  document.addEventListener('click', function (event) {
+    var close = event.target.closest ? event.target.closest('[data-close-dialog]') : null;
+    if (close) { var d = close.closest('dialog'); if (d) d.close(); }
+  });
+
+  /* Add a person. */
+  var addDialog = document.getElementById('addDialog');
+  document.querySelectorAll('#addPersonBtn, [data-open-add]').forEach(function (b) {
+    b.addEventListener('click', function () { open(addDialog); var n = document.getElementById('cu_name'); if (n) n.focus(); });
+  });
+
+  /* The reset dialog: one form, pointed at the user whose button opened it. */
   var dialog = document.getElementById('resetDialog');
   var form = document.getElementById('resetDialogForm');
   var choose = document.getElementById('resetChoose');
-  if (!dialog || !form) return;
   function syncChoice() {
     var chosen = form.querySelector('input[name="mode"]:checked');
     var manual = Boolean(chosen && chosen.value === 'choose');
@@ -464,18 +618,86 @@
     document.getElementById('rd_pw').required = manual;
     document.getElementById('rd_pw2').required = manual;
   }
-  form.addEventListener('change', syncChoice);
-  document.getElementById('resetDialogCancel').addEventListener('click', function () { dialog.close(); });
+  if (dialog && form) {
+    form.addEventListener('change', syncChoice);
+    document.getElementById('resetDialogCancel').addEventListener('click', function () { dialog.close(); });
+  }
+
+  /* Record a signed attestation, for the person whose button opened it. */
+  var attest = document.getElementById('attestDialog');
+  var scopes = document.getElementById('attestScopes');
+  if (attest) {
+    attest.addEventListener('change', function (event) {
+      if (!event.target.hasAttribute('data-scope-all')) return;
+      var some = event.target.value === '0' && event.target.checked;
+      scopes.hidden = !some;
+      if (!some) scopes.querySelectorAll('input').forEach(function (i) { i.checked = false; });
+    });
+    document.getElementById('attestForm').addEventListener('submit', function (event) {
+      var only = attest.querySelector('input[data-scope-all][value="0"]');
+      var first = scopes.querySelector('input');
+      first.setCustomValidity(only.checked && !scopes.querySelector('input:checked')
+        ? 'Tick at least one kind of personal data.' : '');
+      if (!first.checkValidity()) { event.preventDefault(); first.reportValidity(); }
+    });
+    scopes.addEventListener('change', function () { scopes.querySelector('input').setCustomValidity(''); });
+  }
+
   document.addEventListener('click', function (event) {
-    var button = event.target.closest ? event.target.closest('[data-reset-user]') : null;
-    if (!button) return;
-    form.reset();
-    form.action = '/admin/clients/' + encodeURIComponent(accountId) + '/users/' +
-      encodeURIComponent(button.dataset.resetUser) + '/reset-password';
-    document.getElementById('resetDialogWho').textContent =
-      button.dataset.userName + ' · ' + button.dataset.userEmail;
-    syncChoice();
-    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    var reset = event.target.closest ? event.target.closest('[data-reset-user]') : null;
+    if (reset && dialog && form) {
+      form.reset();
+      form.action = '/admin/clients/' + encodeURIComponent(accountId) + '/users/' +
+        encodeURIComponent(reset.dataset.resetUser) + '/reset-password';
+      document.getElementById('resetDialogWho').textContent =
+        reset.dataset.userName + ' · ' + reset.dataset.userEmail;
+      syncChoice();
+      open(dialog);
+      return;
+    }
+    var who = event.target.closest ? event.target.closest('[data-attest-user]') : null;
+    if (who && attest) {
+      document.getElementById('attestForm').reset();
+      scopes.hidden = true;
+      document.getElementById('attestUser').value = who.dataset.attestUser;
+      document.getElementById('attestDialogWho').textContent = who.dataset.userName + ' · ' + who.dataset.userEmail;
+      open(attest);
+    }
+  });
+
+  /* Find someone: by name or email, by sign-in, by clearance, by group. */
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#ppRows tr'));
+  var search = document.getElementById('ppSearch');
+  var group = document.getElementById('ppGroup');
+  var none = document.getElementById('ppNone');
+  var filter = 'all';
+  function apply() {
+    var words = (search ? search.value : '').trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (row) {
+      var d = row.dataset;
+      var ok = (!words || d.name.indexOf(words) >= 0 || d.email.indexOf(words) >= 0)
+        && (!group || !group.value || d.group === group.value)
+        && (filter === 'all' || (filter === 'active' && d.active === '1') || (filter === 'inactive' && d.active === '0')
+            || (filter === 'temp' && d.temp === '1') || (filter === 'cleared' && d.cleared === '1')
+            || (filter === 'not-cleared' && d.cleared === '0'));
+      row.hidden = !ok;
+      if (ok) shown += 1;
+    });
+    if (none) none.hidden = shown > 0;
+  }
+  if (search) search.addEventListener('input', apply);
+  if (group) group.addEventListener('change', apply);
+  document.querySelectorAll('.pp-chip').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      filter = chip.dataset.filter;
+      document.querySelectorAll('.pp-chip').forEach(function (c) {
+        var on = c === chip;
+        c.classList.toggle('is-on', on);
+        c.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      apply();
+    });
   });
 })();
 
@@ -499,8 +721,6 @@ function validatePwMatch() {
   }
 }
 
-/* Password reveal toggle */
-/* Copy temp password */
 function copySignInLink(btn) {
   var text = document.getElementById('signInLink').textContent.trim();
   navigator.clipboard.writeText(text).then(function() {
