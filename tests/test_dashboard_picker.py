@@ -164,7 +164,11 @@ const I18N = {json.dumps(i18n.catalogue_for(lang))};
 // The shell's own enum label, lifted as qbFold is, reading the same catalogue.
 {_function(SHELL, "window.qbEnumLabel = function (group, value)")}
 window.QB_I18N = I18N;
+window.QB_LANG = {json.dumps(lang)};
 const enumLabel = window.qbEnumLabel;
+// The shell's own message and plural helpers, lifted the same way: the list counts its tiles through them.
+{_function(SHELL, "window.qbT = function (id, vars)")}
+{_function(SHELL, "window.qbPlural = function (stem, count, vars)")}
 
 {_const_block(tmpl, "_PIN_ERRORS")}
 
@@ -439,9 +443,14 @@ class TestTheDashboardList:
         assert "Pharmacy performance" in html
         assert "4 visuals" in html and "1 visual" in html      # singular/plural
 
-    def test_it_shows_the_status_and_visibility_the_api_already_returns(self):
+    def test_it_counts_the_tiles_and_says_which_the_workspace_sees_never_a_draft(self):
+        """A dashboard is live as soon as it changes: "draft" and "published" no longer mean anything, and the
+        words were English on a French page."""
         html = _run("renderDashboardPickerOptions('');", items=DASHBOARDS)["nodes"]["dashboardPickerList"]["html"]
-        assert "published" in html and "team" in html
+        assert "4 visuals · Shared with the workspace" in html and "1 visual<" in html
+        assert not any(word in html for word in ("draft", "published", "personal"))
+        french = _run("renderDashboardPickerOptions('');", items=DASHBOARDS, lang="fr")["nodes"]["dashboardPickerList"]["html"]
+        assert "4 visuels · Partagé avec l" in french and "espace de travail<" in french and "1 visuel<" in french
 
     def test_search_matches_the_description_too(self):
         """Two dashboards can share a name; the name alone gave the user no way

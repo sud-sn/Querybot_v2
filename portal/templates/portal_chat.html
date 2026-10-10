@@ -1254,7 +1254,9 @@ function renderDashboardPickerOptions(query = ''){
     const id = Number(item.id);
     const selected = id === _dashboardPickerSelected;
     const count = Number(item.chart_count || 0);
-    const meta = `${count} visual${count === 1 ? '' : 's'} · ${String(item.status || 'draft')} · ${String(item.visibility || 'personal')}`;
+    // How many tiles, and whether the workspace sees it; never "draft": a dashboard is live as soon as it changes.
+    const meta = window.qbPlural('ui.dash.visuals', count)
+      + (String(item.visibility || '') === 'team' ? ` · ${t('ui.dash.shared_with_workspace')}` : '');
     // The API already returns the description; showing it is what lets a user
     // tell two same-named dashboards apart.
     const desc = String(item.description || '').trim();
