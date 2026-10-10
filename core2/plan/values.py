@@ -167,7 +167,6 @@ class MemberIndex:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
 
-
     def quoted(self, question: str) -> list[ValueMatch]:
         """The member names the reader put in quotes ("North", “North”, « Nord », 'North'): the only words of
         a question that may narrow its answer to a member. Ordinary words that happen to be a member's name
@@ -224,9 +223,8 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch]) -> list[V
     was filtered on a profit centre called "lowest". By place ("the first one", "the second
     warehouse", "the last one"), by value ("the lowest one", "the highest one"), or as the one member
     the answer showed ("that one") or of a field it showed ("that division", in whichever of its
-    groupings). Only where
-    the words name a row ("one", or the field's own noun, never "the first quarter"), and never over
-    a member the question names itself.
+    groupings). Only where the words name a row ("one", or the field's own noun, never "the first
+    quarter" or "this year"), and never over a member the question names itself.
     """
     if not shown:
         return []
