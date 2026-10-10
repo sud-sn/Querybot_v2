@@ -135,11 +135,12 @@ class MemberIndex:
         """
         return next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
 
-    def match(self, question: str) -> list[ValueMatch]:
+    def match(self, question: str, *, explicit: bool = False) -> list[ValueMatch]:
         """Whole member names written in the question, longest first, never overlapping.
 
         A member that is also an everyday word is matched only where the question writes it exactly as
-        stored, in a question that is not all capitals (where case says nothing).
+        stored, in a question that is not all capitals (where case says nothing); ``explicit``: the text is
+        one the reader put in quotes, so it names a member however it is written.
         """
         words = _tokens(question)
         found: list[ValueMatch] = []
@@ -154,10 +155,10 @@ class MemberIndex:
                 if key.isdigit() and len(key) < 3:
                     continue   # "top 5" is not member "5"
                 entries = self._entries(key)
-                if key in COMMON_WORDS:
+                if key in COMMON_WORDS and not explicit:
                     written = question[start:end]
                     entries = [e for e in entries if cased and e[1] == written]
-                if PERIOD_WORD.match(key):
+                if PERIOD_WORD.match(key) and not explicit:
                     before = {normalise(w) for w, _, _ in words[max(0, i - 2):i]}
                     entries = [e for e in entries if before & _field_words(e[0])]
                 for attribute, value in entries:
@@ -165,6 +166,32 @@ class MemberIndex:
                 if entries:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
+
+
+    def quoted(self, question: str) -> list[ValueMatch]:
+        """The member names the reader put in quotes ("North", “North”, « Nord », 'North'): the only words of
+        a question that may narrow its answer to a member. Ordinary words that happen to be a member's name
+        ("stock", "open", "available") are never read as one."""
+        found: list[ValueMatch] = []
+        for start, end in quoted_spans(question):
+            for m in self.match(question[start:end], explicit=True):
+                found.append(replace(m, start=m.start + start, end=m.end + start))
+        return sorted(found, key=lambda m: (m.start, m.attribute))
+
+
+# Text in quotes: straight or curly double quotes, guillemets, or single quotes around words (never an
+# apostrophe inside one: "customer's", "3' pipe").
+_QUOTED = re.compile(r""""([^"\n]+)"|“([^”\n]+)”|«\s*([^»\n]+?)\s*»|(?<![\w])'([^'\n]+)'(?![\w])""")
+
+
+def quoted_spans(question: str) -> list[tuple[int, int]]:
+    """Where the question puts text in quotes: (start, end) of the text inside them."""
+    out = []
+    for m in _QUOTED.finditer(question or ""):
+        group = next(i for i in range(1, 5) if m.group(i) is not None)
+        if m.group(group).strip():
+            out.append((m.start(group), m.end(group)))
+    return out
 
 
 def _field_words(attribute: str) -> set[str]:

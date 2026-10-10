@@ -265,7 +265,7 @@ def _learn_and_ask(store, built, schema_dir, monkeypatch):
     seen = _prompts(monkeypatch)
     model = _model(store)
     member = _a_member(built, model)
-    service.portal_answer(ACCOUNT, f"net sales for {member}", {"id": 1, "role": "admin"}, session_key="v")
+    service.portal_answer(ACCOUNT, f'net sales for "{member}"', {"id": 1, "role": "admin"}, session_key="v")
     return model, member, seen
 
 
@@ -302,7 +302,7 @@ def test_value_indexing_turned_off_after_learn_stops_the_names_at_the_next_quest
     store.update_client_state(ACCOUNT, "READY", {**state, "value_index_enabled": False})
     seen = _prompts(monkeypatch)
     member = _a_member(built, _model(store))
-    service.portal_answer(ACCOUNT, f"net sales for {member}", {"id": 1, "role": "admin"}, session_key="w")
+    service.portal_answer(ACCOUNT, f'net sales for "{member}"', {"id": 1, "role": "admin"}, session_key="w")
     assert seen and MATCHES not in seen[0] and seen[0].count(member) == 1
 
 

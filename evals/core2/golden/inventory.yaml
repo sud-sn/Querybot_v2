@@ -392,7 +392,7 @@ questions:
     expect: {order_matters: false}
 
   - id: inventory-020
-    question: "stock on hand for #10 Hex Bolt by warehouse"
+    question: "stock on hand for \"#10 Hex Bolt\" by warehouse"
     tags: [breakdown, snapshot, C3]
     plan:
       intent: breakdown
@@ -414,7 +414,7 @@ questions:
     expect: {order_matters: false}
 
   - id: inventory-021
-    question: "quantity received from O'Brien Fittings in 2025"
+    question: "quantity received from \"O'Brien Fittings\" in 2025"
     tags: [value, C3]
     plan:
       intent: value
@@ -452,7 +452,7 @@ questions:
     expect: {order_matters: false}
 
   - id: inventory-023
-    question: "stock on hand at Monthly Overflow Store by item group"
+    question: "stock on hand at \"Monthly Overflow Store\" by item group"
     tags: [breakdown, snapshot, C2]
     plan:
       intent: breakdown

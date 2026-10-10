@@ -143,10 +143,10 @@ def test_a_member_written_in_another_case_is_the_stored_one(retail):
     assert stored == "Wholesale"
     plan = {"kind": "query", "intent": "value", "measures": ["net_amount"],
             "filters": [{"field": "customer.segment", "op": "eq", "values": ["wholesale"]}]}
-    (frame,), watched = _conversation(retail, ("net sales for wholesale customers", plan))
+    (frame,), watched = _conversation(retail, ('net sales for "wholesale" customers', plan))
     assert frame["data"]["rows"] and "'Wholesale'" in watched.ran[-1] and "'wholesale'" not in watched.ran[-1]
     # Excluding a member there is none of changes nothing, and is not refused.
-    (kept,), _ = _conversation(retail, ("net sales except the mail order segment", {
+    (kept,), _ = _conversation(retail, ('net sales except the "mail order" segment', {
         **plan, "filters": [{"field": "customer.segment", "op": "ne", "values": ["Mail order"]}]}))
     assert kept["data"]["rows"]
 
@@ -156,7 +156,7 @@ def test_an_empty_answer_is_not_blamed_on_a_member_only_excluded(retail):
     plan = {"kind": "query", "intent": "value", "measures": ["net_amount"],
             "time": {"window": {"kind": "between", "start": "2030-01-01", "end": "2030-12-31"}},
             "filters": [{"field": "customer.segment", "op": "ne", "values": ["Mail order"]}]}
-    (frame,), _ = _conversation(retail, ("net sales in 2030 except the mail order segment", plan))
+    (frame,), _ = _conversation(retail, ('net sales in 2030 except the "mail order" segment', plan))
     # Not blamed on the member left out; the sentence names it as the condition it is.
     assert "could not find" not in frame["answer"]["headline"] and "no segment called" not in frame["answer"]["headline"]
     assert "excluding segment Mail order" in frame["answer"]["headline"]

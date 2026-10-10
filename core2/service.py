@@ -37,7 +37,7 @@ from core2.model.schema import Attribute, DateRole, Entity, Measure, SemanticMod
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, plan_question
-from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable, placed
+from core2.plan.values import Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed, quoted_spans
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 
@@ -335,6 +335,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         question, forced = NEW_PREFIX.sub("", question, count=1).strip(), "new"
     last = session.turns[-1] if session.turns else None
     following = False
+    matches: list[ValueMatch] = []
     picked = choose(question, pending.options) if pending is not None else None
     if pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
@@ -348,7 +349,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
             update = {"via": {**pending.plan.via, pending.field: picked}}
         outcome = Outcome(pending.plan.model_copy(update={**update, "follow_up": "refine"}), masked=pending.masked)
     else:
-        found = _visible(services.index.match(question), model, services.allowed_tables)
+        # Only a name the reader put in quotes is a member: ordinary words never narrow the answer. Every
+        # name written, quoted or not, is still withheld from the AI where member values may not reach it.
+        found = _visible(services.index.quoted(question), model, services.allowed_tables)
+        hidden = [] if services.values_allowed else _visible(services.index.match(question), model,
+                                                             services.allowed_tables)
         reading = Reading(forced, "the reader said so") if forced else _read(question, last, model, found)
         if reading.kind == "unsure" and last is not None and last.plan is not None:
             session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
@@ -361,7 +366,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # A new question is planned on its own: nothing of the answer before it can leak in.
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
-                                values_allowed=services.values_allowed, scrub=services.scrub,
+                                values_allowed=services.values_allowed, scrub=services.scrub, hidden=hidden,
                                 reading=reading.kind if reading.kind in ("refine", "new") else None)
         if outcome.plan.kind == "query" and outcome.plan.follow_up == "unsure":
             if last is not None and last.plan is not None and last.plan.kind == "query":
@@ -390,6 +395,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                               "stopped": " ".join(outcome.problems)}
         return asked
 
+    plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     plan, missing = _members_named(plan, model, services.index)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
@@ -440,6 +446,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
+    if unquoted:
+        _say_unquoted(payload, question, unquoted)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
     if following and plan.follow_up == "refine" and last is not None:
@@ -607,6 +615,86 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tupl
             values.append(value if stored is None else stored)
         filters.append(f.model_copy(update={"values": values}))
     return plan.model_copy(update={"filters": filters}), missing
+
+
+def _grounded(matches: list[ValueMatch], session: Session) -> set[str]:
+    """Member values a filter may name: those the reader quoted or pointed at on screen ("the first one"), those
+    the answers before already filtered on (a follow-up keeps them), and those a question back offered."""
+    values = {normalise(str(m.value)) for m in matches}
+    for turn in session.turns[-HISTORY:]:
+        if turn.plan is None:
+            continue
+        for f in turn.plan.filters:
+            values |= {normalise(v) for v in f.values if isinstance(v, str)}
+        if turn.plan.clarify is not None:
+            values |= {normalise(o) for o in turn.plan.clarify.options}
+    return values
+
+
+def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: set[str],
+                    index: MemberIndex) -> tuple[Plan, list[tuple[str, str]]]:
+    """The plan without any filter whose member is a word of the question the reader did not quote, and what
+    was left out.
+
+    "How much stock is available?" was filtered on a stock status called AVAILABLE, and "open orders by
+    month" on an order status OPEN: words of the question matched a member and became a WHERE condition.
+    A member the question writes narrows the answer only when the reader put it in quotes ("OEM",
+    “North”), pointed at it on screen, or a previous answer of the conversation already filtered on it. A
+    code the AI chose for what the question means, not one of its words ("units received" -> movement
+    type RCV), still filters, and the answer names it. A number or a flag (cancelled = 1) is no name. A name
+    the data does not have is kept too: the AI made it up ("those same customers", whose names it was never
+    given), and the answer says there is none and asks which one the reader means, never a total for all.
+    """
+    said = [normalise(question[a:b]) for a, b in quoted_spans(question)]
+    words = {w for w in re.findall(r"[\w#&'.+-]+", normalise(question)) if len(w) >= 3 or w.isdigit()}
+
+    def written(value: str) -> bool:
+        """Is the value one of the question's own words (or made of them)?"""
+        own = [w for w in re.findall(r"[\w#&'.+-]+", normalise(value)) if len(w) >= 3 or w.isdigit()]
+        return any(w in words for w in own)
+
+    def quoted(value: str) -> bool:
+        v = normalise(value)
+        if _REFERENCE.match(value):
+            return True      # "lowest", "that division": no name at all; the reader is asked which one they mean
+        return v in grounded or any(v == q or (len(q) >= 3 and (q in v or v in q)) for q in said)
+
+    filters, dropped = [], []
+    for f in plan.filters:
+        found = find_slug(model, f.field) if f.op in ("eq", "in", "ne", "not_in") else None
+        if found is None or not isinstance(found[1], (Attribute, Entity)):
+            filters.append(f)
+            continue
+        thing = found[1].business_name.lower()
+        attribute = found[1] if isinstance(found[1], Attribute) else next(
+            (a for a in model.attributes.values()
+             if a.column == (found[1].label_column or found[1].code_column)), None)
+        read = attribute is not None and attribute.slug in index.attributes
+
+        def unknown(value: str) -> bool:      # a member the data does not have: said, never answered for all
+            return read and index.stored(attribute.slug, value) is None   # type: ignore[union-attr]
+
+        kept = [v for v in f.values if not isinstance(v, str) or quoted(v) or unknown(v) or not written(v)]
+        dropped += [(thing, v) for v in f.values if v not in kept]
+        if kept:
+            filters.append(f.model_copy(update={"values": kept}))
+    if not dropped:
+        return plan, []
+    return plan.model_copy(update={"filters": filters}), dropped
+
+
+def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]]) -> None:
+    """Said on the answer: which names did not narrow it, and the question again with them in quotes."""
+    notes = payload.setdefault("trust", {}).setdefault("date_context", [])
+    chips = []
+    for thing, value in dropped:
+        notes.append(f'Not narrowed to {thing} "{value}": a name narrows the answer only when it is in quotes.')
+        at = question.lower().find(str(value).lower())
+        if at >= 0:
+            again = f'{question[:at]}"{question[at:at + len(value)]}"{question[at + len(value):]}'
+            chips.append({"label": f'Only "{value}"', "question": again})
+    if chips:
+        payload["follow_up_suggestions"] = (chips + list(payload.get("follow_up_suggestions") or []))[:4]
 
 
 def _visible(matches: list[ValueMatch], model: SemanticModel, allowed: set[str] | None) -> list[ValueMatch]:

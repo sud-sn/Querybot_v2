@@ -151,11 +151,11 @@ def test_words_that_point_at_a_row_are_never_refused_as_a_missing_name(retail):
                            index=index)
     said = then["answer"]["headline"]
     assert re.search(r'I could not tell which store( name)? "lowest" means', said) and "called" not in said, said
-    _, then, _ = _converse(retail, "net sales for nowhere", filtered_on="Nowhere Store", index=index)
+    _, then, _ = _converse(retail, 'net sales for "nowhere"', filtered_on="Nowhere Store", index=index)
     said = then["answer"]["headline"]
     assert re.search(r'there is no store( name)? called "Nowhere Store"', said) and "the first one" in said, said
     # A name that only starts like a pointing word is a name: "Top Value Stores" is no "top one".
-    _, then, _ = _converse(retail, "net sales for top value", filtered_on="Top Value Stores", index=index)
+    _, then, _ = _converse(retail, 'net sales for "top value"', filtered_on="Top Value Stores", index=index)
     assert re.search(r'there is no store( name)? called "Top Value Stores"', then["answer"]["headline"]), \
         then["answer"]["headline"]
     assert "compare that answer with the other period" not in said

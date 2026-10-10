@@ -65,8 +65,9 @@ _GROUPED = re.compile(r"\b(?:by|per|each|every|for each|across)\s+\w+", re.IGNOR
 _CONDITION = re.compile(r"\b(?:(?:less|more|fewer|greater|lower|higher)\s+than|at least|at most|over|under)\s+\$?\d",
                         re.IGNORECASE)
 # "net sales for nowhere": a name the member index does not know is still a scope the question sets.
-_NAMES_ONE = re.compile(r"\b(?:for|at|from|in)\s+(?!(?:the|a|an|each|every|all|total|this|our|my|it|them)\b)[a-z]\w*",
-                        re.IGNORECASE)
+# "for North", "for \"North\"": a name the reader writes, in quotes or not.
+_NAMES_ONE = re.compile(r"\b(?:for|at|from|in)\s+[\"\u201c\u00ab']?\s*"
+                        r"(?!(?:the|a|an|each|every|all|total|this|our|my|it|them)\b)[a-z]\w*", re.IGNORECASE)
 _WHICH = re.compile(r"^\s*(?:which|what)\s+(\w+(?:\s+\w+)?)", re.IGNORECASE)
 _GENERIC_TAIL = {"amount", "amt", "quantity", "qty", "value", "val", "count", "cnt", "number", "total",
                  # units a learned name keeps and people leave out: "utilization pct", "data usage gb"

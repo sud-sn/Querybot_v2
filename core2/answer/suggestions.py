@@ -38,11 +38,12 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
     measures = [m for m in logical.measures]
     if not measures or logical.intent == "list":
         return []
-    # The conditions the answer applied go into every next question, so a click never widens it
+    # The conditions the answer applied go into every next question, so a click never widens it; members in
+    # quotes, since a name narrows an answer only when the question quotes it
     # ("... by month in 2025, where days from order to invoice is above 10 days").
     before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
     by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
-    rest = ", ".join(w for w in (condition_words(c) for c in logical.conditions
+    rest = ", ".join(w for w in (condition_words(c, quoted=True) for c in logical.conditions
                                  if c.kind not in ("activity", "by")) if w)
     tail = f", {rest}" if rest else ""
     m = measures[0].label + (f" {before}" if before else "")
@@ -73,7 +74,7 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
         top = next((str(r.get(grouped[0].name)) for r in rows
                     if r.get(grouped[0].name) not in (None, "", "Unknown")), "")
         if top:
-            out.append(f"Monthly {lower} for {top}{tail}")
+            out.append(f'Monthly {lower} for "{top}"{tail}')
         if bounded and logical.compare is None:
             out.append(f"Why did {lower} change {span}{tail}?")
         if not logical.share and logical.compare is None and logical.measures and adds_up(logical.measures[0]):
@@ -111,7 +112,7 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
         return None
     before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
     by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
-    rest = ", ".join(w for w in (condition_words(c) for c in logical.conditions
+    rest = ", ".join(w for w in (condition_words(c, quoted=True) for c in logical.conditions
                                  if c.kind not in ("activity", "by")) if w)
     tail = f", {rest}" if rest else ""
     m = logical.measures[0].label + (f" {before}" if before else "")
@@ -128,7 +129,7 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
     items: list[dict[str, str]] = []
     if period is not None:
         member = "{member} " if grouped else ""
-        for_member = " for {member}" if grouped else ""
+        for_member = ' for "{member}"' if grouped else ""
         if word:
             items.append({"label": f"{{member}} in {{period}} by {word}" if grouped else f"{{period}} by {word}",
                           "question": f"{m}{for_member} by {word} in {{period}}{tail}"})
@@ -141,9 +142,11 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
     if measure_dates(plan, model)[0] is not None:
         when = span if long_window else "for the last 12 months"
         items.append({"label": "{member} by month",
-                      "question": f"{m} by month for {{member}} {when}".strip() + tail})
+                      "question": f'{m} by month for "{{member}}" {when}'.strip() + tail})
     if word:
-        items.append({"label": f"{{member}} by {word}", "question": f"{m} for {{member}} by {word} {span}".strip() + tail})
+        items.append({"label": f"{{member}} by {word}",
+                      "question": f'{m} for "{{member}}" by {word} {span}'.strip() + tail})
     if bounded and logical.compare is None:
-        items.append({"label": "Why {member} changed", "question": f"Why did {lower} change for {{member}} {span}{tail}?"})
+        items.append({"label": "Why {member} changed",
+                      "question": f'Why did {lower} change for "{{member}}" {span}{tail}?'})
     return {"on": "member", "series": "", "items": items} if items else None

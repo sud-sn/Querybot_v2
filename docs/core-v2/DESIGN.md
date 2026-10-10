@@ -474,6 +474,21 @@ time with a bounded `LIKE` query (a tool the planner may call once). For
 regulated tenants matched values are replaced by placeholders before the
 prompt and substituted back after planning: the AI never sees a member value.
 
+**A name narrows the answer only in quotes.** Ordinary words of a question
+matched members and became filters ("available stock" on a stock status
+AVAILABLE, "open orders" on an order status OPEN). Only text the reader puts in
+quotes (`"North"`, `“North”`, `« Nord »`, `'North'`) is matched and offered to
+the AI as a member; the members of the answer on screen ("the first one") and
+the filters of the conversation's earlier answers stay available. After
+planning, a filter whose member is one of the question's own unquoted words is
+taken out, the answer says so, and its first chip is the same question with the
+name in quotes. A code the AI chose for what the question means, not one of its
+words ("units received" -> movement type `RCV`), a number, a flag, a pointing
+word ("the lowest one") and a name the data does not have (said, never answered
+for all) are kept. For regulated tenants every name the question writes,
+quoted or not, is still replaced by a placeholder. Questions the product writes
+(chips, the drill menu) put their members in quotes.
+
 ### 7.4 Checks (before anything runs)
 Every slug exists; measures are measures and attributes are attributes; filter
 values exist (exact or a single normalised match, else ask with the closest

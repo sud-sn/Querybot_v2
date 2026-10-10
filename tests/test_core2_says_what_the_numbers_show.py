@@ -46,7 +46,9 @@ def _ask(model, con, plan: dict, **kw) -> tuple[dict, DuckDBWarehouse]:
     warehouse = DuckDBWarehouse(con)
     services = Services(model=model, warehouse=warehouse, complete=_AI({"kind": "query", **plan}),
                         index=MemberIndex(), today=TODAY, **kw)
-    return answer_question("q", services, Session()), warehouse
+    # The reader quotes the members the plan narrows to: a name narrows an answer only in quotes.
+    named = " ".join(f'"{v}"' for f in plan.get("filters", []) for v in f["values"] if isinstance(v, str))
+    return answer_question(f"q {named}".strip(), services, Session()), warehouse
 
 
 def _same(reference, sql: str, warehouse: DuckDBWarehouse) -> str:

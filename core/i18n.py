@@ -5345,8 +5345,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     # The composer.
     "ui.chat.composer_label": {"en": "Your question", "fr": "Votre question"},
     "ui.chat.composer_placeholder": {
-        "en": "Ask anything about your data…",
-        "fr": "Posez n'importe quelle question sur vos données…",
+        "en": "Ask anything about your data… Put a name in \"quotes\" to narrow to it",
+        "fr": "Posez n'importe quelle question sur vos données… Mettez un nom entre « guillemets » pour vous y limiter",
     },
     "ui.chat.send": {"en": "Send message", "fr": "Envoyer le message"},
     "ui.chat.hint_all_schemas": {

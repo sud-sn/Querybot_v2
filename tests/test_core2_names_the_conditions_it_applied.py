@@ -59,7 +59,9 @@ def _ask(retail, plan: dict, question: str = "q") -> dict:
     con, model = retail
     services = Services(model=model, warehouse=DuckDBWarehouse(con),
                         complete=Recorded(json.dumps({"kind": "query", **plan})), index=MemberIndex(), today=TODAY)
-    return answer_question(question, services, Session())
+    # The reader quotes the members the plan narrows to: a name narrows an answer only in quotes.
+    named = " ".join(f'"{v}"' for f in plan.get("filters", []) for v in f["values"] if isinstance(v, str))
+    return answer_question(f"{question} {named}".strip() if question == "q" else question, services, Session())
 
 
 @pytest.mark.parametrize("plan, said", [
@@ -95,7 +97,7 @@ def test_the_value_card_the_kpi_and_the_next_questions_keep_the_condition(retail
     assert answer["answer"]["comparison"] == "from Jan 2026 to Jun 2026, for segment Retail"
     assert answer["kpi"]["note"] == "from Jan 2026 to Jun 2026, for segment Retail"
     chips = [c["question"] for c in answer["follow_up_suggestions"]]
-    assert chips and all("for segment Retail" in c for c in chips), chips
+    assert chips and all('for segment "Retail"' in c for c in chips), chips   # quoted: a click keeps it
 
 
 def test_a_count_is_shown_whole_and_days_to_a_tenth(retail):

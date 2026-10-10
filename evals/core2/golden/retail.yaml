@@ -146,7 +146,7 @@ questions:
     expect: {order_matters: false}
 
   - id: retail-009
-    question: "Net sales for northline distribution 58 in 2025"
+    question: "Net sales for \"northline distribution 58\" in 2025"
     tags: [value, C2]
     plan:
       intent: value
@@ -166,7 +166,7 @@ questions:
     expect: {order_matters: false}
 
   - id: retail-010
-    question: "Monthly net sales for Acme #27 Supply in 2025"
+    question: "Monthly net sales for \"Acme #27 Supply\" in 2025"
     tags: [trend, C3]
     plan:
       intent: trend

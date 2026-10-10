@@ -65,7 +65,9 @@ def _answer(warehouse, plan: dict) -> dict:
     answer = json.dumps({"kind": "query", **plan})
     services = Services(model=model, warehouse=DuckDBWarehouse(con), complete=lambda s, t: answer,
                         index=MemberIndex(), today=TODAY)
-    return answer_question("q", services, Session())
+    # The reader quotes the members the plan narrows to: a name narrows an answer only in quotes.
+    named = " ".join(f'"{v}"' for f in plan.get("filters", []) for v in f["values"] if isinstance(v, str))
+    return answer_question(f"q {named}".strip(), services, Session())
 
 
 # ── the shapes offered ──────────────────────────────────────────────────────
@@ -123,9 +125,9 @@ def test_a_member_opens_its_trend_its_next_grouping_and_why_it_changed(retail):
     drill = _drill(retail, BY_STORE)
     assert drill["on"] == "member" and drill["series"] == ""
     assert [i["question"] for i in drill["items"]] == [
-        "Net amount by month for {member} from Jan 2026 to Jun 2026",
-        "Net amount for {member} by product from Jan 2026 to Jun 2026",
-        "Why did net amount change for {member} from Jan 2026 to Jun 2026?",
+        'Net amount by month for "{member}" from Jan 2026 to Jun 2026',
+        'Net amount for "{member}" by product from Jan 2026 to Jun 2026',
+        'Why did net amount change for "{member}" from Jan 2026 to Jun 2026?',
     ]
 
 
@@ -177,7 +179,7 @@ def test_the_page_fills_in_the_member_clicked(retail):
     member = chart["rows"][0][chart["x_key"]]
     choices = _choices(chart, {"name": member, "value": 1.0})
     assert choices[0] == {"label": f"{member} by month",
-                          "question": f"Net amount by month for {member} from Jan 2026 to Jun 2026"}
+                          "question": f'Net amount by month for "{member}" from Jan 2026 to Jun 2026'}
 
 
 def test_the_page_names_the_period_clicked_as_the_chart_does(retail):
@@ -190,7 +192,7 @@ def test_the_page_names_the_period_clicked_as_the_chart_does(retail):
 def test_the_page_names_the_member_of_the_line_clicked(retail):
     chart = _answer(retail, PER_REGION)["chart"]
     choices = _choices(chart, {"name": "2026-03-01", "seriesName": "North", "value": 1.0})
-    assert choices[1]["question"] == "Why did net amount change for North in Mar 2026?"
+    assert choices[1]["question"] == 'Why did net amount change for "North" in Mar 2026?'
     assert _choices(chart, {"name": "2026-03-01", "seriesName": "Forecast", "value": 1.0}) == []
 
 

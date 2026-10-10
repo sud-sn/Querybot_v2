@@ -94,7 +94,7 @@ def test_member_names_are_found_and_handed_to_the_ai():
             "filters": [{"field": slug, "op": "eq", "values": ["Northline Distribution 58"]}],
             "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}}
     ai = Recorded(json.dumps(plan))
-    payload = answer_question("net sales for northline distribution 58 in 2025",
+    payload = answer_question('net sales for "northline distribution 58" in 2025',
                               _services(model, warehouse, ai, index=_index(model, warehouse)), Session())
     assert f'{slug} = "Northline Distribution 58"' in ai.sent[0]
     assert payload["kpi"] and round(payload["kpi"]["value"], 2) == 95698.79
@@ -110,7 +110,7 @@ def test_a_regulated_tenants_member_values_never_reach_the_ai():
             "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}}
     ai = Recorded(json.dumps(plan))
     services = _services(model, warehouse, ai, index=_index(model, warehouse), values_allowed=False)
-    payload = answer_question("net sales for Northline Distribution 58 in 2025", services, Session())
+    payload = answer_question('net sales for "Northline Distribution 58" in 2025', services, Session())
     sent = ai.sent[0]
     assert "Northline" not in sent and "⟨v1⟩" in sent
     assert payload["plan"]["filters"][0]["values"] == ["Northline Distribution 58"]
@@ -132,11 +132,11 @@ def test_a_regulated_tenants_member_values_stay_placeholders_on_a_follow_up():
     ai = Recorded(plan(["⟨v1⟩"], 2025), json.dumps({**json.loads(plan(["⟨v1⟩"], 2024)), "follow_up": "refine"}))
     services = _services(model, warehouse, ai, index=_index(model, warehouse), values_allowed=False)
     session = Session()
-    answer_question("net sales for Northline Distribution 58 in 2025", services, session)
+    answer_question('net sales for "Northline Distribution 58" in 2025', services, session)
     followed = answer_question("and in 2024?", services, session)
     assert "Northline" not in ai.sent[1] and "⟨v1⟩" in ai.sent[1], ai.sent[1]
     assert followed["plan"]["filters"][0]["values"] == ["Northline Distribution 58"]
-    plain = answer_question("net sales for Northline Distribution 58 in 2024",
+    plain = answer_question('net sales for "Northline Distribution 58" in 2024',
                             _services(model, warehouse, Recorded(plan(["Northline Distribution 58"], 2024))), Session())
     assert followed["kpi"]["value"] == plain["kpi"]["value"]
 
@@ -156,10 +156,10 @@ def test_a_placeholder_means_one_member_for_the_whole_conversation():
     ai = Recorded(json.dumps(first), json.dumps(both))
     services = _services(model, warehouse, ai, index=_index(model, warehouse), values_allowed=False)
     session = Session()
-    answer_question("net sales for Northline Distribution 58 in 2025", services, session)
-    followed = answer_question(f"and together with {other}?", services, session)
-    assert "PREVIOUS QUESTION: net sales for ⟨v1⟩ in 2025" in ai.sent[1]
-    assert "QUESTION: and together with ⟨v2⟩?" in ai.sent[1] and other not in ai.sent[1], ai.sent[1]
+    answer_question('net sales for "Northline Distribution 58" in 2025', services, session)
+    followed = answer_question(f'and together with "{other}"?', services, session)
+    assert 'PREVIOUS QUESTION: net sales for "⟨v1⟩" in 2025' in ai.sent[1]
+    assert 'QUESTION: and together with "⟨v2⟩"?' in ai.sent[1] and other not in ai.sent[1], ai.sent[1]
     assert followed["plan"]["filters"][0]["values"] == ["Northline Distribution 58", other]
 
 

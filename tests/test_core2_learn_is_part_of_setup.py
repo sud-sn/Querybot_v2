@@ -137,12 +137,12 @@ def _ask(store, built, monkeypatch, question: str) -> str:
 def test_a_column_masked_after_learn_keeps_its_values_out_at_once(learned, monkeypatch):
     store, built, schema_dir = learned
     code = str(built.con.execute('SELECT MIN(customer_code) FROM "customers"').fetchone()[0])
-    assert "VALUE MATCHES (" in _ask(store, built, monkeypatch, f"net sales for {code}")
+    assert "VALUE MATCHES (" in _ask(store, built, monkeypatch, f'net sales for "{code}"')
 
     # The admin masks the customer codes and discovery runs again; QueryBot has not learned again.
     _rediscover(schema_dir, lambda s: _customers(s).update(masked_fields=["customer_code"], mask_mode="selective"))
     assert BEHIND in _page()
-    prompt = _ask(store, built, monkeypatch, f"net sales for {code} again")
+    prompt = _ask(store, built, monkeypatch, f'net sales for "{code}" again')
     assert "VALUE MATCHES (" not in prompt and prompt.count(code) == 1
     from core2.bootstrap.service import answering_model
     from core2.plan.values import listable

@@ -143,8 +143,9 @@ def _compared(op: str, values: list[str]) -> str:
     return _listed(values, "or") if values else ""
 
 
-def condition_words(c: Condition) -> str:
-    """A condition as the answer's sentence names it: "for customer type Wholesale"."""
+def condition_words(c: Condition, *, quoted: bool = False) -> str:
+    """A condition as the answer's sentence names it: "for customer type Wholesale". ``quoted``: its members in
+    quotes, for a question the reader can send again (a name narrows an answer only when it is quoted)."""
     if c.kind == "activity":
         return f"with {'an' if c.label[:1] in 'aeiou' else 'a'} {c.label}"
     if c.kind == "by":
@@ -160,10 +161,11 @@ def condition_words(c: Condition) -> str:
         amounts = [f"${float(v):,.0f}" if c.format == "currency" and _number(v) is not None
                    and float(v).is_integer() else fmt(v, c.format or "number") for v in c.values]
         return f"with {c.label} {_compared(c.op, amounts)}"
+    values = [f'"{v}"' if quoted and isinstance(v, str) else v for v in c.values]
     if c.op in ("eq", "in"):
-        return f"for {c.label} {_listed(c.values, 'or')}"
+        return f"for {c.label} {_listed(values, 'or')}"
     if c.op in ("ne", "not_in"):
-        return f"excluding {c.label} {_listed(c.values, 'and')}"
+        return f"excluding {c.label} {_listed(values, 'and')}"
     if c.op in ("contains", "starts_with"):
         return f"where {c.label} {c.op.replace('_', ' ')} \u201c{c.values[0] if c.values else ''}\u201d"
     if c.op == "is_null":

@@ -75,7 +75,7 @@ def test_a_ranking_offers_the_leading_member_by_name(retail):
                                 "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-03-31"}}})
     leader = payload["data"]["rows"][0][payload["data"]["headers"][0]]
     chips = _chips(payload)
-    assert chips[0] == f"Monthly net amount for {leader}"
+    assert chips[0] == f'Monthly net amount for "{leader}"'
     assert "Why did net amount change in Q1 2026?" in chips
 
 

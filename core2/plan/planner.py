@@ -76,11 +76,15 @@ How to plan:
    "from February to March", "March vs February" -> window March and
    {"kind": "window", "window": February}; the intent is then "compare".
 8. filters: a member goes in a filter on its attribute with op "eq" (or "in" for several), using the exact
-   stored value from VALUE MATCHES when one is given; "excluding X" -> "ne"/"not_in". A condition on a
-   total ("customers with more than 10,000 in sales") is a filter on the measure slug. A name in VALUE
-   MATCHES can also be what a measure measures ("cost of goods sold" is a ledger account and the cost on
-   sales lines): read it as the member only when that member's table can be broken down and filtered as
-   the question asks; otherwise use the measure.
+   stored value from VALUE MATCHES or a previous plan; "excluding X" -> "ne"/"not_in". VALUE MATCHES holds
+   only the names the reader put in quotes ("OEM") and the members of the answer on screen they point at:
+   a word of the question that is not quoted is never a member, even when one is called that ("available
+   stock" is not a stock status AVAILABLE, "for northline" is no customer): answer without that filter.
+   A code the catalog lists, chosen for what the question means ("units received" -> movement type RCV),
+   may filter. A condition on a total ("customers with more than 10,000 in sales") is a filter on the
+   measure slug. A name in VALUE MATCHES can also be what a measure measures ("cost of goods sold" is a
+   ledger account and the cost on sales lines): read it as the member only when that member's table can
+   be broken down and filtered as the question asks; otherwise use the measure.
 9. sort and limit: "top 5" -> sort by the measure (desc) with limit 5; "bottom 5", "least" -> desc false.
    "grew the most" -> sort by "change" desc; "biggest drop" -> "change" with desc false.
 10. intent: value | breakdown | trend | compare | rank | share | list | count | drivers | forecast. "List the
@@ -351,6 +355,7 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
 def plan_question(model: SemanticModel, question: str, complete: Complete, *, today: dt.date,
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
+                  hidden: list[ValueMatch] | None = None,
                   reading: str | None = None) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
@@ -360,7 +365,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     matches = matches or []
     history = history or []
     known = history[-1].masked.values if history and history[-1].masked is not None else None
-    masked = None if values_allowed else mask(question, matches, known=known)
+    # Every member name the question writes is withheld from the AI, quoted or not; only the quoted ones
+    # (``matches``) are offered to it as names to filter on.
+    masked = None if values_allowed else mask(question, [*matches, *(hidden or [])], known=known)
     # A workspace under compliance (its questions scrubbed) shows people's details masked, never refuses them.
     stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
