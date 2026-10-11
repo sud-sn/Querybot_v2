@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from core2.bootstrap.names import plural
 from core2.model.schema import AggExpr, Attribute, Entity, Measure, SemanticModel
@@ -206,7 +206,9 @@ def _per(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     inner_plan = plan.model_copy(update={
         "per": None, "bands": None, "group_by": [*group_by, *([slug] if slug else [])], "sort": [], "limit": None,
         "intent": "breakdown", "chart": None})
-    inner = resolve_plain(inner_plan, model, ctx)
+    # Each member apart, a member with no name too (by the key its rows hold): items whose names are missing
+    # were one "Unknown" member, their costs averaged together, and none counted as costing more than $1,000.
+    inner = resolve_plain(inner_plan, model, replace(ctx, unnamed_by_key=True) if slug in model.entities else ctx)
     if len(inner.measures) != 1:
         raise ResolveError("unsupported", "one figure per member at a time: ask for each measure on its own")
     figure = inner.measures[0]

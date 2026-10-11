@@ -113,3 +113,23 @@ def test_two_periods_are_compared_from_the_earlier_to_the_later(retail):
     plan = in_time_order(backwards, retail[1], "How did they do in Q1 2026?")
     assert (str(plan.time.window.start), str(plan.time.compare.window.start)) == ("2026-04-01", "2026-01-01")
     assert in_time_order(plan, retail[1], "q") is plan
+
+
+def test_members_with_no_name_are_each_counted(retail):
+    """On a copy whose item table named few of the items the stock rows held, the items with no name were one
+    member, their costs averaged together: none counted as costing more than $1,000, where two did."""
+    from core2.plan.values import MemberIndex
+    from core2.service import Services, Session, answer_question
+    from core2.warehouse.runner import DuckDBWarehouse
+
+    built, model = learn(domains.build("retail"), "descriptive")
+    built.con.execute("DELETE FROM stores")
+    plan = {"kind": "query", "intent": "count", "measures": ["net_amount"],
+            "per": {"of": "store", "summary": "count", "op": "gt", "values": [100000]}}
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con),
+                        complete=lambda s, t: json.dumps(plan), index=MemberIndex(), today=TODAY)
+    payload = answer_question("How many stores sold more than $100,000 each?", services, Session())
+    expected = built.con.execute("SELECT COUNT(*) FROM (SELECT store_id FROM order_lines GROUP BY 1 "
+                                 "HAVING SUM(net_amount) > 100000)").fetchone()[0]
+    assert expected > 1
+    assert list(payload["export_rows"][0].values())[0] == expected, payload["answer"]["headline"]

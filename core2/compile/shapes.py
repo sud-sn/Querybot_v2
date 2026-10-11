@@ -66,7 +66,8 @@ def percentile(c: _Compiler, value: exp.Expression, p: float, partition: list[ex
 def _per(c: _Compiler, shape: PerShape) -> tuple[exp.Select, list[OutColumn], str]:
     body, _, _ = _Compiler(shape.inner, c.model, c.d).shaped_body()
     v = c.out("m", shape.value)
-    keep = [_not_null(c.out("m", n)) for n in shape.members]
+    # A member is one with a name (its code only keeps two of one name apart: a member with no code is one).
+    keep = [_not_null(c.out("m", n)) for n in shape.members[:1]]
     plain = [g for g in c.q.groups if shape.band is None or g.name != shape.band.name]
     groups = [c.out("m", g.name) for g in plain]
     columns = [c.group_column(g) for g in c.q.groups]
@@ -248,7 +249,7 @@ def edges_sql(logical: Logical, model, dialect: str) -> str | None:
         shape = logical.shape
         assert isinstance(shape, PerShape)
         body, _, _ = _Compiler(shape.inner, model, dialect).shaped_body()
-        keep = [_not_null(c.out("m", n)) for n in shape.members]
+        keep = [_not_null(c.out("m", n)) for n in shape.members[:1]]
         values = exp.select(c.out("m", shape.value).as_(c.name("v"))).from_(body.subquery(c.name("m")))
         if keep:
             values = values.where(exp.and_(*keep))
