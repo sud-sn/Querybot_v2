@@ -146,9 +146,11 @@ def test_a_rows_place_in_its_document_is_still_not_offered(carrier):
 def test_the_catalog_tells_the_ai_how_to_read_each_field(carrier):
     lines = {line.split("|")[0].strip(" -"): line for line in catalog_text(carrier[2]).splitlines() if "|" in line}
     transit = next(v for k, v in lines.items() if k.endswith("typical_transit_days"))
-    assert "6 values: 0, 1, 2, 3, 4, 5 (a number: compare, sort or show it; group by it)" in transit
+    assert "6 values: 0, 1, 2, 3, 4, 5 (a number: compare, sort or show it, or average it (its slug in measures); "\
+        "group by it)" in transit
     rate = next(v for k, v in lines.items() if k.endswith("base_rate"))
-    assert "a number: compare, sort or show it, from 5.2 to 48; too many values to group by" in rate
+    assert "a number: compare, sort or show it, or average it (its slug in measures), from 5.2 to 48; too many " \
+        "values to group by" in rate
     gl = next(v for k, v in lines.items() if k.endswith("gl_account_code"))
     assert "6 values: 4000, 4100, 5000, 5100, 6000, 6100 (an identifier" in gl
     tracking = next(v for k, v in lines.items() if k.endswith("tracking_number"))

@@ -594,6 +594,8 @@ class _PartBuilder:
         """
         model = self.model
         column = model.columns[role.column]
+        # A line's date kept on its document (an order line dated by its order): the document joined first.
+        home = self.part.alias if role.table == self.part.table else self.reach(role.table, label=role.name)
         if role.calendar:
             calendar = model.calendars[role.calendar]
             key = ("calendar", role.key)
@@ -604,7 +606,7 @@ class _PartBuilder:
                     raise ResolveError("unsupported", f"{role.name} has no calendar link")
                 alias = self.aliases.new(role.slug or role.name)
                 self.part.joins.append(Joined(alias=alias, table=role.calendar,
-                                              on=[(self.part.alias, join.from_columns[0], join.to_columns[0])],
+                                              on=[(home, join.from_columns[0], join.to_columns[0])],
                                               kind=kind, what=role.name))
                 self.by_path[key] = alias
             alias = self.by_path[key]
@@ -612,12 +614,12 @@ class _PartBuilder:
                 return DateUse(role, alias, "month_calendar", calendar.key_column or "", calendar)
             return DateUse(role, alias, "day_calendar", calendar.date_column or "", calendar)
         if column.data_type == "date":
-            return DateUse(role, self.part.alias, "date", column.key)
+            return DateUse(role, home, "date", column.key)
         if column.data_type == "timestamp":
-            return DateUse(role, self.part.alias, "timestamp", column.key)
+            return DateUse(role, home, "timestamp", column.key)
         if role.granularity == "month":
-            return DateUse(role, self.part.alias, "yyyymm", column.key)
-        return DateUse(role, self.part.alias, "yyyymmdd", column.key)
+            return DateUse(role, home, "yyyymm", column.key)
+        return DateUse(role, home, "yyyymmdd", column.key)
 
 
 def _measure_expr(model: SemanticModel, measure: Measure) -> MeasureExpr:
@@ -683,6 +685,17 @@ def _unit_home(model: SemanticModel, base: str, unit: MeasureExpr) -> str:
     return base
 
 
+def _averaged(model: SemanticModel, attribute: Attribute) -> Measure:
+    """A number each member has, as a measure: its average over the rows of its table."""
+    column = model.columns[attribute.column]
+    name = attribute.business_name or column.business_name or column.name
+    return Measure(key=f"avg:{attribute.slug}", slug=attribute.slug, business_name=f"Average {name[:1].lower()}{name[1:]}",
+                   table=column.table, expr=AggExpr(agg="avg", column=column.key), additivity="non_additive",
+                   format=column.format if column.format in ("currency", "percent") else "number", unit=column.unit,
+                   kind="column", status="verified",
+                   provenance="profile")
+
+
 def _homes(model: SemanticModel, base: str, expr: MeasureExpr, depth: int = 0) -> set[str]:
     if depth > 5:
         raise ResolveError("unsupported", "a measure refers to itself")
@@ -708,6 +721,16 @@ class _Composite:
     items: list[tuple] = field(default_factory=list)    # one chosen item per component
     names: list[str] = field(default_factory=list)      # each component's hidden output column, once named
     at: int = 0                         # where it was asked, among the measures
+
+
+def _inlined(model: SemanticModel, tree: MeasureExpr) -> MeasureExpr:
+    """A derived measure's tree with each measure it names written out, with its own filters."""
+    if isinstance(tree, OpExpr):
+        return OpExpr(op=tree.op, args=[_inlined(model, a) for a in tree.args], scale=tree.scale)
+    if isinstance(tree, RefExpr):
+        m = model.measures[tree.measure]
+        return _with_filters(_measure_expr(model, m), m.filters)  # type: ignore[return-value]
+    return tree
 
 
 def _split(model: SemanticModel, base: str, expr: MeasureExpr, filters: list[ColumnFilter], label: str,
@@ -771,7 +794,7 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure | None, ta
             raise ResolveError("unknown", f"no date called {plan.time.date}", _closest(plan.time.date, _slugs(model, "date")))
         role = found[1]
         assert isinstance(role, DateRole)
-        if role.table == table:
+        if role.table == table or role.table in _documents(model, table):
             return role
     # A date lives on its own table: a measure counted on another table (members counted by what they
     # did, below) is counted by that table's date, never by its own table's.
@@ -779,7 +802,26 @@ def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure | None, ta
         role = model.date_roles.get(key) if key else None
         if role is not None and role.table == table:
             return role
+    if not any(r.table == table and r.kind in ("event", "snapshot") for r in model.date_roles.values()):
+        # An order line with no date of its own: dated by its order, the one document it belongs to. A due date
+        # or the date a row was last changed is no date of the line's own event.
+        documents = _documents(model, table)
+        if len(documents) == 1:
+            return model.date_roles.get(model.tables[documents[0]].default_date or "")
     return None
+
+
+def _documents(model: SemanticModel, table: str) -> list[str]:
+    """The dated documents a table's rows belong to: facts it points at, one row each (an order line's order)."""
+    out = []
+    for j in model.joins.values():
+        if j.from_table != table or j.to_calendar or j.trust == "rejected" or not P.usable(j) \
+                or j.cardinality not in ("many_to_one", "one_to_one") or j.to_table == table:
+            continue
+        target = model.tables[j.to_table]
+        if target.kind in ("fact", "snapshot") and target.default_date and j.to_table not in out:
+            out.append(j.to_table)
+    return out
 
 
 def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> tuple[MeasureExpr, str, str] | None:
@@ -985,8 +1027,16 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                      "is counted twice.")
 
     twins: dict[str, list[Measure]] | None = None      # measures sharing a name with another, found once
+    made_here = {_plain(d.name) for d in plan.derived}
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
+        if found is None and _plain(slug) in made_here:
+            continue        # a derived figure the reader asked for by name: worked out below, and shown
+        if found and found[0] == "attribute" and getattr(found[1], "kind", "") == "number":
+            # "Average vacation hours by gender", "average list price of the bikes": a number each member has,
+            # averaged over the members the question keeps.
+            _shown(model, found[1], slug, personal=ctx.personal_shown)
+            found = ("measure", _averaged(model, found[1]))
         if not found or found[0] != "measure":
             raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
         m = found[1]
@@ -1023,32 +1073,43 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             notes.append(f"{m.business_name} here is the one on {here}; " + (
                 f"{' and '.join(others)} {'has' if len(others) == 1 else 'have'} a figure of the same name"
                 if here not in others else "another figure has the same name") + ".")
+    # A derived measure may be made of an earlier one ("gross margin %" of a "gross profit" worked out first):
+    # that one is worked out inside it, and shown on its own only when the plan sorts or filters by it.
+    made: dict[str, tuple[MeasureExpr, list[Measure], str, str]] = {}    # name -> (tree, measures, format, label)
+    inside = {_plain(s) for d in plan.derived for s in d.measures} - {
+        _plain(x) for x in [*(s.by for s in plan.sort), *(f.field for f in plan.filters), *plan.measures]}
     for d in plan.derived:
-        operands = []
+        parts: list[tuple[MeasureExpr, list[Measure], str, str]] = []
         for slug in d.measures:
+            if _plain(slug) in made:
+                parts.append(made[_plain(slug)])
+                continue
             found = find_slug(model, slug)
             if not found or found[0] != "measure":
                 raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
-            operands.append(found[1])
-        a, b = operands
-        assert isinstance(a, Measure) and isinstance(b, Measure)
+            m = found[1]
+            assert isinstance(m, Measure)
+            parts.append((RefExpr(measure=m.key), [m], m.format, m.business_name))
+        (tree_a, of_a, fmt_a, label_a), (tree_b, of_b, fmt_b, label_b) = parts
         op = {"ratio": "ratio", "difference": "subtract", "sum": "add", "product": "multiply"}[d.op]
         fmt = "percent" if d.scale == 100 else "number"
-        if d.scale == 1 and (d.op in ("difference", "sum") and a.format == b.format == "currency"
-                             or d.op == "ratio" and a.format == "currency" and b.format != "currency"):
+        if d.scale == 1 and (d.op in ("difference", "sum") and fmt_a == fmt_b == "currency"
+                             or d.op == "ratio" and fmt_a == "currency" and fmt_b != "currency"):
             fmt = "currency"        # money less money is money; money per unit or per order is a price
-        if a.table != b.table:
-            # Each measure added up on its own table, then combined.
-            combine(None, d.name, fmt, OpExpr(op=op, args=[RefExpr(measure=a.key), RefExpr(measure=b.key)],
-                                              scale=d.scale), a.table, [])
-        else:
-            expr = OpExpr(op=op, args=[_with_filters(_measure_expr(model, a), a.filters),  # type: ignore[arg-type]
-                                       _with_filters(_measure_expr(model, b), b.filters)], scale=d.scale)
-            chosen.append((None, expr, a.table, d.name, fmt))
+        tree = OpExpr(op=op, args=[tree_a, tree_b], scale=d.scale)
+        of = [*of_a, *of_b]
+        made[_plain(d.name)] = (tree, of, fmt, d.name)
         sign = {"ratio": "÷", "difference": "−", "sum": "+", "product": "×"}[d.op]
         scaled = f" × {d.scale:g}" if d.scale != 1 else ""
-        notes.append(f"{d.name} = {a.business_name} {sign} {b.business_name}{scaled}, worked out for this question "
+        notes.append(f"{d.name} = {label_a} {sign} {label_b}{scaled}, worked out for this question "
                      "(not a saved measure yet).")
+        if _plain(d.name) in inside:
+            continue
+        if len({m.table for m in of}) > 1:
+            # Each measure added up on its own table, then combined.
+            combine(None, d.name, fmt, tree, of[0].table, [])
+        else:
+            chosen.append((None, _inlined(model, tree), of[0].table, d.name, fmt))
     durations: dict[str, tuple[Duration, DateRole, DateRole]] = {}
     for duration in plan.durations:
         start_role, end_role = _duration_dates(model, duration)
@@ -1338,6 +1399,25 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             m = obj
             assert isinstance(m, Measure)
             target = next((o for o in measures_out if o.measure is m), None)
+            column = getattr(m.expr, "column", None) if isinstance(m.expr, AggExpr) and not m.expr.filters else None
+            rows = [b.part for b, _ in builders if b.part.table == m.table] if column else []
+            counted = [o.measure for o in measures_out if o.measure is not None and o.measure.table == m.table]
+            # Each row's own figure: the rows are what is counted, or the figure is one each row has (a discount
+            # rate, a price). A total of documents ("orders over $100") is no row's, and is asked for instead.
+            each_row = bool(counted) and all(getattr(x.expr, "agg", None) == "count" for x in counted) or \
+                getattr(m.expr, "agg", None) in ("avg", "min", "max")
+            if target is None and rows and each_row and f.op in ("gt", "gte", "lt", "lte", "eq", "ne", "between") \
+                    and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in f.values):
+                # "How many order lines had a discount?": the rows counted whose own discount is above 0, the
+                # figure not asked for itself.
+                for part in rows:
+                    part.preds.append(Pred(part.alias, column, f.op, list(f.values),
+                                           f"{m.business_name} {_op_words(f)}"))
+                conditions.append(Condition("number", m.business_name.lower(), f.op, list(f.values)))
+                notes.append(f"Only {model.tables[m.table].business_name.lower()} rows whose own "
+                             f"{m.business_name.lower()} " + (_op_words(f) if f.op in ("eq", "ne") else
+                                                               f"is {_op_words(f)}") + ".")
+                continue
             if target is None:
                 raise ResolveError("unsupported", f"a filter on {m.business_name} needs it in the answer")
             having.append(Pred("", target.name, f.op, list(f.values), f"{m.business_name} {_op_words(f)}"))
@@ -1360,6 +1440,12 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 assert isinstance(filter_role, DateRole)
                 if filter_role.table != part.table:
                     missed.append(part)
+                    continue
+                if f.op in ("is_null", "not_null"):
+                    # "Patients who have died", "orders not yet shipped": rows with (or without) the date at all.
+                    part.preds.append(Pred(part.alias, filter_role.column, f.op, [],
+                                           f"{filter_role.name} {_op_words(f)}"))
+                    took.append(part)
                     continue
                 use = builder.date(filter_role)
                 try:
@@ -1413,8 +1499,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         label = getattr(obj, "business_name", "") or getattr(obj, "name", "") or f.field
         if kind == "date":
             assert isinstance(obj, DateRole)
-            conditions.append(Condition("date", obj.name.lower(), dates=_date_filter_range(
-                f, [dt.date.fromisoformat(str(v)) for v in f.values])))
+            conditions.append(Condition("date", obj.name.lower(), f.op) if f.op in ("is_null", "not_null") else
+                              Condition("date", obj.name.lower(), dates=_date_filter_range(
+                                  f, [dt.date.fromisoformat(str(v)) for v in f.values])))
         else:
             assert isinstance(obj, (Attribute, Entity))
             attribute = _entity_label(model, f.field) if kind == "entity" else obj

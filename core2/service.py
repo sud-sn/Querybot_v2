@@ -428,8 +428,12 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                                              services.allowed_tables)
         # "Break the first one down", "monthly sales for that division in 2026": the member of the answer on
         # screen the words point at. A turn that points at one follows that answer, however much else it says.
-        pointed = _visible(placed(question, last.shown, found, leader=_names_a_leader(last.question)), model,
-                           services.allowed_tables) if last is not None and last.shown else []
+        # An answer with no list on screen (one store's months) leaves "the third one" pointing at the list before
+        # it: the top three stores the series was drawn from.
+        listed = last if last is not None and last.shown else next(
+            (t for t in reversed(session.turns[-HISTORY:]) if t.shown), None)
+        pointed = _visible(placed(question, listed.shown, found, leader=_names_a_leader(listed.question)), model,
+                           services.allowed_tables) if listed is not None else []
         end = which_end(question, last.shown, [*found, *pointed]) if last is not None and last.shown \
             and last.plan is not None and forced != "new" else None
         if end is not None:
@@ -448,6 +452,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
                                 values_allowed=services.values_allowed, scrub=services.scrub, hidden=hidden,
+                                written=_visible(services.index.match(question), model, services.allowed_tables),
+                                defined=[d for t in session.turns[-HISTORY:] if t.plan is not None for d in t.plan.derived],
                                 reading=reading.kind if reading.kind in ("refine", "new") else None,
                                 on_screen=list(last.shown) if last is not None and reading.kind != "new" else None)
         if outcome.plan.kind == "query" and outcome.plan.follow_up == "unsure":
@@ -1043,6 +1049,18 @@ def _grounded(matches: list[ValueMatch], session: Session) -> set[str]:
     return values
 
 
+def _member_form(index: MemberIndex, attribute: str, value: object) -> object:
+    """The stored member a value names in the singular or the plural ("Bike" -> "Bikes"); else the value."""
+    if not isinstance(value, str) or index.stored(attribute, value) is not None:
+        return value
+    for other in (f"{value}s", f"{value}es", value[:-1] if value.endswith("s") else "",
+                  value[:-2] if value.endswith("es") else ""):
+        found = index.stored(attribute, other) if other else None
+        if found is not None:
+            return found
+    return value
+
+
 def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: set[str],
                     index: MemberIndex) -> tuple[Plan, list[tuple[str, str]]]:
     """The plan without any filter whose member is a word of the question the reader did not quote, and what
@@ -1059,11 +1077,13 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     """
     said = [normalise(question[a:b]) for a, b in quoted_spans(question)]
     words = {w for w in re.findall(r"[\w#&'.+-]+", normalise(question)) if len(w) >= 3 or w.isdigit()}
+    singular_words = words | {names.singular(w) for w in words}
 
     def written(value: str) -> bool:
-        """Is the value one of the question's own words (or made of them)?"""
+        """Is the value one of the question's own words (or made of them)? A one-word name in the singular or the
+        plural too ("bike" for "Bikes"); a longer one only as written ("stores" is no word of "Old Town Store")."""
         own = [w for w in re.findall(r"[\w#&'.+-]+", normalise(value)) if len(w) >= 3 or w.isdigit()]
-        return any(w in words for w in own)
+        return any(w in words or len(own) == 1 and names.singular(w) in singular_words for w in own)
 
     def quoted(value: str) -> bool:
         v = normalise(value)
@@ -1100,6 +1120,9 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
             return read and index.stored(attribute.slug, value) is None   # type: ignore[union-attr]
 
         amount = attribute is not None and attribute.kind == "number"    # "exactly 3 days": a value, no name
+        if read:
+            # "Bike" for the category stored as "Bikes": the member it names, then read as any name is.
+            f = f.model_copy(update={"values": [_member_form(index, attribute.slug, v) for v in f.values]})  # type: ignore[union-attr]
         kept = [v for v in f.values
                 if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)
                 or f.op in ("eq", "in") and normalise(v) in left_out]
@@ -1110,7 +1133,7 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     # "Customers who never bought 'Apples'": the conditions on who had none follow the same rule.
     absent = plan.absent.model_copy(update={"without": kept_of(plan.absent.without),
                                             "had": kept_of(plan.absent.had)}) if plan.absent is not None else None
-    if not dropped:
+    if not dropped and filters == plan.filters and (absent is None or absent == plan.absent):
         return plan, []
     return plan.model_copy(update={"filters": filters, "absent": absent}), dropped
 

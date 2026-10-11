@@ -176,6 +176,8 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         return f"counting every {c.label} listed"
     if c.kind == "absent":
         return ""           # who had none: the answer's own sentence says it
+    if c.kind == "date" and c.op in ("is_null", "not_null"):
+        return f"with {'no' if c.op == 'is_null' else 'a'} {c.label}"      # "with a death date", "with no ship date"
     if c.kind == "date":
         return f"with {c.label} {span_words(c.dates)}" if c.dates is not None else ""
     if c.kind == "days_total":
@@ -663,7 +665,9 @@ def _header(c: OutColumn) -> str:
 
 
 def _thing(label: str) -> str:
-    """What a grouping counts, in the singular: "Warehouse name" -> "warehouse", "GL account" -> "GL account"."""
+    """What a grouping counts, in the singular: "Warehouse name" -> "warehouse", "GL account" -> "GL account",
+    "Category name (English)" -> "category"."""
+    label = re.sub(r"\s*\([^()]*\)\s*$", "", label) or label      # the language or unit after it, in brackets
     words = [w if w.isupper() and len(w) > 1 else w.lower() for w in label.split()]   # "GL accounts"
     while len(words) > 1 and words[-1] in ("name", "description", "desc", "code", "label", "title"):
         words.pop()

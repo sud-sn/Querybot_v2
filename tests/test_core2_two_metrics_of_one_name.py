@@ -118,3 +118,82 @@ def test_the_metrics_page_flags_the_pair(twins, tmp_path, monkeypatch):
     assert "2 metrics share a name with" in page
     assert page.count('class="ms-twin"') == 2
     assert "Same name as a metric on Return. Questions that do not say which take this one." in page
+
+
+def test_a_follow_up_that_names_no_figure_keeps_the_conversations_own(twins):
+    """ "Split that by promotion" after the resellers' discount was answered with the internet sales' discount of
+    the same name, all zero: a question that does not name the figure keeps the one the thread was measuring."""
+    plan = named_twin(_rank("return_net_amount"), twins[1], "Split that by store",
+                      _rank("return_net_amount"))
+    assert plan.measures == ["return_net_amount"]
+
+
+def test_a_figure_named_without_its_table_is_the_one_on_the_table_the_thread_measures(twins):
+    """ "Average freight per order" after sales orders by ship method took the purchase orders' freight."""
+    model = twins[1]
+    before = Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": ["number_of_returns"],
+                                  "group_by": ["store.name"]})
+    plan = named_twin(_rank("net_amount"), model, "And the net amount by store?", before)
+    assert plan.measures == ["return_net_amount"]
+
+
+def test_words_both_say_do_not_keep_the_ais_pick(twins):
+    """ "The average euro exchange rate" named a rate kept on a daily table and again on a 50-row staging copy, each
+    one's synonyms saying "exchange rate": the AI took the copy, which held nothing for the year. Words both say
+    tell nothing apart: the one holding the plain name is taken, or the one the thread was measuring."""
+    model = twins[1].model_copy(deep=True)
+    for m in model.measures.values():
+        if m.slug in ("net_amount", "return_net_amount"):
+            m.synonyms = {"en": ["net sales value"]}
+    plan = named_twin(_rank("return_net_amount"), model, "Which stores had the highest net sales value?")
+    assert plan.measures == ["net_amount"]
+    before = Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": ["number_of_returns"],
+                                  "group_by": ["store.name"]})
+    assert named_twin(_rank("net_amount"), model, "And the net sales value by store?", before).measures == [
+        "return_net_amount"]
+
+
+def test_a_question_that_says_neither_never_takes_one_on_a_staging_copy(twins):
+    """ "The average euro exchange rate" took the rate on a 50-row staging copy of the daily rates, which held
+    nothing for the year: a figure on a table of under 100 rows beside one 20 times larger is never the one taken
+    when the question does not say which; the Metrics page says the same."""
+    model = twins[1].model_copy(deep=True)
+    sales = next(m for m in model.measures.values() if m.slug == "net_amount")
+    returns = next(m for m in model.measures.values() if m.slug == "return_net_amount")
+    sales.slug, returns.slug = "order_line_net_amount", "net_amount"       # the plain name on the returns
+    model.tables[sales.table].row_count = 20_000
+    model.tables[returns.table].row_count = 50
+    for ai in ("order_line_net_amount", "net_amount"):
+        assert named_twin(_rank(ai), model, "Which stores had the highest net amount?").measures == [
+            "order_line_net_amount"]
+    rows = {r["slug"]: r["same_name"] for r in listing(model, {})}
+    assert "take this one" in rows["order_line_net_amount"] and "take the other one" in rows["net_amount"]
+
+
+def test_of_tables_of_events_the_largest_and_of_balances_the_plain_name(twins):
+    """ "Total order subtotal in 2024" took the purchase orders' subtotal, the plain name's, over the sales orders'
+    eight times as many: of figures on tables of events, the larger table's. Of a daily balance and a monthly one,
+    the monthly table had more rows and was the wrong one: of balances, the plain name still decides."""
+    model = twins[1].model_copy(deep=True)
+    sales = next(m for m in model.measures.values() if m.slug == "net_amount")
+    returns = next(m for m in model.measures.values() if m.slug == "return_net_amount")
+    sales.slug, returns.slug = "order_line_net_amount", "net_amount"       # the plain name on the smaller table
+    model.tables[sales.table].row_count, model.tables[returns.table].row_count = 20_000, 2_500
+    model.tables[sales.table].kind = model.tables[returns.table].kind = "fact"
+    assert named_twin(_rank("net_amount"), model, "Which stores had the highest net amount?").measures == [
+        "order_line_net_amount"]
+    model.tables[sales.table].kind = model.tables[returns.table].kind = "snapshot"
+    assert named_twin(_rank("order_line_net_amount"), model, "Which stores had the highest net amount?").measures \
+        == ["net_amount"]
+
+
+def test_of_two_tables_of_events_of_about_one_size_the_plain_name_decides(twins):
+    """A dashboard's "Total sales" took the resellers' sales amount over the internet sales' (60,855 rows against
+    60,398): two tables of about one size say nothing of which is meant."""
+    model = twins[1].model_copy(deep=True)
+    sales = next(m for m in model.measures.values() if m.slug == "net_amount")
+    returns = next(m for m in model.measures.values() if m.slug == "return_net_amount")
+    model.tables[sales.table].row_count, model.tables[returns.table].row_count = 60_398, 60_855
+    model.tables[sales.table].kind = model.tables[returns.table].kind = "fact"
+    assert named_twin(_rank("return_net_amount"), model, "Which stores had the highest net amount?").measures == [
+        "net_amount"]

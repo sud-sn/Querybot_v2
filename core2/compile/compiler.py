@@ -330,7 +330,14 @@ class _Compiler:
         if g.kind == "period":
             if g.date is None or g.grain is None:
                 raise CompileError("a period needs a date and a grain")
-            return self.bucket(g.date, g.grain)
+            bucket = self.bucket(g.date, g.grain)
+            months = self._compare_months()
+            if months:
+                # "2024 against 2023 by quarter": each row of the compared window is counted under the period it
+                # is set against, a whole number of months on, so Q1 2023 stands beside Q1 2024.
+                return exp.Case(ifs=[exp.If(this=self.range_condition(g.date, self.q.compare),
+                                            true=D.add_months(bucket.copy(), months, self.d))], default=bucket)
+            return bucket
         if g.kind == "time":
             if g.date is None or g.time_attr is None:
                 raise CompileError("a time attribute needs a date")
@@ -344,6 +351,13 @@ class _Compiler:
                 exp.DPipe(this=D.as_text(self.col(*g.by_key), self.d), expression=exp.Literal.string(" (no name)"),
                           safe=True)])
         return named
+
+    def _compare_months(self) -> int:
+        """Whole months from the compared window to the question's, when both start on the same day of a month."""
+        window, compare = self.q.window, self.q.compare
+        if compare is None or window.start is None or compare.start is None or window.start.day != compare.start.day:
+            return 0
+        return (window.start.year - compare.start.year) * 12 + window.start.month - compare.start.month
 
     def _numbered(self, slug: str | None) -> bool:
         """Are the attribute ``slug``'s members numbers or codes (a fill number, an NPI), read with its name?"""

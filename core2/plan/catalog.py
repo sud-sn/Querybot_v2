@@ -107,6 +107,29 @@ def same_named(model: SemanticModel) -> dict[str, list[Measure]]:
     return out
 
 
+def taken_of(model: SemanticModel, options: list[Measure]) -> Measure | None:
+    """Of measures sharing a name, the one a question that does not say which takes; None when nothing tells them
+    apart. Never one on a table of under 100 rows beside one 20 times larger (a 50-row staging copy of a daily
+    rate). Of figures on tables of events, the one on a table with half as many rows again as any other: an order
+    subtotal is the sales orders', not the purchase orders'. Otherwise, the one whose slug is its plain name: of a
+    daily balance and a monthly one, or of two tables of about one size, the larger is no better guide."""
+    from core2 import ids
+
+    rows = {m.key: (model.tables[m.table].row_count or 0) if m.table in model.tables else 0 for m in options}
+    most = max(rows.values(), default=0)
+    kept = [m for m in options if rows[m.key] >= 100 or rows[m.key] * 20 >= most]
+    if len(kept) == 1:
+        return kept[0]
+    if all(m.table in model.tables and model.tables[m.table].kind == "fact" for m in kept):
+        largest = max(rows[m.key] for m in kept)
+        biggest = [m for m in kept if rows[m.key] == largest]
+        # Clearly the larger (half as many rows again): internet and reseller sales of about one size tell nothing.
+        if len(biggest) == 1 and all(rows[m.key] * 3 <= largest * 2 for m in kept if m is not biggest[0]):
+            return biggest[0]
+    plain = [m for m in kept if m.slug == ids.slug(m.business_name)]
+    return plain[0] if len(plain) == 1 else None
+
+
 def _twins(model: SemanticModel, m: Measure, twins: dict[str, list[Measure]]) -> str:
     others = twins.get(m.key) or []
     return (" | same name as " + ", ".join(f"{o.slug} on {model.tables[o.table].business_name}" for o in others)
@@ -141,7 +164,7 @@ def _members(model: SemanticModel, attribute: Attribute, values_allowed: bool, l
     allowed = values_allowed and column.values_allowed
     listed = allowed and p is not None and bool(p.top) and count <= limit
     if attribute.kind == "number":
-        how = "a number: compare, sort or show it"
+        how = "a number: compare, sort or show it, or average it (its slug in measures)"
         if listed:
             return f"{count} values: {', '.join(_listed(p, limit))} ({how}; group by it)"
         if allowed and p is not None and p.min_num is not None and p.max_num is not None:

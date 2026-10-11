@@ -48,7 +48,9 @@ How to plan:
 2. measures: the measure slugs the question names. Never swap in a different measure because it is close
    (sales is not margin, quantity is not value, count of rows is not count of orders). When the question
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
-   derived with a short name, the op and the two slugs (scale 100 for a percentage). Days between two
+   derived with a short name, the op and the two slugs (scale 100 for a percentage); a part may be an
+   earlier derived's name: a margin % is the ratio of a derived difference (sales less cost) to the sales,
+   scale 100, never sales over cost. Days between two
    dates of the same rows ("days from order to invoice", "how long to invoice", "delivery delay", "lead
    time") go in durations: a short name, start and end (two date slugs on one table, the earlier event as
    start) and agg (avg; max for "longest", min for "shortest", sum for "total days"). To keep only rows by
@@ -676,6 +678,144 @@ def _words_name(name: str) -> str:
     return text[:1].upper() + text[1:] if text else name
 
 
+_AVERAGE = re.compile(r"\b(?:average|avg|mean)\b", re.IGNORECASE)
+_PER_SOMETHING = re.compile(r"\b(?:per|each|every)\b", re.IGNORECASE)
+
+
+_CODE_PART = re.compile(r"(.*?)(_?)(?:code|cd)", re.IGNORECASE)
+
+
+def named_not_coded(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Top 5 medications by total cost" was grouped by the medication code and answered "medication 2563431
+    leads": the rows keep each medication's description beside its code. A grouping by a code whose row keeps a
+    description (or name) of the same thing is by that description, unless the question asks for the code."""
+    if plan.kind != "query" or not plan.group_by or re.search(r"\bcodes?\b", question or "", re.IGNORECASE):
+        return plan
+    swap: dict[str, str] = {}
+    for slug in plan.group_by:
+        attribute = model.attributes.get(slug)
+        head, _, part = slug.rpartition(".")
+        # Rows of events keeping a code and its description side by side; a list's own code ("by tag code") is
+        # the reader's or the AI's choice, and stands.
+        found = _CODE_PART.fullmatch(part) if attribute is not None and head and attribute.entity is None else None
+        if found is None or attribute.column not in model.columns:
+            continue
+        table = model.columns[attribute.column].table
+        for word in ("description", "name", "desc"):
+            other = model.attributes.get(f"{head}.{found.group(1)}{found.group(2)}{word}")
+            if other is not None and other.column in model.columns and model.columns[other.column].table == table \
+                    and other.slug not in plan.group_by:
+                swap[slug] = other.slug
+                break
+    if not swap:
+        return plan
+    return plan.model_copy(update={"group_by": [swap.get(g, g) for g in plan.group_by],
+                                   "sort": [x.model_copy(update={"by": swap[x.by]}) if x.by in swap else x
+                                            for x in plan.sort]})
+
+
+# A period's own name within the year: the same axis as a series of those periods inside one year.
+_SAME_AXIS = {"month": "time:month_of_year", "quarter": "time:quarter_of_year"}
+
+
+def one_time_axis(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Encounters by month" on a dashboard was planned month by month and also grouped by the month's name:
+    each month came out as a series of its own, one point each. Inside one year, the month's name is the series'
+    own axis: the grouping is dropped. Over several years it compares the same month of each year, and stays."""
+    axis = _SAME_AXIS.get(plan.time.grain or "") if plan.kind == "query" else None
+    window = plan.time.window
+    if axis is None or axis not in plan.group_by or window.kind != "between" or not (window.start and window.end) \
+            or window.start.year != window.end.year:
+        return plan
+    return plan.model_copy(update={"group_by": [g for g in plan.group_by if g != axis]})
+
+
+def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many customers placed an order in 2024?" was written with the year as a filter on the order date
+    (between 1 January and 31 December) and refused: the customers are counted by what they did in a period only
+    through the plan's time. A date filter between two days, with no period of its own, is the plan's period."""
+    if plan.kind != "query" or plan.time.window.kind != "all":
+        return plan
+    roles = {r.slug for r in model.date_roles.values()}
+    found = [f for f in plan.filters if f.field in roles and f.op == "between" and len(f.values) == 2]
+    if len(found) != 1 or plan.time.date not in (None, found[0].field):
+        return plan
+    f = found[0]
+    try:
+        start, end = (dt.date.fromisoformat(str(v)[:10]) for v in f.values)
+    except ValueError:
+        return plan
+    return plan.model_copy(update={
+        "filters": [x for x in plan.filters if x is not f],
+        "time": plan.time.model_copy(update={"date": f.field, "window": Window(kind="between", start=start, end=end)})})
+
+
+_DATE_WORDS = {"date", "dates", "time", "day", "on", "at", "of", "the", "when", "dt"}
+
+
+def date_in_a_name(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Order subtotal by ship method in 2024" was dated by the ship date: the word "ship" is the method's, not a
+    date's. A date the question names only inside the name of a field it groups or filters by is no date it
+    asked for: the measure's own date is taken."""
+    role = next((r for r in model.date_roles.values() if r.slug == plan.time.date), None) \
+        if plan.kind == "query" and plan.time.date else None
+    if role is None or role.is_default or not question:
+        return plan
+    own = [w for w in re.findall(r"[a-z0-9]+", role.name.casefold()) if w not in _DATE_WORDS]
+    if not own:
+        return plan
+    from core2.resolve.resolver import find_slug
+
+    left = question.casefold()
+    for slug in [*plan.group_by, *(f.field for f in plan.filters)]:
+        found = find_slug(model, slug)
+        if found is None or not hasattr(found[1], "business_name"):
+            continue
+        names = [found[1].business_name]
+        if getattr(found[1], "entity", None) in model.entities:
+            names.append(model.entities[found[1].entity].business_name)
+        for name in names:
+            words = [w for w in re.findall(r"[a-z0-9]+", name.casefold()) if w not in ("name", "id", "code")]
+            if len(words) >= 2:
+                left = re.sub(r"\b" + r"\s+".join(re.escape(w) + "s?" for w in words) + r"\b", " ", left)
+    if left == question.casefold() or any(re.search(rf"\b{re.escape(w)}", left) for w in own):
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={"date": None})})
+
+
+def average_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Which territory had the highest average order subtotal?" was planned as the subtotal added up, and named
+    the territory with the most sales. A figure that adds up, written after "average", is each row's figure
+    averaged (per, of none): the average order's subtotal in each territory. "Average sales per customer" says
+    what to average over, and is the AI's to plan."""
+    if plan.kind != "query" or plan.per is not None or plan.rolling is not None or plan.derived or plan.durations \
+            or plan.bands is not None or plan.time.compare is not None or len(plan.measures) != 1:
+        return plan
+    measure = next((m for m in model.measures.values() if m.slug == plan.measures[0]), None)
+    hit = _AVERAGE.search(question or "")
+    if measure is None or hit is None:
+        return plan
+    if getattr(measure.expr, "agg", "") in ("max", "min"):
+        # "Average list price by product line" took the highest price of a price history: the number each
+        # product has, of that name, averaged over the products.
+        name = measure.business_name.casefold()
+        own = [a for a in model.attributes.values() if a.kind == "number" and a.business_name.casefold() == name]
+        if len(own) != 1:
+            return plan
+        return plan.model_copy(update={"measures": [own[0].slug], "sort": [
+            s.model_copy(update={"by": own[0].slug}) if s.by == measure.slug else s for s in plan.sort]})
+    if getattr(measure.expr, "agg", "") != "sum":
+        return plan
+    rest = re.split(r"[?.;!]", question[hit.end():], maxsplit=1)[0]
+    if _PER_SOMETHING.search(rest) or measure.slug not in measures_named(model, rest):
+        return plan
+    return plan.model_copy(update={"per": PerMember(of=None, summary="avg")})
+
+
+def _plain_words(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
 def ratio_alone(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """A ratio the question asks for is the answer, under a name in words.
 
@@ -687,10 +827,22 @@ def ratio_alone(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """
     if plan.kind != "query":
         return plan
+    # "What was our gross profit in 2013?" was written with the derived gross_profit among the measures too, and
+    # refused ("no measure called gross_profit"): a derived figure is shown as it is, and named among the measures
+    # only when another derived figure is made of it (the reader asked for both).
+    parts_of = {_plain_words(m) for d in plan.derived for m in d.measures}
+    made = {_plain_words(d.name) for d in plan.derived}
+    slugs = {m.slug for m in model.measures.values()} if model is not None else set()
+    listed = [m for m in plan.measures if m in slugs or _plain_words(m) not in made or _plain_words(m) in parts_of]
+    if listed != plan.measures:
+        plan = plan.model_copy(update={"measures": listed})
     update: dict[str, Any] = {}
     renamed = {d.name: _words_name(d.name) for d in plan.derived if _words_name(d.name) != d.name}
-    derived = [d.model_copy(update={"name": renamed.get(d.name, d.name)}) for d in plan.derived]
+    derived = [d.model_copy(update={"name": renamed.get(d.name, d.name),
+                                    "measures": [renamed.get(m, m) for m in d.measures]}) for d in plan.derived]
     sort = [s.model_copy(update={"by": renamed[s.by]}) if s.by in renamed else s for s in plan.sort]
+    if any(m in renamed for m in plan.measures):
+        update["measures"] = [renamed.get(m, m) for m in plan.measures]
     parts = {m for d in derived for m in d.measures}
     if derived and plan.measures and set(plan.measures) <= parts and _RATIO_WORDS.search(question or "") \
             and not _AND_ALSO.search(question or ""):
@@ -698,6 +850,16 @@ def ratio_alone(plan: Plan, model: SemanticModel, question: str) -> Plan:
         sort = [s.model_copy(update={"by": derived[0].name}) if s.by in parts else s for s in sort]
     if renamed or derived != plan.derived:
         update["derived"] = derived
+    # A duration's name too ("days_between_order_and_ship" -> "Days between order and ship"), wherever the plan
+    # refers to it: a sort, a condition, ranges of it.
+    spans = {d.name: _words_name(d.name) for d in plan.durations if _words_name(d.name) != d.name}
+    if spans:
+        update["durations"] = [d.model_copy(update={"name": spans.get(d.name, d.name)}) for d in plan.durations]
+        sort = [s.model_copy(update={"by": spans[s.by]}) if s.by in spans else s for s in sort]
+        update["filters"] = [f.model_copy(update={"field": spans[f.field]}) if f.field in spans else f
+                             for f in plan.filters]
+        if plan.bands is not None and plan.bands.of in spans:
+            update["bands"] = plan.bands.model_copy(update={"of": spans[plan.bands.of]})
     if sort != plan.sort:
         update["sort"] = sort
     if plan.per is not None and plan.per.of and plan.group_by:
@@ -721,16 +883,18 @@ def _word_set(text: str) -> set[str]:
     return {w[:-1] if len(w) > 3 and w.endswith("s") else w for w in re.findall(r"[a-z0-9]+", text.casefold())}
 
 
-def named_twin(plan: Plan, model: SemanticModel, question: str) -> Plan:
+def named_twin(plan: Plan, model: SemanticModel, question: str, previous: Plan | None = None) -> Plan:
     """Of two measures with one name, the one the question's words point at, else the one that holds the name.
 
     "Which item groups have the highest average item cost?" names a figure kept on a daily balance and again on a
     monthly one, and the AI took the monthly one. The words that tell the two apart (each one's table, and the
     words its slug adds to the name: "on hand", "period") pick one when the question says them; when it says none,
-    the one whose slug is its plain name is taken: the Metrics page says so, and flags the pair for the admin.
+    the one on the table the conversation was already measuring is kept ("Split that by promotion" after the
+    resellers' discount; "average freight per order" after sales orders), else the one core2.plan.catalog.taken_of
+    names (of tables of events, the largest; else the plain name; never a staging copy): the Metrics page says
+    so, and flags the pair.
     """
-    from core2 import ids
-    from core2.plan.catalog import same_named
+    from core2.plan.catalog import same_named, taken_of
 
     if plan.kind != "query":
         return plan
@@ -766,8 +930,18 @@ def named_twin(plan: Plan, model: SemanticModel, question: str) -> Plan:
         said = {m.slug: len(told_apart(m) & asked) for m in options}
         most = max(said.values())
         pick = [m for m in options if said[m.slug] == most]
-        if most == 0:
-            pick = [m for m in options if m.slug == ids.slug(m.business_name)] or [chosen]
+        if most == 0 and not (name - _PLAIN_WORDS) & asked:
+            pick = [chosen]            # the question does not name it: the conversation's own figure stands
+        elif len(pick) > 1:
+            # Named, but by words both say ("the average exchange rate", each one's synonyms saying "exchange"):
+            # the one the conversation was measuring, else the one that holds the plain name.
+            before = {m.table for m in pick if previous is not None and m.slug in slugs(previous.model_dump())}
+            same_table = [m for m in pick if m.table in {by_slug[x].table for x in slugs(previous.model_dump())}] \
+                if previous is not None else []
+            if before or len(same_table) == 1:
+                pick = [m for m in pick if m.table in before] or same_table
+            else:
+                pick = [taken_of(model, pick) or chosen]
         if len(pick) == 1 and pick[0].slug != slug and pick[0].slug not in slugs(data):
             swap[slug] = pick[0].slug
     if not swap:
@@ -828,6 +1002,10 @@ def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], ques
                     and shown == field and next(iter(places)) < len(on_screen):
                 row = on_screen[next(iter(places))]
                 found = {row[1]} if row[1] is not None else set()
+            one = {row[1] for row in on_screen or [] if str(row[0]) == shown and row[1] is not None}
+            if not found and not places and field is not None and shown == field and len(one) == 1:
+                # "What was their sales quota?" after the one sales rep who sold most: the one member on screen.
+                found = one
             if len(found) == 1:
                 f = f.model_copy(update={"field": field, "op": "eq", "values": [next(iter(found))]})
         filters.append(f)
@@ -852,6 +1030,7 @@ def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
                                 "does not say which member it means, return a clarify plan asking which one.")
     problems += _money_on_other(plan, model, question)
     problems += _counts_what_it_asks(plan, model, question)
+    problems += _counted_by_itself(plan, model)
     time = plan.time
     other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
     if other is not None and time.window.kind != "all" and (other == time.window or _overlap(time.window, other)):
@@ -954,6 +1133,33 @@ def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> lis
     return problems
 
 
+def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
+    """ "What are the most common sales reasons on internet orders?" was planned as the number of sales reasons
+    by sales reason: 1 each. A count of a list's own members grouped by those members says nothing; how often
+    each occurs is a count of the rows of a table that records them."""
+    if plan.kind != "query" or plan.per is not None or not plan.group_by:
+        return []
+    problems = []
+    for m in model.measures.values():
+        if m.slug not in plan.measures or getattr(m.expr, "agg", None) not in ("count", "count_distinct"):
+            continue
+        entity = next((e for e in model.entities.values() if e.table == m.table), None)
+        if entity is None or m.expr.agg == "count_distinct" and m.expr.column not in (
+                *entity.key_columns, entity.code_column, entity.label_column):
+            continue
+        own = {entity.label_column, entity.code_column, *entity.key_columns} - {None}
+        if not any(g == entity.slug or g in model.attributes and model.attributes[g].column in own
+                   for g in plan.group_by):
+            continue
+        plural = names.plural((entity.business_name or entity.slug).lower())
+        others = [x.slug for x in model.measures.values() if not x.hidden and x.table != m.table and x.slug
+                  and getattr(x.expr, "agg", None) == "count" and P.all_paths(model, x.table, m.table)][:4]
+        problems.append(f"{m.slug} counts the {plural} themselves: grouped by {entity.slug}, each one is 1. How "
+                        f"often each occurs is a count of the rows that record them, grouped by {entity.slug}"
+                        + (f" ({', '.join(others)})" if others else "") + ".")
+    return problems
+
+
 def _overlap(a: Window, b: Window) -> bool:
     """Do two written-out periods share a day?"""
     if a.kind != "between" or b.kind != "between" or not (a.start and a.end and b.start and b.end):
@@ -1024,6 +1230,8 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
         if exc.kind in ("unconfirmed", "denied", "ambiguous"):
             return [], ""          # not the planner's to fix: the service answers or asks the reader
         options = f" Allowed: {', '.join(exc.options[:12])}." if exc.options else ""
+        if exc.message.endswith(" has no date"):
+            return [f"{exc.message}.{options}"], _dated(model, plan, question)
         return [f"{exc.message}.{options}"], _reaching(model, exc.unlinked, question) if exc.unlinked else ""
     except ValueError as exc:
         return [str(exc)], ""
@@ -1037,6 +1245,38 @@ _COMMON = {"a", "an", "the", "of", "by", "in", "for", "per", "and", "or", "to", 
 def _words(text: str) -> set[str]:
     return {names.singular(w) for w in re.findall(r"[a-z0-9]+", text.casefold())
             if w not in _COMMON and not w.isdigit()}
+
+
+def _dated(model: SemanticModel, plan: Plan, question: str) -> str:
+    """The measures with a date that reach the plan's groupings, those sharing the question's words first.
+
+    "Which payer covered the most cost in 2025?" took the amount each payer covered over its lifetime, kept on
+    the payer list with no date, and gave up; the encounters' payer coverage is dated and reaches the payers."""
+    from core2.resolve.resolver import find_slug
+
+    targets = set()
+    for slug in plan.group_by:
+        found = find_slug(model, slug)
+        column = getattr(found[1], "column", None) if found else None
+        table = model.columns[column].table if column in model.columns else getattr(found[1], "table", None) \
+            if found else None
+        if table:
+            targets.add(table)
+    asked = _words(question)
+    found_: list[tuple[int, str, Measure]] = []
+    for m in model.measures.values():
+        if m.hidden or not m.slug or m.table not in model.tables or not model.tables[m.table].default_date:
+            continue
+        if all(t == m.table or P.all_paths(model, m.table, t) for t in targets):
+            said = " ".join([m.business_name, *(w for words in m.synonyms.values() for w in words)])
+            found_.append((-len(asked & _words(said)), m.business_name.casefold(), m))
+    if not found_:
+        return ""
+    found_.sort(key=lambda f: (f[0], f[1]))
+    listed = ", ".join(f"{m.slug} ({m.business_name}, on {model.tables[m.table].business_name})"
+                       for _, _, m in found_[:8])
+    return (f"Measures with a date that can be broken down that way: {listed}. A figure kept with no date (a total "
+            "on a list) cannot be limited to a period: if the question's words name one of these, use it instead.")
 
 
 def _reaching(model: SemanticModel, table: str, question: str) -> str:
@@ -1093,16 +1333,43 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
     return Plan.model_validate(data)
 
 
+def _derived_named(question: str, defined: list) -> list:
+    """The figures the conversation worked out (gross profit) that the question names again, latest first."""
+    asked = _word_set(question)
+    out, seen = [], set()
+    for d in reversed(defined):
+        words = _word_set(_words_name(d.name)) - _PLAIN_WORDS
+        if words and words <= asked and d.name.casefold() not in seen:
+            seen.add(d.name.casefold())
+            out.append(d)
+    return out
+
+
+def _members_compared(question: str, hidden: list[ValueMatch], model: SemanticModel) -> tuple[str, list[str]] | None:
+    """Two or more members of one field the question writes ("actual and budget"), and that field's slug."""
+    by_field: dict[str, list[str]] = {}
+    for m in hidden:
+        by_field.setdefault(m.attribute, [])
+        if m.text not in by_field[m.attribute]:
+            by_field[m.attribute].append(m.text)
+    found = [(slug, said) for slug, said in by_field.items() if len(said) >= 2 and slug in model.attributes]
+    return found[0] if len(found) == 1 else None
+
+
 def plan_question(model: SemanticModel, question: str, complete: Complete, *, today: dt.date,
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
                   hidden: list[ValueMatch] | None = None,
-                  reading: str | None = None, on_screen: list[tuple] | None = None) -> Outcome:
+                  reading: str | None = None, on_screen: list[tuple] | None = None,
+                  written: list[ValueMatch] | None = None, defined: list | None = None) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
     the plan is marked so, whatever the AI said. None: the AI reads it, and may say "unsure".
     ``on_screen``: the members of the answer the question follows, in the order shown (attribute slug, value, ...).
+    ``written``: every member name the question writes, quoted or not (two compared: "actual and budget").
+    ``defined``: the figures the conversation's plans worked out (gross profit), oldest first: definitions only,
+    never a figure of an answer, so a new question may use them too.
     """
     matches = matches or []
     history = history or []
@@ -1140,6 +1407,34 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 f'"{m.text}" is in VALUE MATCHES ({m.attribute})' for m in matches) + ". Plan the question for "
                 "it, filtering on that value, rather than asking which one."], ""
             continue
+        previous = history[-1].plan if history else None
+        if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
+                and on_screen and previous is not None and previous.kind == "query" and previous.limit \
+                and _THOSE.search(question) and str(on_screen[0][0]) in model.attributes:
+            # "What was their sales quota for 2013?" after the one sales rep who sold most was asked back ("which
+            # employee?"): the members on screen are the ones meant, and the plan is kept to them in code.
+            problems, hint = [f"The question means the members of the answer above (by {on_screen[0][0]}): QueryBot "
+                              'keeps the plan to them. Plan the question with follow_up "refine" and no filter on '
+                              "them, rather than asking which one."], ""
+            continue
+        refused = plan.kind in ("unsupported", "clarify") and (plan.clarify is None or plan.clarify.about != "member")
+        reuse = _derived_named(question, defined or []) if attempt == 0 and refused else []
+        if reuse:
+            # "Show gross profit by month for 2013" after the answer that worked gross profit out: refused as not in
+            # the catalog. The figure the answer above made is made again.
+            problems, hint = ["Earlier in this conversation, QueryBot worked out " + "; ".join(
+                f'"{d.name}" as {json.dumps(d.model_dump(exclude_defaults=True))}' for d in reuse) +
+                ". Use it again as a derived measure (derived) for this question."], ""
+            continue
+        compared = _members_compared(question, written or [], model) if attempt == 0 and refused else None
+        if compared is not None:
+            # "Compare actual and budget for 2011" was refused as having no measure for budget: two members of one
+            # field, compared by grouping by it. Their names are said only where values may reach the AI.
+            slug, said = compared
+            what = " and ".join(f'"{w}"' for w in said) if values_allowed else f"{len(said)} words of the question"
+            problems, hint = [f"{what} are members of the field {slug}, not measures: compare them by grouping the "
+                              f"measure by {slug}."], ""
+            continue
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
         plan = pointed_in(plan, model, matches, question, on_screen)
@@ -1150,13 +1445,16 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (where_we_have, counted_each, in_time_order):   # "where do we have", "$1,000 each", Q1 vs Q2
+        for rule in (dates_as_window, where_we_have, counted_each, in_time_order, average_asked,
+                     date_in_a_name, named_not_coded, one_time_axis):   # 2024 as a date filter, "where do we have",
+            # "$1,000 each", Q1 vs Q2, "average subtotal", "by ship method" (no ship date), a code's description,
+            # "by month" planned twice over
             ruled = rule(plan, model, question)
             if ruled is not plan and not check(ruled, model, today, shown)[0]:
                 plan = ruled
         problems, hint = check(plan, model, today, shown)
         if not problems:
-            twin = named_twin(plan, model, question)
+            twin = named_twin(plan, model, question, history[-1].plan if history else None)
             if twin is not plan and not check(twin, model, today, shown)[0]:
                 plan = twin
             if reading in ("refine", "new") and plan.kind == "query":
@@ -1182,6 +1480,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
 # "The most", "the top 10": highest first. "The least", "the bottom 5": lowest first ("at least 5" is neither).
 _MOST = re.compile(r"\b(?:most|highest|top|biggest|largest|greatest|maximum)\b", re.IGNORECASE)
 _LEAST = re.compile(r"\b(?:(?<!at\s)least|lowest|bottom|fewest|smallest|minimum)\b", re.IGNORECASE)
+
+
+# "Compare it with 2024", "compare that to last year": the answer on screen, set against another period.
+_COMPARE_IT = re.compile(r"\b(?:compare|comparer?)\s+(?:it|that|this|these|them|those|ça|cela)\b", re.IGNORECASE)
 
 
 def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | None) -> Plan:
@@ -1234,7 +1536,11 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
             and any(m.slug in plan.measures for m in model.measures.values()):
         time = time.model_copy(update={"window": Window()})
     ranks_members = plan.intent == "rank" and bool(plan.group_by)      # a ranking of periods is its grain
+    # "Compare it with 2024" after a monthly series: the series on screen, month by month against 2024's.
+    the_series = previous is not None and previous.kind == "query" and previous.time.grain == time.grain \
+        and not plan.group_by and _COMPARE_IT.search(question or "") is not None
     if (plan.intent == "compare" or ranks_members) and time.grain is not None and not asks_series(question) \
+            and not the_series \
             and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", question, re.IGNORECASE):
         time = time.model_copy(update={"grain": None})
     if time != plan.time:
@@ -1325,8 +1631,11 @@ def those_members(plan: Plan, model: SemanticModel, question: str, previous: Pla
     named = next((f for f in previous.filters if f.field in same and f.op in ("in", "eq") and f.values), None)
     if named is not None:                       # named on the answer before: still those
         return plan.model_copy(update={"filters": [*plan.filters, named], "group_by": group_by, "limit": None})
+    # In the same period and shape, the same figure's order and limit find them again; another figure ("their
+    # sales quota" after the rep who sold most) would rank others.
     if not previous.limit or (plan.time.window, plan.time.grain, plan.time.compare) == (
-            previous.time.window, previous.time.grain, previous.time.compare):
+            previous.time.window, previous.time.grain, previous.time.compare) and (
+            set(plan.measures), plan.derived) == (set(previous.measures), previous.derived):
         return plan
     members = list(dict.fromkeys(str(row[1]) for row in on_screen[:previous.limit] if row[1] is not None))
     if not members:

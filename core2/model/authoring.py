@@ -695,7 +695,6 @@ def counted_on(model: SemanticModel, m: Any) -> list[str]:
 
 
 def listing(model: SemanticModel, uses: dict[str, int]) -> list[dict[str, Any]]:
-    from core2 import ids
     from core2.plan.catalog import definition, same_named
 
     twins = same_named(model)
@@ -714,22 +713,23 @@ def listing(model: SemanticModel, uses: dict[str, int]) -> list[dict[str, Any]]:
                     "from": counted_on(model, m), "date": role.name if role else "", "asked": uses.get(m.slug, 0),
                     "source": source(m), "hidden": m.hidden, "description": m.description,
                     "synonyms": sorted({w for ws in m.synonyms.values() for w in ws}),
-                    "same_name": _same_name(model, m, twins.get(m.key) or [], ids.slug(m.business_name))})
+                    "same_name": _same_name(model, m, twins.get(m.key) or [])})
     # The ones people ask for most first; the hidden ones last.
     return sorted(out, key=lambda r: (r["hidden"], -r["asked"], r["name"].casefold()))
 
 
-def _same_name(model: SemanticModel, m: Any, others: list[Any], plain: str) -> str:
+def _same_name(model: SemanticModel, m: Any, others: list[Any]) -> str:
     """For a metric that shares its name with another counted another way: where the other is, and which one a
-    question that does not say takes (the one whose slug is its plain name, core2.plan.planner.named_twin)."""
-    from core2 import ids
+    question that does not say takes (core2.plan.catalog.taken_of, as core2.plan.planner.named_twin does)."""
+    from core2.plan.catalog import taken_of
 
     if not others:
         return ""
     where = ", ".join(sorted({model.tables[o.table].business_name for o in others}))
-    if m.slug == plain:
+    taken = taken_of(model, [m, *others])
+    if taken is m:
         taken = "Questions that do not say which take this one."
-    elif any(o.slug == ids.slug(o.business_name) for o in others):
+    elif taken is not None:
         taken = "Questions that do not say which take the other one."
     else:
         taken = "Questions that do not say which may take either."

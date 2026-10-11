@@ -80,8 +80,9 @@ Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"titl
   time, breakdown for a figure by a grouping, table for a list or a ranking of rows.
 - Each question is a complete question a reader could ask on its own, in plain words, using the measure and field
   names of the catalog below ("Net amount by month for the last 12 months", "Top 10 customers by net amount this
-  year"), with the request's period when it names one. Never a member's name or a value: only names of
-  measures, fields and periods.
+  year"), with the request's period when it names one, and the request's words that say which figure it means
+  ("internet sales", "reseller orders": never "sales" alone when the request says whose). Never a member's name or
+  a value: only names of measures, fields and periods.
 - A title is what the tile shows, in a few words ("Net amount", "Net amount by month"), never a question.
 - When the request names something the catalog has not, still make its tile, titled in the reader's words and
   asking for exactly what they named: the reader is told it is missing and can define it.

@@ -213,3 +213,20 @@ def test_a_quoted_name_is_found_whole_with_its_punctuation_and_one_letter_codes_
     assert [(m.attribute, m.value) for m in index.quoted('value in class "A"')] == [("abc_class.class_code", "A")]
     assert index.match("a value in class A") == [] and index.quoted("a value in class A") == []
     assert index.stored("abc_class.class_code", "a") == "A"
+
+
+def test_a_name_in_the_singular_or_the_plural_is_the_same_name(retail):
+    """ "Which beverage product sold the most?" was planned with the category "Beverage", stored as "Beverages":
+    refused as a name the data does not have. The member it names is "Beverages", and as the reader wrote it
+    without quotes it narrows nothing; written in quotes, it does."""
+    model, _, _, _ = retail
+    category = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "category_name")
+    plan = {"intent": "value", "measures": ["net_amount"], "time": Y2025,
+            "filters": [{"field": category, "op": "eq", "values": ["Beverage"]}]}
+    whole = _ask(retail, Recorded({"intent": "value", "measures": ["net_amount"], "time": Y2025}),
+                 "net sales in 2025")[0]
+    unquoted = _ask(retail, Recorded(plan), "net sales of beverage products in 2025")[0]
+    assert _total(unquoted) == _total(whole), unquoted["answer"]["headline"]
+    assert any('"Beverages"' in n for n in unquoted["trust"]["date_context"]), unquoted["trust"]["date_context"]
+    quoted = _ask(retail, Recorded(plan), 'net sales of "beverage" products in 2025')[0]
+    assert 0 < _total(quoted) < _total(whole), quoted["answer"]["headline"]
