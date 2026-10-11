@@ -256,7 +256,8 @@ def _analyses(model: SemanticModel) -> str:
         lines.append(
             "- bands: rows or members put in ranges of a value, counted per range. of: a number field or a "
             "duration's name for each row (\"orders by delivery time\"); a measure with per for each member's "
-            "figure (\"customers by spend band\"). edges: the reader's own lower edges (\"under 3, 3 to 7, 8 or "
+            "figure (\"customers by spend band\"; \"customers with 1, 2 to 4 and 5 or more orders\": of the count of "
+            "orders, per customer, edges [1, 2, 5]). edges: the reader's own lower edges (\"under 3, 3 to 7, 8 or "
             "more\" -> [3, 8]); [] lets the data choose round ones.")
         if days is not None:
             start, end = days

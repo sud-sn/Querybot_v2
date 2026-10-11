@@ -189,6 +189,22 @@ def test_customers_by_spend_range_and_orders_by_delivery_time(retail):
     assert f"{days['Unknown']} orders have no value for it" in got["answer"]["headline"]
 
 
+def test_members_by_how_many_rows_each_had_put_the_named_count_in_ranges(retail):
+    """"How many patients had 1, 2 to 4 and 5 or more fills": a real model wrote the count of patients as the
+    measure beside the ranges of fills per patient, and the patients per patient (always 1) were put in ranges.
+    The ranges are of the figure the bands name; each range counts its members, whatever was counted beside."""
+    per = f"SELECT o.customer_id, COUNT(DISTINCT o.order_number) AS n {ORDERS_Q1} " \
+          "AND o.customer_id IN (SELECT customer_id FROM customers) GROUP BY 1"
+    expected = dict(_sql(retail, f"SELECT CASE WHEN n < 2 THEN '1' WHEN n < 5 THEN '2–4' ELSE '5 and over' END, "
+                                 f"COUNT(*) FROM ({per}) GROUP BY 1"))
+    asked = {"bands": {"of": "number_of_orders", "per": "customer", "edges": [1, 2, 5]}, "time": Q1}
+    as_written = _ask(retail, {"measures": ["number_of_customers"], **asked})
+    assert {r["band"]: r["customers"] for r in as_written["export_rows"]} == expected
+    assert [r["band"] for r in as_written["export_rows"]] == ["1", "2–4", "5 and over"]     # counts: whole ranges
+    assert as_written["export_rows"] == _ask(retail, {"measures": ["number_of_orders"], **asked})["export_rows"]
+    assert "by number of orders per customer" in as_written["answer"]["headline"]
+
+
 def test_ranges_named_by_no_one_are_round_and_split_the_data(retail):
     got = _ask(retail, {"measures": ["net_amount"], "bands": {"of": "net_amount", "per": "customer"}, "time": Q1})
     names = [r["band"] for r in got["export_rows"]]
@@ -242,6 +258,19 @@ def test_running_total_this_year_and_a_three_month_moving_average(retail):
     assert running["data"]["header_labels"]["net_amount_running"] == "Net amount, year to date"
     assert running["definition"] == "Each month adds to the total since the start of each year."
     assert running["key_insights"] == []                     # a running total only grows: nothing to find in that
+
+    # No reset: the running total starts with the first month shown, as a BI tool's does within its filter
+    # ("running total in fiscal year 2026" started at everything before it: $1.5M in its first month).
+    plain = _ask(retail, {"intent": "trend", "measures": ["net_amount"], "rolling": {"kind": "running"},
+                          "time": {"grain": "month", "window": {"kind": "between", "start": "2026-01-01",
+                                                                 "end": "2026-05-31"}}})
+    assert [r["net_amount_running"] for r in plain["export_rows"]] == pytest.approx(
+        [sum(months[2:3 + i]) for i in range(5)])
+    assert plain["definition"] == "Each month adds to the total from the first month shown."
+    ever = _ask(retail, {"intent": "trend", "measures": ["net_amount"], "rolling": {"kind": "running"},
+                         "time": {"grain": "month"}})
+    assert ever["definition"] == "Each month adds to the total since the data begins."
+    assert ever["export_rows"][0]["net_amount_running"] == ever["export_rows"][0]["net_amount"]
 
     moving = _ask(retail, {"intent": "trend", "measures": ["net_amount"],
                            "rolling": {"kind": "moving_average", "periods": 3},

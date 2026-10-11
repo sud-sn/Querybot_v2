@@ -182,6 +182,14 @@ def _singular(word: str) -> str:
 def _per(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     per = plan.per
     band = plan.bands if plan.bands is not None and plan.bands.per is not None else None
+    if band is not None and band.of not in {d.name for d in plan.durations} | {d.name for d in plan.derived}:
+        found = find_slug(model, band.of)
+        if found is not None and found[0] == "measure" and plan.measures != [band.of]:
+            # "Patients with 1, 2 to 4 and 5 or more fills": each patient's fills are put in ranges, and each
+            # range counts its patients, whatever the plan counted beside it (a real model wrote the count of
+            # patients as the measure, and the patients per patient were put in ranges).
+            plan = plan.model_copy(update={"measures": [band.of], "derived": [],
+                                           "durations": [d for d in plan.durations if not d.measure]})
     of = per.of if per is not None else band.per if band is not None else None
     _one_figure(plan)
     slug, column, member = _member_of(model, of) if of else (None, None, "row")
@@ -248,7 +256,7 @@ def _per(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     taken = {g.name for g in outer_groups}
     if band is not None:
         edges = sorted(set(band.edges))
-        whole = figure.format in ("number", "days", "integer") and _whole(figure)
+        whole = figure.format in ("number", "count", "days", "integer") and _whole(figure)
         labels = B.labels(edges, whole=whole, money=figure.format == "currency",
                           unit="days" if figure.format == "days" else "")
         name = _output_name("band", taken)
@@ -437,8 +445,9 @@ def _rolling(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         elif start is not None and r.reset == "fiscal_year":
             begins = fiscal or 1
             start = dt.date(start.year if start.month >= begins else start.year - 1, begins, 1)
-        elif r.reset is None:
-            start = None            # a running total counts everything before the first period shown
+        # With no reset, a running total starts with the first period shown, as a BI tool's does within its
+        # filter: "running total in fiscal year 2026" starts at April 2026's own figure, never at everything
+        # before it. Asked over all time, it starts where the data begins.
     elif start is not None:
         start = add_units(start, step, -(r.periods - 1))
     if start is not None and first_period is not None and start < first_period:
@@ -502,7 +511,7 @@ def rolling_note(shape: RollingShape) -> str:
     unit = {"fiscal_month": "month", "fiscal_quarter": "quarter", "fiscal_year": "year"}.get(shape.grain, shape.grain)
     if shape.kind == "running":
         since = {"year": "since the start of each year", "fiscal_year": "since the start of each fiscal year"}.get(
-            shape.reset or "", "since the data begins")
+            shape.reset or "", f"from the first {unit} shown" if shape.shown.start is not None else "since the data begins")
         return f"Each {unit} adds to the total {since}."
     each = "the average of" if shape.kind == "moving_average" else "the total of"
     return (f"Each point is {each} that {unit} and the {shape.periods - 1} before it; the first points read "
