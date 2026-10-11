@@ -96,6 +96,9 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
         word = _word(model, slugs[0]) if slugs else ""
         if word:
             out.append(f"{m} by {word} {span}".strip() + tail)
+    if plan.shaped():
+        # A figure per member, a running total or a rank is not yet explained, forecast or shared out.
+        out = [s for s in out if not s.startswith(("Why did ", "Forecast ", "Share of "))]
     seen: set[str] = set()
     unique = [s for s in out if not (s.lower() in seen or seen.add(s.lower()))]   # type: ignore[func-returns-value]
     return [{"label": s, "question": s} for s in unique[:3]]

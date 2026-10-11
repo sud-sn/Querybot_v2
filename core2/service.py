@@ -35,6 +35,7 @@ from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query, repeats_sql
 from core2.compile.shapes import fill_edges
+from core2.plan.chips import offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
@@ -87,6 +88,9 @@ class Session:
     turns: list[Turn] = field(default_factory=list)
     pending: Pending | None = None
     own: dict[str, Measure] = field(default_factory=dict)     # metrics the reader defined in this chat
+    # The chips of the answer on screen that change one setting ("Median instead"), by their words: the plan
+    # each runs, with no AI (core2/plan/chips.py).
+    offers: dict[str, Plan] = field(default_factory=dict)
 
 
 _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
@@ -368,7 +372,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     following = False
     matches: list[ValueMatch] = []
     picked = choose(question, pending.options) if pending is not None else None
-    if pending is not None and picked is not None:
+    offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
+    if offer is not None and (pending is None or picked is None) and last is not None:
+        # A chip of the answer on screen: its plan, one setting changed, run as it is (no AI).
+        outcome = Outcome(offer, masked=last.masked)     # no "Following" line: the chip says what it changed
+    elif pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
         if pending.field == "time.date":
             # The offered dates are tables' defaults; another table may have a date of the same name.
@@ -488,6 +496,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     if not plan.include_left_out and _found_nothing(payload):
         _say_left_out(payload, question, plan, services, ctx)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
+    chips = offered(plan, model)
+    if chips:
+        session.offers = {_plain(words): changed for words, changed in chips}
+        payload["follow_up_suggestions"] = [*({"label": words, "question": words, "kind": "setting"}
+                                              for words, _ in chips), *payload.get("follow_up_suggestions", [])]
     if unquoted:
         _say_unquoted(payload, question, unquoted)
     if outcome.repaired:
@@ -511,6 +524,10 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     warehouse = Guarded(services.warehouse)
     common: dict[str, Any] = {"data_source": services.data_source, "question_id": question_id,
                               "model_version": model.version}
+    if plan.intent in ("drivers", "forecast") and plan.shaped():
+        raise ResolveError("unsupported", f"{'why' if plan.intent == 'drivers' else 'a forecast of'} a figure worked "
+                           "out per member, in ranges or over a running series is not worked out yet: ask for the "
+                           "figure itself")
     if plan.intent == "drivers":
         return answer_drivers(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
     if plan.intent == "forecast":
@@ -788,9 +805,13 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tupl
     member added after the index was read is real. One written in another case
     ("retail") is the stored one ("RETAIL"): the warehouse compares text exactly.
     """
-    filters = []
     missing: tuple[str, str] | None = None
-    for f in plan.filters:
+
+    def spelled(listed: list) -> list:
+        return [as_stored(f) for f in listed]
+
+    def as_stored(f):
+        nonlocal missing
         found = find_slug(model, f.field) if f.op in ("eq", "in", "ne", "not_in") else None
         attribute: Attribute | None = None
         thing = ""
@@ -803,16 +824,19 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tupl
             attribute = next((a for a in model.attributes.values() if a.column == column), None)
             thing = entity.business_name.lower()
         if attribute is None or attribute.slug not in index.attributes:
-            filters.append(f)
-            continue
+            return f
         values = []
         for value in f.values:
             stored = index.stored(attribute.slug, value) if isinstance(value, str) else value
             if stored is None and f.op in ("eq", "in") and missing is None:
                 missing = (thing, str(value))      # excluding a member there is none of is harmless
             values.append(value if stored is None else stored)
-        filters.append(f.model_copy(update={"values": values}))
-    return plan.model_copy(update={"filters": filters}), missing
+        return f.model_copy(update={"values": values})
+
+    filters = spelled(plan.filters)
+    absent = plan.absent.model_copy(update={"without": spelled(plan.absent.without),
+                                            "had": spelled(plan.absent.had)}) if plan.absent is not None else None
+    return plan.model_copy(update={"filters": filters, "absent": absent}), missing
 
 
 def _grounded(matches: list[ValueMatch], session: Session) -> set[str]:
@@ -857,16 +881,25 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
             return True      # "lowest", "that division": no name at all; the reader is asked which one they mean
         return v in grounded or any(v == q or (len(q) >= 3 and (q in v or v in q)) for q in said)
 
-    filters, dropped = [], []
-    for f in plan.filters:
-        found = find_slug(model, f.field) if f.op in ("eq", "in", "ne", "not_in") else None
-        if found is None or not isinstance(found[1], (Attribute, Entity)):
-            filters.append(f)
-            continue
-        thing = found[1].business_name.lower()
-        attribute = found[1] if isinstance(found[1], Attribute) else next(
+    dropped: list[tuple[str, str]] = []
+
+    def kept_of(listed: list) -> list:
+        filters = []
+        for f in listed:
+            found = find_slug(model, f.field) if f.op in ("eq", "in", "ne", "not_in") else None
+            if found is None or not isinstance(found[1], (Attribute, Entity)):
+                filters.append(f)
+                continue
+            kept = values_kept(f, found[1])
+            if kept:
+                filters.append(f.model_copy(update={"values": kept}))
+        return filters
+
+    def values_kept(f, found: Attribute | Entity) -> list:
+        thing = found.business_name.lower()
+        attribute = found if isinstance(found, Attribute) else next(
             (a for a in model.attributes.values()
-             if a.column == (found[1].label_column or found[1].code_column)), None)
+             if a.column == (found.label_column or found.code_column)), None)
         read = attribute is not None and attribute.slug in index.attributes
 
         def unknown(value: str) -> bool:      # a member the data does not have: said, never answered for all
@@ -875,12 +908,16 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
         amount = attribute is not None and attribute.kind == "number"    # "exactly 3 days": a value, no name
         kept = [v for v in f.values
                 if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)]
-        dropped += [(thing, v) for v in f.values if v not in kept]
-        if kept:
-            filters.append(f.model_copy(update={"values": kept}))
+        dropped.extend((thing, v) for v in f.values if v not in kept)
+        return kept
+
+    filters = kept_of(plan.filters)
+    # "Customers who never bought 'Apples'": the conditions on who had none follow the same rule.
+    absent = plan.absent.model_copy(update={"without": kept_of(plan.absent.without),
+                                            "had": kept_of(plan.absent.had)}) if plan.absent is not None else None
     if not dropped:
         return plan, []
-    return plan.model_copy(update={"filters": filters}), dropped
+    return plan.model_copy(update={"filters": filters, "absent": absent}), dropped
 
 
 def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]]) -> None:

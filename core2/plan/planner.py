@@ -198,6 +198,96 @@ def _examples(model: SemanticModel) -> str:
     return "\n".join(lines)
 
 
+def _analyses(model: SemanticModel) -> str:
+    """How to ask for a figure worked out over the rows of a plain answer, one rule and one example for each
+    kind this workspace's data can give (per member, ranges, running figures, ranks in groups, who had none)."""
+    measures = sorted((m for m in model.measures.values() if not m.hidden and m.kind != "count"
+                       and m.additivity == "additive" and m.default_date),
+                      key=lambda m: (-model.tables[m.table].row_count, m.format != "currency", m.slug))
+    if not measures:
+        return ""
+    m: Measure = measures[0]
+    what = m.business_name.lower()
+    # The thing with the most members first (customers before regions): what a figure per member is asked of.
+    entities = sorted((e for e in model.entities.values()
+                       if e.table != m.table and P.all_paths(model, m.table, e.table)),
+                      key=lambda e: (-(e.members or 0), e.slug))
+    # What the main table's rows count: its orders (a distinct count), or its rows when each is one thing (fills).
+    keyed = len(model.tables[m.table].primary_key or model.tables[m.table].grain) == 1
+    counts = sorted((c for c in model.measures.values() if not c.hidden and c.table == m.table and (
+                     getattr(c.expr, "agg", "") == "count_distinct" and getattr(c.expr, "column", None) or
+                     getattr(c.expr, "agg", "") == "count" and not getattr(c.expr, "column", None) and keyed)),
+                    key=lambda c: (getattr(c.expr, "agg", "") != "count_distinct", c.slug))
+    numbers = sorted((a for a in model.attributes.values() if a.kind == "number" and a.column in model.columns
+                      and P.all_paths(model, m.table, model.columns[a.column].table) or
+                      a.kind == "number" and a.column in model.columns and model.columns[a.column].table == m.table),
+                     key=lambda a: a.slug)
+    lines = ["ANALYSES: a figure worked out over the rows of a plain answer. At most one per plan, never with "
+             "time.compare; the plan's other parts (measures, group_by, filters, time) say what the rows are."]
+    count = counts[0] if counts else None
+    things = count.business_name.lower().removeprefix("number of ") if count is not None else "rows"
+    if entities or counts:
+        e = entities[0] if entities else None
+        lines.append(
+            '- per: each member\'s figure first, then one figure over the members. of: an entity ("per customer"), '
+            'the count measure of what is counted ("per order" -> its "number of" measure), or none for each '
+            "row's own value (days between two dates of each row). summary avg (default) | median | percentile "
+            '(p: "90th percentile" -> 90) | min | max | count or share with op and values ("customers with 3 or more '
+            'orders" -> count, gte [3]; "what share of customers ..." -> share). everyone true only when members '
+            "with none count too (\"including those with no orders\").")
+        if e is not None:
+            plan = {"kind": "query", "intent": "value", "measures": [m.slug], "per": {"of": e.slug, "summary": "median"},
+                    "time": {"window": {"kind": "this", "unit": "year"}}}
+            lines.append(f"Q: median {what} per {e.business_name.lower()} this year\nA: {json.dumps(plan)}")
+        if count is not None:
+            plan = {"kind": "query", "intent": "value", "measures": [m.slug], "per": {"of": count.slug}}
+            lines.append(f"Q: average {what} per {names.singular(things)}\nA: {json.dumps(plan)}")
+    days = _two_dates(model, m.table)
+    if numbers or days is not None or entities:
+        lines.append(
+            "- bands: rows or members put in ranges of a value, counted per range. of: a number field or a "
+            "duration's name for each row (\"orders by delivery time\"); a measure with per for each member's "
+            "figure (\"customers by spend band\"). edges: the reader's own lower edges (\"under 3, 3 to 7, 8 or "
+            "more\" -> [3, 8]); [] lets the data choose round ones.")
+        if days is not None:
+            start, end = days
+            name = f"Days from {start.name.lower()} to {end.name.lower()}"
+            plan = {"kind": "query", "intent": "breakdown", "measures": [(count or m).slug],
+                    "durations": [{"name": name, "start": start.slug, "end": end.slug, "measure": False}],
+                    "bands": {"of": name, "edges": [3, 8]}}
+            asked = f"how many {things} took" if count is not None else f"{what} by how long it took,"
+            lines.append(f"Q: {asked} under 3, 3 to 7 and 8 or more days from {start.name.lower()} to "
+                         f"{end.name.lower()}\nA: {json.dumps(plan)}")
+    lines.append(
+        '- rolling: "running total", "cumulative" -> kind running; "year to date by month" -> running with reset '
+        '"year" ("fiscal_year" for the fiscal year); "3-month moving average" -> moving_average, periods 3; "rolling '
+        '12-month total" -> moving_sum, periods 12. Always with time.grain; time.window is the periods shown.')
+    plan = {"kind": "query", "intent": "trend", "measures": [m.slug], "rolling": {"kind": "moving_average", "periods": 3},
+            "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12}}}
+    lines.append(f"Q: 3-month moving average of {what} over the last 12 months\nA: {json.dumps(plan)}")
+    if len(entities) >= 2:
+        a, b = entities[0], entities[-1]          # the most members ranked in each of the fewest
+        lines.append(
+            "- within: a rank that starts again in each member of a grouping: group_by holds both, within.group "
+            "the one each rank starts again in, within.top the first n of each.")
+        plan = {"kind": "query", "intent": "rank", "measures": [m.slug], "group_by": [b.slug, a.slug],
+                "within": {"group": b.slug, "top": 3}, "sort": [{"by": m.slug, "desc": True}]}
+        lines.append(f"Q: top 3 {names.plural(a.business_name.lower())} in each {b.business_name.lower()}\n"
+                     f"A: {json.dumps(plan)}")
+    if entities:
+        e = entities[0]
+        lines.append(
+            "- absent: the members with no matching rows, intent list. of: the entity; measure: whose rows are the "
+            "activity; time.window: when (none: never). without: filters on which rows count (\"never bought "
+            "X\"); had: filters on rows they did have (\"bought A but never B\" -> had A, without B); "
+            "active_before true for \"stopped\", \"lapsed\", \"no longer\".")
+        plan = {"kind": "query", "intent": "list", "absent": {"of": e.slug, "measure": (count or m).slug},
+                "time": {"window": {"kind": "last", "unit": "day", "n": 90}}}
+        lines.append(f"Q: which {names.plural(e.business_name.lower())} had no {things if count else what} in the "
+                     f"last 90 days\nA: {json.dumps(plan)}")
+    return "\n".join(lines)
+
+
 def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | None:
     """Two daily event dates of ``table`` for the worked example, the earlier event first.
 
@@ -222,7 +312,8 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal
     """Rules, schema, catalog and examples: identical for every question on a model version."""
     return "\n\n".join(part for part in (
         RULES, "PLAN SCHEMA (JSON Schema)\n" + schema_text(),
-        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), _examples(model)) if part)
+        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), _examples(model),
+        _analyses(model)) if part)
 
 
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
@@ -342,7 +433,8 @@ def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) 
         return plan.model_dump_json(exclude_defaults=True)
     data = plan.model_dump(mode="json", exclude_defaults=True)
     durations = {str(d.get("name", "")).casefold() for d in data.get("durations", [])}
-    for f in data.get("filters", []):
+    absent = data.get("absent") or {}
+    for f in [*data.get("filters", []), *absent.get("without", []), *absent.get("had", [])]:
         if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles
                                   or getattr(model.attributes.get(f.get("field")), "kind", "") == "number"):
             continue      # amounts, dates and numbers ("3 days in transit"), not member values
@@ -356,7 +448,8 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
     if masked is None or not masked.values:
         return plan
     data = plan.model_dump()
-    for f in data.get("filters", []):
+    absent = data.get("absent") or {}
+    for f in [*data.get("filters", []), *absent.get("without", []), *absent.get("had", [])]:
         f["values"] = [unmask(v, masked) for v in f.get("values", [])]
     return Plan.model_validate(data)
 
