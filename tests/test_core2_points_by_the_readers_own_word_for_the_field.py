@@ -97,3 +97,13 @@ def test_a_list_named_makes_the_readers_word_a_row_of_it(question, found):
     from core2.plan.values import placed
 
     assert [(m.text, m.value) for m in placed(question, [s[:3] for s in SCREEN], [])] == found
+
+
+def test_a_place_counts_the_rows_that_are_members():
+    """ "The first supplier on that list" with the rows that have no supplier ("Unknown") first on screen."""
+    from core2.plan.values import placed
+
+    shown = [("store.name", None, 900.0), ("store.name", "Airport", 500.0), ("store.name", "Harbour", 300.0)]
+    assert [m.value for m in placed("How much did the first store on that list sell?", shown, [])] == ["Airport"]
+    assert [m.value for m in placed("And the second store?", shown, [])] == ["Harbour"]
+    assert placed("And the first one?", shown, []) == []          # "one" may be the row with none: asked

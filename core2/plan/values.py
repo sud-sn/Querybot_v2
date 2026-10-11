@@ -289,18 +289,21 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader
     def free(m: re.Match) -> bool:
         return not any(t.start < m.end() and m.start() < t.end for t in [*taken, *out])
 
+    named_rows = [s for s in shown if s[1] is not None]
+
     for m in _ORDINAL.finditer(question):
         word, noun = m.group(1).lower(), m.group(2).lower()
         # "The top store in March" asks for a ranking; "the top one" points at a row.
         listed = on_list is not None and m.end() <= on_list.start() and noun not in _NOT_MEMBERS
         if not listed and noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) or not free(m):
             continue
+        # "The first supplier": counted over the rows that are suppliers, as the answer's own sentence counts its
+        # members; rows with none ("Unknown") first on screen are none. "The first one" may be that row: asked.
         place = _PLACE[word]
-        if place >= len(shown):
+        rows = shown if noun in ("one", "1") else named_rows
+        if place >= len(rows) or rows[place][1] is None:
             continue
-        attribute, value = shown[place][0], shown[place][1]
-        if value is not None:
-            out.append(ValueMatch(m.group(0), m.start(), m.end(), attribute, value))
+        out.append(ValueMatch(m.group(0), m.start(), m.end(), rows[place][0], rows[place][1]))
     for m in _NUMBER_ONE.finditer(question):
         if m.group(1).lower() in nouns and _a_row(question, m, m.group(1).lower()) and free(m) \
                 and shown[0][1] is not None:
