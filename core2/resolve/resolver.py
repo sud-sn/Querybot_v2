@@ -69,6 +69,9 @@ class Context:
     # Does a link no one measured (paths.unchecked) hold more than one target row for some key? Asked of
     # the data the first time a question follows it; None answers with what the model says.
     link_repeats: Callable[[Join], bool] | None = None
+    # A ranking asked again after it found nothing: members whose table has no row for their key (so no name)
+    # are ranked by that key, never left out.
+    unnamed_by_key: bool = False
 
 
 @dataclass
@@ -166,6 +169,8 @@ class PartGroup:
     days: tuple[DateUse, DateUse] | None = None            # a band of days from one date of each row to another
     style: dict = field(default_factory=dict)              # a band: how its ranges are named (bands.labels' words)
     age_on: dt.date | None = None                          # a band of people's ages on this day, from a birth date
+    # A member named by the key its rows hold when the table that names it has no row for it: (alias, column key).
+    by_key: tuple[str, str] | None = None
 
 
 @dataclass
@@ -362,6 +367,24 @@ def find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
         if r.slug == slug:
             return "date", r
     return None
+
+
+_NO_NAME = re.compile(r"^\s*(.+?)\s+\(no name\)\s*$")
+
+
+def _no_name_keys(f: Filter) -> list | None:
+    """The keys a filter names as members shown with no name ("1000291 (no name)"), each as a number when it is one;
+    None unless every value is one."""
+    if f.op not in ("eq", "in") or not f.values:
+        return None
+    keys: list = []
+    for value in f.values:
+        found = _NO_NAME.match(str(value))
+        if found is None:
+            return None
+        key = found.group(1)
+        keys.append(int(key) if re.fullmatch(r"-?\d+", key) else key)
+    return keys
 
 
 def _can_lack(model: SemanticModel, path: P.Path | None, column: Column) -> bool:
@@ -1182,16 +1205,28 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, slug)
             alias = _reach(builder, column.table, slug, through, link_role, attribute.business_name)
-            part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+            group = PartGroup(name, alias, column.key, "attribute")
+            part.groups.append(group)
             if slug in identity_names:
                 # Names repeat: two members called the same must stay two rows.
                 code_name, code_column = identity_names[slug]
                 part.groups.append(PartGroup(code_name, alias, code_column, "attribute"))
-            if plan.limit and slug != unit_slug:
+            path = builder.paths_used.get(column.table)
+            hop = path.joins[0] if path is not None and path.joins else None
+            if plan.limit and slug != unit_slug and ctx.unnamed_by_key and hop is not None \
+                    and hop.from_table == part.table and len(hop.from_columns) == 1:
+                # Asked again after the ranking found nothing: a member whose table has no row for the key its
+                # rows hold is ranked by that key ("0123 (no name)"); rows with no key at all are still left out.
+                group.by_key = (part.alias, hop.from_columns[0])
+                part.preds.append(Pred(part.alias, hop.from_columns[0], "not_null", []))
+                notes.append(f"Some rows' {attribute.business_name.lower()} is not found in "
+                             f"{model.tables[column.table].business_name.lower()}: those are shown by the key the "
+                             "rows hold, as \"(no name)\".")
+            elif plan.limit and slug != unit_slug:
                 # A top n ranks real members; rows with none are not a member (a
                 # breakdown keeps them as one empty group, so it adds up to the total).
                 part.preds.append(Pred(alias, column.key, "not_null", []))
-                if _can_lack(model, builder.paths_used.get(column.table), column):
+                if _can_lack(model, path, column):
                     notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
         if band is not None:
             part.groups.append(_band_part_group(model, builder, band, group_names["__band__"]))
@@ -1329,6 +1364,16 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 continue
             pred = Pred(alias, column.key, f.op, list(f.values if stored is None else stored),
                         f"{attribute.business_name} {_op_words(f)}")
+            keys = _no_name_keys(f)
+            path = builder.paths_used.get(column.table)
+            hop = path.joins[0] if path is not None and path.joins else None
+            if keys and hop is not None and hop.from_table == part.table and len(hop.from_columns) == 1:
+                # "The first one" of a ranking that showed members by the key their rows hold ("1000291 (no
+                # name)"): the rows holding that key, since no row of the naming table has it.
+                pred = Pred(part.alias, hop.from_columns[0], "in", keys, f"{attribute.business_name} {_op_words(f)}")
+                part.preds.append(pred)
+                took.append(part)
+                continue
             if alias in builder.semi_of:
                 builder.semi_of[alias].preds.append(pred)     # rows with a match, each kept once
                 if len(pred.values) > 1 or f.op not in ("eq", "in"):

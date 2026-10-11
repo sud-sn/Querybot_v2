@@ -448,7 +448,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
                                 values_allowed=services.values_allowed, scrub=services.scrub, hidden=hidden,
-                                reading=reading.kind if reading.kind in ("refine", "new") else None)
+                                reading=reading.kind if reading.kind in ("refine", "new") else None,
+                                on_screen=list(last.shown) if last is not None and reading.kind != "new" else None)
         if outcome.plan.kind == "query" and outcome.plan.follow_up == "unsure":
             if last is not None and last.plan is not None and last.plan.kind == "query":
                 session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
@@ -470,7 +471,12 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # Kept in the conversation: the reply ("the first one") answers this question.
         session.turns.append(Turn(question, plan, outcome.masked))
         del session.turns[:-HISTORY]
-        asked = _clarification(question, plan.clarify)
+        clarify = plan.clarify
+        if clarify.about == "member" and not clarify.options and last is not None and last.shown:
+            # "Which warehouse do you mean by 'the first one'?": the members of the answer on screen, one click each.
+            listed = list(dict.fromkeys(str(s[1]) for s in last.shown if s[1] is not None))[:5]
+            clarify = clarify.model_copy(update={"options": listed})
+        asked = _clarification(question, clarify)
         if outcome.problems:      # the planner's plans did not check out: what it tried, and why not
             asked["trust"] = {**asked["trust"], "considered": _considered(outcome.tried, model),
                               "stopped": " ".join(outcome.problems)}
@@ -526,6 +532,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                          'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+    if plan.limit and plan.group_by and _found_nothing(payload):
+        _by_key(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     if not plan.include_left_out and _found_nothing(payload):
         plan = _say_left_out(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
@@ -870,6 +878,27 @@ def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: 
     chip = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
     payload["follow_up_suggestions"] = [chip, *(payload.get("follow_up_suggestions") or [])][:4]
     return plan
+
+
+def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context, *,
+            question_id: str = "", shown: list[tuple] | None = None) -> None:
+    """A ranking that found nothing, asked again with each member whose table has no row for its key (so no name)
+    ranked by that key: "Which 10 warehouses have the least stock?" said "No rows match" on a copy whose warehouse
+    table named none of the warehouses the stock rows held. The answer on screen, and what "the first one" points
+    at, become those rows."""
+    members: list[tuple] = []
+    try:
+        again = _compute(question, plan, services, replace(ctx, unnamed_by_key=True),
+                         question_id=question_id, started=time.perf_counter(), shown=members)
+    except Exception as exc:  # noqa: BLE001 - the answer that found nothing stands
+        log.warning("core2: could not rank %r by its members' keys: %s", question, exc)
+        return
+    if _found_nothing(again):
+        return
+    payload.clear()
+    payload.update(again)
+    if shown is not None:
+        shown[:] = members
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:

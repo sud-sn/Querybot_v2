@@ -337,7 +337,13 @@ class _Compiler:
             return self.time_attribute(g.date, g.time_attr)
         if g.column is None:
             raise CompileError(f"{g.name} has no column")
-        return self.named_values(self.col(g.alias, g.column), g.column)
+        named = self.named_values(self.col(g.alias, g.column), g.column)
+        if g.by_key is not None:
+            # No row names this member: it is shown by the key its rows hold, "0123 (no name)".
+            return exp.Coalesce(this=D.as_text(named, self.d), expressions=[
+                exp.DPipe(this=D.as_text(self.col(*g.by_key), self.d), expression=exp.Literal.string(" (no name)"),
+                          safe=True)])
+        return named
 
     def _numbered(self, slug: str | None) -> bool:
         """Are the attribute ``slug``'s members numbers or codes (a fill number, an NPI), read with its name?"""

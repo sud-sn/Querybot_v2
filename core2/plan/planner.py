@@ -460,6 +460,48 @@ def stands_for(value: Any) -> bool:
     return bool(_BRACKETED.match(value)) or bool(_STANDS_FOR.match(value)) and bool(set(value.split("_")) & _POINTING)
 
 
+# "The first supplier on that list", "the 2nd one": a place in the answer on screen.
+_PLACE_WORD = re.compile(r"\b(first|1st|top|second|2nd|third|3rd|fourth|4th|fifth|5th|last|bottom)\b", re.IGNORECASE)
+_PLACES = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
+           "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
+
+
+def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], question: str = "",
+               on_screen: list[tuple] | None = None) -> Plan:
+    """A filter value written as a stand-in ("first_warehouse_id", "<top warehouse from previous answer>") for the
+    one member of that field the question's words found ("the first one" -> warehouse "301"): that member, with no
+    second call to the AI. When the words found none ("the first supplier on that list", the field being called
+    party) but the AI put the stand-in on the field the answer on screen is grouped by, the question's one place
+    word ("first", "top", "last") picks that row. A stand-in with neither is left for the repair round to ask
+    about."""
+    if plan.kind != "query" or not plan.filters or not (matches or on_screen):
+        return plan
+    places = {_PLACES[m.group(1).lower()] for m in _PLACE_WORD.finditer(question or "")}
+
+    def attribute_of(slug: str) -> str | None:
+        if slug in model.attributes:
+            return slug
+        entity = model.entities.get(slug)
+        if entity is None:
+            return None
+        column = entity.label_column or entity.code_column
+        return next((a.slug for a in model.attributes.values() if a.column == column), None)
+
+    filters = []
+    for f in plan.filters:
+        if f.op in ("eq", "in") and f.values and all(stands_for(v) for v in f.values):
+            field = attribute_of(f.field)
+            found = {m.value for m in matches if field is not None and m.attribute == field}
+            if not found and on_screen and field is not None and len(places) == 1 \
+                    and str(on_screen[0][0]) == field and next(iter(places)) < len(on_screen):
+                row = on_screen[next(iter(places))]
+                found = {row[1]} if row[1] is not None else set()
+            if len(found) == 1:
+                f = f.model_copy(update={"field": field, "op": "eq", "values": [next(iter(found))]})
+        filters.append(f)
+    return plan.model_copy(update={"filters": filters}) if filters != plan.filters else plan
+
+
 def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
     """What a plan asks that cannot be meant, whatever the model holds: each a sentence the repair round acts on."""
     problems: list[str] = []
@@ -640,11 +682,12 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
                   hidden: list[ValueMatch] | None = None,
-                  reading: str | None = None) -> Outcome:
+                  reading: str | None = None, on_screen: list[tuple] | None = None) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
     the plan is marked so, whatever the AI said. None: the AI reads it, and may say "unsure".
+    ``on_screen``: the members of the answer the question follows, in the order shown (attribute slug, value, ...).
     """
     matches = matches or []
     history = history or []
@@ -676,6 +719,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             continue
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
+        plan = pointed_in(plan, model, matches, question, on_screen)
         problems, hint = check(plan, model, today, shown)
         if not problems:
             if reading in ("refine", "new") and plan.kind == "query":
