@@ -16,7 +16,7 @@
       <h1 style="font-size:var(--font-lg);margin:0 0 .5rem">{{ t('portal.unsubscribe.done', address=address) }}</h1>
       {% else %}
       <h1 style="font-size:var(--font-lg);margin:0 0 .5rem">{{ t('portal.unsubscribe.title') }}</h1>
-      <p style="margin:0 0 1rem;color:var(--text-soft)">{{ t('portal.unsubscribe.follow', name=name) if kind == 'follow' and name else t('portal.unsubscribe.other', address=address) }}</p>
+      <p style="margin:0 0 1rem;color:var(--text-soft)">{% if kind == 'follow' and name %}{{ t('portal.unsubscribe.follow', name=name) }}{% elif kind == 'schedule' and name %}{{ t('portal.unsubscribe.schedule', name=name) }}{% else %}{{ t('portal.unsubscribe.other', address=address) }}{% endif %}</p>
       <form method="post" action="/portal/unsubscribe/{{ token }}">
         <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">{{ t('portal.unsubscribe.confirm') }}</button>
       </form>

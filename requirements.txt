@@ -45,6 +45,14 @@ duckdb>=1.0.0
 # Charts
 matplotlib>=3.9.0
 
+# Dashboards emailed on a schedule: their charts pictured and their PDF made by a headless Chromium
+# (core/dashboard_snapshot.py). Once per server, after installing:
+#   python -m playwright install --with-deps chromium
+# or set QUERYBOT_CHROMIUM_PATH to a Chromium already there. Without it the emails still go, with every number
+# and table, and say why the charts are not in them.
+playwright>=1.55.0
+pypdf>=5.0.0
+
 # Security and environment configuration
 cryptography>=42.0.0
 python-dotenv>=1.0.0

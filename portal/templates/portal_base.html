@@ -20,7 +20,8 @@
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="{{ asset('css/brand-motion.css') }}">
 </head>
-<body>
+{# A dashboard drawn for an email or a PDF (core/dashboard_snapshot.py): no shell, no live socket. #}
+<body{% if snapshot is defined and snapshot %} class="is-snapshot"{% endif %}>
 
 <script>
 // The message catalogue for this user's language, injected once for the whole
@@ -429,7 +430,7 @@ window.qbEnumLabel = function (group, value) {
 
 
 
-{% if user %}
+{% if user and not (snapshot is defined and snapshot) %}
 <script>
 (function(){
   var socket=null,reconnectMs=1000;

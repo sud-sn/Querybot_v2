@@ -300,3 +300,60 @@
 .dash-kpi-arrow { font-size: .85em; }
 .dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); overflow: hidden; text-overflow: ellipsis; }
 .dash-kpi-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── A dashboard drawn for an email or a PDF (core/dashboard_snapshot.py) ──
+   The dashboard alone, at full height: no sidebar, menus, filters to change or edit controls. What it was drawn
+   under (when, for whom, its tab and filters) is written under its name instead. */
+.is-snapshot { overflow: visible; height: auto; }
+.is-snapshot .portal-app-shell,
+.is-snapshot .portal-app-main { display: block; width: auto; height: auto; overflow: visible; }
+.is-snapshot .main { overflow: visible; padding: 28px 32px 32px; }
+.is-snapshot .portal-sidebar, .is-snapshot .portal-mobile-bar, .is-snapshot .portal-drawer-backdrop,
+.is-snapshot .portal-lang-switch, .is-snapshot .breadcrumb, .is-snapshot .welcome-banner,
+.is-snapshot .dash-header-actions, .is-snapshot .dashboard-tabs, .is-snapshot .dash-filters,
+.is-snapshot .dashboard-controls, .is-snapshot .dash-edit-hint, .is-snapshot .dash-tile-action,
+.is-snapshot .chart-drag-handle, .is-snapshot .dash-ctrl-row, .is-snapshot .dash-dialog,
+.is-snapshot .dash-header-meta { display: none !important; }
+.is-snapshot .chart-card, .is-snapshot .chart-card * { animation: none !important; transition: none !important; }
+.dash-snapshot-meta { margin-top: 4px; font-size: var(--font-sm); color: var(--text-muted); }
+.dash-snapshot-meta strong { color: var(--text); font-weight: var(--weight-semibold); }
+
+/* ── Emailed on a schedule: the list of a dashboard's schedules, and the form to add or change one ── */
+.dash-sched-intro { margin: 0 20px 8px; font-size: var(--font-sm); color: var(--text-muted); }
+.dash-sched-warn { display: flex; gap: 8px; align-items: flex-start; margin: 4px 20px 10px; padding: 10px 12px;
+  border-radius: var(--radius); background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  font-size: var(--font-sm); color: var(--text); }
+.dash-sched-list { margin: 0 20px; }
+.dash-sched-list-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin: 6px 0 8px; }
+.dash-sched-list-head h3 { margin: 0; font-size: var(--font-sm); font-weight: var(--weight-semibold);
+  text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.dash-sched-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dash-sched-item { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.dash-sched-item.is-paused { background: var(--surface-sunken, var(--bg)); }
+.dash-sched-when { font-weight: var(--weight-semibold); }
+.dash-sched-who { margin-top: 2px; font-size: var(--font-sm); color: var(--text); }
+.dash-sched-meta { margin-top: 2px; font-size: var(--font-xs); color: var(--text-muted); }
+.dash-sched-actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px -6px 0; }
+.dash-sched-delete { color: var(--danger); }
+.dash-sched-empty { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
+.dash-sched-form { margin: 14px 0 0; padding-top: 6px; border-top: 1px solid var(--line-subtle); }
+.dash-sched-row { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 20px 4px; }
+.dash-sched-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); font-weight: var(--weight-semibold); }
+.dash-sched-field .form-input { min-width: 120px; font-weight: var(--weight-normal, 400); }
+.dash-sched-zone { flex: 1 1 200px; }
+.dash-sched-zone .form-input { width: 100%; }
+.dash-sched-block { margin: 0; padding: 10px 20px 4px; border: 0; }
+.dash-sched-block .form-label { display: block; margin-bottom: 6px; font-size: var(--font-sm); font-weight: var(--weight-semibold); }
+.dash-sched-block .form-input { width: 100%; }
+.dash-sched-gap { margin-top: 10px; }
+.dash-sched-check { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--font-sm); }
+.dash-sched-filters { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
+/* Who it goes to: the shared brand badge, with a remove button inside. */
+.dash-sched-picks { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; padding: 0; }
+.dash-sched-picks:empty { display: none; }
+.dash-sched-pick { gap: 2px; padding-right: 2px; }
+/* The parts the dialog shows and hides (a day field by cadence, the tab choices, the email warning): hidden wins
+   over their own display. */
+.dash-sched-warn[hidden], .dash-sched-field[hidden], .dash-sched-check[hidden], .dash-sched-form[hidden],
+.dash-sched-empty[hidden] { display: none; }

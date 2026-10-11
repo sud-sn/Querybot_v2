@@ -58,8 +58,9 @@ RULES: list[tuple[Optional[frozenset[str]], re.Pattern, str]] = [
         ("", rf"^/api/dashboard/{_ID}/shares(/.*)?$", "share"),
         ("POST", rf"^/dashboard/{_ID}/(share|publish)$", "share"),
         ("GET", r"^/api/people$", "share"),
-        # Scheduled reports.
+        # Scheduled reports, and dashboards emailed on a schedule.
         ("", r"^/reports(/.*)?$", "reports"),
+        ("", rf"^/api/dashboard/{_ID}/schedules(/.*)?$", "reports"),
     ]
 ]
 

@@ -182,6 +182,7 @@ class TestTheCatalogueIsWellFormed:
                                         # because "B" reads as the French long
                                         # -scale billion, a thousand times more.
         "answer.total",                 # the same word in French
+        "email.schedule.subject",       # "{name} · {date}": a name and a date, in any language
         "ui.chat.table_count.one",      # "table" is the same word, singular
         "ui.chat.table_count.other",    # and plural
         "ui.chat.trust.source",         # "source" is the same word

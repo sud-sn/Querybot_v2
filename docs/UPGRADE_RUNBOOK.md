@@ -351,6 +351,21 @@ Then:
 3. Links in an email open `PORTAL_BASE_URL` (section 14). Set it to the
    address readers use, or the links point at `localhost`.
 
+**Scheduled dashboards** draw their charts and their PDF in a headless Chromium on
+the server. After `pip install -r requirements.txt`, once:
+
+```bash
+venv/bin/python -m playwright install --with-deps chromium
+```
+
+(or set `QUERYBOT_CHROMIUM_PATH` to a Chromium already installed). Without it the
+scheduled emails still go, with every number and table, and say that the charts
+could not be drawn. A dashboard's owner, when a Creator, schedules it from the
+dashboard's ⋯ menu › Email on a schedule; **Send me a test** shows at once whether
+it went. Over Microsoft 365 a message larger than 3 MB (a big PDF) is sent as a
+draft with its files uploaded, which needs the Graph permission `Mail.ReadWrite`
+as well as `Mail.Send`.
+
 The secret and the SMTP password are stored encrypted. A message the mail
 service could not take (down, busy, throttling) is tried again after 1, 5, 30,
 120 and 360 minutes, then marked failed; the delivery log lists every message

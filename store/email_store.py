@@ -52,8 +52,9 @@ def queue_email(*, kind: str, to_address: str, subject: str, body_text: str, bod
                 ref: str = "", unsubscribe_url: str = "") -> Optional[int]:
     """A message in the outbox; None when ``dedupe_key`` is queued already.
 
-    ``attachments``: (filename, content_type, bytes). ``status`` SKIPPED records a message that was not sent, and
-    ``reason`` says why, so the delivery log shows it.
+    ``attachments``: (filename, content_type, bytes), or (filename, content_type, bytes, content_id) for an image
+    the HTML shows in its body (``<img src="cid:content_id">``). ``status`` SKIPPED records a message that was not
+    sent, and ``reason`` says why, so the delivery log shows it.
     """
     with get_db() as conn:
         if dedupe_key and conn.execute("SELECT 1 FROM email_outbox WHERE dedupe_key=?", (dedupe_key,)).fetchone():
@@ -70,11 +71,13 @@ def queue_email(*, kind: str, to_address: str, subject: str, body_text: str, bod
         folder = attachments_root() / str(email_id)
         folder.mkdir(parents=True, exist_ok=True)
         kept = []
-        for filename, content_type, data in attachments:
+        for filename, content_type, data, *inline in attachments:
             name = _safe_name(filename)
             (folder / name).write_bytes(data)
-            kept.append({"name": name, "content_type": str(content_type or "application/octet-stream"),
-                         "size": len(data)})
+            item = {"name": name, "content_type": str(content_type or "application/octet-stream"), "size": len(data)}
+            if inline and inline[0]:
+                item["cid"] = re.sub(r"[^A-Za-z0-9._@-]+", "-", str(inline[0]))[:120]
+            kept.append(item)
         with get_db() as conn:
             conn.execute("UPDATE email_outbox SET attachments_json=? WHERE id=?", (json.dumps(kept), email_id))
     return email_id
@@ -97,14 +100,16 @@ def _row(row) -> Optional[dict]:
     return email
 
 
-def email_attachments(email: dict) -> list[tuple[str, str, bytes]]:
-    """The files attached to a message, read back: (filename, content_type, bytes). A missing file is left out."""
+def email_attachments(email: dict) -> list[tuple]:
+    """The files attached to a message, read back: (filename, content_type, bytes), with the content id after them
+    for an image shown in the body. A missing file is left out."""
     folder = attachments_root() / str(email["id"])
     found = []
     for item in email.get("attachments") or []:
         path = folder / str(item.get("name") or "")
         if path.is_file():
-            found.append((path.name, str(item.get("content_type") or "application/octet-stream"), path.read_bytes()))
+            kept = (path.name, str(item.get("content_type") or "application/octet-stream"), path.read_bytes())
+            found.append(kept + (str(item["cid"]),) if item.get("cid") else kept)
     return found
 
 

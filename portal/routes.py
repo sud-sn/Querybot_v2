@@ -1124,6 +1124,11 @@ def _unsubscribe_page(request: Request, token: str, *, done: bool = False):
     name = ""
     if found and kind == "follow" and str(ref).isdigit():
         name = store.dashboard_name(int(ref))
+    elif found and kind == "schedule" and str(ref).isdigit():
+        from store import schedule_store
+
+        schedule = schedule_store.get_schedule(int(ref))
+        name = store.dashboard_name(int(schedule["dashboard_id"])) if schedule else ""
     response = _resp(request, "portal_unsubscribe.html", {
         "ok": bool(found and address and kind), "done": done, "token": token, "kind": kind, "name": name,
         "address": address, "user": None})
@@ -1182,7 +1187,9 @@ async def portal_dashboard(request: Request):
         deactivate_language(_lang_token)
 
 
-async def _render_dashboard(request: Request, user: dict):
+async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | None = None):
+    """The dashboard page for ``user``. ``snapshot``: drawn for an email or a PDF (core/dashboard_snapshot.py),
+    {"drawn": "Drawn ... for ..."}: the page without its controls."""
     legacy_dashboard = store.migrate_legacy_charts(user["account_id"], user["id"])
     requested_dashboard = None
     dashboard_id = request.query_params.get("dashboard_id")
@@ -1309,6 +1316,7 @@ async def _render_dashboard(request: Request, user: dict):
         "dash_groupings": groupings,
         "dash_filtered": bool(view["period"] or view["members"]),
         "welcome":       request.query_params.get("welcome") == "1",
+        "snapshot":      snapshot,
         # Its tiles were drawn on this request: the header says when.
         "drawn_at":      (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                           if requested_dashboard else ""),
@@ -2719,6 +2727,175 @@ async def remove_dashboard_share_api(request: Request, dashboard_id: int, subjec
         return JSONResponse({"ok": False, "error": "Only the dashboard's owner can share it."}, status_code=404)
     store.remove_dashboard_share(int(dashboard_id), user["id"], user["account_id"], subject_type, subject_id)
     return _shares_reply(dashboard, user)
+
+
+# ── Dashboards emailed on a schedule (core/dashboard_schedule.py) ─────────────
+# The dashboard's owner, a Creator (portal/access.py), from the dashboard's ⋯ menu. Every call answers with the
+# dashboard's schedules as they are after it.
+
+def _schedule_owner(request: Request, dashboard_id: int):
+    """(reader, their dashboard) or a JSON refusal."""
+    user = _get_portal_user(request)
+    if not user:
+        return None, JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard(int(dashboard_id), user["id"], user["account_id"])
+    if not dashboard:
+        return None, JSONResponse({"ok": False, "error": i18n_t("schedule.error.not_owner",
+                                                                lang=_request_language(request))}, status_code=404)
+    return (user, dashboard), None
+
+
+def _schedule_reply(user: dict, dashboard: dict, lang: str, **extra) -> JSONResponse:
+    from core import dashboard_schedule
+    from core.mail import settings as mail_settings
+    from store import schedule_store
+
+    items = []
+    for schedule in schedule_store.list_schedules(user["account_id"], int(dashboard["id"]), int(user["id"])):
+        upcoming = ""
+        if schedule.get("is_active") and schedule.get("next_run_at"):
+            from core.dashboard_snapshot import local_time
+
+            moment = _dt.datetime.fromisoformat(str(schedule["next_run_at"])[:19])
+            upcoming = local_time(moment, schedule.get("timezone") or "UTC", lang)
+        last = ""
+        if schedule.get("last_status"):
+            runs = schedule_store.list_runs(int(schedule["id"]), limit=5)
+            run = next((r for r in runs if r.get("kind") != "test"), None)
+            if run:
+                last = i18n_t(f"ui.sched.status.{run['status']}", lang=lang, count=run.get("queued") or 0,
+                              queued=run.get("queued") or 0, skipped=run.get("skipped") or 0) \
+                    if run["status"] in ("sent", "partial", "failed", "nothing") else ""
+        items.append({
+            "id": schedule["id"], "cadence": schedule["cadence"], "weekday": schedule["weekday"],
+            "month_day": schedule["month_day"], "send_time": schedule["send_time"], "timezone": schedule["timezone"],
+            "tabs": schedule.get("tabs") or [], "view": schedule.get("view") or {},
+            "attach_pdf": bool(schedule.get("attach_pdf")), "include_owner": bool(schedule.get("include_owner")),
+            "subject": schedule.get("subject") or "", "message": schedule.get("message") or "",
+            "active": bool(schedule.get("is_active")), "paused_reason": schedule.get("paused_reason") or "",
+            "when": dashboard_schedule.describe(schedule, lang), "next": upcoming, "last": last,
+            "recipients": schedule.get("recipients") or [],
+        })
+    return JSONResponse({"ok": True, "schedules": items, "mail_ready": mail_settings.load().configured, **extra})
+
+
+@router.get("/api/dashboard/{dashboard_id}/schedules")
+async def dashboard_schedules_api(request: Request, dashboard_id: int):
+    found, refused = _schedule_owner(request, dashboard_id)
+    if refused:
+        return refused
+    return _schedule_reply(*found, _request_language(request))
+
+
+async def _schedule_payload(request: Request) -> dict:
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@router.post("/api/dashboard/{dashboard_id}/schedules")
+async def add_dashboard_schedule_api(request: Request, dashboard_id: int):
+    return await _save_schedule(request, dashboard_id, None)
+
+
+@router.post("/api/dashboard/{dashboard_id}/schedules/{schedule_id}")
+async def change_dashboard_schedule_api(request: Request, dashboard_id: int, schedule_id: int):
+    return await _save_schedule(request, dashboard_id, schedule_id)
+
+
+def _owned_schedule(user: dict, dashboard: dict, schedule_id: int) -> dict | None:
+    from store import schedule_store
+
+    schedule = schedule_store.get_schedule(int(schedule_id))
+    if (not schedule or schedule["account_id"] != user["account_id"] or int(schedule["owner_id"]) != int(user["id"])
+            or int(schedule["dashboard_id"]) != int(dashboard["id"])):
+        return None
+    return schedule
+
+
+async def _save_schedule(request: Request, dashboard_id: int, schedule_id: int | None):
+    from core import dashboard_schedule
+
+    found, refused = _schedule_owner(request, dashboard_id)
+    if refused:
+        return refused
+    user, dashboard = found
+    lang = _request_language(request)
+    if schedule_id is not None and not _owned_schedule(user, dashboard, schedule_id):
+        return JSONResponse({"ok": False, "error": i18n_t("schedule.error.not_found", lang=lang)}, status_code=404)
+    fields = dashboard_schedule.read_form(await _schedule_payload(request), dashboard, user)
+    if isinstance(fields, str):
+        return JSONResponse({"ok": False, "error": i18n_t(fields, lang=lang)}, status_code=400)
+    shared_before = {(s["subject_type"], int(s["subject_id"]))
+                     for s in store.list_dashboard_shares(int(dashboard["id"]), user["id"], user["account_id"])}
+    saved = dashboard_schedule.save(user, dashboard, fields, schedule_id=schedule_id)
+    for subject_type, subject_id in fields_recipients(saved):
+        if (subject_type, subject_id) not in shared_before:
+            await _tell_shared(dashboard, user, subject_type, subject_id)
+    log.info("Dashboard %s schedule %s saved by user %s", dashboard["id"], saved, user["id"])
+    return _schedule_reply(user, dashboard, lang, saved=saved)
+
+
+def fields_recipients(schedule_id: int) -> list[tuple[str, int]]:
+    from store import schedule_store
+
+    return [(r["type"], int(r["id"])) for r in schedule_store.schedule_recipients(int(schedule_id))]
+
+
+@router.post("/api/dashboard/{dashboard_id}/schedules/{schedule_id}/{action}")
+async def dashboard_schedule_action_api(request: Request, dashboard_id: int, schedule_id: int, action: str):
+    """pause | resume | test (to its owner alone, at once) | send (to everyone, at once)."""
+    from core import dashboard_schedule
+    from store import schedule_store
+
+    found, refused = _schedule_owner(request, dashboard_id)
+    if refused:
+        return refused
+    user, dashboard = found
+    lang = _request_language(request)
+    schedule = _owned_schedule(user, dashboard, schedule_id)
+    if not schedule:
+        return JSONResponse({"ok": False, "error": i18n_t("schedule.error.not_found", lang=lang)}, status_code=404)
+    if action == "pause":
+        schedule_store.set_schedule_active(int(schedule_id), False)
+        return _schedule_reply(user, dashboard, lang)
+    if action == "resume":
+        dashboard_schedule.resume(schedule)
+        return _schedule_reply(user, dashboard, lang)
+    if action not in ("test", "send"):
+        return JSONResponse({"ok": False, "error": "Unknown action."}, status_code=404)
+    run = await asyncio.to_thread(dashboard_schedule.send_now, schedule, test=action == "test")
+    sent = {"status": run.get("status"), "queued": run.get("queued") or 0, "skipped": run.get("skipped") or 0,
+            "detail": run.get("detail") or ""}
+    if action == "test":
+        # The test goes out at once, so the owner hears now whether it was taken.
+        from core.mail import outbox
+        from store import email_store
+
+        ids = run.get("email_ids") or []
+        mine = email_store.get_email(int(ids[0])) if ids else None
+        if mine and mine.get("status") == email_store.QUEUED:
+            mine = await asyncio.to_thread(outbox.send_now, int(mine["id"]))
+        sent["email"] = {"status": (mine or {}).get("status") or "", "to": user.get("email") or "",
+                         "reason": (mine or {}).get("last_error") or ""}
+    return _schedule_reply(user, dashboard, lang, sent=sent)
+
+
+@router.delete("/api/dashboard/{dashboard_id}/schedules/{schedule_id}")
+async def delete_dashboard_schedule_api(request: Request, dashboard_id: int, schedule_id: int):
+    from store import schedule_store
+
+    found, refused = _schedule_owner(request, dashboard_id)
+    if refused:
+        return refused
+    user, dashboard = found
+    if not _owned_schedule(user, dashboard, schedule_id):
+        return JSONResponse({"ok": False, "error": i18n_t("schedule.error.not_found",
+                                                          lang=_request_language(request))}, status_code=404)
+    schedule_store.delete_schedule(int(schedule_id))
+    return _schedule_reply(user, dashboard, _request_language(request))
 
 
 @router.post("/unpin")

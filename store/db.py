@@ -1492,6 +1492,7 @@ def _run_migrations() -> None:
         _ensure_portal_notice_table(conn)
         _ensure_admin_account_tables(conn)
         _ensure_email_tables(conn)
+        _ensure_schedule_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1785,6 +1786,61 @@ def _ensure_dashboard_share_table(conn: sqlite3.Connection) -> None:
             UNIQUE(dashboard_id, subject_type, subject_id)
         );
         CREATE INDEX IF NOT EXISTS idx_dashboard_share_subject ON dashboard_share(account_id, subject_type, subject_id);
+        """
+    )
+
+
+def _ensure_schedule_tables(conn: sqlite3.Connection) -> None:
+    """Dashboards emailed on a schedule, who they go to, and each time one went (store/schedule_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_schedule (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id    TEXT    NOT NULL,
+            dashboard_id  INTEGER NOT NULL,
+            owner_id      INTEGER NOT NULL,
+            cadence       TEXT    NOT NULL DEFAULT 'weekly',
+            weekday       INTEGER NOT NULL DEFAULT 0,
+            month_day     INTEGER NOT NULL DEFAULT 1,
+            send_time     TEXT    NOT NULL DEFAULT '08:00',
+            timezone      TEXT    NOT NULL DEFAULT 'UTC',
+            tabs_json     TEXT    NOT NULL DEFAULT '[]',
+            view_json     TEXT    NOT NULL DEFAULT '{}',
+            attach_pdf    INTEGER NOT NULL DEFAULT 1,
+            include_owner INTEGER NOT NULL DEFAULT 1,
+            subject       TEXT    NOT NULL DEFAULT '',
+            message       TEXT    NOT NULL DEFAULT '',
+            is_active     INTEGER NOT NULL DEFAULT 1,
+            paused_reason TEXT    NOT NULL DEFAULT '',
+            next_run_at   TEXT    DEFAULT NULL,
+            last_run_at   TEXT    DEFAULT NULL,
+            last_status   TEXT    NOT NULL DEFAULT '',
+            last_detail   TEXT    NOT NULL DEFAULT '',
+            created_at    TEXT    DEFAULT (datetime('now')),
+            updated_at    TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_dashboard_schedule_due ON dashboard_schedule(is_active, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_dashboard_schedule_board ON dashboard_schedule(account_id, dashboard_id);
+        CREATE TABLE IF NOT EXISTS dashboard_schedule_recipient (
+            schedule_id  INTEGER NOT NULL,
+            subject_type TEXT    NOT NULL CHECK(subject_type IN ('user','group')),
+            subject_id   INTEGER NOT NULL,
+            PRIMARY KEY (schedule_id, subject_type, subject_id)
+        );
+        CREATE TABLE IF NOT EXISTS dashboard_schedule_run (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_id INTEGER NOT NULL,
+            due_at      TEXT    NOT NULL,
+            kind        TEXT    NOT NULL DEFAULT 'scheduled',
+            started_at  TEXT    DEFAULT (datetime('now')),
+            finished_at TEXT    DEFAULT NULL,
+            status      TEXT    NOT NULL DEFAULT 'running',
+            recipients  INTEGER NOT NULL DEFAULT 0,
+            queued      INTEGER NOT NULL DEFAULT 0,
+            skipped     INTEGER NOT NULL DEFAULT 0,
+            detail      TEXT    NOT NULL DEFAULT '',
+            UNIQUE(schedule_id, due_at)
+        );
         """
     )
 

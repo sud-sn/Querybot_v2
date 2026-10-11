@@ -101,6 +101,10 @@
       {% if dashboard_artifact.refresh_schedule and dashboard_artifact.refresh_schedule != 'manual' %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>{% endif %}
       {% if not _editable %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.read_only') }}</span>{% endif %}
     </div>
+    {# Drawn for an email or a PDF: when and for whom, and what it was drawn under, in place of the controls. #}
+    {% if snapshot is defined and snapshot %}
+    <div class="dash-snapshot-meta">{{ snapshot.drawn }}{% if dashboard_tabs|length > 1 %} · <strong>{{ selected_tab }}</strong>{% endif %}{% if dash_view.period %} · {{ t('ui.dash.period') }}: <strong>{{ t('ui.dash.period.' ~ dash_view.period) }}</strong>{% endif %}{% for grouping in dash_groupings if grouping.selected %} · {{ grouping.label }}: <strong>{{ grouping.selected }}</strong>{% endfor %}</div>
+    {% endif %}
   </div>
   {# As the approved design has it: Edit, Share, and everything else under ⋯. #}
   <div class="dash-header-actions">
@@ -130,6 +134,11 @@
           {% for cadence in ('daily', 'weekly', 'monthly') %}<button class="btn btn-secondary btn-xs" role="menuitem" type="submit" name="cadence" value="{{ cadence }}">{{ enum_label('cadence', cadence) }}</button>{% endfor %}
           {% if mail_ready is defined and mail_ready() %}<label class="dash-menu-check"><input type="checkbox" name="by_email" value="1"> {{ t('ui.dash.follow_by_email') }}</label>{% endif %}
         </form>
+        {% endif %}
+        {# Emailed on a schedule (core/dashboard_schedule.py): the owner, when a Creator. #}
+        {% if _editable and reader_can(user, 'reports') %}
+        <button class="dash-menu-item" role="menuitem" type="button" id="dashScheduleButton" aria-haspopup="dialog"
+                aria-controls="dashScheduleDialog">{{ ic("clock", 15) }}<span>{{ t('ui.sched.menu') }}</span></button>
         {% endif %}
         <div class="dash-menu-sep" role="separator"></div>
         {% if _asks %}<a class="dash-menu-item" role="menuitem" href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}">{{ ic("chat", 15) }}<span>{{ t('ui.dash.chat_with') }}</span></a>{% endif %}
@@ -245,7 +254,7 @@
       {% set numeric = chart.table_numeric or [] %}
       <div class="dash-table-wrap">
         <table class="dash-table">
-          <thead><tr>{% for col in chart.table_columns %}<th{% if col in numeric %} class="num"{% endif %}>{% if chart.sort_enabled %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0|int }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
+          <thead><tr>{% for col in chart.table_columns %}<th{% if col in numeric %} class="num"{% endif %}>{% if chart.sort_enabled and not (snapshot is defined and snapshot) %}<button type="button" class="dash-th-sort" onclick="sortDashboardTable(this, {{ loop.index0|int }})">{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }} ↕</button>{% else %}{{ chart.table_column_labels.get(col, col) if chart.table_column_labels else col }}{% endif %}</th>{% endfor %}</tr></thead>
           <tbody>{% for row in chart.table_rows %}<tr>{% for col in chart.table_columns %}{% set cell = row[col] %}<td data-sort="{{ cell.v if cell.v is not none else '' }}"{% if col in numeric %} class="num"{% endif %}>{{ cell.d }}</td>{% endfor %}</tr>{% endfor %}</tbody>
         </table>
       </div>
@@ -323,6 +332,83 @@
   <div class="dash-dialog-foot">
     <button type="button" class="btn btn-primary" onclick="this.closest('dialog').close()">{{ t('ui.dash.share_done') }}</button>
   </div>
+</dialog>
+{% endif %}
+
+{# Emailed on a schedule: the dashboard in the email itself, drawn for each person as they may see it, with a PDF.
+   The list of this dashboard's schedules, and one form to add or change one. Only its owner, a Creator. #}
+{% if dashboard_artifact.can_edit and reader_can(user, 'reports') %}
+{% set _filters_now = [] %}
+{% if dash_view.period %}{% set _ = _filters_now.append(t('ui.dash.period') ~ ': ' ~ t('ui.dash.period.' ~ dash_view.period)) %}{% endif %}
+{% for grouping in dash_groupings if grouping.selected %}{% set _ = _filters_now.append(grouping.label ~ ': ' ~ grouping.selected) %}{% endfor %}
+<dialog class="dash-dialog dash-dialog-wide" id="dashScheduleDialog" aria-labelledby="dashScheduleTitle"
+        data-dashboard-id="{{ dashboard_artifact.id }}" data-view="{{ (dash_view if dash_view is defined else {})|tojson|forceescape }}">
+  <div class="dash-dialog-head">
+    <h2 id="dashScheduleTitle">{{ t('ui.sched.title', name=dashboard_artifact.name) }}</h2>
+    <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+  </div>
+  <p class="dash-sched-intro">{{ t('ui.sched.intro') }}</p>
+  <p class="dash-sched-warn" id="dashSchedNoMail" hidden>{{ ic("alert-triangle", 15) }}<span>{{ t('ui.sched.no_email') }}</span></p>
+  <section class="dash-sched-list" aria-labelledby="dashSchedListTitle">
+    <div class="dash-sched-list-head">
+      <h3 id="dashSchedListTitle">{{ t('ui.sched.list_title') }}</h3>
+      <button type="button" class="btn btn-secondary btn-sm" id="dashSchedNew">{{ ic("plus", 14) }}<span>{{ t('ui.sched.new') }}</span></button>
+    </div>
+    <ul id="dashSchedItems" class="dash-sched-items"></ul>
+    <p class="dash-sched-empty" id="dashSchedEmpty" hidden>{{ t('ui.sched.none') }}</p>
+  </section>
+  <form class="dash-sched-form" id="dashSchedForm" hidden novalidate>
+    <input type="hidden" name="schedule_id" value="">
+    <div class="dash-sched-row">
+      <label class="dash-sched-field"><span>{{ t('ui.sched.how_often') }}</span>
+        <select class="form-input" name="cadence">
+          {% for cadence in ('daily', 'weekdays', 'weekly', 'monthly') %}<option value="{{ cadence }}"{% if cadence == 'weekly' %} selected{% endif %}>{{ t('ui.sched.cadence.' ~ cadence) }}</option>{% endfor %}
+        </select></label>
+      <label class="dash-sched-field" data-for="weekly"><span>{{ t('ui.sched.on_weekday') }}</span>
+        <select class="form-input" name="weekday">{% for day in range(7) %}<option value="{{ day }}">{{ t('reply.weekday.' ~ day) }}</option>{% endfor %}</select></label>
+      <label class="dash-sched-field" data-for="monthly" hidden><span>{{ t('ui.sched.on_date') }}</span>
+        <select class="form-input" name="month_day">{% for day in range(1, 29) %}<option value="{{ day }}">{{ day }}</option>{% endfor %}<option value="0">{{ t('ui.sched.last_day') }}</option></select></label>
+      <label class="dash-sched-field"><span>{{ t('ui.sched.at') }}</span>
+        <input class="form-input" type="time" name="send_time" value="08:00" step="300" required></label>
+      <label class="dash-sched-field dash-sched-zone"><span>{{ t('ui.sched.zone') }}</span>
+        <select class="form-input" name="timezone" id="dashSchedZone"></select></label>
+    </div>
+    <div class="dash-sched-block">
+      <label class="form-label" for="dashSchedSearch">{{ t('ui.sched.to') }}</label>
+      <ul class="dash-sched-picks" id="dashSchedChips" aria-label="{{ t('ui.sched.to') }}"></ul>
+      <div class="dash-combobox">
+        <input class="form-input" id="dashSchedSearch" type="text" role="combobox" autocomplete="off" spellcheck="false"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="dashSchedSuggestions"
+               aria-describedby="dashSchedToHint" placeholder="{{ t('ui.dash.share_add_hint') }}" maxlength="80">
+        <ul class="dash-suggestions" id="dashSchedSuggestions" role="listbox" aria-label="{{ t('ui.dash.share_suggestions') }}" hidden></ul>
+      </div>
+      <p class="dash-share-hint" id="dashSchedToHint">{{ t('ui.sched.to_hint') }}</p>
+      <label class="dash-sched-check"><input type="checkbox" name="include_owner" checked> {{ t('ui.sched.me_too') }}</label>
+    </div>
+    {% if dashboard_tabs|length > 1 %}
+    <fieldset class="dash-sched-block dash-sched-tabs">
+      <legend class="form-label">{{ t('ui.sched.tabs') }}</legend>
+      <label class="dash-sched-check"><input type="checkbox" name="all_tabs" checked> {{ t('ui.sched.all_tabs') }}</label>
+      {% for tab in dashboard_tabs %}<label class="dash-sched-check" data-tab-choice hidden><input type="checkbox" name="tab" value="{{ tab }}" checked> {{ tab }}</label>{% endfor %}
+    </fieldset>
+    {% endif %}
+    <div class="dash-sched-block">
+      <span class="form-label">{{ t('ui.sched.filters') }}</span>
+      <p class="dash-sched-filters">{% if _filters_now %}{{ t('ui.sched.filters_now', filters=_filters_now|join(' · ')) }}{% else %}{{ t('ui.sched.filters_none') }}{% endif %}</p>
+      <label class="dash-sched-check"><input type="checkbox" name="attach_pdf" checked> {{ t('ui.sched.pdf') }}</label>
+    </div>
+    <div class="dash-sched-block">
+      <label class="form-label" for="dashSchedSubject">{{ t('ui.sched.subject') }}</label>
+      <input class="form-input" id="dashSchedSubject" name="subject" maxlength="200" placeholder="{{ t('ui.sched.subject_hint', name=dashboard_artifact.name) }}">
+      <label class="form-label dash-sched-gap" for="dashSchedMessage">{{ t('ui.sched.message') }}</label>
+      <textarea class="form-input" id="dashSchedMessage" name="message" rows="2" maxlength="1000"></textarea>
+    </div>
+    <div class="dash-dialog-foot">
+      <button type="button" class="btn btn-secondary" id="dashSchedCancel">{{ t('ui.sched.cancel') }}</button>
+      <button type="submit" class="btn btn-primary">{{ t('ui.sched.save') }}</button>
+    </div>
+  </form>
+  <p class="sr-only" id="dashSchedStatus" role="status" aria-live="polite"></p>
 </dialog>
 {% endif %}
 
@@ -813,9 +899,225 @@ function initShareDialog() {
   dialog.addEventListener('close', () => { closeList(); if (changed) window.location.reload(); });
 }
 
+// ── Emailed on a schedule (core/dashboard_schedule.py) ─────────────────────────
+// The dashboard's schedules, each with Change, Pause or Resume, Send me a test, Send now and Delete; one form to
+// add or change one. Who it goes to is picked like Share's people and groups.
+function initScheduleDialog() {
+  const dialog = document.getElementById('dashScheduleDialog');
+  if (!dialog) return;
+  const base = `/portal/api/dashboard/${encodeURIComponent(dialog.dataset.dashboardId)}/schedules`;
+  let view = {};
+  try { view = JSON.parse(dialog.dataset.view || '{}') || {}; } catch (_) { view = {}; }
+  const form = document.getElementById('dashSchedForm');
+  const items = document.getElementById('dashSchedItems');
+  const empty = document.getElementById('dashSchedEmpty');
+  const status = document.getElementById('dashSchedStatus');
+  const chips = document.getElementById('dashSchedChips');
+  const input = document.getElementById('dashSchedSearch');
+  const list = document.getElementById('dashSchedSuggestions');
+  const zone = document.getElementById('dashSchedZone');
+  let schedules = [], chosen = [], options = [], active = -1, timer = null, asked = 0, saved = false;
+
+  const say = (text, tone) => {
+    status.textContent = text;
+    window.qbToast?.notify?.({body: text, tone: tone || 'success', duration: 4000});
+  };
+  const describe = (item) => item.type === 'group'
+    ? `${t('ui.dash.share_group')} · ${plural('ui.dash.share_group_size', item.members || 0)}` : (item.group || '');
+  const upper = (text) => text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+
+  // The time zones this browser knows, its own first.
+  const here = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+  let zones = [];
+  try { zones = Intl.supportedValuesOf('timeZone'); } catch (_) { zones = ['UTC', 'Europe/London', 'Europe/Paris',
+    'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']; }
+  const fillZones = (wanted) => {
+    const all = Array.from(new Set([wanted || here, here, 'UTC', ...zones]));
+    zone.innerHTML = all.map(z => `<option value="${escHtmlDash(z)}">${escHtmlDash(z.replace(/_/g, ' '))}</option>`).join('');
+    zone.value = wanted || here;
+  };
+
+  const showDays = () => {
+    const cadence = form.cadence.value;
+    form.querySelector('[data-for="weekly"]').hidden = cadence !== 'weekly';
+    form.querySelector('[data-for="monthly"]').hidden = cadence !== 'monthly';
+  };
+  form.cadence.addEventListener('change', showDays);
+  const allTabs = form.querySelector('[name="all_tabs"]');
+  allTabs?.addEventListener('change', () => form.querySelectorAll('[data-tab-choice]').forEach(l => { l.hidden = allTabs.checked; }));
+
+  const drawChips = () => {
+    chips.innerHTML = '';
+    chosen.forEach((item, index) => {
+      const li = document.createElement('li');
+      li.className = 'badge badge-brand dash-sched-pick';
+      li.innerHTML = `<span>${escHtmlDash(item.name)}</span>` +
+        `<button type="button" class="btn btn-ghost btn-icon btn-xs" aria-label="${escHtmlDash(t('ui.sched.remove', {name: item.name}))}">` +
+        `${window.qbIcon ? window.qbIcon('x', 12) : ''}</button>`;
+      li.querySelector('button').addEventListener('click', () => { chosen.splice(index, 1); drawChips(); input.focus(); });
+      chips.appendChild(li);
+    });
+  };
+  const closeList = () => { list.hidden = true; list.innerHTML = ''; options = []; active = -1;
+    input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
+  const mark = (index) => {
+    active = index;
+    options.forEach((_, i) => list.children[i]?.setAttribute('aria-selected', i === active ? 'true' : 'false'));
+    if (active >= 0) input.setAttribute('aria-activedescendant', `dashSchedOption${active}`);
+  };
+  const showList = (found) => {
+    options = found.filter(f => !chosen.some(c => c.type === f.type && c.id === f.id));
+    list.innerHTML = options.length ? options.map((item, i) =>
+      `<li role="option" id="dashSchedOption${i}" class="dash-suggestion" aria-selected="false" data-index="${i}">` +
+      `<span class="dash-share-name">${escHtmlDash(item.name)}</span>` +
+      `<span class="dash-share-detail">${escHtmlDash(describe(item))}</span></li>`).join('')
+      : `<li class="dash-suggestion is-empty" role="option" aria-disabled="true">${escHtmlDash(t('ui.dash.share_none_found'))}</li>`;
+    list.hidden = false; input.setAttribute('aria-expanded', 'true'); mark(options.length ? 0 : -1);
+  };
+  const pick = (item) => { closeList(); input.value = ''; chosen.push(item); drawChips(); input.focus(); };
+  const search = async () => {
+    const text = input.value.trim();
+    if (text.length < 2) { closeList(); return; }
+    const mine = ++asked;
+    try {
+      const response = await fetch(`/portal/api/people?q=${encodeURIComponent(text)}`, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (mine !== asked) return;
+      if (!response.ok || !data.ok) { closeList(); return; }
+      showList(data.results || []);
+    } catch (_) { if (mine === asked) closeList(); }
+  };
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 180); });
+  input.addEventListener('keydown', (e) => {
+    const open = !list.hidden && options.length;
+    if (e.key === 'ArrowDown' && open) { e.preventDefault(); mark((active + 1) % options.length); }
+    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); mark((active - 1 + options.length) % options.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (open && active >= 0) pick(options[active]); }
+    else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); closeList(); }
+  });
+  dialog.addEventListener('cancel', (e) => { if (!list.hidden) { e.preventDefault(); closeList(); } });
+  list.addEventListener('mousedown', (e) => e.preventDefault());
+  list.addEventListener('click', (e) => { const o = e.target.closest('[data-index]'); if (o) pick(options[Number(o.dataset.index)]); });
+  input.addEventListener('blur', () => setTimeout(closeList, 150));
+
+  const send = async (method, url, body) => {
+    try {
+      const response = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {},
+                                         body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.detail || data.error || t('ui.sched.failed'));
+      return data;
+    } catch (error) { say(error.message || t('ui.sched.failed'), 'error'); return null; }
+  };
+
+  const openForm = (schedule) => {
+    const s = schedule || {cadence: 'weekly', weekday: 0, month_day: 1, send_time: '08:00', timezone: here,
+                           tabs: [], include_owner: true, attach_pdf: true, subject: '', message: '', recipients: []};
+    form.schedule_id.value = schedule ? schedule.id : '';
+    form.cadence.value = s.cadence; form.weekday.value = String(s.weekday); form.month_day.value = String(s.month_day);
+    form.send_time.value = s.send_time; fillZones(s.timezone);
+    form.include_owner.checked = !!s.include_owner; form.attach_pdf.checked = !!s.attach_pdf;
+    form.subject.value = s.subject || ''; form.message.value = s.message || '';
+    if (allTabs) {
+      allTabs.checked = !(s.tabs || []).length;
+      form.querySelectorAll('[name="tab"]').forEach(box => { box.checked = !s.tabs.length || s.tabs.includes(box.value); });
+      form.querySelectorAll('[data-tab-choice]').forEach(l => { l.hidden = allTabs.checked; });
+    }
+    chosen = (s.recipients || []).map(r => ({type: r.type, id: r.id, name: r.name, group: r.group, members: r.members}));
+    drawChips(); showDays();
+    form.hidden = false;
+    form.cadence.focus();
+  };
+  const closeForm = () => { form.hidden = true; closeList(); };
+  document.getElementById('dashSchedNew').addEventListener('click', () => openForm(null));
+  document.getElementById('dashSchedCancel').addEventListener('click', closeForm);
+
+  const render = (data) => {
+    if (!data || !data.ok) return;
+    schedules = data.schedules || [];
+    document.getElementById('dashSchedNoMail').hidden = !!data.mail_ready;
+    empty.hidden = schedules.length > 0;
+    items.innerHTML = '';
+    schedules.forEach(s => {
+      const li = document.createElement('li');
+      li.className = 'dash-sched-item' + (s.active ? '' : ' is-paused');
+      const who = (s.recipients || []).map(r => r.name).concat(s.include_owner ? [t('ui.sched.you')] : []);
+      const state = s.active ? (s.next ? t('ui.sched.next', {when: s.next}) : '')
+                             : (s.paused_reason ? t('ui.sched.paused', {reason: s.paused_reason}) : t('ui.sched.paused_plain'));
+      li.innerHTML = `<div class="dash-sched-when">${escHtmlDash(upper(s.when))}</div>` +
+        `<div class="dash-sched-who">${escHtmlDash(who.join(', '))}</div>` +
+        `<div class="dash-sched-meta">${escHtmlDash([state, s.last ? t('ui.sched.last', {status: s.last}) : ''].filter(Boolean).join(' · '))}</div>` +
+        `<div class="dash-sched-actions">` +
+        `<button type="button" class="btn btn-ghost btn-xs" data-act="edit">${escHtmlDash(t('ui.sched.edit'))}</button>` +
+        `<button type="button" class="btn btn-ghost btn-xs" data-act="${s.active ? 'pause' : 'resume'}">${escHtmlDash(t(s.active ? 'ui.sched.pause' : 'ui.sched.resume'))}</button>` +
+        `<button type="button" class="btn btn-ghost btn-xs" data-act="test">${escHtmlDash(t('ui.sched.test'))}</button>` +
+        `<button type="button" class="btn btn-ghost btn-xs" data-act="send">${escHtmlDash(t('ui.sched.send_now'))}</button>` +
+        `<button type="button" class="btn btn-ghost btn-xs dash-sched-delete" data-act="delete">${escHtmlDash(t('ui.sched.delete'))}</button></div>`;
+      li.querySelectorAll('[data-act]').forEach(button => button.addEventListener('click', () => act(s, button)));
+      items.appendChild(li);
+    });
+    if (!schedules.length && form.hidden) openForm(null);
+  };
+
+  const act = async (s, button) => {
+    const what = button.dataset.act;
+    if (what === 'edit') { openForm(s); return; }
+    if (what === 'delete') {
+      if (!window.confirm(t('ui.sched.delete_confirm'))) return;
+      render(await send('DELETE', `${base}/${s.id}`));
+      return;
+    }
+    const label = button.textContent;
+    button.disabled = true;
+    if (what === 'test' || what === 'send') button.textContent = t('ui.sched.sending');
+    const data = await send('POST', `${base}/${s.id}/${what}`);
+    button.disabled = false; button.textContent = label;
+    if (!data) return;
+    render(data);
+    const sent = data.sent || {};
+    if (what === 'test') {
+      const mail = sent.email || {};
+      if (mail.status === 'sent') say(t('ui.sched.test_sent', {email: mail.to}));
+      else if (mail.status === 'queued') say(t('ui.sched.test_queued', {email: mail.to}));
+      else say(t('ui.sched.not_sent', {reason: mail.reason || sent.detail || ''}), 'error');
+    } else if (what === 'send') {
+      if (sent.queued) say(t('ui.sched.sent_now', {count: sent.queued}));
+      else say(t('ui.sched.not_sent', {reason: sent.detail || ''}), 'error');
+    }
+  };
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const tabs = allTabs && !allTabs.checked
+      ? Array.from(form.querySelectorAll('[name="tab"]:checked')).map(b => b.value) : [];
+    const body = {
+      cadence: form.cadence.value, weekday: Number(form.weekday.value), month_day: Number(form.month_day.value),
+      send_time: form.send_time.value, timezone: form.timezone.value, tabs, view,
+      recipients: chosen.map(c => ({type: c.type, id: c.id})), include_owner: form.include_owner.checked,
+      attach_pdf: form.attach_pdf.checked, subject: form.subject.value, message: form.message.value,
+    };
+    const id = form.schedule_id.value;
+    const data = await send('POST', id ? `${base}/${id}` : base, body);
+    if (!data) return;
+    closeForm();
+    render(data);
+    saved = true;
+    say(t('ui.sched.saved'));
+  });
+  // Saving may share the dashboard: the header says who sees it, read again once the dialog closes.
+  dialog.addEventListener('close', () => { closeList(); if (saved) window.location.reload(); });
+
+  document.getElementById('dashScheduleButton')?.addEventListener('click', async () => {
+    form.hidden = true;
+    dialog.showModal();
+    render(await send('GET', base));
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initDashboardMenu();
   initShareDialog();
+  initScheduleDialog();
   // The link is to the dashboard as it is seen (its tab and filters), without this visit's one-off notices.
   const shareLink = document.getElementById('dashShareLink');
   if (shareLink) {
