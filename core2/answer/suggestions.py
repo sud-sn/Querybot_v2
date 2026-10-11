@@ -77,7 +77,8 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
     elif grouped and period is None:
         top = next((str(r.get(grouped[0].name)) for r in rows
                     if r.get(grouped[0].name) not in (None, "", "Unknown")), "")
-        if top:
+        # A class, a stage or a pair an analysis made is no member a question can name.
+        if top and (not plan.shaped() or (grouped[0].attribute and measures[0].measure is not None)):
             out.append(f'Monthly {lower} for "{top}"{tail}')
         if bounded and logical.compare is None:
             out.append(f"Why did {lower} change {span}{tail}?")
@@ -145,7 +146,7 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
         items.append({"label": f"Why {member}changed in {{period}}",
                       "question": f"Why did {lower} change{for_member} in {{period}}{tail}?"})
         return {"on": "period", "series": "member" if grouped else "", "items": items}
-    if not grouped:
+    if not grouped or (plan.shaped() and not grouped[0].attribute) or chart.get("x_pair"):
         return None
     long_window = bounded and (logical.window.end - logical.window.start).days > 80   # type: ignore[operator]
     if measure_dates(plan, model)[0] is not None:

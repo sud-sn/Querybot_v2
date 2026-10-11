@@ -209,6 +209,48 @@ class OnTime(_Strict):
     ageing: bool = False             # the rows not done yet, by days past due today (current, 1-30, 31-60, ...)
 
 
+class Pareto(_Strict):
+    """Who makes most of a figure, each member's figure ranked from the largest: ABC classes ("ABC analysis of
+    products by sales": A the members making the first 80% of it, B the next ones up to 95%, C the rest), the
+    members making up a share ("which customers make 80% of revenue"), or groups of equal size by the figure
+    ("customers by decile of spend", quartiles). A member's class is the one its share starts in: the member that
+    takes the total past 80% is still an A."""
+
+    of: str                          # an entity slug: whose figure (product, customer)
+    measure: str                     # a measure slug: the figure (net amount)
+    mode: Literal["abc", "pareto", "ntile"] = "abc"
+    cuts: list[float] = Field(default_factory=lambda: [80.0, 95.0], min_length=1, max_length=3)  # cumulative %
+    groups: int = Field(default=10, ge=2, le=20)               # ntile: 10 deciles, 4 quartiles, 5 quintiles
+    members: bool = False            # abc / ntile: each member with its class, not one row a class
+
+
+class Funnel(_Strict):
+    """Rows through dates of their own in order ("orders through ship and delivery", "claims submitted, approved,
+    paid"): how many reached each stage (a date filled, and every stage before it), the share of the first stage
+    and of the stage before, and the average days from the stage before. The window holds the first stage."""
+
+    stages: list[str] = Field(min_length=2, max_length=6)   # date slugs of the same rows, in order
+
+
+class Together(_Strict):
+    """Items bought in the same basket: "products bought together", "what is bought with \"Road Bike\"" (a quoted
+    item, as a filter on the items, keeps the pairs that hold it). Each pair: the baskets holding both, their share
+    of all baskets, how often a basket with the first holds the second, and the lift (how much more often than by
+    chance)."""
+
+    of: str                          # an entity slug: the items (product)
+    basket: str                      # a count measure whose distinct value is a basket (number of orders)
+
+
+class Target(_Strict):
+    """A figure against its target, budget or quota ("sales against target by store", "spend vs budget by
+    month"): the two figures, the difference and the actual as a % of the target, with the plan's groupings and
+    periods."""
+
+    actual: str                      # a measure slug: what happened (net amount, spend)
+    target: str                      # a measure slug: what was planned (target amount, budget, quota)
+
+
 class Plan(_Strict):
     kind: Literal["query", "clarify", "describe_data", "unsupported", "smalltalk"] = "query"
     intent: Intent | None = None
@@ -241,12 +283,17 @@ class Plan(_Strict):
     cohort: Cohort | None = None
     active: Active | None = None
     on_time: OnTime | None = None
+    pareto: Pareto | None = None
+    funnel: Funnel | None = None
+    together: Together | None = None
+    target: Target | None = None
     notes: list[str] = Field(default_factory=list)
 
     def shaped(self) -> bool:
         """Does the plan ask for an analytical shape (worked out over the plain answer's rows)?"""
         return any(x is not None for x in (self.per, self.rolling, self.within, self.bands, self.absent, self.gap,
-                                           self.lifecycle, self.cohort, self.active, self.on_time))
+                                           self.lifecycle, self.cohort, self.active, self.on_time, self.pareto,
+                                           self.funnel, self.together))
 
 
 def schema_text() -> str:

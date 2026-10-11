@@ -460,8 +460,12 @@ class _Compiler:
 
         A table with no rows for a group adds nothing to it (a store with no returns
         has refunds of 0), so its total counts as 0 there; a ratio over a 0 is empty.
+        A figure against its target is the exception: a period with no target set (or no
+        figure yet) has no difference, never the whole figure (or the whole target) as one.
         """
         if isinstance(expr, RefExpr):
+            if self.q.target is not None:
+                return self.out(alias, f"{expr.measure}{suffix}")
             return exp.Coalesce(this=self.out(alias, f"{expr.measure}{suffix}"), expressions=[_num(0)])
         if isinstance(expr, OpExpr):
             if len(expr.args) != 2:

@@ -44,7 +44,10 @@ def test_each_warehouse_is_offered_the_analyses_its_data_gives_and_each_is_answe
     for lead in EXPECTED[name]:
         assert any(q.startswith(lead) for q in said), (lead, said)
     if not EXPECTED[name]:
-        assert said == []
+        # None of the members' analyses (an item or a ledger account comes back or lapses no more than a movement
+        # stays in force); who makes most of a figure, or what is bought together, may still be offered.
+        assert [q for q, plan in offered if any(k in plan for k in ("gap", "lifecycle", "cohort", "active",
+                                                                    "on_time"))] == []
     for question, plan in offered:
         compiled = compile_query(resolve(Plan.model_validate(plan), model, Context(today=TODAY)), model, "duckdb")
         rows = built.con.execute(compiled.sql).fetchall()

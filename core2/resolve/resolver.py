@@ -282,6 +282,7 @@ class Logical:
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
     shape: object | None = None         # an analytical shape worked out over these rows (core2/resolve/shapes.py)
+    target: object | None = None        # a figure against its target: what the answer says of it (shapes.TargetInfo)
     people: str | None = None           # the hidden column counting each group's people, when age is used
     age_checks: list[tuple[int, int]] = field(default_factory=list)   # ages each limit's 5 years hold: checked
     age_slug: str = ""
@@ -992,6 +993,13 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 def _resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.kind != "query":
         raise ResolveError("unsupported", f"a {plan.kind} plan is not a query")
+    if plan.target is not None:
+        from core2.resolve.shapes import with_target
+
+        plan, info = with_target(plan, model)
+        logical = _resolve(plan, model, ctx)
+        logical.target = info
+        return logical
     if plan.shaped():
         from core2.resolve.shapes import resolve_shaped
 

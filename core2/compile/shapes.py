@@ -25,8 +25,9 @@ from core2.compile.compiler import CompileError, OutColumn, _Compiler, _double, 
 from core2.model.schema import AggExpr
 from core2.resolve import bands as B
 from core2.resolve.resolver import Logical, OutMeasure, Part, PartGroup
-from core2.resolve.shapes import (AGEING, AbsentShape, ActiveShape, CohortShape, Events, GapShape, LifecycleShape,
-                                  OnTimeShape, PerShape, RollingShape, WithinShape)
+from core2.resolve.shapes import (ABC, AGEING, AbsentShape, ActiveShape, CohortShape, Events, FunnelShape, GapShape,
+                                  LifecycleShape, OnTimeShape, ParetoShape, PerShape, RollingShape, TogetherShape,
+                                  WithinShape)
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -57,6 +58,12 @@ def shaped(c: _Compiler) -> tuple[exp.Select, list[OutColumn], str]:
         return _active(c, shape)
     if isinstance(shape, OnTimeShape):
         return _ageing(c, shape) if shape.ageing else _on_time(c, shape)
+    if isinstance(shape, ParetoShape):
+        return _pareto(c, shape)
+    if isinstance(shape, FunnelShape):
+        return _funnel(c, shape)
+    if isinstance(shape, TogetherShape):
+        return _together(c, shape)
     raise CompileError(f"no SQL for {type(shape).__name__}")
 
 
@@ -660,3 +667,166 @@ def fill_edges(logical: Logical, model, dialect: str, query: Callable[[str], lis
         if group.name == g.name:
             group.bands = list(g.labels)
     return logical
+
+
+# ── who makes most of a figure ─────────────────────────────────────────────
+
+
+def _percent_of(c: _Compiler, part: exp.Expression, whole: exp.Expression) -> exp.Expression:
+    return D.div(D.mul(_double(part), 100), exp.Nullif(this=whole, expression=_num(0)))
+
+
+def _pareto(c: _Compiler, shape: ParetoShape) -> tuple[exp.Select, list[OutColumn], str]:
+    """Each member's figure (``m``), ranked from the largest with its running total over all of them (``r``); then
+    each member with its share and class, or one row a class."""
+    body, _, _ = _Compiler(shape.inner, c.model, c.d).shaped_body()
+    source = body.subquery(c.name("m"))
+    v = c.out("m", shape.value)
+    named = [c.out("m", n) for n in shape.members]
+    keep = exp.and_(*[_not_null(e) for e in named[:1]], _not_null(v))
+    # Members with no figure or name are left out first, so empties need no place; SQL Server is told its own way
+    # (it cannot say NULLS LAST inside a running window).
+    tsql = c.d == "tsql"
+    order = [exp.Ordered(this=v.copy(), desc=True, nulls_first=False if tsql else None),
+             *[exp.Ordered(this=e.copy(), desc=False, nulls_first=True if tsql else None) for e in named]]
+
+    def over(fn: exp.Expression, *, ordered: bool = True, running: bool = False) -> exp.Window:
+        window = exp.Window(this=fn, order=exp.Order(expressions=[o.copy() for o in order]) if ordered else None)
+        if running:
+            window.set("spec", exp.WindowSpec(kind="ROWS", start="UNBOUNDED", start_side="PRECEDING",
+                                              end="CURRENT ROW"))
+        return window
+
+    ranked = exp.select(*[e.copy().as_(c.name(n)) for e, n in zip(named, shape.members)], v.copy().as_(c.name("v")),
+                        over(exp.Sum(this=v.copy()), running=True).as_(c.name("run")),
+                        over(exp.Sum(this=v.copy()), ordered=False).as_(c.name("tot")),
+                        over(exp.Count(this=exp.Star()), ordered=False).as_(c.name(TOTAL)))
+    if shape.mode == "ntile":
+        ranked = ranked.select(over(exp.Anonymous(this="NTILE", expressions=[_num(shape.groups)])).as_(c.name("tile")))
+    ranked = ranked.from_(source).where(keep)
+    r = lambda n: c.out("r", n)  # noqa: E731
+    before = _percent_of(c, exp.Sub(this=r("run"), expression=r("v")), r("tot"))
+    cls = shape.columns.get("class")
+    if shape.mode == "ntile":
+        klass: exp.Expression = r("tile")
+    else:
+        klass = exp.Case(ifs=[exp.If(this=exp.LT(this=before.copy(), expression=_num(cut)),
+                                     true=exp.Literal.string(ABC[i])) for i, cut in enumerate(shape.cuts)],
+                         default=exp.Literal.string(ABC[len(shape.cuts)]))
+    cols = shape.columns
+    if shape.listed:
+        level = exp.select(*[r(n).as_(c.name(n)) for n in shape.members], r("v").as_(c.name(cols["value"])),
+                           _percent_of(c, r("v"), r("tot")).as_(c.name(cols["share"])),
+                           _percent_of(c, r("run"), r("tot")).as_(c.name(cols["running"])),
+                           r(TOTAL).as_(c.name(TOTAL)))
+        if cls:
+            level = level.select(klass.as_(c.name(cls)))
+        level = level.from_(ranked.subquery(c.name("r")))
+        if shape.mode == "pareto":
+            # How many made the first cut is counted here: the rows read back may be cut short.
+            level = level.select(exp.Window(this=exp.Count(this=exp.Star())).as_(c.name(LISTED)))
+            level = level.where(exp.LT(this=before, expression=_num(shape.cuts[0])))
+    else:
+        k = lambda n: c.out("k", n)  # noqa: E731
+        classed = exp.select(klass.as_(c.name(cls)), r("v").as_(c.name("v")), r("tot").as_(c.name("tot")),
+                             r(TOTAL).as_(c.name(TOTAL))).from_(ranked.subquery(c.name("r")))
+        level = exp.select(k(cls).as_(c.name(cls)), exp.Count(this=exp.Star()).as_(c.name(cols["members"])),
+                           exp.Sum(this=k("v")).as_(c.name(cols["value"])),
+                           _percent_of(c, exp.Sum(this=k("v")), exp.Max(this=k("tot"))).as_(c.name(cols["share"])),
+                           exp.Max(this=k(TOTAL)).as_(c.name(TOTAL)))
+        level = level.from_(classed.subquery(c.name("k"))).group_by(k(cls))
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format,
+                                                                   m.measure.key if m.measure else None)
+                                                         for m in c.q.measures]
+    outer = exp.select(*[c.out("q", col.name) for col in columns], c.out("q", TOTAL))
+    if shape.listed and shape.mode == "pareto":
+        outer = outer.select(c.out("q", LISTED))
+    return outer.from_(level.subquery(c.name("q"))), columns, "q"
+
+
+# ── funnels ────────────────────────────────────────────────────────────────
+
+
+def _funnel(c: _Compiler, shape: FunnelShape) -> tuple[exp.Select, list[OutColumn], str]:
+    """One read of the rows: how many reached each stage (its date and every one before it filled), and the
+    average days from the stage before; then a row a stage."""
+    rows = c.part_select(dataclasses.replace(shape.part, groups=[], measures=[], row_level=True,
+                                             distinct_only=False))
+    real = [c.range_condition(u, Range(None, None)) for u in shape.stages]
+    wide = rows.select(append=False)
+    for i in range(len(shape.stages)):
+        reached = exp.and_(*[x.copy() for x in real[:i + 1]])
+        wide = wide.select(exp.Sum(this=_flag(reached)).as_(c.name(f"r{i}")))
+        if i:
+            days = c.days(shape.stages[i - 1], shape.stages[i])
+            wide = wide.select(exp.Avg(this=_double(exp.Case(ifs=[exp.If(this=reached.copy(), true=days)])))
+                               .as_(c.name(f"d{i}")))
+    cols = shape.columns
+    w = lambda n: c.out("w", n)  # noqa: E731
+    none = _double(exp.Null())
+    branches = []
+    for i, label in enumerate(shape.labels):
+        branch = exp.select(exp.Literal.string(label).as_(c.name(cols["stage"])),
+                            w(f"r{i}").as_(c.name(cols["reached"])),
+                            _percent_of(c, w(f"r{i}"), w("r0")).as_(c.name(cols["of_first"])),
+                            (_percent_of(c, w(f"r{i}"), w(f"r{i - 1}")) if i else none.copy())
+                            .as_(c.name(cols["of_previous"])),
+                            (w(f"d{i}") if i else none.copy()).as_(c.name(cols["days"])))
+        branches.append(branch.from_(exp.to_table(c.name("w").name).as_(c.name("w"))))
+    union = branches[0]
+    for b in branches[1:]:
+        union = exp.union(union, b, distinct=False)
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
+                                                         for m in c.q.measures]
+    outer = exp.select(*[c.out("q", col.name) for col in columns])
+    return outer.from_(union.subquery(c.name("q"))).with_(c.name("w"), as_=wide), columns, "q"
+
+
+# ── bought together ────────────────────────────────────────────────────────
+
+
+def _together(c: _Compiler, shape: TogetherShape) -> tuple[exp.Select, list[OutColumn], str]:
+    """Each basket's items once (``b``); every pair of items on the same basket, counted; each pair beside how
+    many baskets hold each item and how many there are in all."""
+    item, basket = shape.item, shape.basket
+    b = c.part_select(shape.part)
+    keep = exp.and_(_not_null(exp.column(c.name(item), table=c.name("bb"))),
+                    _not_null(exp.column(c.name(basket), table=c.name("bb"))))
+    cleaned = exp.select(exp.column(c.name(item), table=c.name("bb")).as_(c.name(item)),
+                         exp.column(c.name(basket), table=c.name("bb")).as_(c.name(basket))) \
+        .from_(b.subquery(c.name("bb"))).where(keep)
+    t = lambda alias, n: c.out(alias, n)  # noqa: E731
+    same = exp.EQ(this=t("a", basket), expression=t("o", basket))
+    if shape.anchor:
+        pairs_on = exp.and_(same, exp.In(this=t("a", item), expressions=[exp.Literal.string(str(v)) if isinstance(
+            v, str) else _num(v) for v in shape.anchor]), exp.NEQ(this=t("o", item), expression=t("a", item)))
+    else:
+        pairs_on = exp.and_(same, exp.LT(this=t("a", item), expression=t("o", item)))
+    cols = shape.columns
+    pairs = exp.select(t("a", item).as_(c.name("x")), t("o", item).as_(c.name("y")),
+                       exp.Count(this=exp.Star()).as_(c.name("n"))) \
+        .from_(exp.to_table(c.name("b").name).as_(c.name("a"))) \
+        .join(exp.to_table(c.name("b").name).as_(c.name("o")), on=pairs_on, join_type="inner") \
+        .group_by(t("a", item), t("o", item))
+    per_item = exp.select(t("b", item).as_(c.name("i")), exp.Count(this=exp.Star()).as_(c.name("n"))) \
+        .from_(exp.to_table(c.name("b").name).as_(c.name("b"))).group_by(t("b", item))
+    total = exp.select(exp.Count(this=exp.Distinct(expressions=[t("b", basket)])).as_(c.name("n"))) \
+        .from_(exp.to_table(c.name("b").name).as_(c.name("b")))
+    together = t("p", "n")
+    lift = D.div(D.mul(_double(together.copy()), t("t", "n")),
+                 exp.Nullif(this=exp.Mul(this=_double(t("ix", "n")), expression=t("iy", "n")), expression=_num(0)))
+    level = exp.select(t("p", "x").as_(c.name(cols["item"])), t("p", "y").as_(c.name(cols["with_item"])),
+                       together.copy().as_(c.name(cols["together"])),
+                       _percent_of(c, together.copy(), t("t", "n")).as_(c.name(cols["support"])),
+                       _percent_of(c, together.copy(), t("ix", "n")).as_(c.name(cols["confidence"])),
+                       lift.as_(c.name(cols["lift"]))) \
+        .from_(pairs.subquery(c.name("p"))) \
+        .join(per_item.subquery(c.name("ix")), on=exp.EQ(this=t("ix", "i"), expression=t("p", "x")),
+              join_type="inner") \
+        .join(per_item.subquery(c.name("iy")), on=exp.EQ(this=t("iy", "i"), expression=t("p", "y")),
+              join_type="inner") \
+        .join(total.subquery(c.name("t")), join_type="cross")
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
+                                                         for m in c.q.measures]
+    outer = exp.select(*[c.out("q", col.name) for col in columns])
+    return outer.from_(level.subquery(c.name("q"))).with_(c.name("b"), as_=cleaned), columns, "q"

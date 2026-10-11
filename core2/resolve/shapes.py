@@ -196,6 +196,15 @@ LIFECYCLE = {"active": "Active", "new": "New", "returning": "Returning", "won_ba
 
 
 def resolve_shaped(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    if plan.pareto is not None:
+        _alone(plan, "pareto")
+        return _pareto(plan, model, ctx)
+    if plan.funnel is not None:
+        _alone(plan, "funnel")
+        return _funnel(plan, model, ctx)
+    if plan.together is not None:
+        _alone(plan, "together")
+        return _together(plan, model, ctx)
     if plan.gap is not None:
         _alone(plan, "gap")
         return _gap(plan, model, ctx)
@@ -1261,3 +1270,338 @@ def on_time_definition(shape: OnTimeShape, span: str, counted: float | None, lat
     n = f" Of {int(counted):,}, {int(late or 0):,} were late." if counted is not None else ""
     return (f"Each of the {shape.things}{when} on time when its {shape.done_name} is on or before its "
             f"{shape.due_name}{grace}; those without both dates are left out.{n}")
+
+
+# ── who makes most of a figure: ABC classes, the first 80%, deciles ────────
+
+ABC = ["A", "B", "C", "D"]
+
+
+@dataclass
+class ParetoShape:
+    inner: Logical                 # each member's figure: the plain answer grouped by the member
+    members: list[str]             # inner group names that make one member (its name first)
+    value: str                     # the inner column holding each member's figure
+    mode: str                      # abc | pareto | ntile
+    cuts: list[float]              # cumulative % each class (or the share listed) ends at
+    groups: int                    # ntile: how many groups
+    listed: bool                   # each member listed (pareto always), or one row a class
+    member: str                    # "product"
+    figure: str                    # "Net amount"
+    columns: dict[str, str]        # what each output column is: class, value, share, running, members
+
+
+def _pareto(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    pa = plan.pareto
+    assert pa is not None
+    slug, _, member = _member_of(model, pa.of)
+    if slug is None:
+        raise ResolveError("unsupported", "classes are worked out for things the data lists: name whose figure "
+                           "(each product, each customer)")
+    if plan.group_by:
+        raise ResolveError("unsupported", "classes are worked out over every member at once: ask without a "
+                           "grouping, or for one group by its quoted name")
+    cuts = sorted({float(c) for c in pa.cuts if 0 < float(c) < 100})
+    if not cuts:
+        raise ResolveError("unsupported", "a share between 0 and 100% is needed (80 for the first 80%)")
+    inner_plan = plan.model_copy(update={
+        "pareto": None, "measures": [pa.measure], "derived": [], "durations": [], "group_by": [slug], "sort": [],
+        "limit": None, "intent": "breakdown", "chart": None,
+        "time": plan.time.model_copy(update={"grain": None, "compare": None})})
+    inner = resolve_plain(inner_plan, model, replace(ctx, unnamed_by_key=True) if slug in model.entities else ctx)
+    if len(inner.measures) != 1:
+        raise ResolveError("unsupported", "one figure at a time: ask for each measure on its own")
+    figure = inner.measures[0]
+    if not _adds(figure):
+        raise ResolveError("unsupported", f"{figure.label} is not a total (an average or a ratio has no share of "
+                           "a whole): ask for a figure that adds up, such as an amount or a count")
+    attribute = _entity_label(model, slug) if slug in model.entities else model.attributes[slug]
+    members = [g.name for g in inner.groups if g.attribute == attribute.slug]
+    member_groups = [g for g in inner.groups if g.name in members]
+    taken = {g.name for g in inner.groups}
+
+    def name(hint: str) -> str:
+        out = _output_name(hint, taken)
+        taken.add(out)
+        return out
+
+    things = plural(member)
+    word = figure.label
+    columns: dict[str, str] = {}
+    groups: list[Group] = []
+    out: list[OutMeasure] = []
+    listed = pa.mode == "pareto" or pa.members
+    if listed:
+        groups = list(member_groups)
+        columns["value"] = name(figure.name)
+        out.append(OutMeasure(columns["value"], word, AggExpr(agg="sum"), figure.format, figure.measure))
+        columns["share"] = name("share")
+        out.append(OutMeasure(columns["share"], f"Share of {word.lower()}", AggExpr(agg="sum"), "percent", None))
+        columns["running"] = name("running_share")
+        out.append(OutMeasure(columns["running"], "Running share", AggExpr(agg="sum"), "percent", None))
+        if pa.mode != "pareto":
+            columns["class"] = name("decile" if pa.mode == "ntile" else "class")
+            groups.append(Group(columns["class"], _ntile_word(pa.groups) if pa.mode == "ntile" else "Class",
+                                "attribute"))
+    else:
+        columns["class"] = name("decile" if pa.mode == "ntile" else "class")
+        labels = [str(i) for i in range(1, pa.groups + 1)] if pa.mode == "ntile" else ABC[:len(cuts) + 1]
+        groups.append(Group(columns["class"], _ntile_word(pa.groups) if pa.mode == "ntile" else "Class",
+                            "attribute", bands=labels))
+        columns["members"] = name(things.replace(" ", "_"))
+        out.append(OutMeasure(columns["members"], things.capitalize(), AggExpr(agg="count"), "number", None))
+        columns["value"] = name(figure.name)
+        out.append(OutMeasure(columns["value"], word, AggExpr(agg="sum"), figure.format, figure.measure))
+        columns["share"] = name("share")
+        out.append(OutMeasure(columns["share"], f"Share of {word.lower()}", AggExpr(agg="sum"), "percent", None))
+    shape = ParetoShape(inner=inner, members=members, value=figure.name, mode=pa.mode, cuts=cuts, groups=pa.groups,
+                        listed=listed, member=member, figure=word, columns=columns)
+    return dataclasses.replace(
+        inner, intent="rank" if listed else "breakdown", groups=groups, measures=out,
+        sort=[(columns["value"], True)] if listed else [], sort_asked=False, limit=plan.limit, share=False, having=[],
+        notes=list(inner.notes), unit_group=None, shape=shape)
+
+
+def _ntile_word(groups: int) -> str:
+    return {10: "Decile", 4: "Quartile", 5: "Quintile", 3: "Tercile", 20: "Ventile"}.get(groups, "Group")
+
+
+def pareto_definition(shape: ParetoShape, span: str) -> str:
+    when = f" {span}" if span else ""
+    things, word = plural(shape.member), shape.figure.lower()
+    if shape.mode == "ntile":
+        kind = _ntile_word(shape.groups).lower()
+        return (f"{things[:1].upper()}{things[1:]} ranked by their {word}{when}, from the largest, and cut into "
+                f"{shape.groups} groups of the same number of {things}: {kind} 1 holds the largest.")
+    if shape.mode == "pareto":
+        return (f"{things[:1].upper()}{things[1:]} ranked by their {word}{when}, from the largest: those listed make "
+                f"up the first {shape.cuts[0]:g}% of the total, the one that takes it past {shape.cuts[0]:g}% "
+                "included.")
+    edges = [0.0, *shape.cuts, 100.0]
+    parts = [f"{ABC[i]} the {things} making {'the first ' if i == 0 else 'the next '}"
+             f"{edges[i + 1] - edges[i]:g}%" if i < len(shape.cuts) else f"{ABC[i]} the rest"
+             for i in range(len(shape.cuts) + 1)]
+    return (f"{things[:1].upper()}{things[1:]} ranked by their {word}{when}, from the largest: " + "; ".join(parts) +
+            ". A class holds the member that takes the total past its edge.")
+
+
+# ── funnels: rows through their dates in order ─────────────────────────────
+
+
+@dataclass
+class FunnelShape:
+    part: Part
+    stages: list[DateUse]
+    labels: list[str]              # each stage in words ("Order date")
+    things: str                    # "orders"
+    columns: dict[str, str]        # stage, reached, of_first, of_previous, days
+
+
+def _funnel(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    fu = plan.funnel
+    assert fu is not None
+    roles: list[DateRole] = []
+    for slug in fu.stages:
+        found = find_slug(model, slug)
+        if not found or found[0] != "date":
+            raise ResolveError("unknown", f"no date called {slug}", sorted(model.date_roles)[:12])
+        role = found[1]
+        assert isinstance(role, DateRole)
+        roles.append(role)
+    if len({r.key for r in roles}) != len(roles):
+        raise ResolveError("unsupported", "each stage of a funnel is a date of its own")
+    table = roles[0].table
+    other = next((r for r in roles if r.table != table), None)
+    if other is not None:
+        raise ResolveError("unsupported", f"a funnel follows the dates of the same rows: {other.name} is not on the "
+                           f"{plural(model.tables[table].business_name.lower())}")
+    if plan.group_by or plan.time.grain:
+        raise ResolveError("unsupported", "a funnel is drawn for its rows all together: ask for one group by its "
+                           "quoted name, or for one period")
+    taken: set[str] = set()
+    builder, _, _ = _rows_part(plan, model, ctx, table, taken)
+    part = builder.part
+    uses = [builder.date(roles[0]), *(builder.date(r, kind="left") for r in roles[1:])]
+    first, last = _first_last(roles[0])
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=model.settings.fiscal_year_start_month)
+    if plan.time.window.kind == "all":
+        window = Range(None, None)
+    part.date_ranges.append((uses[0], window))
+    labels = [r.name[:1].upper() + r.name[1:] for r in roles]
+    things = plural(model.tables[table].business_name.lower())
+    names = {k: _output_name(k, taken) for k in ("stage", "reached", "of_first", "of_previous", "days")}
+    groups = [Group(names["stage"], "Stage", "attribute", bands=labels)]
+    out = [OutMeasure(names["reached"], f"{things[:1].upper()}{things[1:]}", AggExpr(agg="count"), "number", None),
+           OutMeasure(names["of_first"], "Share of the first stage", AggExpr(agg="sum"), "percent", None),
+           OutMeasure(names["of_previous"], "Share of the stage before", AggExpr(agg="sum"), "percent", None),
+           OutMeasure(names["days"], "Average days from the stage before", AggExpr(agg="avg"), "days", None)]
+    shape = FunnelShape(part=part, stages=uses, labels=labels, things=things, columns=names)
+    return Logical(intent="breakdown", parts=[part], groups=groups, measures=out, window=window, sort=[],
+                   limit=None, max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
+                   conditions=[], shape=shape)
+
+
+def funnel_definition(shape: FunnelShape, span: str) -> str:
+    stage = shape.labels[0].lower()
+    when = f" with {'an' if stage[:1] in 'aeiou' else 'a'} {stage} {span}" if span else ""
+    return (f"{shape.things[:1].upper()}{shape.things[1:]}{when}, through "
+            f"{', '.join(lbl.lower() for lbl in shape.labels)}: a stage is reached when its date and every one before "
+            "it are filled; the days are from the stage before, over those that reached both.")
+
+
+# ── bought together ────────────────────────────────────────────────────────
+
+
+@dataclass
+class TogetherShape:
+    part: Part                     # each basket's items: the rows, by basket and item
+    basket: str                    # the part's group holding the basket
+    item: str                      # the part's group holding the item's name
+    anchor: list[object]           # the item names a quoted filter kept: the pairs that hold one of them
+    item_word: str                 # "product"
+    basket_word: str               # "order"
+    columns: dict[str, str]        # item, with, together, support, confidence, lift
+
+
+def _together(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    to = plan.together
+    assert to is not None
+    found = find_slug(model, to.of)
+    if not found or found[0] != "entity":
+        raise ResolveError("unknown", f"nothing the data lists called {to.of}: name the items (each product)",
+                           sorted(model.entities)[:12])
+    entity = found[1]
+    assert isinstance(entity, Entity)
+    counted = find_slug(model, to.basket)
+    if not counted or counted[0] != "measure" or getattr(counted[1].expr, "agg", "") not in ("count", "count_distinct"):
+        raise ResolveError("unsupported", f"{to.basket} does not count baskets: name a count of orders (or "
+                           "invoices, visits) that the items are on")
+    _, column, basket_word = _member_of(model, to.basket)
+    if column is None:
+        raise ResolveError("unsupported", f"{to.basket} does not count baskets: name a count of orders (or "
+                           "invoices, visits) that the items are on")
+    label = _entity_label(model, to.of)
+    # The item's own filter (a quoted product) keeps the pairs holding it, not the rows of its baskets.
+    anchor: list[object] = []
+    rest = []
+    for f in plan.filters:
+        if f.field in (to.of, label.slug) and f.op in ("eq", "in"):
+            _, stored = _named_filter(model.columns[label.column], f)
+            anchor += list(stored)
+        else:
+            rest.append(f)
+    inner_plan = plan.model_copy(update={
+        "together": None, "measures": [to.basket], "derived": [], "durations": [], "group_by": [to.of],
+        "filters": rest, "sort": [], "limit": None, "intent": "breakdown", "chart": None,
+        "time": plan.time.model_copy(update={"grain": None, "compare": None})})
+    inner = resolve_plain(inner_plan, model, ctx)
+    if len(inner.parts) != 1:
+        raise ResolveError("unsupported", f"the {plural(entity.business_name.lower())} and the {plural(basket_word)} "
+                           "are not on the same rows")
+    part = inner.parts[0]
+    owner = model.columns[column].table
+    if part.table != owner:
+        link = next((j for j in model.joins.values() if j.from_table == part.table and j.to_table == owner
+                     and list(j.to_columns) == [column] and P.usable(j)), None)
+        if link is None:
+            raise ResolveError("unsupported", f"each {basket_word} of the "
+                               f"{plural(entity.business_name.lower())} cannot be told from their rows")
+        column = link.from_columns[0]
+    item = next((g.name for g in inner.groups if g.attribute == label.slug), None)
+    if item is None:
+        raise ResolveError("unsupported", f"the {plural(entity.business_name.lower())} have no name to show")
+    basket = _output_name("basket", {g.name for g in inner.groups})
+    part.groups = [g for g in part.groups if g.name == item]
+    part.groups.append(PartGroup(basket, part.alias, column, "attribute"))
+    part.measures = []
+    part.distinct_only = True
+    taken = {basket, item}
+    names = {k: _output_name(k, taken) for k in ("item", "with_item", "together", "support", "confidence", "lift")}
+    word = entity.business_name
+    groups = [Group(names["item"], word, "attribute"), Group(names["with_item"], "Bought with", "attribute")]
+    baskets = plural(basket_word)
+    out = [OutMeasure(names["together"], f"{baskets[:1].upper()}{baskets[1:]} with both", AggExpr(agg="count"),
+                      "number", None),
+           OutMeasure(names["support"], f"Share of {baskets}", AggExpr(agg="sum"), "percent", None),
+           OutMeasure(names["confidence"], f"Share of the first's {baskets}", AggExpr(agg="sum"), "percent", None),
+           OutMeasure(names["lift"], "Lift", AggExpr(agg="sum"), "number", None)]
+    shape = TogetherShape(part=part, basket=basket, item=item, anchor=anchor, item_word=word.lower(),
+                          basket_word=basket_word, columns=names)
+    return dataclasses.replace(inner, intent="rank", groups=groups, measures=out, sort=[(names["together"], True)],
+                               sort_asked=False, limit=plan.limit or 20, share=False, having=[], unit_group=None,
+                               shape=shape)
+
+
+def together_definition(shape: TogetherShape, span: str) -> str:
+    when = f" {span}" if span else ""
+    baskets = plural(shape.basket_word)
+    return (f"Pairs of {plural(shape.item_word)} on the same {shape.basket_word}{when}: how many {baskets} hold "
+            f"both, their share of all {baskets}, how many of the {baskets} with the first also hold the second, "
+            "and the lift (above 1: bought together more often than chance would have it).")
+
+
+# ── a figure against its target ────────────────────────────────────────────
+
+
+@dataclass
+class TargetInfo:
+    actual: str                    # the actual's label
+    target: str                    # the target's label
+    difference: str                # the derived difference's name
+    percent: str                   # the derived % of target's name
+    lower_is_better: bool          # a cost against its budget: under it is good
+
+
+TARGET_SHARE = "% of target"
+TARGET_DIFFERENCE = "Difference"
+
+
+_PERIOD_COLUMNS = ("year", "quarter", "month", "week")
+
+
+def _by_period(plan: Plan, model: SemanticModel, tables: tuple[str, str]) -> Plan:
+    """"By quarter" read as one table's own quarter column (a quota kept a row a quarter, with its year and quarter
+    as numbers): the other figure has no such column, so both are counted by the period, each by its own date
+    ("by year and quarter" is by quarter)."""
+    if plan.time.grain is not None:
+        return plan
+
+    def period(slug: str) -> str:
+        a = model.attributes.get(slug)
+        column = model.columns.get(a.column) if a is not None else None
+        word = a.business_name.strip().lower() if a is not None else ""
+        return word if column is not None and column.table in tables and word in _PERIOD_COLUMNS else ""
+
+    periods = [g for g in plan.group_by if period(g)]
+    if not periods:
+        return plan
+    finest = max((period(g) for g in periods), key=_PERIOD_COLUMNS.index)
+    return plan.model_copy(update={"group_by": [g for g in plan.group_by if g not in periods],
+                                   "time": plan.time.model_copy(update={"grain": finest})})
+
+
+def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
+    """The plan of a figure against its target: both figures, their difference, the actual as a % of the target."""
+    from core2.plan.ir import Derived
+
+    tg = plan.target
+    assert tg is not None
+    measures: list[Measure] = []
+    for slug in (tg.actual, tg.target):
+        found = find_slug(model, slug)
+        if not found or found[0] != "measure":
+            raise ResolveError("unknown", f"no measure called {slug}", sorted(model.measures)[:12])
+        assert isinstance(found[1], Measure)
+        measures.append(found[1])
+    actual, target = measures
+    if actual.slug == target.slug:
+        raise ResolveError("unsupported", "a figure against its target needs two figures")
+    derived = [Derived(name=TARGET_DIFFERENCE, op="difference", measures=[actual.slug, target.slug]),
+               Derived(name=TARGET_SHARE, op="ratio", measures=[actual.slug, target.slug], scale=100.0)]
+    plan = _by_period(plan, model, (actual.table, target.table))
+    plan = plan.model_copy(update={"target": None, "measures": [actual.slug, target.slug], "derived": derived,
+                                   "intent": plan.intent or ("trend" if plan.time.grain else "breakdown"
+                                                             if plan.group_by else "value")})
+    return plan, TargetInfo(actual.business_name, target.business_name, TARGET_DIFFERENCE, TARGET_SHARE,
+                            actual.better == "lower")

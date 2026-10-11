@@ -65,8 +65,8 @@ RECIPES = [
             "channel", "basket", "checkout", "retail", "turnover"},
            [{"net", "revenue", "sale", "turnover"}, {"order"}, {"margin", "profit"}, {"return", "refund"},
             {"quantity", "unit"}, {"gross"}],
-           ["category", "region", "store", "channel", "segment", "country", "brand", "city"],
-           tops=["customer", "product", "store"], analysis="lifecycle"),
+           ["category", "territory", "region", "store", "channel", "segment", "country", "brand", "city"],
+           tops=["customer", "product", "store", "reseller"], analysis="lifecycle"),
     Recipe("purchasing", "Purchasing", "Achats",
            {"purchase", "supplier", "vendor", "receipt", "procurement", "po", "buyer", "requisition"},
            [{"spend", "amount", "cost", "value"}, {"po", "purchase"}, {"received", "receipt"}, {"rejected"}],
@@ -217,9 +217,22 @@ def kind_of(model: SemanticModel, may: May = _all) -> Recipe:
     return best if score >= FEWEST_SIGNS else GENERIC
 
 
+# What a lead is measured in: money words want an amount ("sales": the sales amount, never the number of sales);
+# words of things counted want a count ("orders": the number of orders, never the order quantity).
+_MONEY = {"revenue", "sale", "net", "gross", "turnover", "amount", "spend", "cost", "value", "price", "pay", "payroll",
+          "salary", "mrr", "arr", "billed", "billing", "budget", "charged", "paid", "refund", "margin", "profit"}
+_THINGS = {"order", "return", "fill", "prescription", "rx", "visit", "booking", "job", "appointment", "encounter",
+           "admission", "alarm", "incident", "ticket", "receipt", "claim", "po", "purchase", "subscription"}
+
+
+def _wants(lead: set[str]) -> str | None:
+    return "currency" if lead & _MONEY else "count" if lead & _THINGS else None
+
+
 def headlines(model: SemanticModel, recipe: Recipe, may: May = _all) -> list[Measure]:
     """Up to four figures the business leads with: the recipe's, in its order, then the rest by kind (an admin's
-    metric first, money before counts, the busiest table first), at most two of one table."""
+    metric first, a figure named like a lead, money before counts, the busiest table first), at most two of one
+    table."""
     figures = _figures(model, may)
     rows = {k: model.tables[k].row_count or 0 for k in {m.table for m in figures}}
     rank = {"currency": 0, "count": 1}
@@ -229,17 +242,22 @@ def headlines(model: SemanticModel, recipe: Recipe, may: May = _all) -> list[Mea
             break
         tables = {m.table for m in picked}
         fits = [m for m in figures if m not in picked and _words(m.business_name) & lead]
+        want = _wants(lead)
         if fits:
-            # The one its words say most of ("gross pay" for pay, before a monthly salary), named for it ("number
-            # of visits", never "visits included" in a plan), on a table already leading ("on hand value" beside
-            # "on hand quantity"), named most plainly.
-            picked.append(min(fits, key=lambda m: (m.kind != "metric", -len(_words(m.business_name) & lead),
+            # Measured as the lead is (an amount for sales, a count for orders); the one its words say most of
+            # ("gross pay" for pay, before a monthly salary), named for it ("number of visits", never "visits
+            # included" in a plan), on a table already leading ("on hand value" beside "on hand quantity"), named
+            # most plainly.
+            picked.append(min(fits, key=lambda m: (m.kind != "metric", want is not None and m.format != want,
+                                                   -len(_words(m.business_name) & lead),
                                                    _last(m.business_name) not in lead,
                                                    m.table not in tables if tables else False,
                                                    len(names.tokens(m.business_name)), rank.get(m.format, 2),
                                                    -rows[m.table], m.slug)))
+    led = set().union(*recipe.leads) if recipe.leads else set()
     rest = sorted((m for m in figures if m not in picked),
-                  key=lambda m: (m.kind != "metric", rank.get(m.format, 2), -rows[m.table], m.slug))
+                  key=lambda m: (m.kind != "metric", -len(_words(m.business_name) & led), rank.get(m.format, 2),
+                                 -rows[m.table], m.slug))
     for m in rest:
         if len(picked) == MOST_HEADLINES:
             break
@@ -324,12 +342,12 @@ _SAY = {
            "by": "{m} by {g}", "top": "Top 10 {e}", "top_q": "Top 10 {e} by {m}", "name": "{title} executive dashboard",
            "plain": "Executive dashboard",
            "lifecycle": "New, returning and lapsed {members} by month", "on_time": "Share of {rows} on time",
-           "active": "{Rows} at each month end"},
+           "active": "{Rows} at each month end", "against": "{a} against {t} by month"},
     "fr": {"overview": "Vue d'ensemble", "period": "sur les 12 derniers mois", "in": "en {year}",
            "by_month": "{m} par mois", "by": "{m} par {g}", "top": "Top 10 des {e}", "top_q": "Top 10 des {e} par {m}",
            "name": "Tableau de bord de direction — {title}", "plain": "Tableau de bord de direction",
            "lifecycle": "Nouveaux, fidèles et perdus par mois ({members})", "on_time": "Part des {rows} à l'heure",
-           "active": "{Rows} en cours à chaque fin de mois"},
+           "active": "{Rows} en cours à chaque fin de mois", "against": "{a} par rapport à {t} par mois"},
 }
 
 
@@ -363,6 +381,16 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
         window, when = {"kind": "last", "unit": "month", "n": 12}, say["period"]
     overview = say["overview"]
     made: list[Made] = []
+    # Two figures of one name on two tables (the sales amount of resellers and of the web): each says whose.
+    by_name: dict[str, set[str]] = {}
+    for f in _figures(model, may):
+        by_name.setdefault(f.business_name.casefold(), set()).add(f.table)
+
+    def called(m: Measure) -> str:
+        if len(by_name.get(m.business_name.casefold(), ())) > 1:
+            return f"{m.business_name} ({area_name(model, m.table)})"
+        return m.business_name
+
     shown: set[tuple[str, str]] = set()          # (figure, grouping, "month" or "top") already on the dashboard
 
     def add(tile: Made, *marks: tuple[str, str]) -> bool:
@@ -373,7 +401,7 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
         return True
 
     def trend(m: Measure, tab: str) -> None:
-        title = say["by_month"].format(m=m.business_name)
+        title = say["by_month"].format(m=called(m))
         add(Made(title, "trend", f"{title} {when}", {"kind": "query", "intent": "trend", "measures": [m.slug],
                                                      "time": {"grain": "month", "window": window}}, tab),
             (m.slug, "month"))
@@ -382,7 +410,7 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
         for a in groupings(model, m, recipe, may):
             if (m.slug, a.slug) in shown or ("by", a.slug) in shown and tab == overview:
                 continue
-            title = say["by"].format(m=m.business_name, g=_named_by(model, a).lower())
+            title = say["by"].format(m=called(m), g=_named_by(model, a).lower())
             if add(Made(title, "breakdown", f"{title} {when}",
                         {"kind": "query", "intent": "breakdown", "measures": [m.slug], "group_by": [a.slug],
                          "sort": [{"by": m.slug, "desc": True}], "time": {"window": window}}, tab),
@@ -395,14 +423,14 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
                 continue
             many = names.plural((e.business_name or e.slug).lower())
             if add(Made(say["top"].format(e=many), "table",
-                        f"{say['top_q'].format(e=many, m=m.business_name.lower())} {when}",
+                        f"{say['top_q'].format(e=many, m=called(m).lower())} {when}",
                         {"kind": "query", "intent": "rank", "measures": [m.slug], "group_by": [e.slug],
                          "limit": 10, "sort": [{"by": m.slug, "desc": True}], "time": {"window": window}}, tab),
                    ("top", e.slug)):
                 return
 
     for m in leads:
-        add(Made(m.business_name, "number", f"{m.business_name} {when}", _value(m, window), overview))
+        add(Made(called(m), "number", f"{called(m)} {when}", _value(m, window), overview))
     extra = _analysis(model, recipe, window, when, say, may)
     if extra is not None:
         extra.tab = overview
@@ -410,6 +438,18 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
     trend(leads[0], overview)
     for m in leads[:2]:
         breakdown(m, overview)
+
+    paired = analyses.target_pair(model, may)
+    against: dict[str, Made] = {}          # a target's table: its figure against the target, by month
+    if paired is not None:
+        actual, target = paired
+        title = say["against"].format(a=actual.business_name, t=target.business_name.lower())
+        made_target = Made(title, "trend", f"{title} {when}",
+                           {"kind": "query", "intent": "trend", "target": {"actual": actual.slug, "target": target.slug},
+                            "time": {"grain": "month", "window": window}}, "")
+        if answers(made_target.plan):
+            against[target.table] = made_target
+            shown.add((target.slug, "month"))
 
     figures = _figures(model, may)
     rows = {m.table: model.tables[m.table].row_count or 0 for m in figures}
@@ -424,6 +464,9 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
         if not own or tab.casefold() in tabs:
             continue
         tabs.add(tab.casefold())
+        if table_key in against:
+            against[table_key].tab = tab
+            made.append(against[table_key])
         trended = next((m for m in own if (m.slug, "month") not in shown), None)
         if trended is not None:
             trend(trended, tab)

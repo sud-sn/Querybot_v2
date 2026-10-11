@@ -100,7 +100,7 @@ def test_each_kind_leads_with_its_own_figures_and_analysis(learned):
 
     sales = overview("retail")
     assert [title for kind, title in sales if kind == "number"] == [
-        "Net amount", "Number of orders", "Number of returns", "Gross amount"]
+        "Net amount", "Number of orders", "Refund amount", "Gross amount"]
     assert ("trend", "New, returning and lapsed customers by month") in sales
     assert ("trend", "Net amount by month") in sales and ("breakdown", "Net amount by category") in sales
     workforce = overview("hr")

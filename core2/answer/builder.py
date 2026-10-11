@@ -550,7 +550,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
                  model_version=model_version)
-    if logical.shape is not None or any(g.bands for g in logical.groups):
+    if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups):
         from core2.answer.shaped import explain
 
         explain(framed, logical, list(columns), list(rows))
@@ -1288,10 +1288,21 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     if not measures or len(records) < 2 or logical.intent == "list":
         return None
+    from core2.resolve.shapes import FunnelShape, TogetherShape
+
+    together = isinstance(logical.shape, TogetherShape)
+    funnel = isinstance(logical.shape, FunnelShape)
+    if together:      # how often each pair is bought together is the bar; the shares and lift are in the table
+        measures = [c for c in measures if c.name == logical.shape.columns["together"]] or measures
+    if funnel:        # how many reached each stage is the bar, its share of the first beside it; days in the table
+        measures = [c for c in measures if c.name == logical.shape.columns["reached"]] or measures
     m = measures[0]
     ranked = _ranked_periods(logical, cols) and not members
     place: str | None = None
     compare: dict | None = None
+    # Each row a pair of members with several figures (or a pair bought together): a bar per pair, named by both.
+    pair = members[1] if len(members) == 2 and not periods and logical.compare is None \
+        and (len(measures) > 1 or together) else None
     if logical.compare is not None and members:
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
         x, ys, kind = members[0], [c.name for c in (prior, m) if c is not None], "bar"
@@ -1307,7 +1318,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         x, ys, kind = periods[0], [c.name for c in measures], "line"
         if members:   # one line per member
             return _pivot(logical, periods[0], members[0], m, records, formats, labels, display, unit=unit)
-    elif len(members) == 2 and len(measures) == 1:
+    elif len(members) == 2 and len(measures) == 1 and pair is None:
         # Two groupings and no time: a bar per member of one, split by the other, or a grid of both.
         return _cross(logical, members[0], members[1], m, records, formats, labels, unit=unit)
     elif len(members) > 2:
@@ -1326,7 +1337,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         # Members that are places (states, provinces, countries, ZIP codes): a map, a region shaded for each, or
         # a dot per ZIP code. A top 5 stays a ranking, and amounts below zero stay bars (one hue light to dark
         # would draw a loss as a small gain): both with the map on offer.
-        if len(ys) == 1 and kind == "bar":
+        if len(ys) == 1 and kind == "bar" and pair is None:
             place = place_kind(labels[x.name], x.name, [str(r[x.name]) for r in records if r[x.name] is not None])
             if place and not logical.limit and len(records) >= 5 \
                     and all((_number(r[ys[0]]) or 0) >= 0 for r in records):
@@ -1344,12 +1355,16 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     def x_value(r: dict) -> str:
         if ranked and _day(r[x.name]) is not None:
             return period_label(_day(r[x.name]) or dt.date.min, x.grain or "month", fiscal_start=logical.fiscal_start)
+        if pair is not None:
+            return (" + " if together else " · ").join("" if r[c.name] is None else str(r[c.name]) for c in (x, pair))
         return "" if r[x.name] is None else str(r[x.name])
 
     # The share of the whole each bar is, when the query worked it out: drawn beside the bar's value (a
     # second measure on its own axis would read as one more amount).
     share = next((c for c in cols.of("share") if c.measure == m.measure), None) \
         if len(ys) == 1 and compare is None and kind in ("bar", "pie") else None
+    if funnel and len(ys) == 1:
+        share = next((c for c in cols.columns if c.name == logical.shape.columns["of_first"]), None)
     if share is not None:
         roles[share.name] = {"column": share.name, "label": labels[share.name], "role": "share", "format": "percentage"}
     rows = [{x.name: x_value(r), **{y: _number(r[y]) for y in ys},
@@ -1374,7 +1389,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             warnings.append(said)
             other = {"label": "", "count": 0, "ranges": True}     # its bars are ranges, never one member to open
     elif kind == "bar" and not temporal and not ranked and compare is None and len(rows) > MOST_BARS \
-            and all(_adds(logical, y) for y in ys):
+            and pair is None and all(_adds(logical, y) for y in ys):     # pairs are never "the other products"
         rows, other, said = _fold(rows, x.name, ys, TOP_BARS, share.name if share is not None else None,
                                   format_=m.format, things=names.plural(_thing(labels[x.name])))
         if said:
@@ -1389,8 +1404,8 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     # donut, its ring) is offered for parts of a whole: one measure over every member (no top N, no
     # cut on the totals), a handful of them, none below zero, their shares worked out by the query.
     whole = len(ys) == 1 and compare is None and not ranked and not logical.limit and not logical.having
-    parts = whole and share is not None and 2 <= len(rows) <= MAX_SLICES \
-        and all((r[ys[0]] or 0) >= 0 for r in rows)
+    parts = whole and share is not None and 2 <= len(rows) <= MAX_SLICES and not funnel \
+        and all((r[ys[0]] or 0) >= 0 for r in rows)          # a funnel's stages are no parts of a whole
     pairs = len(ys) == 2 and compare is None and not temporal and not ranked and len(rows) >= 5
     geo: dict | None = None
     if place is not None:
@@ -1415,13 +1430,16 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         renderable, allowed = ["line", "area", "bar"], ["line", "area", "bar"]
     else:
         renderable = ["bar", "pie", "donut"] if parts else ["bar"]
-        allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked else ["bar"]
+        allowed = ["bar", "pie", "donut"] if len(ys) == 1 and not ranked and not funnel else ["bar"]
         if pairs:                         # two measures by member: also as a dot per member
             renderable, allowed = [*renderable, "scatter"], [*allowed, "scatter"]
         if geo is not None:               # places: also as a map
             renderable, allowed = [*renderable, "map"], [*allowed, "map"]
     measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and")
-    return {"title": chart_title(logical, measure, [_by_words(c, labels) for c in [*members, *periods]], unit),
+    bys = [_by_words(c, labels) for c in [*members, *periods]]
+    if together:
+        bys = [f"pair of {names.plural(_thing(labels[x.name]))}"]
+    return {"title": chart_title(logical, measure, bys, unit),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
             "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
@@ -1429,6 +1447,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
             "geo": geo, "x_order": "number" if in_order or in_calendar else "", "intent": logical.intent,
+            "x_pair": pair is not None,
             "grouped_by": None,
             "forecast_meta": None, "chart_warnings": warnings}
 

@@ -25,7 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
-from core2.plan.analyses import due_and_done, start_and_end
+from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Filter, PerMember, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
@@ -353,6 +353,53 @@ def _analyses(model: SemanticModel) -> str:
         plan = {"kind": "query", "intent": "value", "on_time": {"done": done.slug, "due": due.slug},
                 "time": {"window": {"kind": "this", "unit": "year"}}}
         lines.append(f"Q: what share of {rows} were on time this year\nA: {json.dumps(plan)}")
+    lead = leading(model)
+    who = ranked_entity(model, lead) if lead is not None else None
+    if lead is not None and who is not None:
+        many = names.plural(who.business_name.lower())
+        lines.append(
+            "- pareto: who makes most of a figure, each member's figure ranked from the largest; no measures, no "
+            "group_by. of: the entity; measure: the figure. mode abc (\"ABC analysis\", \"A/B/C classes\"; cuts "
+            "[80, 95] by default) | pareto (\"which customers make 80% of revenue\", \"the top 20%\": cuts [80]) "
+            "| ntile (\"deciles\": groups 10, \"quartiles\": 4). members true to list each member with its class "
+            "or decile.")
+        plan = {"kind": "query", "intent": "breakdown", "pareto": {"of": who.slug, "measure": lead.slug},
+                "time": {"window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: ABC analysis of {many} by {lead.business_name.lower()} this year\nA: {json.dumps(plan)}")
+        plan = {"kind": "query", "intent": "rank", "pareto": {"of": who.slug, "measure": lead.slug, "mode": "pareto",
+                                                              "cuts": [80]}}
+        lines.append(f"Q: which {many} make 80% of {lead.business_name.lower()}\nA: {json.dumps(plan)}")
+    stages = funnel_dates(model)
+    if len(stages) >= 2:
+        rows = names.plural(model.tables[stages[0].table].business_name.lower())
+        lines.append(
+            "- funnel: rows through dates of their own, in order; no measures, no group_by. stages: the date slugs "
+            "in the order they happen (\"order to ship to delivery\"); time.window holds the first stage.")
+        plan = {"kind": "query", "intent": "breakdown", "funnel": {"stages": [r.slug for r in stages]},
+                "time": {"window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: funnel of {rows} from {stages[0].name.lower()} to {stages[-1].name.lower()} this year\n"
+                     f"A: {json.dumps(plan)}")
+    found = basket(model)
+    if found is not None:
+        item, count = found
+        many = names.plural(item.business_name.lower())
+        lines.append(
+            "- together: items on the same basket, in pairs; no measures, no group_by. of: the items' entity; "
+            "basket: the count measure of the baskets (\"number of orders\"). A quoted item, as a filter on the "
+            "items' name, keeps the pairs that hold it (\"what is bought with \\\"X\\\"\").")
+        plan = {"kind": "query", "intent": "rank", "together": {"of": item.slug, "basket": count.slug}, "limit": 10}
+        lines.append(f"Q: which {many} are bought together\nA: {json.dumps(plan)}")
+    pair_t = target_pair(model)
+    if pair_t is not None:
+        actual, target = pair_t
+        lines.append(
+            "- target: a figure against its target, budget or quota (\"vs budget\", \"against quota\", \"did we hit "
+            "target\"): actual and target measures, no measures list; group_by and time as asked. The answer adds "
+            "the difference and the % of target.")
+        plan = {"kind": "query", "intent": "trend", "target": {"actual": actual.slug, "target": target.slug},
+                "time": {"grain": "month", "window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: {actual.business_name.lower()} against {target.business_name.lower()} by month this year\n"
+                     f"A: {json.dumps(plan)}")
     return "\n".join(lines)
 
 
@@ -496,7 +543,8 @@ def _forgive(data: dict[str, Any]) -> None:
         for key in [k for k, v in time.items() if v is None]:
             time.pop(key)
     for key in [k for k in ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active",
-                            "on_time", "drivers", "chart") if data.get(k) is None and k in data]:
+                            "on_time", "pareto", "funnel", "together", "target", "drivers", "chart")
+                if data.get(k) is None and k in data]:
         data.pop(key)
     durations = [d for d in data.get("durations") or [] if isinstance(d, dict)]
     for d in durations:

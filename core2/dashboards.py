@@ -78,6 +78,8 @@ Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"titl
   3. The whole business ("an executive dashboard", "an overview", "a KPI dashboard", "a CFO dashboard", or no
      subject at all): the headline figures of each main area of the catalog (sales or revenue, volumes, costs,
      operations), with a trend and one or two breakdowns for each area: 10 to 16 tiles.
+- name: what the dashboard shows, in two to five words ("Internet sales 2013", "Customers and products"), never
+  "Custom dashboard", "My dashboard" or "Dashboard" alone.
 - tab: the tab the tile is on, in a word or two. A list of up to 12 tiles, or a subject's dashboard, is on one
   tab, "Overview". A dashboard of several areas (the whole business), or of more than 12 tiles, puts the headline
   numbers and the main trend on "Overview" and gives each area its own tab named for it ("Revenue", "Fills",
@@ -89,6 +91,13 @@ Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"titl
   year"), with the request's period when it names one, and the request's words that say which figure it means
   ("internet sales", "reseller orders": never "sales" alone when the request says whose). Never a member's name or
   a value: only names of measures, fields and periods.
+- A grouping is a field the catalog lists ("by country name", "by state name"), never a table "named by its key"
+  on its own ("by geography"): its key is no name a reader can read.
+- A tile for an analysis keeps the analysis's own words in its question, never reworded as a plain breakdown:
+  "ABC classes of products by net amount" (never "net amount by product class"), "Customers making 80% of net
+  amount", "Customers by decile of net amount", "Funnel of orders from order date to delivered date", "Products
+  bought together on orders", "Net amount against target amount by month", "New and returning customers by
+  month", "Cohort retention of customers by first month".
 - A title is what the tile shows, in a few words ("Net amount", "Net amount by month"), never a question.
 - When the request names something the catalog has not, still make its tile, titled in the reader's words and
   asking for exactly what they named: the reader is told it is missing and can define it.
@@ -156,7 +165,30 @@ def design(model, request: str, complete: Callable[[str, str], str], *, scrub: C
             data, tiles = again, more
     if not tiles:
         raise DesignError("nothing in this data fits that dashboard")
+    for tile in tiles:
+        tile.question = _in_words(model, tile.question)
     return str(data.get("name") or "Dashboard")[:80], tiles
+
+
+# A name as the catalog spells it: "sales_quota.quarter", "reseller_sale_order_date".
+_SLUG = re.compile(r"\b[a-z][a-z0-9]*(?:[._][a-z0-9]+)+\b")
+
+
+def _in_words(model, question: str) -> str:
+    """A field or date the design named as the catalog spells it, in a reader's words ("by sales_quota.quarter" is
+    "by quarter"): asked by its catalog name, it is that one table's column ("the quota table's quarter"), where the
+    design meant the period of every figure on the tile. A measure keeps its name: it says whose figure it is."""
+    from core2.resolve.resolver import find_slug
+
+    def word(found: re.Match) -> str:
+        hit = find_slug(model, found.group(0))
+        if hit is None or hit[0] == "measure":
+            return found.group(0)
+        thing = hit[1]
+        name = getattr(thing, "business_name", None) or getattr(thing, "name", None)
+        return str(name).lower() if name else found.group(0)
+
+    return _SLUG.sub(word, question)
 
 
 def _read(text: str) -> dict[str, Any]:
@@ -178,6 +210,18 @@ def _lists(request: str) -> bool:
     return bool(_LIST.search(request or ""))
 
 
+# The words that ask for an analysis rather than a plain figure: a tile whose title has one its question lost
+# ("ABC classes of products" asked as "sales by product class") is asked in its title's words.
+_ANALYSIS = re.compile(r"\b(?:abc|pareto|deciles?|quartiles?|quintiles?|\d+\s*%\s+of|funnel|bought together|"
+                       r"against|attainment|cohorts?|retention|returning|lapsed|won back|churn|on time|overdue|"
+                       r"ageing|aging|headcount)\b", re.IGNORECASE)
+
+
+def _asked(title: str, question: str) -> str:
+    lost = {w.casefold() for w in _ANALYSIS.findall(title)} - {w.casefold() for w in _ANALYSIS.findall(question)}
+    return title if lost else question
+
+
 def _tiles(items: Any, most: int) -> list[Tile]:
     out = []
     for item in items if isinstance(items, list) else []:
@@ -185,9 +229,9 @@ def _tiles(items: Any, most: int) -> list[Tile]:
             continue
         kind = str(item.get("kind") or "breakdown")
         tab = " ".join(str(item.get("tab") or "").split())[:30]
-        out.append(Tile(title=str(item.get("title") or item["question"]).strip()[:80],
-                        kind=kind if kind in HEIGHT else "breakdown", question=str(item["question"]).strip(),
-                        tab=tab))
+        title = str(item.get("title") or item["question"]).strip()[:80]
+        out.append(Tile(title=title, kind=kind if kind in HEIGHT else "breakdown",
+                        question=_asked(title, str(item["question"]).strip()), tab=tab))
     return out[:most]
 
 
