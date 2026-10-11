@@ -208,8 +208,12 @@ def test_the_layout_puts_numbers_in_a_row_trends_across_and_breakdowns_side_by_s
     assert places["Net amount"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 3, "tab": 0}
     assert places["Orders"]["grid_x"] == 6 and places["Orders"]["grid_y"] == 0
     assert places["Net amount by month"] == {"grid_x": 0, "grid_y": 3, "grid_w": 12, "grid_h": 10, "tab": 0}
-    assert places["Net amount by store"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 10, "tab": 1}
-    assert places["Net amount by segment"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 10, "tab": 2}
+    # A breakdown alone in its row spans it, never half a row beside a gap.
+    assert places["Net amount by store"] == {"grid_x": 0, "grid_y": 0, "grid_w": 12, "grid_h": 10, "tab": 1}
+    assert places["Net amount by segment"] == {"grid_x": 0, "grid_y": 0, "grid_w": 12, "grid_h": 10, "tab": 2}
+    pair = [dashboards.Tile(f"b{i}", "breakdown", "q") for i in range(3)]
+    dashboards.lay_out(pair)
+    assert [(t.layout["grid_x"], t.layout["grid_w"]) for t in pair] == [(0, 6), (6, 6), (0, 12)]
     assert places["Top customers"] == {"grid_x": 0, "grid_y": 10, "grid_w": 12, "grid_h": 10, "tab": 2}
     assert {t["title"]: t["tab"] for t in payload["dashboard_tiles"]}["Top customers"] == "Customers"
 

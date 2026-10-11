@@ -15,8 +15,8 @@ area). A design too thin for a subject or the whole business (one tile for "a re
 again, once. A dashboard of several areas, or of more tiles than one page holds, is on named tabs: "Overview"
 first, then a tab per area ("Revenue", "Fills").
 
-Layout, on each tab: the numbers in one row (at most six), a trend across the width (two side by side),
-breakdowns side by side, tables across the width; at most 12 tiles on a tab, at most 16 on a dashboard.
+Layout, on each tab: the numbers in one row (at most six), trends and breakdowns two side by side (one alone
+across the width), tables across the width; at most 12 tiles on a tab, at most 16 on a dashboard.
 """
 
 from __future__ import annotations
@@ -241,7 +241,7 @@ def answered(tile: Tile, answer: Callable[[str], dict]) -> Tile:
 
 
 def lay_out(tiles: list[Tile]) -> list[str]:
-    """Grid places, tab by tab: the numbers in a row, a trend across (or two side by side), breakdowns side by side,
+    """Grid places, tab by tab: the numbers in a row, trends and breakdowns two side by side (one alone across),
     tables across. The tabs are the design's, "Overview" first, at most six; a tile with none (or on a tab past
     the sixth) goes on the first, and a tab of more than 12 tiles goes on over a second ("Revenue 2"). Each tile's
     tab is set to the one it is on. Returns the tabs' names in order."""
@@ -280,16 +280,12 @@ def _tab(tiles: list[Tile], tab: int) -> None:
         for i, t in enumerate(line):
             place(t, i * (GRID // len(line)), GRID // len(line))
         y += HEIGHT["number"]
-    for kind, alone_full in (("trend", True), ("breakdown", False)):
+    for kind in ("trend", "breakdown"):
         group = [t for t in tiles if t.kind == kind]
-        if len(group) == 1 and alone_full:
-            place(group[0], 0, GRID)                # one trend across the width
-            y += HEIGHT[kind]
-            continue
-        for i in range(0, len(group), 2):           # side by side, two to a row
+        for i in range(0, len(group), 2):           # side by side, two to a row; one alone spans the row
             pair = group[i:i + 2]
             for j, t in enumerate(pair):
-                place(t, j * (GRID // 2), GRID if len(pair) == 1 and alone_full else GRID // 2)
+                place(t, j * (GRID // 2), GRID if len(pair) == 1 else GRID // 2)
             y += HEIGHT[kind]
     for t in (t for t in tiles if t.kind == "table"):
         place(t, 0, GRID)
