@@ -36,7 +36,7 @@ from core2.model.schema import (
     value_names,
 )
 from core2.plan.catalog import left_out_note, left_out_words
-from core2.plan.ir import TIME_ATTRIBUTES, Duration, Filter, Plan
+from core2.plan.ir import ALL_TIMES, CALENDAR_TIMES, HOUR, TIME_ATTRIBUTES, YES_NO_TIMES, Duration, Filter, Plan
 from core2.resolve import paths as P
 from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
                                 year_basis)
@@ -165,6 +165,7 @@ class PartGroup:
     labels: list[str] = field(default_factory=list)        # a band: each range's name, in order
     days: tuple[DateUse, DateUse] | None = None            # a band of days from one date of each row to another
     style: dict = field(default_factory=dict)              # a band: how its ranges are named (bands.labels' words)
+    age_on: dt.date | None = None                          # a band of people's ages on this day, from a birth date
 
 
 @dataclass
@@ -174,6 +175,28 @@ class Pred:
     op: str
     values: list
     text: str = ""
+
+
+@dataclass
+class AgePred:
+    """Only the people of an age: their age in whole years on ``on``, from the birth date ``column`` (never read
+    otherwise), compared with a multiple of 5 (core2/resolve/age.py)."""
+
+    alias: str
+    column: str
+    op: str                  # gte | lt
+    values: list
+    on: dt.date
+
+
+@dataclass
+class TimePred:
+    """Rows whose date falls on a business day, a holiday, a weekday, an hour...: a time field compared."""
+
+    date: "DateUse"
+    name: str                # day_of_week | is_weekend | business_day | holiday | holiday_name | fiscal_week | ...
+    op: str
+    values: list
 
 
 @dataclass
@@ -195,6 +218,8 @@ class Part:
     groups: list[PartGroup] = field(default_factory=list)
     preds: list[Pred] = field(default_factory=list)
     day_preds: list[DaysPred] = field(default_factory=list)
+    time_preds: list[TimePred] = field(default_factory=list)
+    age_preds: list[AgePred] = field(default_factory=list)
     date: DateUse | None = None
     date_ranges: list[tuple[DateUse, Range]] = field(default_factory=list)
     snapshot: bool = False
@@ -252,6 +277,9 @@ class Logical:
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
     shape: object | None = None         # an analytical shape worked out over these rows (core2/resolve/shapes.py)
+    people: str | None = None           # the hidden column counting each group's people, when age is used
+    age_checks: list[tuple[int, int]] = field(default_factory=list)   # ages each limit's 5 years hold: checked
+    age_slug: str = ""
 
 
 class _Aliases:
@@ -281,7 +309,36 @@ def _slugs(model: SemanticModel, kind: str) -> list[str]:
         return sorted(r.slug for r in model.date_roles.values() if r.kind != "audit")
     shown = [a.slug for a in model.attributes.values()
              if not model.columns[a.column].hidden and model.columns[a.column].sensitivity == "none"]
-    return sorted([*model.entities, *shown, *TIME_ATTRIBUTES])
+    return sorted([*model.entities, *shown, *time_fields(model)])
+
+
+def time_fields(model: SemanticModel) -> tuple[str, ...]:
+    """The time fields this workspace has: those of every date, its calendars' own (holiday, business day,
+    fiscal week) where a calendar holds them, and the hour where a date has a time."""
+    held = {a for c in model.calendars.values() for a in c.attributes}
+    own = [t for t in CALENDAR_TIMES if t.split(":", 1)[1] in held]
+    timed = any(r.kind != "audit" and r.column in model.columns and model.columns[r.column].data_type == "timestamp"
+                for r in model.date_roles.values())
+    return (*TIME_ATTRIBUTES, *own, *((HOUR,) if timed else ()))
+
+
+def _time_field(use: DateUse, name: str) -> None:
+    """``use`` has the time field ``name``, or the reader is told why not."""
+    if name == "hour_of_day" and use.mode != "timestamp":
+        raise ResolveError("unsupported", f"{use.role.name or 'this date'} has no time of day: only a date")
+    if f"time:{name}" in CALENDAR_TIMES and (use.calendar is None or name not in use.calendar.attributes):
+        raise ResolveError("unsupported", f"the calendar of {use.role.name or 'this date'} does not say which days "
+                           f"are {_TIME_WORDS[name][0]}")
+
+
+_TIME_WORDS = {"business_day": ("business days", "days that are not business days"),
+               "holiday": ("holidays", "days that are not holidays"),
+               "is_weekend": ("weekends", "weekdays"),
+               "holiday_name": ("holidays", ""), "fiscal_week": ("fiscal weeks", ""), "hour_of_day": ("hours", "")}
+
+
+def _yes(value: object) -> bool:
+    return str(value).strip().casefold() in ("true", "1", "1.0", "yes", "y", "t")
 
 
 def _closest(name: str, candidates: list[str], n: int = 6) -> list[str]:
@@ -763,6 +820,37 @@ _AGG_WORDS = {"avg": "on average", "min": "the shortest", "max": "the longest", 
 _BARE_NAMES = frozenset({"description", "desc", "name", "code", "label", "title", "id", "key", "value", "number"})
 
 
+def _time_filter(f: Filter, builders: list, conditions: list[Condition], notes: list[str],
+                 model: SemanticModel) -> None:
+    """Only the rows whose date is a business day, a holiday, a weekday, in an hour...: on each measure table's
+    own date (the date the question counts by)."""
+    name = f.field.split(":", 1)[1]
+    values = list(f.values)
+    op = f.op
+    if name in YES_NO_TIMES:
+        if op not in ("eq", "ne", "in") or len(values) != 1:
+            raise ResolveError("unsupported", f"{_TIME_WORDS[name][0]} are kept or left out: eq true or false")
+        yes = _yes(values[0]) != (op == "ne")
+        op, values = "eq", [1 if yes else 0]
+        conditions.append(Condition("flag", name.replace("_", " "), "eq", [_TIME_WORDS[name][0 if yes else 1]]))
+    elif name == "holiday_name":
+        conditions.append(Condition("member", "holiday", op, values))
+    else:
+        try:
+            values = [float(v) for v in values]
+        except (TypeError, ValueError):
+            raise ResolveError("unsupported", f"{name.replace('_', ' ')} is compared with numbers") from None
+        conditions.append(Condition("number", name.replace("_", " "), op, values))
+    dated = [b.part for b, _ in builders if b.part.date is not None]
+    if not dated:
+        raise ResolveError("unsupported", "a condition on the day or the hour needs a date to read it from")
+    for part in dated:
+        _time_field(part.date, name)
+        part.time_preds.append(TimePred(part.date, name, op, values))
+    notes.append(f"Only rows whose {dated[0].date.role.name.lower() or 'date'} meets "
+                 f"{name.replace('_', ' ')} {op} {', '.join(str(v) for v in values)}.")
+
+
 def _attribute_label(model: SemanticModel, attribute: Attribute) -> str:
     """An attribute as an answer heads it: its own name, or with its owner's when the name is a bare word."""
     name = attribute.business_name
@@ -829,6 +917,14 @@ def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
 
 
 def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    from core2.resolve import age
+
+    if age.uses_age(plan, model):
+        return age.resolve_with_age(plan, model, ctx)       # type: ignore[return-value]
+    return _resolve(plan, model, ctx)
+
+
+def _resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.kind != "query":
         raise ResolveError("unsupported", f"a {plan.kind} plan is not a query")
     if plan.shaped():
@@ -847,7 +943,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Measures, and the table each is counted on.
     chosen: list[tuple[Measure | None, MeasureExpr, str, str, str]] = []   # (measure, expr, table, label, format)
     timed = bool(plan.time.grain) or plan.time.window.kind != "all" or plan.time.compare is not None or any(
-        slug in TIME_ATTRIBUTES for slug in plan.group_by)
+        slug in ALL_TIMES for slug in plan.group_by) or any(f.field in ALL_TIMES for f in plan.filters)
     conditions: list[Condition] = []
     composites: list[_Composite] = []
 
@@ -927,7 +1023,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Groupings asked for.
     wanted: list[tuple[str, Attribute | None, str | None]] = []   # (slug, attribute, time attribute)
     for slug in plan.group_by:
-        if slug in TIME_ATTRIBUTES:
+        if slug in ALL_TIMES:
             wanted.append((slug, None, slug.split(":", 1)[1]))
             continue
         found = find_slug(model, slug)
@@ -1079,6 +1175,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if time_attr:
                 if part.date is None:
                     raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
+                _time_field(part.date, time_attr)
                 part.groups.append(PartGroup(name, part.date.alias, None, "time", time_attr=time_attr, date=part.date))
                 continue
             assert attribute is not None
@@ -1129,6 +1226,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     # Filters: attributes, other dates, totals.
     having: list[Pred] = []
     for f in plan.filters:
+        if f.field in ALL_TIMES:
+            _time_filter(f, builders, conditions, notes, model)
+            continue
         if _plain(f.field) in durations:
             duration, start_role, end_role = durations[_plain(f.field)]
             if f.op not in ("gt", "gte", "lt", "lte", "eq", "ne", "between"):

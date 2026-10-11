@@ -298,7 +298,8 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             first_date=cal.first, last_date=cal.last, contiguous=cal.contiguous,
             fiscal_year_start_month=cal.fiscal_year_start_month,
             fiscal_year_named_by=cal.fiscal_year_named_by,  # type: ignore[arg-type]
-            placeholders=list(cal.placeholders), evidence=cal.evidence)
+            placeholders=list(cal.placeholders), evidence=cal.evidence,
+            flags={a: _flag_value(v) for a, v in cal.flags.items()})
         if cal.fiscal_year_start_month and not model.settings.fiscal_year_start_month:
             model.settings.fiscal_year_start_month = cal.fiscal_year_start_month
 
@@ -443,6 +444,12 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                                            evidence=m.evidence))
 
     _entities_and_attributes(model, f, ck, taken, people)
+    # A person's birth date, on the table that lists them: proposed to the admin as usable through age only.
+    listed = {e.table for e in model.entities.values() if len(e.key_columns) == 1}
+    for column in model.columns.values():
+        if column.table in listed and column.personal == "detail" and column.data_type in ("date", "timestamp") \
+                and personal._like(personal._tokens(column.name), personal.BIRTH_WORDS):
+            column.age = "proposed"
 
     model.quality = flags
     for table, a, b, share in f.same_values:
@@ -529,6 +536,17 @@ def _versions(found: VersionsFinding | None, ck: dict[tuple[str, str], str]) -> 
                              for c, op, v in found.current],
                     valid_from=ck[(t, found.valid_from)] if found.valid_from else None,
                     valid_to=ck[(t, found.valid_to)] if found.valid_to else None, members=found.members)
+
+
+def _flag_value(value: object) -> object:
+    """A yes/no column's "yes" as the model keeps it: a number from the warehouse (1, 1.0) stays a number."""
+    if isinstance(value, bool) or isinstance(value, (int, str)):
+        return value
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+    return int(number) if number.is_integer() else number
 
 
 def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[str, str], str],

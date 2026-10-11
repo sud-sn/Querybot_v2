@@ -15,6 +15,7 @@ from __future__ import annotations
 from functools import partial
 
 import datetime as dt
+import re
 from dataclasses import dataclass, field
 
 from sqlglot import exp
@@ -29,6 +30,10 @@ from core2.warehouse.runner import Warehouse
 
 MIN_DAYS = 300
 AGREE = 0.995
+# A calendar's own facts are not worked out from the date: a holiday is told by its name in any of these words,
+# a fiscal week by "week" with a fiscal word (a business day is recognised from the data alone).
+_HOLIDAY = re.compile(r"holiday|(^|_)hol($|_)|feriado|f[eé]ri[eé]|festiv|feiertag", re.IGNORECASE)
+_FISCAL = re.compile(r"fisc|(^|_)fy|financ|(^|_)fin($|_)", re.IGNORECASE)
 _LOW = dt.date(1901, 1, 1)
 _HIGH = dt.date(9000, 1, 1)
 
@@ -50,6 +55,7 @@ class CalendarFinding:
     evidence: list[Evidence] = field(default_factory=list)
     grain: str = "day"
     year_rows: bool = False
+    flags: dict[str, object] = field(default_factory=dict)    # a yes/no attribute -> the value meaning yes
 
 
 def _as_date(value: object) -> dt.date | None:
@@ -220,12 +226,58 @@ def _calendar_in(warehouse: Warehouse, table: InvTable, profile: TableProfile, k
                             {"fiscal_month": fiscal_month, "fiscal_quarter": fiscal_quarter}, finding.real_rows))
         break
 
+    _own_facts(p, table, profile, finding, found, texts)
     finding.attributes = found
     if found:
         finding.evidence.append(Evidence(kind="calendar_attributes", weight=0.5,
                                          detail="agree with the date on every day: " + ", ".join(
                                              f"{c} ({a.replace('_', ' ')})" for a, c in sorted(found.items()))))
     return finding
+
+
+def _own_facts(p: _Probe, table: InvTable, profile: TableProfile, finding: CalendarFinding,
+               found: dict[str, str], texts: list[str]) -> None:
+    """The calendar's own facts, which no date arithmetic gives: whether a day is a business day (a yes/no
+    column that is "no" on every weekend day and "yes" on most weekdays), a holiday and its name (columns named
+    so), and the fiscal week (a week number 1-53 named as fiscal)."""
+    taken = set(found.values()) | {finding.key_column, finding.date_column}
+    flags = [c.name for c in table.columns if c.name not in taken and 1 <= profile.columns[c.name].distinct <= 2
+             and table.type_of(c.name) in ("integer", "decimal", "boolean", "text")]
+    weekend = exp.GTE(this=p.part("isodow"), expression=exp.Literal.number(6))
+    for column in flags:
+        rows = p.run([p.col(column), _count_if(weekend.copy()), _count_if(exp.not_(weekend.copy())),
+                      exp.Count(this=exp.Literal.number(1))], group=p.col(column))
+        weekends = sum(int(r[1] or 0) for r in rows)
+        weekdays = sum(int(r[2] or 0) for r in rows)
+        days = sum(int(r[3] or 0) for r in rows)
+        values = [r for r in rows if r[0] is not None]
+        if not weekends or not weekdays or not values:
+            continue
+        busy = max(values, key=lambda r: int(r[2] or 0))
+        if "business_day" not in found and int(busy[2] or 0) >= 0.85 * weekdays and int(busy[1] or 0) <= 0.005 * weekends:
+            found["business_day"], finding.flags["business_day"] = column, busy[0]
+            taken.add(column)
+            continue
+        rare = min(values, key=lambda r: int(r[3] or 0))
+        if "holiday" not in found and _HOLIDAY.search(column) and len(values) == 2 and int(rare[3] or 0) <= 0.1 * days:
+            found["holiday"], finding.flags["holiday"] = column, rare[0]
+            taken.add(column)
+    for column in texts:
+        if column in taken or "holiday_name" in found or not _HOLIDAY.search(column):
+            continue
+        named = exp.not_(exp.Is(this=exp.Nullif(this=exp.Trim(this=p.col(column)), expression=exp.Literal.string("")),
+                                expression=exp.Null()))
+        (count,), = p.run([_count_if(named)])
+        if 0 < int(count or 0) <= 0.15 * finding.real_rows:
+            found["holiday_name"] = column
+            taken.add(column)
+    for c in table.columns:
+        cp = profile.columns[c.name]
+        if c.name in taken or "fiscal_week" in found or table.type_of(c.name) not in ("integer", "decimal"):
+            continue
+        if "week" in c.name.lower() and _FISCAL.search(c.name) and (cp.min_num or 0) >= 1 \
+                and (cp.max_num or 0) <= 53 and cp.distinct >= 50:
+            found["fiscal_week"] = c.name
 
 
 def find_calendars(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],

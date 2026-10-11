@@ -85,6 +85,12 @@ def namable(column: Column) -> list[dict[str, Any]]:
     return [{"code": str(t.value), "name": column.value_names.get(str(t.value), ""), "rows": t.count} for t in values]
 
 
+def ageable(model: SemanticModel, column) -> bool:
+    """Can this field be read as people's ages: a personal date on the table that lists them?"""
+    return column.personal == "detail" and column.data_type in ("date", "timestamp") and any(
+        e.table == column.table and len(e.key_columns) == 1 for e in model.entities.values())
+
+
 def table_view(model: SemanticModel, table_key: str) -> dict[str, Any]:
     t = model.tables[table_key]
     dated = {r.column for r in model.date_roles.values()}
@@ -98,6 +104,8 @@ def table_view(model: SemanticModel, table_key: str) -> dict[str, Any]:
             "key": column.key, "name": column.business_name or column.name, "physical": column.name,
             "description": column.description, "synonyms": _words(column.synonyms), "shown": shown(column),
             "personal": column.personal,
+            # A person's birth date: read only as an age, once the admin confirms Learn's proposal.
+            "age": column.age, "ageable": ageable(model, column),
             "values": values, "namable": bool(values),
             "kind": "date" if column.key in dated or column.data_type in ("date", "timestamp") else column.data_type,
         })
@@ -139,6 +147,14 @@ def field_changes(model: SemanticModel, column_key: str, data: dict[str, Any]) -
             raise KnowledgeError("Choose whether it holds people's names, their details, or neither.")
         if reading != column.personal:
             changes["personal"] = reading
+    if "age" in data:
+        reading = str(data.get("age") or "")
+        if reading not in ("none", "proposed", "confirmed"):
+            raise KnowledgeError("Choose whether it may be read as an age.")
+        if reading == "confirmed" and not ageable(model, column):
+            raise KnowledgeError("Only a person's birth date, on the table that lists them, can be read as an age.")
+        if reading != column.age and not (reading == "proposed" and column.age == "none"):
+            changes["age"] = reading
     if "value_names" in data:
         codes = {v["code"] for v in namable(column)}
         given = data.get("value_names") or {}

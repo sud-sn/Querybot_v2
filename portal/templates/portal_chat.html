@@ -681,6 +681,10 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-next .follow-up-chip::before { content: "\21B3"; color: var(--text-muted); margin-right: 6px; }
 .answer-next .follow-up-chip:hover { border-color: var(--primary); color: var(--primary-ink); }
 .answer-next .follow-up-chip.is-action::before { content: none; }
+/* A chip that changes one setting of the answer ("Median instead") rather than ask another question. */
+.answer-next .follow-up-chip.is-setting { border-style: dashed; }
+.answer-next .follow-up-chip.is-setting::before { content: "\21C4"; }
+.answer-card .answer-definition { margin: 0; font-size: var(--font-sm); line-height: 1.5; color: var(--text-muted); text-wrap: pretty; }
 .answer-next .follow-up-chip:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
 .answer-card .feedback-panel { margin: 0; }
 .answer-card .rc-panel { margin: 0; }
@@ -3462,6 +3466,8 @@ function answerCardHtml(msg, ids, env) {
   } else {
     leadHtml = `<p class="answer-headline is-lead">${escHtml(answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
   }
+  // What an analytical answer worked out ("Each customer's net amount in Q1 2026, then the middle value of ...").
+  const definitionHtml = answer.definition ? `<p class="answer-definition">${escHtml(answer.definition)}</p>` : '';
   // An answer about the data itself reads as titled parts under its lead.
   const sections = Array.isArray(msg.sections) ? msg.sections : [];
   const sectionsHtml = sections.map(s => {
@@ -3538,11 +3544,13 @@ function answerCardHtml(msg, ids, env) {
   // Never attach an executable action to an unaddressable card: falling back
   // to the latest result could run an old card's button against a newer answer.
   const nextActions = actionResultId && Array.isArray(msg.next_actions) ? msg.next_actions : [];
-  const follow = (Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : []).slice(0, 3).map(_followUpChip);
+  // The chips that change one setting of this answer, then up to three next questions.
+  const offered = (Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : []).map(_followUpChip);
+  const follow = [...offered.filter(c => c.setting).slice(0, 3), ...offered.filter(c => !c.setting).slice(0, 3)];
   const chipsHtml = (nextActions.length || follow.length)
     ? `<div class="answer-next" role="group" aria-label="${escHtml(t('ui.chat.suggestions.label'))}">`
       + nextActions.map(a => `<button class="follow-up-chip is-action" type="button" data-analysis-action="${escHtml(a.id)}" data-analysis-label="${escHtml(a.label)}">${escHtml(a.label)}</button>`).join('')
-      + follow.map(c => `<button class="follow-up-chip" type="button" data-question="${escHtml(c.question)}" data-follow-up="${escHtml(c.label)}" title="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')
+      + follow.map(c => `<button class="follow-up-chip${c.setting ? ' is-setting' : ''}" type="button" data-question="${escHtml(c.question)}" data-follow-up="${escHtml(c.label)}" title="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')
       + `</div>`
     : '';
   const rcHtml = ids.rcId
@@ -3561,7 +3569,7 @@ function answerCardHtml(msg, ids, env) {
     + _followingHtml(msg)
     + _ownMetricHtml(msg)
     + _answerBadgesHtml(msg)
-    + leadHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
+    + leadHtml + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
     + visualHtml + bodyHtml + _answerSummaryHtml(msg.summary) + insightsHtml
     + actionsHtml + feedbackPanelHtml
@@ -4204,7 +4212,9 @@ function sendMessage(tableHint){
 function _followUpChip(entry) {
   if (entry && typeof entry === 'object') {
     const question = String(entry.question || entry.label || '');
-    return {question, label: String(entry.label || question)};
+    const chip = {question, label: String(entry.label || question)};
+    if (entry.kind === 'setting') chip.setting = true;    // a chip that changes one setting of the answer
+    return chip;
   }
   const text = String(entry == null ? '' : entry);
   return {question: text, label: text};

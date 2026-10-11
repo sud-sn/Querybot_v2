@@ -20,6 +20,11 @@ FilterOp = Literal["in", "not_in", "eq", "ne", "gt", "gte", "lt", "lte", "betwee
                    "is_null", "not_null"]
 Intent = Literal["value", "breakdown", "trend", "compare", "rank", "share", "drivers", "list", "count", "forecast"]
 TIME_ATTRIBUTES = ("time:day_of_week", "time:month_of_year", "time:quarter_of_year", "time:is_weekend")
+# A calendar table's own facts (where Learn found them) and the hour of a date with a time: the workspace's own.
+CALENDAR_TIMES = ("time:business_day", "time:holiday", "time:holiday_name", "time:fiscal_week")
+HOUR = "time:hour_of_day"
+ALL_TIMES = (*TIME_ATTRIBUTES, *CALENDAR_TIMES, HOUR)
+YES_NO_TIMES = ("is_weekend", "business_day", "holiday")
 
 
 class _Strict(BaseModel):

@@ -18,7 +18,6 @@ from sqlglot import exp
 from core2.model import formula
 from core2.model.schema import (AggExpr, Attribute, ColumnProfile, Measure, MeasureExpr, OpExpr, RefExpr,
                                  SemanticModel, SqlExpr, value_names)
-from core2.plan.ir import TIME_ATTRIBUTES
 from core2.resolve import paths as P
 
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -211,7 +210,21 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
                 lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     lines.append("")
 
-    lines.append(f"TIME ATTRIBUTES: {', '.join(TIME_ATTRIBUTES)} (from the date a question uses)")
+    from core2.resolve.age import EDGES, age_fields
+    from core2.resolve.resolver import time_fields
+
+    for slug, found in age_fields(model).items():
+        # The age alone: the AI is never told of the birth date it comes from.
+        lines.append(f"AGE: {slug} | each {found.entity.business_name.lower()}'s age in whole years | group by it "
+                     f"for age bands (edges {EDGES}, or bands with your own edges), or filter on it in years "
+                     "(gte, lt, between); never listed or sorted by, and groups of fewer than 11 people are hidden")
+    times = time_fields(model)
+    lines.append(f"TIME ATTRIBUTES: {', '.join(times)} (from the date a question uses; group by them, or filter: "
+                 '"on weekends" -> time:is_weekend eq [true]'
+                 + (', "on business days" -> time:business_day eq [true]' if "time:business_day" in times else "")
+                 + (', "excluding holidays" -> time:holiday eq [false]' if "time:holiday" in times else "")
+                 + (', "between 9 and 5" -> time:hour_of_day between [9, 16]' if "time:hour_of_day" in times else "")
+                 + ")")
     fiscal = model.settings.fiscal_year_start_month
     if fiscal and fiscal != 1:
         lines.append(f"CALENDAR: weeks start on Monday. The fiscal year starts in {_MONTHS[fiscal - 1]}; "

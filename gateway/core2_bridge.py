@@ -228,8 +228,9 @@ def _kept_frame(payload: dict[str, Any], question: str) -> dict[str, Any] | None
 
     The question is the one kept in the trace (personal data scrubbed for a tenant under
     compliance). The tokens behind its buttons end with the chat, so they are not kept: a
-    reopened answer gets a new Add to dashboard token, and a metric the reader made shows
-    without the buttons that would save or forget it.
+    reopened answer gets a new Add to dashboard token, a metric the reader made shows
+    without the buttons that would save or forget it, and the chips that change a setting
+    of the answer ("Median instead") are left out.
     """
     frame = {k: v for k, v in payload.items() if k not in ("pin_token", "trace_id", "export_rows")}
     frame["question"] = question
@@ -237,6 +238,10 @@ def _kept_frame(payload: dict[str, Any], question: str) -> dict[str, Any] | None
         frame["own_metric"] = {k: v for k, v in frame["own_metric"].items() if k != "token"}
     if isinstance(frame.get("chart"), dict):
         frame["chart"] = {k: v for k, v in frame["chart"].items() if k != "pin_token"}
+    if isinstance(frame.get("follow_up_suggestions"), list):
+        # A chip that changes a setting runs a plan kept in the chat it was offered in: it ends with the chat.
+        frame["follow_up_suggestions"] = [s for s in frame["follow_up_suggestions"]
+                                          if not (isinstance(s, dict) and s.get("kind") == "setting")]
     if len(json.dumps(frame, default=str)) > MAX_KEPT_FRAME:
         log.warning("A new-core answer of over %d characters is kept by its rows only", MAX_KEPT_FRAME)
         return None

@@ -1567,17 +1567,19 @@ def _view_plan(plan: dict, view: dict | None) -> tuple[dict, list[str]]:
     """A tile's plan under the dashboard's filters, and the member filters applied to it.
 
     The period replaces the window of a tile that counts one span (a number, a breakdown, a ranking); a tile
-    over time keeps its own range and shows the period shaded. A member filter ("Region: North") narrows every
-    tile but one grouped by that field, which keeps all its members (it is where the filter's choices come
-    from)."""
+    over time keeps its own range and shows the period shaded. A running or moving figure is shown over the
+    period, and still reads the periods before it that its first points need (core2/resolve/shapes.py). A list
+    of who had none keeps its own window: the window is what it is about ("no order in the last 90 days"). A
+    member filter ("Region: North") narrows every tile but one grouped by that field, which keeps all its
+    members (it is where the filter's choices come from)."""
     import copy
 
     view = view or {}
     out = copy.deepcopy(plan)
     period = DASH_PERIODS.get(str(view.get("period") or ""))
-    if period:
+    if period and not out.get("absent"):
         time_spec = out.setdefault("time", {}) if out.get("time") is None else out["time"]
-        if isinstance(time_spec, dict) and not time_spec.get("grain"):
+        if isinstance(time_spec, dict) and (not time_spec.get("grain") or out.get("rolling")):
             time_spec["window"] = dict(period)
     applied: list[str] = []
     groups = {str(g) for g in out.get("group_by") or []}
@@ -1680,6 +1682,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     if filters:
         result["filter_warnings"] = ["Dashboard filters do not apply to this tile yet: it is drawn from its "
                                      "answer's own question."]
+    if plan.get("absent") and DASH_PERIODS.get(str((view or {}).get("period") or "")):
+        result["filter_warnings"] = [*result.get("filter_warnings", []), "The Period filter does not apply to "
+                                     "this tile: it lists who had none in its own window."]
     data = payload.get("data") or {}
     # What the dashboard's member filters can offer: the members of the field this tile is grouped by alone.
     groups = [str(g) for g in plan.get("group_by") or [] if not str(g).startswith("time:")]

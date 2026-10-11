@@ -169,6 +169,8 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         return f"by {c.label}"
     if c.kind == "snapshot":
         return "at the last snapshot"
+    if c.kind == "age":
+        return c.label                   # "aged 65 and over"
     if c.kind == "everyone":
         return f"counting every {c.label} listed"
     if c.kind == "absent":
@@ -331,6 +333,11 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
         if column.grain and column.grain.startswith("fiscal"):
             return period_label(day, column.grain, fiscal_start=logical.fiscal_start)
         return day.isoformat()
+    if column.role == "time" and column.name.startswith("holiday"):
+        # A holiday by its name, or said to be one; a day that is none is said so.
+        if column.name.startswith("holiday_name"):
+            return str(value) if value not in (None, "") else "Not a holiday"
+        return "Holiday" if _number(value) else "Not a holiday"
     if column.role == "time":
         number = _number(value)
         if number is None:
@@ -344,6 +351,12 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
             return f"Q{n}"
         if column.name.startswith("is_weekend"):
             return "Weekend" if n else "Weekday"
+        if column.name.startswith("business_day"):
+            return "Business day" if n else "Not a business day"
+        if column.name.startswith("hour_of_day"):
+            return f"{n:02d}:00"
+        if column.name.startswith("fiscal_week"):
+            return f"Fiscal week {n}"
         return str(n)
     if column.role in ("attribute", "member_code", "unit"):
         if value is None:
@@ -432,6 +445,15 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         from core2.answer.shaped import rows_for
 
         columns, rows = rows_for(logical, compiled, list(columns), list(rows))
+    protected = None
+    if logical.people:
+        # An answer that uses age: no group of fewer than 11 people, nor one that would let it be worked out.
+        from core2.resolve.age import protect
+
+        band = next((g.name for g in logical.groups if g.label == "Age band"), None)
+        protected = protect(list(columns), list(rows), people=logical.people, band=band,
+                            shares=[c.name for c in compiled.columns if c.role == "share"])
+        columns, rows = protected.columns, protected.rows
     if len(rows) > logical.max_rows:
         truncated, rows = True, rows[:logical.max_rows]
     cols = _Columns(compiled, columns, unit=logical.unit_group)
@@ -466,6 +488,13 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                            f"{'has' if len(ahead) == 1 else 'have'} no data yet.")
     if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
+    if protected is not None and protected.hidden and rows:
+        caveats.append(f"{protected.hidden} group{'s are' if protected.hidden > 1 else ' is'} not shown: each holds "
+                       "fewer than 11 people, or would let a smaller one be worked out from the total.")
+    if protected is not None and protected.unknown:
+        caveats.append(f"{protected.unknown:,} people have no usable birth date and are in no age band."
+                       if protected.unknown >= 11 else
+                       "Fewer than 11 people have no usable birth date and are in no age band.")
     gaps = _gaps(logical, cols, raw, truncated)
     if gaps:
         caveats.append(gaps)
@@ -522,6 +551,11 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         from core2.answer.shaped import explain
 
         explain(framed, logical, list(columns), list(rows))
+    if protected is not None:
+        framed["personal"] = True        # never summarised by the AI
+        if not rows and protected.hidden:
+            framed["answer"]["headline"] = ("Not shown: fewer than 11 people match, so the answer could point at "
+                                            "someone. Ask about a wider group.")
     return framed
 
 
@@ -1164,7 +1198,8 @@ def _binned(rows: list[dict], x: str, ys: list[str], share: str | None = None,
     return out, said
 
 
-_CALENDAR = {name: i for names_ in (_DAYS, _MONTHS, ["Q1", "Q2", "Q3", "Q4"], ["Weekday", "Weekend"])
+_CALENDAR = {name: i for names_ in (_DAYS, _MONTHS, ["Q1", "Q2", "Q3", "Q4"], ["Weekday", "Weekend"],
+                                    ["Business day", "Not a business day"], ["Holiday", "Not a holiday"])
              for i, name in enumerate(names_)}
 
 
@@ -1174,6 +1209,9 @@ def _calendar_key(value: Any) -> tuple[int, float]:
     text = str(value)
     if text in _CALENDAR:
         return 0, float(_CALENDAR[text])
+    numbered = re.fullmatch(r"(?:Fiscal week )?(\d+)(?::00)?", text)     # "Fiscal week 9", "09:00"
+    if numbered:
+        return 0, float(numbered.group(1))
     try:
         return 0, float(text)
     except ValueError:

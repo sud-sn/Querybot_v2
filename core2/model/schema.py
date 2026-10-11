@@ -133,6 +133,9 @@ class Column(Belief):
     # (contact, birth date, national ID). Never sent to the AI; where the workspace is under compliance,
     # shown masked to a reader who has not signed the confidentiality attestation.
     personal: Literal["none", "name", "detail"] = "none"
+    # A birth date read only as an age (core2/resolve/age.py): Learn proposes it, an admin confirms it on the
+    # Knowledge base page. The date itself stays a personal detail: never shown, sorted, filtered or sent.
+    age: Literal["none", "proposed", "confirmed"] = "none"
     values_allowed: bool = False    # may common values be shown to the AI and in the catalog
     profile: ColumnProfile | None = None
     hidden: bool = False            # an admin hid it from questions
@@ -256,6 +259,7 @@ class Calendar(_Data):
     fiscal_year_named_by: Literal["start", "end"] | None = None
     placeholders: list[Scalar] = Field(default_factory=list)   # key values that mean "no date"
     evidence: list[Evidence] = Field(default_factory=list)
+    flags: dict[str, Scalar] = Field(default_factory=dict)     # a yes/no attribute (holiday) -> the value meaning yes
 
 
 class DateRole(Belief):

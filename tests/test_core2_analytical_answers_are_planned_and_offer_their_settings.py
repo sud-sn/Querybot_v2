@@ -182,3 +182,61 @@ def test_no_name_in_who_had_none_reaches_the_ai_where_names_are_withheld(retail)
     assert "Airport Store" not in shown and "Online" not in shown and "⟨v1⟩" in shown and "⟨v2⟩" in shown
     back = _unmask_plan(Plan.model_validate(json.loads(shown)), masked)
     assert back.absent.without[0].values == ["Airport Store"] and back.absent.had[0].values == ["Online"]
+
+
+# ── on the page ────────────────────────────────────────────────────────────
+
+
+def test_the_card_says_what_was_worked_out_and_offers_the_settings_before_the_questions():
+    pytest.importorskip("dukpy")
+    from tests.test_the_answer_card import Elements, card
+
+    said = "Each customer's net amount in Q1 2026, then the middle value of the 231 customers with a net amount."
+    msg = {"type": "assistant_response", "engine": "core2", "question": "q",
+           "answer": {"headline": "Median net amount per customer in Q1 2026: $1,784.25.", "definition": said},
+           "follow_up_suggestions": [*({"label": f"Next {n}", "question": f"Next {n}"} for n in range(1, 5)),
+                                     {"label": "Average instead", "question": "Average instead", "kind": "setting"}],
+           "data": {"headers": [], "rows": []}, "trust": {"engine": "core2"}}
+    page = Elements(card(msg))
+    assert page.first("answer-definition")["text"] == said
+    chips = page.all("follow-up-chip")
+    assert [c["text"] for c in chips] == ["Average instead", "Next 1", "Next 2", "Next 3"]
+    assert "is-setting" in chips[0]["classes"] and "is-setting" not in chips[1]["classes"]
+    assert chips[0]["attrs"]["data-question"] == "Average instead"
+
+
+def test_a_reopened_thread_keeps_the_questions_but_not_the_settings_of_an_answer():
+    from gateway.core2_bridge import _kept_frame
+
+    kept = _kept_frame({"type": "assistant_response", "follow_up_suggestions": [
+        {"label": "Median instead", "question": "Median instead", "kind": "setting"},
+        {"label": "By month", "question": "By month"}]}, "q")
+    assert kept["follow_up_suggestions"] == [{"label": "By month", "question": "By month"}]
+
+
+# ── on a dashboard ─────────────────────────────────────────────────────────
+
+
+def test_the_period_filter_narrows_what_a_moving_figure_shows_and_it_still_reads_the_months_before(retail):
+    from portal.routes import _view_plan
+
+    built, model = retail
+    tile = {"intent": "trend", "measures": ["net_amount"], "rolling": {"kind": "moving_average", "periods": 3},
+            "time": {"grain": "month", "window": {"kind": "between", "start": "2025-01-01", "end": "2026-05-31"}}}
+    viewed, _ = _view_plan(tile, {"period": "this_year"})
+    assert viewed["time"] == {"grain": "month", "window": {"kind": "to_date", "unit": "year"}}
+    payload = _chat(retail, viewed)[0]("q")
+    shown = [r["period"] for r in payload["export_rows"]]
+    assert shown[0] == "2026-01-01"                                   # the period is what it shows
+    assert "2025-11-01" in payload["trust"]["sql"]                    # and January's average still reads Nov, Dec
+    assert all(r["net_amount_moving_average"] is not None for r in payload["export_rows"])
+    plain = {**tile, "rolling": None}
+    assert _view_plan(plain, {"period": "this_year"})[0]["time"] == plain["time"]   # a plain trend keeps its range
+
+
+def test_a_list_of_who_had_none_keeps_its_own_window_under_the_period_filter():
+    from portal.routes import _view_plan
+
+    tile = {"intent": "list", "absent": {"of": "customer", "measure": "number_of_orders"},
+            "time": {"window": {"kind": "last", "unit": "day", "n": 90}}}
+    assert _view_plan(tile, {"period": "this_year"})[0] == tile

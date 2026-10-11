@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel, value_names
 from core2.plan.catalog import definition
-from core2.plan.ir import TIME_ATTRIBUTES
+from core2.plan.ir import ALL_TIMES
 from core2.resolve import paths as P
 from core2.resolve.resolver import find_slug
 
@@ -334,7 +334,7 @@ def describe(model: SemanticModel, about: list[str], *, today: dt.date, allowed:
     reader = _Reader(model, allowed, values, today)
     parts: list[Described] = []
     missing: list[str] = []
-    for wanted in dict.fromkeys(a for a in about if a and a.strip() and a not in TIME_ATTRIBUTES):
+    for wanted in dict.fromkeys(a for a in about if a and a.strip() and a not in ALL_TIMES):
         thing = _find(reader, wanted)
         if isinstance(thing, Measure):
             parts.append(_measure(reader, thing))

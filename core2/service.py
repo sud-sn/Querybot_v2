@@ -533,6 +533,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if plan.intent == "forecast":
         return answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
     logical = resolve(plan, model, replace(ctx, split_units=services.split_units))
+    if logical.people:
+        _age_limits(plan, logical, services, ctx, warehouse)
     if any(part.snapshot for part in logical.parts):
         logical = complete_snapshots(logical, model, warehouse)     # a snapshot still loading is not the latest
     # Ranges the question named no edges for: round numbers near the values that split the data evenly.
@@ -542,22 +544,39 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
-    if any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"
-           for part in logical.parts for g in part.groups):
-        payload["personal"] = True      # its rows name people: no written summary by the AI
+    if logical.people or any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"
+                             for part in logical.parts for g in part.groups):
+        payload["personal"] = True      # its rows name people, or count them by age: no written summary by the AI
     if shown is not None:
         shown.extend(_members_shown(logical, payload))
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
     chart = payload.get("chart") or {}
     # A bar that is a range of amounts ("5–10") is no member a click could open.
     drill = drills(plan, logical, payload, model, services.allowed_tables) \
-        if chart and not (chart.get("other") or {}).get("ranges") else None
+        if chart and not (chart.get("other") or {}).get("ranges") and not logical.people else None
     if drill:
         payload["chart"]["drill"] = drill
     context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
     return payload
+
+
+def _age_limits(plan: Plan, logical: Any, services: Services, ctx: Context, warehouse: Guarded) -> None:
+    """An age limit stands only where the 5 years just inside it hold at least 11 people (with the question's
+    other conditions): two answers either side of it never isolate fewer. Each use of an age is logged."""
+    from core2.resolve import age
+
+    age.used(logical, str(getattr(services.warehouse, "account_id", "") or ""))
+    for low, high in logical.age_checks:
+        checked = resolve(age.edge_check_plan(plan, logical.age_slug, low, high), services.model, ctx)
+        compiled = compile_query(checked, services.model, warehouse.dialect)
+        result = warehouse.query(compiled.sql, max_rows=2)
+        names = [n.casefold() for n in result.columns]
+        people = int(result.rows[0][names.index(checked.people.casefold())] or 0) if result.rows else 0
+        if people < age.MIN_PEOPLE:
+            raise ResolveError("unsupported", f"fewer than {age.MIN_PEOPLE} people are aged {low} to {high} here, so "
+                               "an age limit there could point at someone: ask for a wider range of ages")
 
 
 # Links no one measured, as the data answered for them: asked the first time a question follows one, once per

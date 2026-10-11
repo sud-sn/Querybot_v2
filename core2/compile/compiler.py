@@ -280,7 +280,22 @@ class _Compiler:
         if name == "is_weekend":
             return exp.Case(ifs=[exp.If(this=exp.GTE(this=D.date_part(value, "isodow", self.d), expression=_num(6)),
                                         true=_num(1))], default=_num(0))
-        raise CompileError(f"no time attribute {name}")
+        if name == "hour_of_day":
+            if use.mode != "timestamp":
+                raise CompileError(f"{use.role.name or 'this date'} has no time of day")
+            return D.date_part(value, "hour", self.d)
+        # The calendar's own facts: what its row for the day says (a holiday, a business day, the fiscal week).
+        column = use.calendar.attributes.get(name) if use.calendar is not None else None
+        if column is None or name not in ("business_day", "holiday", "holiday_name", "fiscal_week"):
+            raise CompileError(f"no time attribute {name} for {use.role.name or 'this date'}")
+        held = self.col(use.alias, column)
+        if name in ("business_day", "holiday"):
+            yes = use.calendar.flags.get(name, 1) if use.calendar is not None else 1
+            return exp.Case(ifs=[exp.If(this=exp.EQ(this=held, expression=self.literal(yes, column)), true=_num(1))],
+                            default=_num(0))
+        if name == "holiday_name":
+            return exp.Nullif(this=exp.Trim(this=held), expression=exp.Literal.string(""))
+        return held
 
     def band(self, value: exp.Expression, g: PartGroup) -> exp.Expression:
         """Each row's range: the first whose upper edge is above its value; no value, no range."""
@@ -292,10 +307,23 @@ class _Compiler:
         return exp.Case(ifs=[exp.If(this=exp.Is(this=value.copy(), expression=exp.Null()), true=exp.Null()), *ifs],
                         default=last)
 
+    def age(self, birth: exp.Expression, on: dt.date) -> exp.Expression:
+        """Whole years from ``birth`` to ``on``: a year less before the birthday; none for a placeholder date
+        (before 1901, or after ``on``). The same on every warehouse: years and month-days compared as numbers."""
+        years = D.sub(_num(on.year), D.date_part(birth.copy(), "year", self.d))
+        birthday = D.add(D.mul(D.date_part(birth.copy(), "month", self.d), 100), D.date_part(birth.copy(), "day", self.d))
+        before = exp.Case(ifs=[exp.If(this=exp.GT(this=birthday, expression=_num(on.month * 100 + on.day)),
+                                      true=_num(1))], default=_num(0))
+        real = exp.and_(exp.GTE(this=birth.copy(), expression=D.date_literal(_LOW, self.d)),
+                        exp.LTE(this=birth.copy(), expression=D.date_literal(on, self.d)))
+        return exp.Case(ifs=[exp.If(this=real, true=D.sub(years, before))])
+
     def group_expr(self, g: PartGroup) -> exp.Expression:
         if g.kind == "band":
             if g.days is not None:
                 return self.band(self.days(*g.days), g)
+            if g.age_on is not None and g.column is not None:
+                return self.band(self.age(self.col(g.alias, g.column), g.age_on), g)
             if g.column is None:
                 raise CompileError(f"{g.name} has no value to put in ranges")
             return self.band(self.col(g.alias, g.column), g)
@@ -466,6 +494,9 @@ class _Compiler:
                                        for p in part.preds]
         conds += [self.exists(semi) for semi in part.semis]
         conds += [self.days_condition(p) for p in part.day_preds]
+        conds += [self.predicate(self.time_attribute(t.date, t.name), t.op, list(t.values)) for t in part.time_preds]
+        conds += [self.predicate(self.age(self.col(a.alias, a.column), a.on), a.op, list(a.values))
+                  for a in part.age_preds]
         dated = False
         for use, rng in part.date_ranges:
             dated = dated or use is part.date
@@ -601,8 +632,11 @@ class _Compiler:
                 columns.append(OutColumn(f"{m.name}_prior", m.label, "prior", m.format, key))
 
         # Output columns are always listed by name, never alias.*: QueryBot's production
-        # query rules refuse a star projection, and a listed column is what was asked for.
-        outer = exp.select(*[self.out("q", c.name) for c in columns]).from_(body.subquery(self.name("q")))
+        # query rules refuse a star projection, and a listed column is what was asked for. Each group's people,
+        # when age is used, are read beside them and never shown (core2/resolve/age.py).
+        kept = [q.people] if q.people else []
+        outer = exp.select(*[self.out("q", c.name) for c in columns], *[self.out("q", n) for n in kept]) \
+            .from_(body.subquery(self.name("q")))
         if q.compare is not None:
             for m in q.measures:
                 cur, pri = self.out("q", m.name), self.out("q", f"{m.name}_prior")
@@ -633,7 +667,8 @@ class _Compiler:
             # expression, and its nulls-last ordering is one. A share is of everything
             # shown before a filter on totals.
             alias = "r"
-            outer = exp.select(*[self.out(alias, c.name) for c in columns]).from_(outer.subquery(self.name(alias)))
+            outer = exp.select(*[self.out(alias, c.name) for c in columns], *[self.out(alias, n) for n in kept]) \
+                .from_(outer.subquery(self.name(alias)))
             if q.having:
                 outer = outer.where(exp.and_(*[self.predicate(self.out(alias, h.column), h.op, h.values)
                                                for h in q.having]))
