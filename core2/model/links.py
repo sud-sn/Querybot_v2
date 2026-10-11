@@ -123,6 +123,7 @@ def view(model: SemanticModel) -> dict[str, Any]:
                       for f, t in zip(j.from_columns, j.to_columns) if f in model.columns and t in model.columns],
             "cardinality": j.cardinality, "rows_words": CARDINALITY_WORDS.get(j.cardinality, j.cardinality),
             "role": j.role or "", "trust": j.trust, "status": status(j), "match": round(j.match_rate, 4),
+            "sure": next((e.weight for e in j.evidence if e.kind == "link_score"), None), "why": _why(j),
             "to_calendar": j.to_calendar, "admin": j.provenance == "admin" and j.trust == "admin",
             "keep_unmatched": j.keep_unmatched,
             "conditions": [{"column": f.column, "op": f.op, "values": list(f.values),
@@ -132,6 +133,21 @@ def view(model: SemanticModel) -> dict[str, Any]:
     return {"tables": tables, "joins": joins,
             "counts": {"all": len(live), "review": sum(1 for j in live if j["status"] == "Suggested"),
                        "conditions": sum(1 for j in live if j["conditions"])}}
+
+
+# What Learn found about a link, said to the admin beside how sure it is: names, the database, the data, the AI.
+_WHY = {"declared_fk": "the database declares it", "name_match": "the names agree",
+        "query_history": "the warehouse's own queries join it so", "ai_opinion": "the AI reads it so",
+        "second_role": "the row already points at that table by name"}
+
+
+def _why(j: Join) -> list[str]:
+    out = [_WHY[e.kind] for e in j.evidence if e.kind in _WHY]
+    if j.match_rate >= 0.99:
+        out.append("every row finds one")
+    elif j.match_rate:
+        out.append(f"{j.match_rate:.0%} of rows find one")
+    return list(dict.fromkeys(out))
 
 
 # ── a link, as the admin edits it ────────────────────────────────────────────

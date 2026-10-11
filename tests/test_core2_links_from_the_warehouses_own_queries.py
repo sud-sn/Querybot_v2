@@ -87,13 +87,13 @@ def models():
     return without, with_history
 
 
-@pytest.mark.parametrize("link", [
-    ("customer", ("support_rep_id",), "employee"),        # a support rep is an employee
-    ("employee", ("reports_to",), "employee"),            # an employee reports to one
+@pytest.mark.parametrize("link, by_its_name", [
+    (("customer", ("support_rep_id",), "employee"), False),  # a support rep is an employee: names cannot tell
+    (("employee", ("reports_to",), "employee"), True),       # an employee reports to one: a step up, named so
 ])
-def test_the_joins_people_write_are_links(models, link):
+def test_the_joins_people_write_are_links(models, link, by_its_name):
     without, with_history = models
-    assert link not in _links(without), "names and values alone cannot tell"
+    assert (link in _links(without)) == by_its_name
     found = _links(with_history).get(link)
     assert found is not None, sorted(_links(with_history))
     assert found.trust == "verified"

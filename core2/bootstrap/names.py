@@ -62,10 +62,10 @@ EXPANSIONS = {
     "pri": "priority", "prnt": "parent", "prv": "province", "pst": "postal", "pur": "purchase", "qtr": "quarter",
     "qty": "quantity", "rcpt": "receipt", "rct": "receipt", "rcv": "received", "req": "requested",
     "rev": "revenue", "rfd": "refund", "rgn": "region", "rjt": "rejected", "rqs": "requested", "rslv": "resolved",
-    "rsn": "reason", "rsv": "reserved", "rtn": "return", "sld": "sold", "tfr": "transfer", "sal": "salary", "seg": "segment", "shp": "ship", "sls": "sales",
+    "rprt": "reports", "rsn": "reason", "rsv": "reserved", "rtn": "return", "sld": "sold", "tfr": "transfer", "sal": "salary", "seg": "segment", "shp": "ship", "sls": "sales",
     "snp": "snapshot", "sts": "status", "stk": "stock", "str": "store", "strt": "start", "sub": "subscription",
     "sup": "supplier", "supp": "supplier", "tgt": "target", "tkt": "ticket", "ts": "timestamp", "typ": "type",
-    "uom": "unit of measure", "upd": "updated", "unt": "unit", "usr": "user", "val": "value", "vch": "voucher",
+    "uom": "unit of measure", "uplnk": "uplink", "upd": "updated", "unt": "unit", "usr": "user", "val": "value", "vch": "voucher",
     "whs": "warehouse", "wh": "warehouse", "wk": "week", "wknd": "weekend", "yr": "year",
 }
 

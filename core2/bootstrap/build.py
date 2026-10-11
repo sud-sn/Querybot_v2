@@ -23,7 +23,9 @@ from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins, identifier_text
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
+from core2.bootstrap.link_score import link_score
 from core2.bootstrap.keys import TableKeys, infer_keys, series_key
+from core2.bootstrap.second_opinion import second_opinion
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
 from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
 from core2.bootstrap.quality import find_quality
@@ -52,7 +54,7 @@ from core2.warehouse.runner import Warehouse
 @dataclass
 class BuildOptions:
     profile: ProfileOptions = field(default_factory=ProfileOptions)
-    max_join_tests: int = 400
+    max_join_tests: int = 600       # links tested at most: a large warehouse proposes 400 and more
     workers: int = 4
     outliers: bool = True
     today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
@@ -139,6 +141,9 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     versions = find_versions(warehouse, inventory, profiles, keys, calendars)
     joins = discover_joins(warehouse, inventory, profiles, keys, calendars, max_tests=options.max_join_tests,
                            workers=options.workers, seen=seen, versions=versions)
+    if options.labeler is not None:
+        journal.step("Asking the AI about columns named like links that names and values could not place")
+        joins += second_opinion(warehouse, inventory, profiles, keys, calendars, joins, options.labeler)
     journal.step("Finding the dates each table is about")
     dates = find_date_roles(warehouse, inventory, profiles, keys, calendars, joins)
     for key, candidates in dates.items():
@@ -271,6 +276,9 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     join_key_of: dict[tuple[str, str], str] = {}
     for j in f.joins:
         key = ids.join_key(j.from_table, j.from_columns, j.to_table, [t for _, t in j.pairs])
+        # How sure Learn is, as a chance of being right (core2/bootstrap/link_score.py), beside what it found.
+        sure = round(link_score(j), 4)
+        evidence = [*j.evidence, Evidence(kind="link_score", weight=sure, detail=f"Learn is {sure:.0%} sure")]
         if not j.also:     # one column's own link (its date's calendar, its review question)
             join_key_of[(j.from_table, j.from_column)] = key
         model.joins[key] = Join(
@@ -283,7 +291,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             conditions=[ColumnFilter(column=ck[(j.to_table, c)], op=op, values=list(v))  # type: ignore[arg-type]
                         for c, op, v in j.conditions],
             trust="verified" if j.trust == "verified" else ("declared" if j.trust == "declared" else "proposed"),
-            to_calendar=j.to_calendar, evidence=j.evidence, confidence=j.match_rate,
+            to_calendar=j.to_calendar, evidence=evidence, confidence=sure,
             provenance="declared" if j.declared else "profile",
             status="verified" if j.trust in ("verified", "declared") else "proposed")
 
@@ -496,7 +504,15 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 choice_made=f"left out: {', '.join(map(str, shown))}" if leave_out else "all rows are counted",
                 alternatives=(["count all rows"] if leave_out else []) + [f"leave out {v}" for v in others]))
     for j in f.joins:
-        if j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence):
+        if any(e.kind == "ai_opinion" for e in j.evidence) and not j.also:
+            model.review.append(ReviewItem(
+                key=f"join:{j.from_table}.{j.from_column}", object=join_key_of[(j.from_table, j.from_column)],
+                question=(f"The AI reads {inv.tables[j.from_table].name}.{j.from_column} as pointing at "
+                          f"{inv.tables[j.to_table].name}, and every row finds one there. Is it?"),
+                choice_made=("not used until confirmed on the Relationships page" if any(
+                    e.kind == "ambiguous" for e in j.evidence) else "linked; turn it off on the Relationships page "
+                    "if not"), alternatives=["not a link"], evidence=j.evidence))
+        elif j.trust == "proposed" and any(e.kind == "ambiguous" for e in j.evidence):
             model.review.append(ReviewItem(
                 key=f"join:{j.from_table}.{j.from_column}", object=join_key_of[(j.from_table, j.from_column)],
                 question=f"Which table does {inv.tables[j.from_table].name}.{j.from_column} point at?",

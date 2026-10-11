@@ -66,6 +66,8 @@ class JoinFinding:
     evidence: list[Evidence] = field(default_factory=list)
     also: list[tuple[str, str]] = field(default_factory=list)   # a multi-column key's other (from, to) pairs
     to_alternate: bool = False        # the target is another unique column of its table, not its key
+    second_role: bool = False         # found by values beside a link the names make to the same table
+    self_role: bool = False           # a table's own key named with a role before it, on that table
     history: int = 0                  # queries in the warehouse's own history that join it this way
     # One target row per key, as measured: a declared link may point at a column that repeats (a customer
     # number kept once per version of the customer), and following it would count a row once per match.
@@ -113,6 +115,8 @@ _FIGURE_WORDS = {"qty", "quantity", "cnt", "count", "total", "tot", "sum", "avg"
                  "percent"}
 # Words that, first in a name, make it a count of the things it names: NumberEmployees, NUM_ORDERS, NO_OF_SEATS.
 _COUNT_LEAD = {"number", "num", "nbr", "nb", "no", "count", "cnt", "total", "tot", "qty", "quantity"}
+# Small words a step up is written with: REPORTS_TO, MANAGED_BY, ROLLS_UP_TO.
+_STEP_WORDS = {"to", "by", "of", "into", "under"}
 # A table's own number beside its key: BOOKING_NUMBER beside BOOKING_ID.
 _NUMBER_WORDS = {"number", "nr"}
 # A copy of a table, kept beside it: DEVICES_BAK, ORDERS_OLD, CUSTOMERS_20240101.
@@ -120,6 +124,13 @@ _COPY_WORDS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp", "arch
                "prev", "previous", "save", "saved"}
 SMALL_TARGET = 30          # members: below this, values alone must use most of them
 RUN = 0.9                  # share of a stretch's whole numbers a column holds for it to be a run of numbers
+
+
+def _a_step_up(word: str) -> bool:
+    """MGR, PARENT, or a word of four letters or more cut short from one (RPRT for reports, UPLNK for uplink);
+    never a longer word that starts like one (HEADCOUNT is no head), nor a short one (a REP is no report)."""
+    return word in _HIERARCHY or len(word) >= 4 and any(
+        len(h) >= len(word) and names.same_word(word, h) for h in _HIERARCHY)
 
 
 def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, list[str]]:
@@ -255,7 +266,7 @@ def _test(warehouse: Warehouse, inventory: Inventory, finding: JoinFinding, prof
 
 def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                    keys: dict[str, TableKeys], calendars: dict[str, CalendarFinding], *,
-                   max_tests: int = 400, workers: int = 4,
+                   max_tests: int = 600, workers: int = 4,
                    seen: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], int] | None = None,
                    versions: dict[str, VersionsFinding] | None = None) -> list[JoinFinding]:
     """``seen``: how many of the warehouse's own queries join each pair of columns (core2/bootstrap/history.py);
@@ -270,6 +281,13 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     # of the same name, or one the database declares; values alone would find them by accident.
     alternates: set[tuple[str, str]] = set()
     copies = _copies(inventory)
+    # Which tables hold a column of each name: a code of one length named alike in two tables (a prescriber's NPI
+    # on the prescribers and on the prescriptions) is the code of the one it is unique in, whatever its last word.
+    holders: dict[tuple[str, ...], set[str]] = {}
+    for key, table in inventory.tables.items():
+        for c in table.columns:
+            if not names.opaque(c.name):
+                holders.setdefault(tuple(names.tokens(c.name)), set()).add(key)
     for key, table in inventory.tables.items():
         if key in calendars:
             cal = calendars[key]
@@ -293,7 +311,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # accident: a warehouse's profit-centre code is unique in a small
                 # warehouse table, and still the profit centre's, not the warehouse's.
                 words = names.tokens(unique)
-                if not (words and words[-1] in names.KEY_SUFFIXES | _NUMBER_WORDS):
+                # Many members, all of one length: a code (an NPI), not three names that happen to be four letters.
+                shared_code = kind == "text" and p.pattern == "code" and p.min_len == p.max_len \
+                    and p.distinct >= SMALL_TARGET and len(holders.get(tuple(words), ())) > 1
+                if not (words and words[-1] in names.KEY_SUFFIXES | _NUMBER_WORDS or shared_code):
                     continue   # a unique name or title is what a member is called, not what points at it
                 if profiles[key].rows < 20 or not _names_its_table(unique, table.name):
                     if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
@@ -312,6 +333,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if any(table.type_of(c) == "text" and c not in keys[key].primary_key for c in keys[key].unique_columns)}
 
     candidates: dict[tuple[str, str, str, str], JoinFinding] = {}
+    roles_by_value: list[tuple[tuple[str, str, str, str], float, bool]] = []
     # What the database declares is a candidate whatever the values look like: one value in every row
     # (every film in one language), a key of two columns, a target that is not the table's own key.
     for fk in inventory.foreign_keys:
@@ -348,10 +370,14 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             if own_key and _names_its_table(column.name, table.name):
                 continue   # CUSTOMER_ID on CUSTOMERS identifies the row; it points nowhere
             column_words = names.tokens(column.name)
+            # A step up named by its words alone: REPORTS_TO, PARENT, MANAGED_BY. No key word after them, but no
+            # other reading either.
+            stepping = any(_a_step_up(w) for w in column_words)
+            step_up = stepping and all(_a_step_up(w) or w in _STEP_WORDS for w in column_words)
             # A parent pointer used by one parent alone (every department group under Corporate): one value, still a
             # step up the hierarchy, tested like any other.
-            hierarchy_key = bool(_HIERARCHY & set(column_words)) and bool(column_words) \
-                and column_words[-1] in names.KEY_SUFFIXES and a.distinct == 1
+            hierarchy_key = stepping and bool(column_words) \
+                and (column_words[-1] in names.KEY_SUFFIXES or step_up) and a.distinct == 1
             # A code that holds one value (every rate converts from USD): linked only where its name says where.
             single_valued = a.distinct < 2 and not hierarchy_key
             if column.name in sequence_columns or a.distinct < 1 \
@@ -401,12 +427,15 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 words = names.tokens(column.name)
                 # MGR_KEY on the employees: a key named for a step up a hierarchy. Few rows are managers,
                 # so the share of members it uses proves nothing; the test run decides.
-                up_the_hierarchy = to_table == key and bool(_HIERARCHY & set(words)) and bool(words) \
-                    and words[-1] in names.KEY_SUFFIXES
-                if to_table == key and not (is_declared or score >= 0.8 and up_the_hierarchy
-                                            or up_the_hierarchy and column.data_type == inventory.tables[key].type_of(
-                                                to_column)):
-                    continue   # a table points at itself only up a hierarchy (a parent, a manager)
+                up_the_hierarchy = to_table == key and stepping and bool(words) \
+                    and (words[-1] in names.KEY_SUFFIXES or step_up)
+                # UPLNK_DVC_KEY on the devices: the table's own key named with a role before it, whatever the role
+                # word (an uplink, an original order, a replacement part): another member of the same table.
+                own_role = to_table == key and score >= 0.85 and bool(role)
+                same_type = column.data_type == inventory.tables[key].type_of(to_column)
+                if to_table == key and not (is_declared or score >= 0.8 and up_the_hierarchy or own_role
+                                            or up_the_hierarchy and same_type):
+                    continue   # a table points at itself only up a hierarchy (a parent, a manager) or by a role
                 if is_calendar and not (is_declared or score >= 0.9):
                     continue   # a calendar's own period numbers are not foreign keys
                 if own_key and not (is_declared or score >= 0.9):
@@ -417,13 +446,26 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 if plausible and not (is_declared or score) and not to_calendar and not same_identifiers \
                         and not names.opaque(column.name) and not _shares_a_word(column.name, inventory.tables[to_table].name):
                     plausible = False   # whole-number keys collide by chance: a meaningful name must agree
+                    if words and words[-1] in names.KEY_SUFFIXES and to_table != key:
+                        roles_by_value.append((ident, coverage, column.name in tkeys.unique_columns))
                 plausible = plausible or up_the_hierarchy
                 if not (is_declared or score >= 0.75 or plausible):
                     continue
                 candidates[ident] = JoinFinding(*ident, declared=is_declared, name_score=score, role_tokens=role,
                                                 to_calendar=to_calendar, coverage=coverage,
                                                 from_unique=column.name in tkeys.unique_columns,
-                                                to_alternate=(to_table, to_column) in alternates)
+                                                to_alternate=(to_table, to_column) in alternates,
+                                                self_role=own_role and not up_the_hierarchy and not is_declared)
+
+    # A second role of a table the row already points at by name: a bill of materials' component beside its
+    # assembly, both products. Its values found it; the row's named link says which table its rows are about. Only
+    # a column no name ties anywhere is read so, and only where every value finds a member (tested below).
+    named_from = {(f.from_table, f.to_table) for f in candidates.values() if f.declared or f.name_score >= 0.75}
+    named_columns = {(f.from_table, f.from_column) for f in candidates.values() if f.declared or f.name_score > 0}
+    for ident, coverage, unique in roles_by_value:
+        key, column, to_table, _ = ident
+        if (key, to_table) in named_from and (key, column) not in named_columns and ident not in candidates:
+            candidates[ident] = JoinFinding(*ident, coverage=coverage, from_unique=unique, second_role=True)
 
     # A document and its line, named alike in another table (a claim's prescription and fill number): one
     # link of two columns, never two links to half a key each. Only a document's lines: a day and an item
@@ -531,8 +573,22 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
                 f"{f.non_null - round(f.match_rate * f.non_null):,} rows find nothing, and nothing but the values "
                 "says it is a link")))
+        elif f.second_role and (f.match_rate < VERIFIED or f.unmatched_values):
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                "found by its values beside a named link to the same table, and some values find no member")))
+        elif f.self_role and f.match_rate < VERIFIED:
+            # An original order's number that is no order of this table (a customer's own reference) is not
+            # another member: only one every row finds is.
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
+                f"not every {f.from_column} is one of the table's own members")))
         elif f.match_rate >= VERIFIED:
             f.trust = "verified"
+            if f.second_role:
+                f.evidence.append(Evidence(kind="second_role", weight=0.5, detail=(
+                    f"the row already points at {inventory.tables[f.to_table].name} by name, and every "
+                    f"{f.from_column} is one of its members")))
         elif f.declared and f.match_rate >= PROPOSED:
             f.trust = "declared"   # usable, as the database says; the unmatched rows are reported
         elif f.match_rate >= PROPOSED or (
@@ -553,33 +609,47 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             # A key of two columns is its own choice: the order number in it may also point at the orders.
             by_column.setdefault((f.from_table, tuple(f.from_columns)), []).append(f)
     kept: list[JoinFinding] = []
-    for group in by_column.values():
-        order = {"verified": 0, "declared": 1, "proposed": 2}
-        # Equal otherwise, the table the column is named for: PRODUCT_ID points at PRODUCTS, not at
-        # PRODUCT_CATEGORIES, which holds the same numbers once each beside each product's category.
-        group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score,
-                                  not _names_its_table(f.to_column, inventory.tables[f.to_table].name), -f.coverage,
-                                  -f.match_rate, f.ident))
-        one = _one_to_one(group, profiles, inventory)
-        if one is not None:
-            kept += one
+    # A second role goes to the table its row's named link was kept to (the products, not the product photos that
+    # share their numbers): the named links are settled first.
+    named_kept: set[tuple[str, str]] = set()
+    for group in sorted(by_column.values(), key=lambda g: any(f.second_role for f in g)):
+        group = [f for f in group if not f.second_role or (f.from_table, f.to_table) in named_kept]
+        if not group:
             continue
-        best = group[0]
-        if len(group) > 1 and not best.declared and not best.history and best.name_score == 0:
-            rival = group[1]
-            if rival.trust == best.trust and rival.name_score == 0 and abs(rival.coverage - best.coverage) < 0.05:
-                for f in (best, rival):
-                    f.trust = "proposed"
-                    f.evidence.append(Evidence(kind="ambiguous", weight=-0.5,
-                                               detail=f"{f.from_column} matches two tables equally well"))
-                kept += [best, rival]
-                continue
-        kept.append(best)
+        before = len(kept)
+        _keep_one(group, kept, profiles, inventory)
+        named_kept |= {(f.from_table, f.to_table) for f in kept[before:] if f.declared or f.name_score >= 0.75}
 
     for f in kept:
         _measure_target(warehouse, inventory, keys, calendars, f, versions)
     _name_roles(kept, inventory)
     return sorted(kept, key=lambda f: f.ident)
+
+
+def _keep_one(group: list[JoinFinding], kept: list[JoinFinding], profiles: dict[str, TableProfile],
+              inventory: Inventory) -> None:
+    """The link (or links) one column keeps of those that passed their test."""
+    order = {"verified": 0, "declared": 1, "proposed": 2}
+    # Equal otherwise, the table the column is named for: PRODUCT_ID points at PRODUCTS, not at
+    # PRODUCT_CATEGORIES, which holds the same numbers once each beside each product's category.
+    group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score,
+                              not _names_its_table(f.to_column, inventory.tables[f.to_table].name), -f.coverage,
+                              -f.match_rate, f.ident))
+    one = _one_to_one(group, profiles, inventory)
+    if one is not None:
+        kept += one
+        return
+    best = group[0]
+    if len(group) > 1 and not best.declared and not best.history and best.name_score == 0:
+        rival = group[1]
+        if rival.trust == best.trust and rival.name_score == 0 and abs(rival.coverage - best.coverage) < 0.05:
+            for f in (best, rival):
+                f.trust = "proposed"
+                f.evidence.append(Evidence(kind="ambiguous", weight=-0.5,
+                                           detail=f"{f.from_column} matches two tables equally well"))
+            kept += [best, rival]
+            return
+    kept.append(best)
 
 
 def _one_to_one(group: list[JoinFinding], profiles: dict[str, TableProfile],
@@ -738,9 +808,16 @@ _GENERIC_WORDS = {"sts", "status", "typ", "type", "cd", "code", "grp", "group", 
 
 
 def _shares_a_word(column: str, table: str) -> bool:
+    """The column names what the table's rows are: VendorID and the vendors, SalesPersonID and the salespeople.
+    Only the table's last word counts (what each row is): a transaction's ReferenceOrderID names an order, and the
+    order lines' numbers (SalesOrderDetail) are no orders, however well its values sit inside them."""
     left = [t for t in names.tokens(column) if t not in names.KEY_SUFFIXES and not t.isdigit() and t not in _GENERIC_WORDS]
     right = [t for t in names.core_table(table) if t not in _GENERIC_WORDS]
-    return any(names.same_word(a, b) for a in left for b in right)
+    if not left or not right:
+        return False
+    head = right[-1]
+    joined = {"".join(left[i:j]) for i in range(len(left)) for j in range(i + 2, len(left) + 1)}
+    return any(names.same_word(a, head) for a in left) or any(names.same_word(w, head) for w in joined)
 
 
 def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:

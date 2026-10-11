@@ -102,6 +102,12 @@ def _restarts(warehouse: Warehouse, table: InvTable, doc: str, seq: str, *, valu
     return multi > 0 and running >= 0.9 * multi and multi_rows >= 0.3 * max(rows, 1)
 
 
+def _named_as_pointer(column: str) -> bool:
+    """SpecialOfferID, PRODUCT_KEY: named for something else, ending in a key word, with no word of a sequence."""
+    words = names.tokens(column)
+    return len(words) > 1 and words[-1] in names.KEY_SUFFIXES and not set(words) & _SEQUENCE_WORDS
+
+
 def _numbers_lines(table: InvTable, profile: TableProfile, column: str) -> bool:
     """Could ``column`` number the lines of a document: a small whole number from 0 or 1, or named so."""
     p = profile.columns[column]
@@ -222,7 +228,10 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
                 continue
             if profile.columns[doc].distinct * profile.columns[seq].distinct < rows:
                 continue
-            if not _duplicates(warehouse, table, [doc, seq]) and _restarts(warehouse, table, doc, seq):
+            # A number named as a pointer (SpecialOfferID beside ProductID) starts at 1 in every product when offer 1
+            # covers them all; only a run without a gap in each makes it the product's line number.
+            if not _duplicates(warehouse, table, [doc, seq]) and _restarts(warehouse, table, doc, seq,
+                                                                          gapless=_named_as_pointer(seq)):
                 found.append([doc, seq])
         result.alternate_keys = found
         result.line_numbers = [alt[1] for alt in found if profile.columns[alt[1]].distinct < profile.columns[alt[0]].distinct]
