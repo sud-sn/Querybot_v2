@@ -581,6 +581,27 @@ def why_periods(plan: Plan, model: SemanticModel, question: str, history: list[T
     return plan
 
 
+_SNAPSHOT = re.compile(r"\b(?:snapshots?|instantan[ée]s?|photos?)\b", re.IGNORECASE)
+
+
+def snapshot_date(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many warehouses and items are in each snapshot?" was counted by the item list's own date (when its
+    rows last changed), and refused: a question about snapshots is about the date of a snapshot table. The one
+    snapshot date of the plan's grain is taken ("each snapshot" by day: the daily table's), or the only one."""
+    if plan.kind != "query" or not _SNAPSHOT.search(question or ""):
+        return plan
+    dates = [r for r in model.date_roles.values() if r.kind == "snapshot" and r.is_default
+             and model.tables[r.table].kind == "snapshot"]
+    if not dates or any(r.slug == plan.time.date for r in dates):
+        return plan
+    grain = plan.time.grain
+    fitting = [r for r in dates if r.granularity == grain] if grain else []
+    chosen = fitting if len(fitting) == 1 else dates if len(dates) == 1 else []
+    if len(chosen) != 1:
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={"date": chosen[0].slug})})
+
+
 # "Average selling price per unit", "what percentage ... did they reject", "the return rate": a ratio asked for.
 _RATIO_WORDS = re.compile(r"\bper\b|%|\bpercent(?:age)?\b|\brate\b|\bratio\b|\bshare of\b|\bproportion\b|"
                           r"\baverage\b.*\bper\b", re.IGNORECASE)
@@ -1025,6 +1046,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         halved = why_periods(plan, model, question, [])       # "the first to the second half of FY2026"
         if halved is not plan and not check(halved, model, today, shown)[0]:
             plan = halved
+        snapped = snapshot_date(plan, model, question)         # "in each snapshot"
+        if snapped is not plan and not check(snapped, model, today, shown)[0]:
+            plan = snapped
         problems, hint = check(plan, model, today, shown)
         if not problems:
             twin = named_twin(plan, model, question)

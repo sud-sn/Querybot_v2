@@ -536,6 +536,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     if plan.limit and plan.group_by and _found_nothing(payload):
         _by_key(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
+    if plan.time.date and _found_nothing(payload, zero=True):
+        plan = _by_main_date(payload, question, plan, services, ctx, question_id=question_id, shown=shown,
+                             periods=periods)
     if not plan.include_left_out and _found_nothing(payload):
         plan = _say_left_out(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
@@ -894,6 +897,59 @@ def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: 
     return plan
 
 
+def _by_main_date(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context, *,
+                  question_id: str = "", shown: list[tuple] | None = None, periods: list[str] | None = None) -> Plan:
+    """Nothing by a date the question did not name, the rows having none at all: answered by their table's main
+    date, and said. 'Shipments with delivery status "Delivery Exception" in 2025' kept the delivered date of the
+    question before it, and said "No rows match": a shipment that was never delivered has no delivered date. Rows
+    that have the date, only not in that period ("shipped in June", none shipped then), keep the answer they got.
+    Returns the plan answered."""
+    model = services.model
+    role = next((r for r in model.date_roles.values() if r.slug == plan.time.date), None)
+    if role is None or role.is_default or plan.time.window.kind == "all" or role.table not in model.tables:
+        return plan
+    table = model.tables[role.table]
+    main = model.date_roles.get(table.default_date or "")
+    if main is None or main.slug == role.slug:
+        return plan
+    words = {w for w in re.findall(r"[a-z]+", role.name.lower()) if w not in ("date", "day", "time", "on", "of")}
+    words |= {w.lower() for ws in role.synonyms.values() for w in ws}
+    if words & set(re.findall(r"[a-z]+", question.lower())):
+        return plan                     # "delivered in 2025": nothing delivered then is the answer
+    ever = plan.model_copy(update={"time": plan.time.model_copy(update={"window": Window(), "compare": None,
+                                                                        "grain": None}),
+                                   "group_by": [], "sort": [], "limit": None})
+    try:
+        if not _found_nothing(_compute(question, ever, services, ctx, question_id=question_id,
+                                       started=time.perf_counter()), zero=True):
+            return plan                 # the rows have that date, only not then: nothing then is the answer
+    except Exception as exc:  # noqa: BLE001 - the answer that found nothing stands
+        log.warning("core2: could not check the dates of %r: %s", question, exc)
+        return plan
+    main_plan = plan.model_copy(update={"time": plan.time.model_copy(update={"date": main.slug})})
+    members: list[tuple] = []
+    spans: list[str] = []
+    try:
+        again = _compute(question, main_plan, services, ctx, question_id=question_id, started=time.perf_counter(),
+                         shown=members, periods=spans)
+    except Exception as exc:  # noqa: BLE001 - the answer that found nothing stands
+        log.warning("core2: could not answer %r by its main date: %s", question, exc)
+        return plan
+    if _found_nothing(again):
+        return plan
+    payload.clear()
+    payload.update(again)
+    if shown is not None:
+        shown[:] = members
+    if periods is not None:
+        periods[:] = spans
+    trust = payload.setdefault("trust", {})
+    trust["date_context"] = [f"None of these rows has a {role.name.lower()}: shown by {main.name.lower()}, the "
+                             f"main date of {table.business_name.lower()} rows.",
+                             *(trust.get("date_context") or [])]
+    return main_plan
+
+
 def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context, *,
             question_id: str = "", shown: list[tuple] | None = None) -> None:
     """A ranking that found nothing, asked again with each member whose table has no row for its key (so no name)
@@ -915,9 +971,12 @@ def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Servic
         shown[:] = members
 
 
-def _found_nothing(payload: dict[str, Any]) -> bool:
-    """No rows, or only empty values: a total over nothing comes back as one row with no value."""
+def _found_nothing(payload: dict[str, Any], *, zero: bool = False) -> bool:
+    """No rows, or only empty values: a total over nothing comes back as one row with no value (``zero``: or
+    a count of nothing, as 0)."""
     rows = (payload.get("data") or {}).get("rows") or []
+    if zero and len(rows) == 1:
+        return all(v is None or v == 0 and not isinstance(v, bool) for v in rows[0].values())
     return all(all(v is None for v in row.values()) for row in rows)
 
 

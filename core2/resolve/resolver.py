@@ -799,7 +799,7 @@ def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> 
         return None
     links = [j for j in model.joins.values()
              if j.to_table == measure.table and j.trust != "rejected" and not j.to_calendar and len(j.to_columns) == 1
-             and model.tables[j.from_table].kind == "fact" and model.tables[j.from_table].default_date
+             and model.tables[j.from_table].kind in ("fact", "snapshot") and model.tables[j.from_table].default_date
              and (expr.agg == "count" or j.to_columns[0] == expr.column)]
     named = find_slug(model, plan.time.date) if plan.time.date else None
     role = named[1] if named and named[0] == "date" else None
@@ -997,7 +997,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             counted, on, said = by_activity
             chosen.append((m, counted, on, m.business_name, m.format))
             notes.append(said)
-            conditions.append(Condition("activity", model.tables[on].business_name.lower()))
+            said = Condition("activity", model.tables[on].business_name.lower())
+            if said not in conditions:            # warehouses and items, both counted on the same rows: said once
+                conditions.append(said)
             continue
         homes = _homes(model, m.table, m.expr)
         if len(homes) > 1:
