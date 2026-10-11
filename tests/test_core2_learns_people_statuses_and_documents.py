@@ -185,6 +185,29 @@ def test_a_customer_named_in_two_parts_is_answered_by_the_full_name_and_kept_apa
     assert "TRIM(COALESCE(" in sql
 
 
+def test_a_list_of_people_keeps_two_of_one_name_apart():
+    """Found on a pharmacy's warehouse: "list the patients" listed each name once, so patients sharing a name
+    were one row and the list came up short. Each is listed once, with the code that tells them apart."""
+    import json
+
+    from core2.plan.values import MemberIndex
+    from core2.service import Services, Session, answer_question
+
+    built, model, t_of, c_of = _model("descriptive")
+    customers = built.domain.table("customers").data
+    assert len(set(customers["first_name"] + " " + customers["last_name"])) < len(customers)    # namesakes
+    answers = [json.dumps({"kind": "query", "intent": "list", "group_by": ["customer"]})]
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=lambda s, t: answers.pop(0),
+                        index=MemberIndex(), today=dt.date(2026, 6, 15))
+    got = answer_question("list the customers", services, Session())
+    rows = got["export_rows"]
+    code = next(k for k in rows[0] if k.endswith("_code"))
+    assert len(rows) == len(customers) and len({r[code] for r in rows}) == len(customers)
+    first = rows[0]["customer_name"]
+    if sum(1 for r in rows if r["customer_name"] == first) > 1:
+        assert f"{first} (" in got["answer"]["headline"]               # told apart in the sentence too
+
+
 @pytest.mark.parametrize("dialect", ["tsql", "snowflake", "oracle"])
 def test_a_name_in_two_parts_is_joined_in_every_dialect(dialect):
     from core2.compile.compiler import column_sql

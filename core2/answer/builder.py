@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
+import collections
 import re
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -756,9 +757,14 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         if not groups:
             return f"{len(raw):,} rows{(' ' + span) if span else ''}."
         first, beside = groups[0], groups[1:3]
+        code = next(iter(cols.of("member_code")), None)
+        named = collections.Counter(str(r.get(first.name)) for r in raw)
 
         def details(r: dict) -> list[str]:      # what else the list shows of it: "base rate 5.9", "carrier FedEx"
-            return [f"{_thing(c.label)} {r[c.name]}" for c in beside if r.get(c.name) not in (None, "")]
+            # Two members of one name are told apart by their code ("Avery Ashford (patient name code 1042)").
+            told = [f"{_thing(code.label)} {r[code.name]}"] if code is not None and named[str(r.get(first.name))] > 1 \
+                and r.get(code.name) not in (None, "") else []
+            return told + [f"{_thing(c.label)} {r[c.name]}" for c in beside if r.get(c.name) not in (None, "")]
 
         looked_up = re.search(rf"(?<![\w-]){re.escape(str(shown[0][first.name]))}(?![\w-])", span) if raw else None
         if len(raw) == 1 and beside and details(shown[0]) and looked_up:

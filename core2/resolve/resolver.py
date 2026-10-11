@@ -1759,6 +1759,12 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
         name = _output_name(attr.slug.replace(".", "_"), out_names)
         part.groups.append(PartGroup(name, alias, col.key, "attribute"))
         groups.append(Group(name, _attribute_label(model, attr), "attribute", attribute=attr.slug))
+        identity = _member_identity(model, attr)
+        if identity is not None:
+            # Two people of one name are two rows, told apart by their code, as in any answer by them.
+            code_name = _output_name(f"{name}_code", out_names)
+            part.groups.append(PartGroup(code_name, alias, identity, "attribute"))
+            groups.append(Group(code_name, f"{attr.business_name} code", "member_code", attribute=attr.slug))
     conditions: list[Condition] = []
     for f in plan.filters:
         found = find_slug(model, f.field)
