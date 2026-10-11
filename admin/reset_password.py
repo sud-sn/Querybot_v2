@@ -1,11 +1,14 @@
 """
-Set a new admin console password from the server.
+Set a new emergency admin password from the server, and turn emergency sign-in back on.
 
     python -m admin.reset_password            # asks twice, without echo
     python -m admin.reset_password --stdin    # reads one line, for automation
 
 For when the admin password is lost, or when the stored one can no longer be
-read because the encryption key changed. The web setup page stays closed once
+read because the encryption key changed, or when no Super admin can sign in
+any more (admin/access.py: the shared password signs in as a Super admin with
+no name). It turns emergency sign-in on even if a Super admin turned it off; to
+make a named account from here instead, see python -m admin.create_admin. The web setup page stays closed once
 a password exists, so this runs where only someone with a shell on the server
 can run it. Run it as the service's user, from the application directory, with
 the same QUERYBOT_DB_PATH, DATABASE_URL and QUERYBOT_KEY_FILE as the service.
@@ -19,6 +22,7 @@ import sys
 
 import store
 from admin import credentials
+from admin.access import EMERGENCY_KEY
 
 
 def main(argv: list[str] | None = None, *, prompt=getpass.getpass, stdin=None) -> int:
@@ -42,11 +46,12 @@ def main(argv: list[str] | None = None, *, prompt=getpass.getpass, stdin=None) -
 
     store.init_db()
     credentials.set_password(password)
+    store.set_system(EMERGENCY_KEY, "on")
     # Whoever runs this holds the server, so any wait failed attempts built up
     # ends here too.
     store.clear_sign_in_scope("admin")
     print("The admin password is set and every admin session is signed out. "
-          "Sign in at /admin/login.")
+          "Sign in at /admin/login?emergency=1 (emergency sign-in is on).")
     return 0
 
 

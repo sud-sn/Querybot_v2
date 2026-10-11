@@ -235,7 +235,7 @@ class TestTheAdminSignIn:
     def test_another_address_is_counted_on_its_own(self, admin_password):
         for _ in range(6):
             _admin_login("a-guess", host="198.51.100.9")
-        assert _admin_login(admin_password, host="203.0.113.7").headers["location"] == "/admin"
+        assert _admin_login(admin_password, host="203.0.113.7").headers["location"] == "/admin/me/setup"  # no named Super admin yet: the shared password (now the emergency sign-in) lands on making one
 
     def test_the_servers_reset_ends_the_wait(self, admin_password):
         from admin import reset_password
@@ -243,7 +243,7 @@ class TestTheAdminSignIn:
         for _ in range(6):
             _admin_login("a-guess")
         assert reset_password.main(["--stdin"], stdin=io.StringIO("a-new-admin-password\n")) == 0
-        assert _admin_login("a-new-admin-password").headers["location"] == "/admin"
+        assert _admin_login("a-new-admin-password").headers["location"] == "/admin/me/setup"  # no named Super admin yet: the shared password (now the emergency sign-in) lands on making one
 
 
 # ── The question API ─────────────────────────────────────────────────────────

@@ -1094,6 +1094,7 @@ def init_db() -> None:
     so upgrades never require manual ALTER TABLE commands.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _back_up_before_roles()
     with get_db() as conn:
         conn.executescript(_SCHEMA)
         # Indexes that aren't worth coupling to the _SCHEMA string — idempotent.
@@ -1460,6 +1461,11 @@ def _run_migrations() -> None:
         ("user_attestation", "scope", "TEXT NOT NULL DEFAULT '*'"),
         ("user_attestation", "document_name", "TEXT NOT NULL DEFAULT ''"),
         ("user_attestation", "document_sha256", "TEXT NOT NULL DEFAULT ''"),
+        # What a reader may do in the portal (core/portal_roles.py): viewer (dashboards shared with them), asker
+        # (also the chat and private dashboards) or creator (also dashboards by request, sharing, schedules).
+        # Every account made before roles keeps all it could do: creator. Which tables they see stays with
+        # ``role`` and their group, as before. Declared HERE ONLY, as above.
+        ("portal_user", "portal_role", "TEXT NOT NULL DEFAULT 'creator'"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)
@@ -1484,6 +1490,7 @@ def _run_migrations() -> None:
         _ensure_llm_usage_tables(conn)
         _ensure_dashboard_share_table(conn)
         _ensure_portal_notice_table(conn)
+        _ensure_admin_account_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1779,6 +1786,87 @@ def _ensure_dashboard_share_table(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_dashboard_share_subject ON dashboard_share(account_id, subject_type, subject_id);
         """
     )
+
+
+def _ensure_admin_account_tables(conn: sqlite3.Connection) -> None:
+    """Named admins, the workspaces each may open, and what admins did (store/admin_store.py).
+
+    No foreign key from admin_event: a record outlives the admin it names.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS admin_account (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            email             TEXT    NOT NULL UNIQUE,
+            name              TEXT    NOT NULL DEFAULT '',
+            role              TEXT    NOT NULL DEFAULT 'data_steward',
+            password_hash     TEXT    NOT NULL DEFAULT '',
+            is_active         INTEGER NOT NULL DEFAULT 1,
+            session_version   INTEGER NOT NULL DEFAULT 1,
+            invite_token_hash TEXT    NOT NULL DEFAULT '',
+            invite_expires_at TEXT    DEFAULT NULL,
+            created_by        TEXT    NOT NULL DEFAULT '',
+            last_sign_in_at   TEXT    DEFAULT NULL,
+            created_at        TEXT    DEFAULT (datetime('now')),
+            updated_at        TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS admin_workspace (
+            admin_id   INTEGER NOT NULL REFERENCES admin_account(id) ON DELETE CASCADE,
+            account_id TEXT    NOT NULL,
+            PRIMARY KEY (admin_id, account_id)
+        );
+        CREATE TABLE IF NOT EXISTS admin_event (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id    INTEGER,
+            admin_email TEXT    NOT NULL DEFAULT '',
+            action      TEXT    NOT NULL,
+            method      TEXT    NOT NULL DEFAULT '',
+            path        TEXT    NOT NULL DEFAULT '',
+            account_id  TEXT    NOT NULL DEFAULT '',
+            status      INTEGER NOT NULL DEFAULT 0,
+            detail      TEXT    NOT NULL DEFAULT '',
+            ip          TEXT    NOT NULL DEFAULT '',
+            created_at  TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_event_account ON admin_event(account_id, id);
+        CREATE INDEX IF NOT EXISTS idx_admin_event_admin ON admin_event(admin_id, id);
+        """
+    )
+
+
+def _back_up_before_roles() -> None:
+    """A copy of the database before roles first change it (the admin tables and every reader's portal role).
+
+    Once: a database that already has admin_account was upgraded already, and a new one has nothing to keep.
+    SQLite only (a file copied through SQLite's backup, so a running server's writes stay consistent); a
+    PostgreSQL server is backed up by its own tools, and the log says so.
+    """
+    try:
+        if is_postgres():
+            log.info("Roles upgrade: back up the PostgreSQL database with its own tools before upgrading.")
+            return
+        # The path the store opens now (store/database.py reads it at each connection, as tests change it).
+        db_path = Path(os.getenv("QUERYBOT_DB_PATH") or os.getenv("DB_PATH") or str(DB_PATH))
+        if not db_path.exists() or db_path.stat().st_size == 0:
+            return
+        source = sqlite3.connect(str(db_path))
+        try:
+            tables = {r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "admin_account" in tables or "portal_user" not in tables:
+                return
+            from datetime import datetime as _dt
+
+            target_path = db_path.with_name(f"{db_path.name}.before-roles-{_dt.now():%Y%m%d-%H%M%S}.bak")
+            target = sqlite3.connect(str(target_path))
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+            log.info("Roles upgrade: the database was copied to %s before it changed.", target_path)
+        finally:
+            source.close()
+    except Exception as exc:  # noqa: BLE001 - said loudly; the upgrade itself goes on
+        log.warning("Roles upgrade: the database could not be copied before it changed: %s", exc)
 
 
 def _ensure_sign_in_attempt_table(conn: sqlite3.Connection) -> None:

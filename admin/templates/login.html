@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "icons.html" import ic %}
 {% from "macros.html" import brand_motion %}
+{% from "_auth_styles.html" import auth_styles %}
 {% block title %}Login — QueryBot Admin{% endblock %}
 {% block auth_content %}
 <div class="auth-card-wrap">
@@ -10,7 +11,7 @@
   </div>
 
   <div class="card auth-card">
-    <div class="card-header"><h1>{{ ic("lock", 14) }} Sign in to continue</h1></div>
+    <div class="card-header"><h1>{{ ic("lock", 14) }} {{ 'Emergency sign-in' if emergency else 'Sign in to continue' }}</h1></div>
     <div class="card-body">
       {% if error %}
       <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
@@ -20,11 +21,18 @@
       {% endif %}
 
       <form method="post" action="/admin/login" id="loginForm" data-busy-on-submit>
+        {% if not emergency %}
         <div class="form-group">
-          <label for="password">Admin password</label>
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" value="{{ email or '' }}" required autofocus
+                 placeholder="you@company.com" autocomplete="username">
+        </div>
+        {% endif %}
+        <div class="form-group">
+          <label for="password">{{ 'Emergency admin password' if emergency else 'Password' }}</label>
           <div class="input-reveal-wrap">
-            <input type="password" id="password" name="password"
-                   autofocus required placeholder="Enter your admin password"
+            <input type="password" id="password" name="password" {% if emergency %}autofocus{% endif %} required
+                   placeholder="{{ 'The admin password this server was set up with' if emergency else 'Your password' }}"
                    autocomplete="current-password">
             <button type="button" class="input-reveal-btn" data-qb-reveal="password" aria-pressed="false"
                     aria-label="Show password">{{ ic("eye", 16) }}</button>
@@ -34,53 +42,17 @@
           Sign in &rarr;
         </button>
       </form>
+      {% if emergency and accounts %}
+      <p class="auth-switch"><a href="/admin/login">Sign in with your email instead</a></p>
+      {% elif emergency %}
+      <p class="auth-note">The first time after the upgrade: sign in with the admin password you use today, then make your own
+        Super admin account. From then on you sign in with your email.</p>
+      {% elif emergency_on %}
+      <p class="auth-switch"><a href="/admin/login?emergency=1">Use the emergency admin password instead</a></p>
+      {% endif %}
     </div>
   </div>
 </div>
 
-<style>
-.auth-card-wrap {
-  width: 100%;
-  max-width: 400px;
-  margin: 0 auto;
-  padding-top: 4rem;
-}
-.auth-brand-identity {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: .5rem;
-  margin-bottom: 1.5rem;
-  text-align: center;
-}
-.auth-brand-name {
-  font-size: var(--font-2xl);
-  font-weight: var(--weight-bold);
-  color: var(--text);
-  letter-spacing: -.03em;
-}
-.auth-brand-name > span:first-child { color: var(--primary); }
-.auth-brand-tag {
-  margin-left: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  vertical-align: middle;
-  font-size: var(--font-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.auth-card { box-shadow: var(--shadow-md); }
-.auth-card .card-header h1 {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: var(--font-base);
-  font-weight: var(--weight-bold);
-  color: var(--text-soft);
-}
-
-</style>
+{{ auth_styles() }}
 {% endblock %}

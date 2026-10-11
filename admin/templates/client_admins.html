@@ -1,0 +1,79 @@
+{% extends "client_base.html" %}
+{% from "icons.html" import ic %}
+{% import "_admin_bits.html" as bits with context %}
+{% block title %}Admins — {{ client.client_name }}{% endblock %}
+{% block head %}{{ bits.styles() }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Admins of this workspace</h1>
+  <p>Who looks after {{ client.client_name or client.account_id }} in this admin panel. Super admins open every workspace.</p>
+</div>
+
+{{ bits.invite_reveal(invite) }}
+{% if saved %}<div class="alert alert-success" role="status">Saved.</div>{% endif %}
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Add an admin</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/clients/{{ client.account_id }}/admins/add">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="wa_email">Work email</label>
+          <input type="email" id="wa_email" name="email" required placeholder="name@company.com">
+          <p class="form-note">Someone who is an admin already gets this workspace too; anyone else gets a one-time link.</p>
+        </div>
+        <div class="form-group">
+          <label for="wa_name">Name</label>
+          <input type="text" id="wa_name" name="name" placeholder="Optional">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="wa_role">Role</label>
+        <select id="wa_role" name="role">
+          {% for value, label in grantable %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+        {% for value, label in grantable %}<p class="adm-role-note"><b>{{ label }}:</b> {{ bits.ROLE_NOTES[value] }}</p>{% endfor %}
+      </div>
+      <button type="submit" class="btn btn-primary">{{ ic("plus", 15) }} Add</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Who can open this workspace</h2></div>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table">
+      <thead><tr><th>Admin</th><th>Role</th><th>Sign-in</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+      {% for a in admins %}
+        <tr class="{% if not a.is_active %}row-inactive{% endif %}" data-admin="{{ a.email }}">
+          <td data-label="Admin"><span class="adm-who"><b>{{ a.name or a.email }}{% if me and me.admin_id == a.id %}<span class="badge badge-indigo adm-you">you</span>{% endif %}</b><small>{{ a.email }}</small></span></td>
+          <td data-label="Role"><span class="badge {% if a.role == 'super_admin' %}badge-amber{% else %}badge-indigo{% endif %}">{{ a.role_label }}</span></td>
+          <td data-label="Sign-in" class="text-sm">
+            {% if not a.is_active %}<span class="badge badge-gray">Inactive</span>
+            {% elif not a.password_hash %}<span class="badge badge-amber">Waiting to choose a password</span>
+            {% else %}<span class="badge badge-green">Active</span>{% endif %}
+          </td>
+          <td>
+            {% if a.role == 'super_admin' %}<span class="text-muted text-sm">Every workspace</span>
+            {% elif me and (me.is_super or a.role == 'data_steward') %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/admins/{{ a.id }}/remove" class="inline-form">
+              <button type="submit" class="btn btn-ghost btn-xs text-danger" aria-label="Take this workspace from {{ a.email }}"
+                      data-confirm-title="Take this workspace away?" data-confirm="{{ a.email }} will no longer open {{ client.client_name or client.account_id }}."
+                      data-confirm-label="Take away">{{ ic("x", 13) }} Remove from this workspace</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>What admins did here</h2></div>
+  {{ bits.event_table(events) }}
+</div>
+{% endblock %}

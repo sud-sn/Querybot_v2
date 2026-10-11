@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
+{% import "_admin_bits.html" as bits with context %}
+{% block title %}Your account — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "Dashboard", "href": "/admin"}, {"label": "Your account", "href": ""}]) }}
+{% endblock %}
+{% block head %}{{ bits.styles() }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Your account</h1>
+  <p>{{ me.label }} · {{ me.role_label }}</p>
+</div>
+
+{% if saved == 'password' %}<div class="alert alert-success" role="status">Your password is changed. Your other sessions are signed out.</div>
+{% elif saved %}<div class="alert alert-success" role="status">Saved.</div>{% endif %}
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+
+{% if me.emergency %}
+<div class="card">
+  <div class="card-body">
+    <p>You signed in with the <b>emergency admin password</b>: it has no name, email or password of its own here.</p>
+    {% if admin_emergency_needs_account() %}
+    <a class="btn btn-primary" href="/admin/me/setup">Make your own Super admin account</a>
+    {% else %}
+    <a class="btn btn-secondary" href="/admin/logout">Sign in with your own account</a>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <div class="card-header"><h2>You</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/me/name" class="form-grid">
+      <div class="form-group">
+        <label for="me_name">Name</label>
+        <input type="text" id="me_name" name="name" value="{{ admin.name or '' }}" autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" value="{{ admin.email }}" readonly aria-readonly="true">
+        <p class="form-note">A Super admin can change who you are; you sign in with this email.</p>
+      </div>
+      <div><button type="submit" class="btn btn-secondary btn-sm">Save name</button></div>
+    </form>
+    <p style="margin-top:1rem"><b>{{ me.role_label }}</b> — {{ bits.ROLE_NOTES[me.role] }}</p>
+    {% if not me.is_super %}
+    <p class="text-sm">Your workspaces:
+      {% for account_id, name in workspaces %}<a class="badge badge-gray" href="/admin/clients/{{ account_id }}">{{ name }}</a> {% else %}<span class="text-muted">none yet — ask a Super admin</span>{% endfor %}</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Password</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/me/password">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="cur_pw">Current password</label>
+          <input type="password" id="cur_pw" name="current_password" required autocomplete="current-password">
+        </div>
+        <div></div>
+        <div class="form-group">
+          <label for="new_pw">New password <span class="text-muted">(at least {{ min_password }} characters)</span></label>
+          <input type="password" id="new_pw" name="password" required minlength="{{ min_password }}" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label for="new_pw2">Type it again</label>
+          <input type="password" id="new_pw2" name="confirm_password" required minlength="{{ min_password }}" autocomplete="new-password">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Change password</button>
+      <span class="text-muted text-sm" style="margin-left:8px">Your other sessions are signed out.</span>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>What you did lately</h2></div>
+  {{ bits.event_table(events, show_workspace=true) }}
+</div>
+{% endif %}
+{% endblock %}

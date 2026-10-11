@@ -89,6 +89,13 @@ from store.user_store import (
     generate_temp_password,
 )
 from store.notice_store import add_notice, list_notices, unread_notice_count, mark_notices_read
+from store.admin_store import (
+    SUPER_ADMIN, WORKSPACE_ADMIN, DATA_STEWARD, ADMIN_ROLES, ADMIN_ROLE_LABELS, ADMIN_ROLE_RANK,
+    any_admin_accounts, count_active_super_admins, create_admin, get_admin, get_admin_by_email, list_admins,
+    admin_workspaces, set_admin_workspaces, add_admin_workspace, remove_admin_workspace, update_admin,
+    set_admin_password, verify_admin_password, upgrade_admin_hash, mark_admin_signed_in, issue_admin_invite,
+    admin_for_invite, delete_admin, record_admin_event, list_admin_events,
+)
 from store.dashboard_store import (
     save_built_dashboard, change_dashboard, undo_dashboard,
     create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread,
@@ -192,6 +199,11 @@ from store.llm_usage_store import (
 )
 
 __all__ = [
+    "SUPER_ADMIN", "WORKSPACE_ADMIN", "DATA_STEWARD", "ADMIN_ROLES", "ADMIN_ROLE_LABELS", "ADMIN_ROLE_RANK",
+    "any_admin_accounts", "count_active_super_admins", "create_admin", "get_admin", "get_admin_by_email",
+    "list_admins", "admin_workspaces", "set_admin_workspaces", "add_admin_workspace", "remove_admin_workspace",
+    "update_admin", "set_admin_password", "verify_admin_password", "upgrade_admin_hash", "mark_admin_signed_in",
+    "issue_admin_invite", "admin_for_invite", "delete_admin", "record_admin_event", "list_admin_events",
     "init_db","get_db","encrypt","decrypt","decrypt_json","mask",
     "save_domain","list_domains","get_domain","delete_domain",
     "list_client_sources","get_client_source","save_client_source",

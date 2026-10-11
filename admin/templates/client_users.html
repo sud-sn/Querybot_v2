@@ -170,7 +170,26 @@
             </form>
           </td>
           <td data-label="Role">
-            <span class="badge {% if u.role == 'admin' %}badge-amber{% else %}badge-indigo{% endif %}">{{ u.role }}</span>
+            {# What they can do in the portal, and whether they see every table (else their group's). #}
+            {% set _pr = u.portal_role if u.portal_role in ('viewer', 'asker', 'creator') else 'creator' %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
+                  class="inline-form" data-no-loading>
+              <select name="portal_role" class="form-input form-input-sm select-xs" onchange="this.form.submit()"
+                      aria-label="What {{ u.name or u.email }} can do" data-portal-role="{{ _pr }}">
+                {% for value, label in [('viewer', 'Viewer'), ('asker', 'Asker'), ('creator', 'Creator')] %}
+                <option value="{{ value }}" {% if value == _pr %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </form>
+            <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update" class="inline-form">
+              <input type="hidden" name="role" value="{{ 'analyst' if u.role == 'admin' else 'admin' }}">
+              <button type="submit" class="pp-tables {% if u.role == 'admin' %}every{% endif %}"
+                      aria-label="{{ u.name or u.email }} sees {{ 'every table' if u.role == 'admin' else 'their group\'s tables' }}: change"
+                      data-confirm-title="{{ 'Limit to their group\'s tables?' if u.role == 'admin' else 'Let them see every table?' }}"
+                      data-confirm="{{ (u.name or u.email) ~ (' will see only the tables of their group and the ones given to them.' if u.role == 'admin' else ' will see every table of this workspace, whatever their group. Row rules and masking still apply.') }}"
+                      data-confirm-label="{{ 'Limit' if u.role == 'admin' else 'Every table' }}">
+                {{ ic("database", 12) }} {{ 'Every table' if u.role == 'admin' else "Group's tables" }}</button>
+            </form>
           </td>
           <td data-label="Sign-in">
             <span class="badge {% if u.is_active %}badge-green{% else %}badge-gray{% endif %}">
@@ -301,13 +320,25 @@
         <p class="form-note">People with no group have no table access.</p>
       </div>
       <div class="form-group">
-        <label for="cu_role">Role</label>
-        <select id="cu_role" name="role">
-          <option value="analyst" selected>Analyst — assigned tables only</option>
-          <option value="admin">Admin — all tables, no restrictions</option>
+        <label for="cu_tables">Tables</label>
+        <select id="cu_tables" name="role">
+          <option value="analyst" selected>Their group's tables</option>
+          <option value="admin">Every table (row rules and masking still apply)</option>
         </select>
       </div>
     </div>
+    <fieldset class="pp-roles">
+      <legend>What they can do</legend>
+      {% for value, label, note in [
+           ('viewer', 'Viewer', 'Opens the dashboards shared with them, filters and follows them. No chat.'),
+           ('asker', 'Asker', 'Also asks questions in the chat and keeps answers on dashboards of their own.'),
+           ('creator', 'Creator', 'Also has dashboards made from a request, changes them by talking, and shares them.')] %}
+      <label class="pp-role">
+        <input type="radio" name="portal_role" value="{{ value }}" {% if value == 'asker' %}checked{% endif %}>
+        <span><b>{{ label }}</b><small>{{ note }}</small></span>
+      </label>
+      {% endfor %}
+    </fieldset>
 
     <div class="form-divider"><span>Password</span></div>
     <p class="form-note pp-pw-note"><strong>Leave blank</strong> and a temporary password is made, shown once; they choose their
@@ -507,6 +538,17 @@
 .pp-who { display: flex; flex-direction: column; min-width: 0; }
 .pp-name { font-weight: var(--weight-semibold); color: var(--text-strong); overflow-wrap: anywhere; }
 .pp-email { font-size: var(--font-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.pp-tables { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 1px 7px; border: 1px solid var(--border);
+  border-radius: 999px; background: none; font: inherit; font-size: var(--font-xs); color: var(--text-muted); cursor: pointer; }
+.pp-tables.every { border-color: var(--warning); color: var(--warning); }
+.pp-tables:hover { color: var(--text); border-color: var(--text-muted); }
+.pp-roles { border: 0; padding: 0; margin: .25rem 0 .75rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pp-roles legend { font-size: var(--font-sm); font-weight: var(--weight-semibold); margin-bottom: 6px; }
+.pp-role { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.pp-role:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.pp-role span { display: flex; flex-direction: column; gap: 2px; font-size: var(--font-sm); }
+.pp-role small { color: var(--text-muted); font-size: var(--font-xs); line-height: 1.35; }
+@media (max-width: 640px) { .pp-roles { grid-template-columns: 1fr; } }
 .pp-sub { display: flex; align-items: center; gap: 4px; font-size: var(--font-xs); color: var(--text-muted); margin-top: 3px; }
 .pp-doc { color: var(--primary); text-decoration: none; }
 .pp-doc:hover { text-decoration: underline; }

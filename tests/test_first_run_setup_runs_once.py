@@ -156,7 +156,7 @@ class TestSignIn:
         _setup("first-password")
         assert _login("wrong-password")["error"] == "Incorrect password"
         response = _login("first-password")
-        assert response.status_code == 303 and response.headers["location"] == "/admin"
+        assert response.status_code == 303 and response.headers["location"] == "/admin/me/setup"  # no named Super admin yet: the shared password (now the emergency sign-in) lands on making one
         assert _cookie_set(response)
 
 
@@ -174,7 +174,7 @@ class TestTheServerSideReset:
         _unreadable_password_row()
         assert self._run("new-admin-password", "new-admin-password") == 0
         assert credentials.is_readable() and credentials.verify("new-admin-password")
-        assert _login("new-admin-password").headers["location"] == "/admin"
+        assert _login("new-admin-password").headers["location"] == "/admin/me/setup"  # no named Super admin yet: the shared password (now the emergency sign-in) lands on making one
 
     def test_two_different_answers_change_nothing(self, fresh_store):
         from admin import credentials

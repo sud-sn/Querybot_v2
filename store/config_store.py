@@ -62,6 +62,9 @@ SYSTEM_KEYS = {
     # A number admin session cookies carry. A password change bumps it, which
     # ends every admin session issued before (admin/credentials.py).
     "admin_session_version",
+    # "off": the admin password above no longer signs in (the emergency sign-in, admin/access.py). Turned off
+    # by a named super admin, on again by python -m admin.reset_password.
+    "admin_emergency_sign_in",
 }
 
 
@@ -181,7 +184,7 @@ PLATFORM_FIELDS: dict[str, list[str]] = {
 # with them, and no settings page takes them again (python -m
 # admin.reset_password sets the password; the sign-in page says when it
 # cannot be read).
-_NOT_CREDENTIALS = ("admin_password_hash", "admin_session_version")
+_NOT_CREDENTIALS = ("admin_password_hash", "admin_session_version", "admin_emergency_sign_in")
 
 
 def unreadable_credentials() -> list[dict]:

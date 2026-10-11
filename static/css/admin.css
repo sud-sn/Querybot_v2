@@ -576,8 +576,17 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   font-weight: var(--weight-semibold);
   flex: none;
 }
-.sidebar-me { display: grid; min-width: 0; color: var(--on-primary); font-size: var(--font-sm); font-weight: var(--weight-semibold); }
+.sidebar-avatar { text-decoration: none; }
+.sidebar-avatar.emergency { background: var(--danger); }
+.sidebar-me { display: grid; min-width: 0; color: var(--on-primary); font-size: var(--font-sm); font-weight: var(--weight-semibold);
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-me:hover { text-decoration: none; color: var(--on-primary); }
+.sidebar-me .sidebar-role { color: var(--shell-muted); font-size: var(--font-xs); font-weight: var(--weight-regular); }
 .sidebar-me .sidebar-version { text-align: left; font-weight: var(--weight-regular); }
+/* The emergency admin password is in use. */
+.admin-emergency-banner { display: flex; align-items: center; gap: 8px; padding: 8px 20px; background: var(--danger-soft);
+  color: var(--danger); border-bottom: 1px solid var(--danger-line); font-size: var(--font-sm); }
+.admin-emergency-banner a { color: inherit; font-weight: var(--weight-semibold); text-decoration: underline; margin-left: 4px; }
 .sidebar-out {
   margin-left: auto;
   width: 32px;

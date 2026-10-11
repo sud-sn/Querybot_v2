@@ -24,6 +24,7 @@ import store
 from gateway import PlatformEvent
 from fastapi import BackgroundTasks
 from core.i18n import t as _t
+from core.portal_roles import can as can_do, refusal as role_refusal
 from core.pipeline_context import get_state, get_client_db, get_portal_base
 from core.pipeline_helpers import _looks_like_new_query
 from core.conversation_state import (
@@ -1680,6 +1681,10 @@ async def dispatch(
         if not portal_user:
             await handle_unregistered_user(account_id, event.user_id, event, adapter)
             return
+    # A viewer opens the dashboards shared with them and asks nothing (core/portal_roles.py).
+    if isinstance(portal_user, dict) and not can_do(portal_user, "ask"):
+        await adapter.send_message(event, role_refusal("ask", portal_user.get("lang")))
+        return
 
     # ── Login-time report prompt reply — checked before EVERY other front
     # door (conversational, report-ask) so a "no thanks" isn't misclassified

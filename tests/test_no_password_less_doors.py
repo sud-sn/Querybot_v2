@@ -228,10 +228,10 @@ class TestTheAdminPassword:
         self._setup()
         routes.store.set_system("admin_password_hash", hashlib.sha256(b"the-admin-password").hexdigest())
         version = credentials.session_version()
-        assert self._login("the-admin-password").headers["location"] == "/admin"
+        assert self._login("the-admin-password").headers["location"] == "/admin/me/setup"  # no named Super admin yet: the shared password (now the emergency sign-in) lands on making one
         assert routes.store.get_system("admin_password_hash").startswith("pbkdf2_sha256$")
         assert credentials.session_version() == version
-        assert self._login("the-admin-password").headers["location"] == "/admin"
+        assert self._login("the-admin-password").headers["location"] == "/admin/me/setup"
 
     def test_break_glass_checks_the_same_password(self, fresh_store):
         from fastapi import FastAPI

@@ -22,7 +22,7 @@
 <body class="{% block body_class %}{% endblock %}" data-admin-client-id="{% if client is defined %}{{ client.account_id|default('') }}{% endif %}">
 
 {# ── Determine if this is a full-shell page or an auth page ── #}
-{% set _auth_page = request.url.path in ['/admin/login', '/admin/setup'] %}
+{% set _auth_page = request.url.path in ['/admin/login', '/admin/setup', '/admin/me/setup'] or (request.url.path|string).startswith('/admin/invite/') %}
 
 <a class="skip-link" href="#main-content">Skip to content</a>
 
@@ -45,7 +45,9 @@
   {# One sidebar for every admin page, as the approved shell draws it: the places, the workspaces, who is signed in. #}
   {% set _path = request.url.path.rstrip('/') %}
   {% set _ws_id = client.account_id if (client is defined and client) else '' %}
-  {% set _ws = admin_workspaces(_ws_id) if admin_workspaces is defined else {'items': [], 'total': 0} %}
+  {% set _ws = admin_workspaces(_ws_id, request=request) if admin_workspaces is defined else {'items': [], 'total': 0} %}
+  {% set _me = admin_me(request) if admin_me is defined else none %}
+  {% set _can = admin_can if admin_can is defined else none %}
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
     <div class="sidebar-brand">
@@ -60,11 +62,14 @@
            ('/admin/clients', 'users', 'Workspaces', _path.startswith('/admin/clients')),
            ('/admin/databases', 'database', 'Databases', _path.startswith('/admin/databases')),
            ('/admin/platforms', 'chat', 'Chat platforms', _path.startswith('/admin/platforms')),
+           ('/admin/admins', 'key', 'Admins', _path.startswith('/admin/admins')),
            ('/admin/system', 'settings', 'System', _path.startswith('/admin/system'))] %}
+      {% if not _can or _can(request, href) %}
       <a href="{{ href }}" class="sidebar-link {% if on %}active{% endif %}" {% if on %}aria-current="{{ 'page' if _path == href else 'true' }}"{% endif %}>
         <span class="sidebar-link-icon">{{ ic(icon) }}</span> {{ label }}
         {%- if href == '/admin/clients' %}<span class="admin-live-badge semantic-review-chip" id="semanticPendingBadge" title="">0</span>{% endif %}
       </a>
+      {% endif %}
       {% endfor %}
 
       {% if _ws['items'] %}
@@ -80,8 +85,12 @@
     </nav>
 
     <div class="sidebar-foot">
-      <span class="sidebar-avatar" aria-hidden="true">AD</span>
-      <span class="sidebar-me">Administrator{% if product_version is defined %}<small class="sidebar-version">Version {{ product_version() }}</small>{% endif %}</span>
+      {% set _who = (_me.label if _me else 'Administrator') %}
+      {% set _initials = ('!' if (_me and _me.emergency) else ((_who.split() | map('first') | join)[:2] | upper or 'AD')) %}
+      <a class="sidebar-avatar{% if _me and _me.emergency %} emergency{% endif %}" href="/admin/me" aria-hidden="true" tabindex="-1">{{ _initials }}</a>
+      <a class="sidebar-me" href="/admin/me" title="Your account">{{ _who }}
+        <small class="sidebar-role">{{ _me.role_label if _me else 'Administrator' }}</small>
+        {%- if product_version is defined %}<small class="sidebar-version">Version {{ product_version() }}</small>{% endif %}</a>
       <a href="/admin/logout" class="sidebar-out" aria-label="Sign out" title="Sign out">{{ ic("log-out", 18) }}</a>
     </div>
 
@@ -98,6 +107,19 @@
       <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
     </header>
 
+    {% set _signed_in = admin_me(request) if admin_me is defined else none %}
+    {% if _signed_in and _signed_in.emergency %}
+    {# The shared emergency password is in use: everyone should see it, and know how to stop needing it. #}
+    <div class="admin-emergency-banner" role="status">
+      {{ ic("alert-triangle", 16) }}
+      <span>You are signed in with the <b>emergency admin password</b>. Every action is logged as the emergency sign-in.
+      {% if admin_emergency_needs_account is defined and admin_emergency_needs_account() %}
+        <a href="/admin/me/setup">Make your own Super admin account</a>
+      {% else %}
+        <a href="/admin/logout">Sign in with your own account</a>
+      {% endif %}</span>
+    </div>
+    {% endif %}
     {% if client is defined and client %}
     {% include "_client_workspace_nav.html" %}
     {% endif %}
@@ -263,7 +285,8 @@ function closeSidebar(){
   }
 
   ready(function(){
-    if(location.pathname==='/admin/login'||location.pathname==='/admin/setup') return;
+    if(location.pathname==='/admin/login'||location.pathname==='/admin/setup'||location.pathname==='/admin/me/setup'
+       ||location.pathname.indexOf('/admin/invite/')===0) return;
     if(!document.querySelector('a[href="/admin/logout"]')) return;
     pollSummary();
     pollPendingUsers();

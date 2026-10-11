@@ -68,19 +68,21 @@
 
 <div class="dashboard-page" data-mode="view" data-dashboard-user="{{ user.id if user.id is defined else user.name }}">
 
+{# What this reader's portal role lets them do (core/portal_roles.py); portal/access.py refuses the rest. #}
+{% set _asks = reader_can(user, 'ask') %}{% set _arranges = reader_can(user, 'own_dashboards') %}{% set _shares = reader_can(user, 'share') %}
 {% if welcome %}
 <div class="welcome-banner">
   <div>
     <div class="welcome-banner-title">{{ t('ui.dash.welcome', name=user.name.split()[0]) }}</div>
     <div style="opacity:.9;font-size:var(--font-base)">{{ t('ui.dash.welcome_body') }}</div>
   </div>
-  <a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">{{ t('ui.dash.open_chat_arrow') }}</a>
+  {% if _asks %}<a href="/portal/chat" class="btn btn-secondary btn-sm" style="flex-shrink:0">{{ t('ui.dash.open_chat_arrow') }}</a>{% endif %}
 </div>
 {% endif %}
 
 {% if dashboard_artifact %}
 {% if dashboard_artifact %}
-{% set _editable = dashboard_artifact.can_edit %}
+{% set _editable = dashboard_artifact.can_edit %}{% set _arrange = _editable and _arranges %}
 {# The dashboard leads. It used to be an h2 below the account KPI strip and the
    table-access card, under a permanently generic "Dashboards" h1 -- the page
    was organised around the account rather than around the thing you opened. #}
@@ -102,13 +104,13 @@
   </div>
   {# As the approved design has it: Edit, Share, and everything else under ⋯. #}
   <div class="dash-header-actions">
-    {% if _editable and charts %}
+    {% if _arrange and charts %}
     {# View is the default: no handles, no remove buttons, no type switches.
        Edit shows them and lets the tiles move. #}
     <button type="button" class="btn" id="dashEditToggle" aria-pressed="false"
             data-label-edit="{{ t('ui.dash.edit') }}" data-label-done="{{ t('ui.dash.done') }}">{{ ic("pencil", 15) }}<span>{{ t('ui.dash.edit') }}</span></button>
     {% endif %}
-    {% if _editable %}
+    {% if _editable and _shares %}
     <button type="button" class="btn btn-primary" id="dashShareButton" aria-haspopup="dialog" aria-controls="dashShareDialog"
             onclick="document.getElementById('dashShareDialog').showModal()">{{ ic("share", 15) }}<span>{{ t('ui.dash.share') }}</span></button>
     {% endif %}
@@ -129,8 +131,8 @@
         </form>
         {% endif %}
         <div class="dash-menu-sep" role="separator"></div>
-        <a class="dash-menu-item" role="menuitem" href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}">{{ ic("chat", 15) }}<span>{{ t('ui.dash.chat_with') }}</span></a>
-        {% if _editable and charts %}
+        {% if _asks %}<a class="dash-menu-item" role="menuitem" href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}">{{ ic("chat", 15) }}<span>{{ t('ui.dash.chat_with') }}</span></a>{% endif %}
+        {% if _arrange and charts %}
         <button class="dash-menu-item" role="menuitem" type="button" id="dashTidy" title="{{ t('ui.dash.tidy_title') }}"
                 onclick="tidyDashboard(this)">{{ ic("layout-grid", 15) }}<span>{{ t('ui.dash.tidy') }}</span></button>
         {% endif %}
@@ -177,7 +179,7 @@
 
 {% endif %}
 {% if charts %}
-{% if dashboard_artifact.can_edit %}<p class="dash-edit-hint dash-edit-only">{{ t('ui.dash.drag_hint') }}</p>{% endif %}
+{% if dashboard_artifact.can_edit and _arranges %}<p class="dash-edit-hint dash-edit-only">{{ t('ui.dash.drag_hint') }}</p>{% endif %}
 <div class="chart-grid">
   {% for chart in charts %}
   {% set grid_x = chart.grid_x if chart.grid_x is defined and chart.grid_x is not none else (loop.index0 % 2) * 6 %}
@@ -189,7 +191,7 @@
     <div class="chart-card-header">
       {# A tile is its name: the question it came from is not shown. Its owner names it when adding it and can
          rename it in Edit (the pencil, or a click on the name). #}
-      {% set _can_edit = dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit %}
+      {% set _can_edit = _arranges and (dashboard_artifact is not defined or not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="chart-card-name">
         <div class="chart-card-title{% if _can_edit %} is-editable{% endif %}" title="{{ chart.title }}"
              {% if _can_edit %}onclick="if (this.closest('.dashboard-page')?.dataset.mode === 'edit') startRenameChart(this, {{ chart.id|int }})"{% endif %}
@@ -257,7 +259,7 @@
       {% endif %}
       {% if chart.from_cache and chart.refresh_failed_at %}<div class="chart-warning">{{ t('ui.dash.refresh_failed', since=chart.refresh_failed_at[:16], at=(chart.cache_refreshed_at or '')[:16]) }}</div>{% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
-      {% if chart.chart_json and (not dashboard_artifact or dashboard_artifact.can_edit) %}
+      {% if chart.chart_json and _arranges and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
         <!-- type toggles and palette swatches injected by JS -->
       </div>
@@ -272,20 +274,20 @@
   <div class="empty-state-icon">{{ ic("chart-line", 24) }}</div>
   <h2 class="empty-state-title">{{ t('ui.dash.empty_title') }}</h2>
   <p class="empty-state-body">{{ t('ui.dash.empty_body') }}</p>
-  <div class="empty-state-actions">
+  {% if _asks %}<div class="empty-state-actions">
     <a href="/portal/kb" class="btn btn-secondary">{{ t('ui.dash.browse_semantic') }}</a>
     <a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a>
-  </div>
+  </div>{% endif %}
 </div>
 {% elif not dashboards %}
-<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
 {% endif %}
 {# Provenance is a footnote to the charts, not a two-column block above
    them: it used to be the third thing on the page while the charts were
    the fifth. #}
 {# Who sees it: only its owner, or everyone in the workspace -- each teammate sees every tile as their own
    access allows, since a tile is drawn again for whoever opens it. #}
-{% if dashboard_artifact.can_edit %}
+{% if dashboard_artifact.can_edit and _shares %}
 <dialog class="dash-dialog" id="dashShareDialog" aria-labelledby="dashShareTitle" data-dashboard-id="{{ dashboard_artifact.id }}">
   {# Each change saves at once; nothing to submit. People and groups of this workspace only, by name. #}
   <div class="dash-dialog-head">
@@ -331,7 +333,7 @@
   </div>
 <section class="artifact-details" aria-label="{{ t('ui.dash.provenance_label') }}">
   <details class="artifact-detail" open><summary>{{ t('ui.dash.sources', count=dashboard_sources|length) }}</summary><div class="artifact-detail-list">{% for source in dashboard_sources %}<div class="artifact-detail-row"><span>{{ source.name }}</span><span>{{ enum_label('source', source.source_type) }}{% if source.semantic_contract_version %} · {{ source.semantic_contract_version }}{% endif %}</span></div>{% else %}<div class="artifact-detail-row"><span>{{ t('ui.dash.no_sources') }}</span></div>{% endfor %}</div></details>
-  {% if dashboard_artifact.can_edit %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:var(--weight-bold)">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
+  {% if dashboard_artifact.can_edit and _arranges %}<details class="artifact-detail"><summary>{{ t('ui.dash.history', count=dashboard_versions|length) }}</summary><div class="artifact-detail-list">{% for item in dashboard_versions[:8] %}<div class="artifact-detail-row"><span>v{{ item.version }} · {{ item.change_summary }}</span>{% if item.version != dashboard_artifact.version %}<form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/rollback"><input type="hidden" name="version" value="{{ item.version }}"><button class="btn btn-xs btn-secondary" type="submit">{{ t('ui.dash.restore') }}</button></form>{% else %}<span>{{ t('ui.dash.current') }}</span>{% endif %}</div>{% endfor %}</div></details>{% else %}<div class="artifact-detail"><div style="font-size:var(--font-sm);font-weight:var(--weight-bold)">{{ t('ui.dash.published_team') }}</div><div style="font-size:var(--font-sm);color:var(--text-muted);margin-top:.45rem">{{ t('ui.dash.published_team_body') }}</div></div>{% endif %}
 </section>
 
 {# The account's own numbers are context for the artifact above, not the
@@ -362,7 +364,7 @@
 <div class="dashboard-library">{% for item in _shared %}{{ library_item(item) }}{% endfor %}</div>
 {% endif %}
 {% else %}
-<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2><p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div></div>
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions"><a href="/portal/chat" class="btn btn-primary">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
 {% endif %}
 
 <details class="artifact-detail" style="margin:1rem 0"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
@@ -399,7 +401,7 @@ function escHtmlDash(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-const CAN_EDIT_DASHBOARD = {{ (dashboard_artifact.can_edit if dashboard_artifact else true)|tojson }};
+const CAN_EDIT_DASHBOARD = {{ (_arranges and (dashboard_artifact.can_edit if dashboard_artifact else true))|tojson }};
 const ACTIVE_DASHBOARD_ID = {{ (dashboard_artifact.id if dashboard_artifact else 0)|tojson }};
 function sortDashboardTable(button, columnIndex){
   const table = button?.closest('table');

@@ -130,9 +130,10 @@ class TestCustomerDataIsNeverTranslated:
     def test_the_role_is_a_label_not_the_raw_column(self):
         """It rendered `{{ user.role|capitalize }}` -- a filter that cannot
         translate and mangles whatever case the database holds. The role is
-        shown once, under the reader's name in the sidebar."""
-        assert "Analysts · Analyste" in visible(render(lang="fr"))
-        assert "Analysts · Analyst" in visible(render(lang="en"))
+        shown once, under the reader's name in the sidebar: their portal role
+        (core/portal_roles.py), a creator for a reader made before roles."""
+        assert "Analysts · Créateur" in visible(render(lang="fr"))
+        assert "Analysts · Creator" in visible(render(lang="en"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

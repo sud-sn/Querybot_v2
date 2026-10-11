@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "icons.html" import ic %}
+{% from "macros.html" import brand_motion %}
+{% from "_auth_styles.html" import auth_styles %}
+{% block title %}Choose your password — QueryBot Admin{% endblock %}
+{% block auth_content %}
+<div class="auth-card-wrap auth-wide">
+  <div class="auth-brand-identity">
+    {{ brand_motion('admin-auth', 'idle', 'lg', root_id='adminAuthMark') }}
+    <div class="auth-brand-name">Query<span>Bot</span> <span class="auth-brand-tag">Admin</span></div>
+  </div>
+  <div class="card auth-card">
+    {% if not admin %}
+    <div class="card-header"><h1>{{ ic("x-circle", 14) }} This link does not work</h1></div>
+    <div class="card-body">
+      <p class="auth-lead">It was used already, it expired, or it was replaced by a newer one. Ask a Super admin for a new link.</p>
+      <p class="auth-switch"><a href="/admin/login">Go to sign-in</a></p>
+    </div>
+    {% else %}
+    <div class="card-header"><h1>{{ ic("key", 14) }} Welcome{% if admin.name %}, {{ admin.name }}{% endif %}</h1></div>
+    <div class="card-body">
+      <p class="auth-lead">You are a <b>{{ admin.role_label }}</b> for QueryBot. Choose your password; you then sign in as
+        <b>{{ admin.email }}</b>.</p>
+      {% if error %}
+      <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
+        <span class="alert-icon">{{ ic("x-circle", 16) }}</span>
+        <div class="alert-body">{{ error }}</div>
+      </div>
+      {% endif %}
+      <form method="post" action="/admin/invite/{{ token }}" data-busy-on-submit>
+        <div class="form-group">
+          <label for="name">Your name</label>
+          <input type="text" id="name" name="name" value="{{ admin.name or '' }}" autocomplete="name">
+        </div>
+        <input type="email" name="email" value="{{ admin.email }}" autocomplete="username" hidden aria-hidden="true" tabindex="-1">
+        <div class="form-group">
+          <label for="password">Password <span class="text-muted">(at least {{ min_password }} characters)</span></label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="password" name="password" required minlength="{{ min_password }}" autofocus autocomplete="new-password">
+            <button type="button" class="input-reveal-btn" data-qb-reveal="password" aria-pressed="false" aria-label="Show password">{{ ic("eye", 16) }}</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="confirm_password">Type it again</label>
+          <input type="password" id="confirm_password" name="confirm_password" required minlength="{{ min_password }}" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Choose this password &rarr;</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{{ auth_styles() }}
+{% endblock %}

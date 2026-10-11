@@ -52,9 +52,13 @@
         {% if not item.single %}
         <div class="inbox-clients">
           {% for m in item.shown %}
+          {% if admin_can is not defined or admin_can(request, m.href) %}
           <a class="inbox-chip" href="{{ m.href }}">
             {{ m.client_name }}{% if m.count %}<span class="inbox-chip-n">{{ m.count }}</span>{% endif %}
           </a>
+          {% else %}{# Their role does not reach the page that fixes it: named, not linked. #}
+          <span class="inbox-chip">{{ m.client_name }}{% if m.count %}<span class="inbox-chip-n">{{ m.count }}</span>{% endif %}</span>
+          {% endif %}
           {% endfor %}
           {% if item.more %}
           {# No link: there is no page that lists "the rest of these", and a link
@@ -65,7 +69,7 @@
         {% endif %}
       </div>
 
-      {% if item.single %}
+      {% if item.single and (admin_can is not defined or admin_can(request, item.href)) %}
       <a href="{{ item.href }}" class="btn btn-secondary btn-sm inbox-cta">
         {{ item.cta }} &rarr;
       </a>

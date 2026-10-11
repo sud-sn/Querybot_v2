@@ -188,6 +188,7 @@ def create_user(
     role: str = "analyst",
     password: Optional[str] = None,
     must_change: bool = False,
+    portal_role: str = "creator",
 ) -> tuple[int, str]:
     """
     Create a portal user.
@@ -214,10 +215,10 @@ def create_user(
         cur = conn.execute("""
             INSERT INTO portal_user
                 (account_id, group_id, name, email, password_hash, role, is_temp_pw,
-                 temp_pw_expires_at)
-            VALUES (?,?,?,?,?,?,?,?)
+                 temp_pw_expires_at, portal_role)
+            VALUES (?,?,?,?,?,?,?,?,?)
         """, (account_id, group_id, name, email.lower().strip(), pw_hash, role, is_temp,
-              expires))
+              expires, _portal_role(portal_role)))
         uid = cur.lastrowid
     log.info("Created user '%s' (id=%d) for client %s (temp_pw=%s)",
              email, uid, account_id, bool(is_temp))
@@ -287,14 +288,25 @@ def list_users(account_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _portal_role(value: str) -> str:
+    from core.portal_roles import PORTAL_ROLES
+
+    if value not in PORTAL_ROLES:
+        raise ValueError(f"Unknown portal role: {value!r}")
+    return value
+
+
 def update_user(
     user_id: int,
     name: Optional[str] = None,
     group_id: Optional[int] = None,
     role: Optional[str] = None,
     is_active: Optional[int] = None,
+    portal_role: Optional[str] = None,
 ) -> None:
     fields, params = [], []
+    if portal_role is not None:
+        fields.append("portal_role=?"); params.append(_portal_role(portal_role))
     if name is not None:
         fields.append("name=?"); params.append(name)
     if group_id is not None:

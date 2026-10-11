@@ -472,6 +472,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.browse_semantic": {"en": "Browse Semantic Layer", "fr": "Parcourir la couche sémantique"},
     "ui.dash.open_chat": {"en": "Open Chat", "fr": "Ouvrir le chat"},
     "ui.dash.no_dashboards_title": {"en": "No dashboards yet", "fr": "Aucun tableau de bord"},
+    "ui.dash.no_dashboards_viewer": {
+        "en": "The dashboards shared with you appear here.",
+        "fr": "Les tableaux de bord partagés avec vous apparaissent ici.",
+    },
     "ui.dash.no_dashboards_body": {
         "en": "Create an analysis in Chat and add the resulting KPI, chart, or "
               "table to a new named dashboard.",
@@ -628,6 +632,36 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.enum.charttype.heatmap": {"en": "Grid", "fr": "Grille"},
     "ui.enum.role.admin": {"en": "Admin", "fr": "Administrateur"},
     "ui.enum.role.analyst": {"en": "Analyst", "fr": "Analyste"},
+    "ui.enum.portal_role.viewer": {"en": "Viewer", "fr": "Lecteur"},
+    "ui.enum.portal_role.asker": {"en": "Asker", "fr": "Demandeur"},
+    "ui.enum.portal_role.creator": {"en": "Creator", "fr": "Créateur"},
+    "portal.role.no_chat": {
+        "en": "Your access lets you read the dashboards shared with you. Asking questions needs the Asker or "
+              "Creator role: ask an administrator of this workspace.",
+        "fr": "Votre accès vous permet de lire les tableaux de bord partagés avec vous. Pour poser des questions, "
+              "il faut le rôle Demandeur ou Créateur : demandez-le à un administrateur de cet espace.",
+    },
+    "portal.role.no_dashboard_request": {
+        "en": "Creating a dashboard from a request is for Creators. You can save answers to your own private "
+              "dashboard with Add to dashboard, or ask an administrator for the Creator role.",
+        "fr": "La création d'un tableau de bord à partir d'une demande est réservée aux Créateurs. Vous pouvez "
+              "enregistrer des réponses dans votre tableau de bord privé avec Ajouter au tableau de bord, ou demander "
+              "le rôle Créateur à un administrateur.",
+    },
+    "portal.role.no_dashboard_talk": {
+        "en": "Changing a dashboard by talking is for Creators. You can still move, rename and remove tiles on your "
+              "own dashboards from the dashboard itself.",
+        "fr": "La modification d'un tableau de bord par la conversation est réservée aux Créateurs. Vous pouvez "
+              "toujours déplacer, renommer et retirer les tuiles de vos tableaux de bord depuis le tableau de bord.",
+    },
+    "portal.role.no_share": {
+        "en": "Sharing and publishing dashboards is for Creators.",
+        "fr": "Le partage et la publication des tableaux de bord sont réservés aux Créateurs.",
+    },
+    "portal.role.not_allowed": {
+        "en": "Your role does not include this. Ask an administrator of this workspace if you need it.",
+        "fr": "Votre rôle ne le permet pas. Demandez-le à un administrateur de cet espace si vous en avez besoin.",
+    },
     "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
     "ui.enum.source.metric": {"en": "Metric", "fr": "Métrique"},
     "ui.enum.source.report": {"en": "Report", "fr": "Rapport"},

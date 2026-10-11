@@ -1402,6 +1402,12 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
                   question_id: str = "", progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
     """The new core's answer in the web portal (compare mode, or core2 mode). ``progress`` is shown a described
     dashboard's card as its tiles land."""
+    from core.portal_roles import can, refusal
+    from core2 import dashboards
+
+    if dashboards.asked_for(question) is not None and not can(portal_user, "create_dashboard"):
+        # A dashboard made from a request is a creator's (core/portal_roles.py): refused before any AI.
+        return _frame(question, refusal("create_dashboard", str((portal_user or {}).get("lang") or "en")))
     services, refused = _portal_services(account_id, question, portal_user, question_id)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")

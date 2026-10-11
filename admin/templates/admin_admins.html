@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
+{% import "_admin_bits.html" as bits with context %}
+{% block title %}Admins — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "Dashboard", "href": "/admin"}, {"label": "Admins", "href": ""}]) }}
+{% endblock %}
+{% block head %}{{ bits.styles() }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Admins</h1>
+  <p>Who signs in to this admin panel, with which role, and for which workspaces. Every change names who made it.</p>
+</div>
+
+{{ bits.invite_reveal(invite) }}
+{% if saved %}<div class="alert alert-success" role="status">Saved.</div>{% endif %}
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>Invite an admin</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/admins/invite" id="inviteForm">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="inv_email">Work email</label>
+          <input type="email" id="inv_email" name="email" required placeholder="name@company.com">
+        </div>
+        <div class="form-group">
+          <label for="inv_name">Name</label>
+          <input type="text" id="inv_name" name="name" placeholder="Optional: they can give it themselves">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="inv_role">Role</label>
+        <select id="inv_role" name="role" data-role-select>
+          {% for value, label in roles %}<option value="{{ value }}" {% if value == 'data_steward' %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <p class="adm-role-note" data-role-note>{{ bits.ROLE_NOTES['data_steward'] }}</p>
+      </div>
+      <fieldset class="form-group" data-spaces>
+        <legend>Workspaces they look after</legend>
+        {% if clients %}
+        <div class="adm-spaces">
+          {% for c in clients %}<label><input type="checkbox" name="workspaces" value="{{ c.account_id }}"> {{ c.client_name or c.account_id }}</label>{% endfor %}
+        </div>
+        {% else %}<p class="text-muted text-sm">No workspaces yet.</p>{% endif %}
+      </fieldset>
+      <button type="submit" class="btn btn-primary">{{ ic("plus", 15) }} Invite</button>
+      <span class="text-muted text-sm" style="margin-left:8px">You get a one-time link to send them.</span>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Everyone</h2></div>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table">
+      <thead><tr><th>Admin</th><th>Role</th><th>Workspaces</th><th>Sign-in</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+      {% for a in admins %}
+        <tr class="{% if not a.is_active %}row-inactive{% endif %}" data-admin="{{ a.email }}">
+          <td data-label="Admin"><span class="adm-who"><b>{{ a.name or a.email }}{% if me and me.admin_id == a.id %}<span class="badge badge-indigo adm-you">you</span>{% endif %}</b>
+            <small>{{ a.email }}</small></span></td>
+          <td data-label="Role"><span class="badge {% if a.role == 'super_admin' %}badge-amber{% else %}badge-indigo{% endif %}">{{ a.role_label }}</span></td>
+          <td data-label="Workspaces">
+            {% if a.role == 'super_admin' %}<span class="text-muted text-sm">Every workspace</span>
+            {% else %}<span class="adm-chips">{% for w in a.workspaces %}<span class="badge badge-gray">{{ names.get(w, w) }}</span>{% else %}<span class="text-muted text-sm">None</span>{% endfor %}</span>{% endif %}
+          </td>
+          <td data-label="Sign-in" class="text-sm">
+            {% if not a.is_active %}<span class="badge badge-gray">Inactive</span>
+            {% elif not a.password_hash %}<span class="badge badge-amber">Waiting to choose a password</span>
+            {% else %}<span class="badge badge-green">Active</span>{% endif %}
+            <div class="text-muted">{{ ('last ' ~ a.last_sign_in_at[:16]) if a.last_sign_in_at else 'never signed in' }}</div>
+          </td>
+          <td>
+            <div class="adm-actions">
+              <form method="post" action="/admin/admins/{{ a.id }}/invite" class="inline-form">
+                <button type="submit" class="btn btn-ghost btn-xs" title="A new one-time link to choose a password">{{ ic("link", 13) }} New link</button>
+              </form>
+              {% if not (me and me.admin_id == a.id) %}
+              <form method="post" action="/admin/admins/{{ a.id }}/delete" class="inline-form">
+                <button type="submit" class="btn btn-ghost btn-xs text-danger" aria-label="Remove {{ a.email }}"
+                        data-confirm-title="Remove this admin?" data-confirm="{{ a.email }} will no longer sign in to the admin panel. The log keeps what they did."
+                        data-confirm-label="Remove">{{ ic("trash", 13) }}</button>
+              </form>
+              {% endif %}
+            </div>
+            <details class="adm-row-edit">
+              <summary>Change</summary>
+              <form method="post" action="/admin/admins/{{ a.id }}/update">
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label for="r{{ a.id }}">Role</label>
+                    <select id="r{{ a.id }}" name="role" data-role-select>
+                      {% for value, label in roles %}<option value="{{ value }}" {% if value == a.role %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="s{{ a.id }}">Sign-in</label>
+                    <select id="s{{ a.id }}" name="is_active">
+                      <option value="1" {% if a.is_active %}selected{% endif %}>Active</option>
+                      <option value="0" {% if not a.is_active %}selected{% endif %}>Deactivated</option>
+                    </select>
+                  </div>
+                </div>
+                <fieldset class="form-group" data-spaces>
+                  <legend>Workspaces</legend>
+                  <div class="adm-spaces">
+                    {% for c in clients %}<label><input type="checkbox" name="workspaces" value="{{ c.account_id }}" {% if c.account_id in a.workspaces %}checked{% endif %}> {{ c.client_name or c.account_id }}</label>{% endfor %}
+                  </div>
+                </fieldset>
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted">No named admins yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Emergency sign-in</h2></div>
+  <div class="card-body">
+    <p class="adm-plain">The admin password this server was set up with signs in as a Super admin with no name. It is
+      <span class="{{ 'adm-state-on' if emergency_on else 'adm-state-off' }}">{{ 'on' if emergency_on else 'off' }}</span>.
+      Every use is logged and shows a red banner. Keep it for the day no Super admin can sign in, or turn it off; on the server,
+      <code>python -m admin.reset_password</code> sets a new one and turns it back on.</p>
+    <form method="post" action="/admin/admins/emergency" class="inline-form">
+      <input type="hidden" name="state" value="{{ 'off' if emergency_on else 'on' }}">
+      <button type="submit" class="btn {{ 'btn-danger' if emergency_on else 'btn-secondary' }} btn-sm"
+              data-confirm-title="{{ 'Turn emergency sign-in off?' if emergency_on else 'Turn emergency sign-in on?' }}"
+              data-confirm="{{ 'The shared admin password stops working, and anyone signed in with it is signed out.' if emergency_on else 'The shared admin password will sign in as a Super admin again.' }}"
+              data-confirm-label="{{ 'Turn off' if emergency_on else 'Turn on' }}">{{ 'Turn it off' if emergency_on else 'Turn it on' }}</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>What admins did</h2></div>
+  {{ bits.event_table(events, show_workspace=true) }}
+</div>
+
+<script>
+(function(){
+  var notes = {{ bits.ROLE_NOTES | tojson }};
+  document.querySelectorAll('[data-role-select]').forEach(function(sel){
+    var form = sel.closest('form'), spaces = form.querySelector('[data-spaces]'), note = form.querySelector('[data-role-note]');
+    function show(){
+      if (spaces) spaces.hidden = sel.value === 'super_admin';
+      if (note) note.textContent = notes[sel.value] || '';
+    }
+    sel.addEventListener('change', show); show();
+  });
+})();
+</script>
+{% endblock %}

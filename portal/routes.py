@@ -51,6 +51,7 @@ from core.chart import detect_chart_type, build_chart_payload, build_chart_annot
 from core.semantic_layer import build_semantic_layer_tables, find_semantic_field
 from core.field_overrides import load_field_overrides
 from core.portal_notifications import portal_notification_hub
+from core.portal_roles import can as can_do, portal_role as reader_role
 from core.i18n import (
     catalogue_for, date_format, number_format, translator_for, LANGUAGE_NAMES,
     DEFAULT_LANGUAGE, activate_language, deactivate_language,
@@ -71,6 +72,9 @@ templates = Jinja2Templates(
 templates.env.globals["asset"] = asset_url
 # The reader's chart choices (palette, line shape, values on lines, motion), for every page that draws charts.
 templates.env.globals["chart_prefs"] = lambda user: store.chart_prefs(user if isinstance(user, dict) else None)
+# What the reader's portal role lets them do (core/portal_roles.py): pages draw only what portal/access.py serves.
+templates.env.globals["reader_can"] = lambda user, action: can_do(user if isinstance(user, dict) else None, action)
+templates.env.globals["reader_role"] = lambda user: reader_role(user if isinstance(user, dict) else None)
 
 _COOKIE = "qb_portal_session"  # different from admin cookie
 
@@ -941,7 +945,7 @@ def _landing(user: dict | None) -> str:
         client = store.get_client((user or {}).get("account_id") or "") or {}
     except Exception:  # noqa: BLE001 - an unreadable workspace lands where it always did
         client = {}
-    return "/portal/chat" if client.get("chat_ui_enabled") else "/portal/dashboard"
+    return "/portal/chat" if client.get("chat_ui_enabled") and can_do(user, "ask") else "/portal/dashboard"
 
 
 @router.get("/home")

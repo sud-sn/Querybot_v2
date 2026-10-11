@@ -1,0 +1,84 @@
+{# Pieces the admin-account pages share: the one-time invitation link, the log of admins' actions, role notes. #}
+{% from "icons.html" import ic %}
+
+{% set ROLE_NOTES = {
+  'super_admin': 'Everything: workspaces, databases, Learn, compliance, system settings and the other admins.',
+  'workspace_admin': 'The people, groups, table access and admins of their workspaces, and everything a data steward does there.',
+  'data_steward': "Metrics, dates, relationships, the knowledge base and readers' requests, in their workspaces."} %}
+
+{% set EVENT_LABELS = {
+  'sign_in': 'Signed in', 'sign_out': 'Signed out', 'emergency_sign_in': 'Signed in with the emergency password',
+  'refused': 'Refused', 'change': 'Changed', 'admin_created': 'Made an admin account', 'admin_invited': 'Invited an admin',
+  'admin_changed': 'Changed an admin', 'admin_removed': 'Removed an admin', 'admin_link_issued': 'Made a new sign-in link',
+  'invite_accepted': 'Chose a password', 'password_changed': 'Changed their password',
+  'admin_workspace_added': 'Gave a workspace', 'admin_workspace_removed': 'Took a workspace away',
+  'emergency_off': 'Turned emergency sign-in off', 'emergency_on': 'Turned emergency sign-in on'} %}
+
+{% macro invite_reveal(invite) %}
+{% if invite %}
+<div class="alert alert-success adm-invite" role="status">
+  <span class="alert-icon">{{ ic("link", 16) }}</span>
+  <div class="alert-body">
+    <b>Send this link to {{ invite[0] }}.</b> It works once, for 72 hours, and is not shown again: they open it to choose
+    their password.
+    <div class="adm-invite-row">
+      <input type="text" readonly value="{{ invite[1] }}" id="inviteLink" aria-label="One-time sign-in link" onfocus="this.select()">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="(function(b){var i=document.getElementById('inviteLink');
+        i.select();(navigator.clipboard?navigator.clipboard.writeText(i.value):Promise.reject()).then(function(){b.textContent='Copied';},
+        function(){document.execCommand&&document.execCommand('copy');b.textContent='Copied';});})(this)">{{ ic("copy", 14) }} Copy</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro event_table(events, show_workspace=false) %}
+{% if events %}
+<div class="qb-table-wrap">
+  <table class="qb-table adm-events">
+    <thead><tr><th>When</th><th>Who</th><th>What</th>{% if show_workspace %}<th>Workspace</th>{% endif %}<th>Detail</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="{% if e.action == 'refused' %}adm-refused{% elif e.action == 'emergency_sign_in' %}adm-emergency{% endif %}">
+        <td data-label="When" class="text-sm">{{ (e.created_at or '')[:16] }}</td>
+        <td data-label="Who" class="text-sm">{{ e.admin_email or 'emergency sign-in' }}</td>
+        <td data-label="What" class="text-sm">{{ EVENT_LABELS.get(e.action, e.action) }}{% if e.action in ('change', 'refused') %}
+          <code class="adm-path">{{ e.method }} {{ e.path }}</code>{% endif %}</td>
+        {% if show_workspace %}<td data-label="Workspace" class="text-sm">{{ e.account_id or '—' }}</td>{% endif %}
+        <td data-label="Detail" class="text-sm">{{ e.detail or '' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted text-sm" style="padding:1rem">Nothing yet.</p>
+{% endif %}
+{% endmacro %}
+
+{% macro styles() %}
+<style>
+.adm-invite-row { display: flex; gap: 8px; margin-top: 8px; }
+.adm-invite-row input { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--font-xs); }
+.adm-events code.adm-path { display: block; color: var(--text-muted); font-size: var(--font-2xs); word-break: break-all; }
+.adm-refused td { color: var(--danger); }
+.adm-emergency td { color: var(--warning); }
+fieldset.form-group { border: 0; padding: 0; margin: 0 0 1rem; min-width: 0; }
+fieldset.form-group legend { padding: 0; margin-bottom: 4px; font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text-soft); }
+.adm-plain { font-size: var(--font-sm); line-height: 1.55; margin: 0 0 .75rem; }
+.adm-role-note { color: var(--text-muted); font-size: var(--font-xs); line-height: 1.4; margin-top: 4px; }
+.adm-spaces { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px; margin-top: 6px; }
+.adm-spaces label { display: flex; gap: 6px; align-items: center; font-size: var(--font-sm); padding: 4px 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-spaces label:has(input:checked) { border-color: var(--primary); background: var(--primary-soft, var(--surface-2)); }
+.adm-who { display: flex; flex-direction: column; }
+.adm-who small { color: var(--text-muted); }
+.adm-you { margin-left: 6px; }
+.adm-row-edit summary { cursor: pointer; color: var(--primary); font-size: var(--font-sm); }
+.adm-row-edit[open] { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-top: 6px; background: var(--surface-2); }
+.adm-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.adm-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.adm-state-on { color: var(--danger); font-weight: var(--weight-semibold); }
+.adm-state-off { color: var(--success); font-weight: var(--weight-semibold); }
+</style>
+{% endmacro %}

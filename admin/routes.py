@@ -32,7 +32,7 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Form, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
@@ -41,6 +41,7 @@ from fastapi.templating import Jinja2Templates
 
 import store
 from admin import credentials as admin_credentials
+from admin import access as admin_access
 from core import web_security
 from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
@@ -49,6 +50,8 @@ from core.pipeline_context import save_state
 from core.process_secrets import env_secret_or_random
 from core.release import kb_build_record, kb_rebuild_needed, product_version
 from core.static_assets import asset_url
+from core.i18n import enum_label
+from core.portal_roles import CREATOR, PORTAL_ROLES, portal_role as reader_role
 from core.llm_audit import llm_audit_scope, make_llm_audit_request_id
 from core.log_export import (
     DEFAULT_EXPORT_TIME,
@@ -65,6 +68,7 @@ from core.admin_notifications import (
     admin_notification_hub,
     notify_kb_build_changed,
     notify_semantic_feedback_changed,
+    scoped_summary,
     semantic_feedback_summary,
 )
 from core.portal_notifications import notify_portal_semantic_feedback_changed
@@ -115,10 +119,11 @@ templates.env.globals["asset"] = asset_url
 templates.env.globals["product_version"] = product_version
 
 
-def _admin_workspaces(current: str = "", limit: int = 8) -> dict:
-    """The workspaces the sidebar lists: by name, the first few and the one open now, and how many there are."""
+def _admin_workspaces(current: str = "", limit: int = 8, request=None) -> dict:
+    """The workspaces the sidebar lists: by name, the first few and the one open now, and how many there are.
+    With ``request``, only those the signed-in admin may open."""
     try:
-        rows = store.list_clients()
+        rows = _visible_clients(request, store.list_clients()) if request is not None else store.list_clients()
     except Exception as exc:  # noqa: BLE001 - the sidebar still draws; the page says what failed elsewhere
         log.warning("admin: the sidebar's workspaces could not be read: %s", exc)
         rows = []
@@ -131,6 +136,26 @@ def _admin_workspaces(current: str = "", limit: int = 8) -> dict:
 
 
 templates.env.globals["admin_workspaces"] = _admin_workspaces
+
+
+def _visible_clients(request, rows: list[dict]) -> list[dict]:
+    """The workspaces (client rows) the signed-in admin may open: every one for a super admin."""
+    identity = admin_access.identity_of(request) if request is not None else None
+    if identity is None or identity.is_super:
+        return rows
+    return admin_access.visible_workspaces(identity, rows)
+
+
+def _admin_can(request, path: str) -> bool:
+    """Whether to draw a link: the signed-in admin's role reaches ``path``. AdminAccess refuses the page itself
+    whatever a link shows; a page drawn with no session (only a test does that) shows every link."""
+    identity = admin_access.identity_of(request)
+    return True if identity is None else admin_access.can(identity, path)
+
+
+templates.env.globals["admin_can"] = _admin_can
+templates.env.globals["admin_me"] = lambda request: admin_access.identity_of(request)
+templates.env.globals["admin_emergency_needs_account"] = lambda: not store.count_active_super_admins()
 
 _COOKIE = "querybot_session"
 
@@ -172,48 +197,40 @@ def _session_secret() -> str:
         "ADMIN_SESSION_SECRET", "SESSION_SECRET", purpose="admin_session")
 
 # An admin session lasts at most this long, and a password change ends it
-# sooner (admin/credentials.py). Every sign-in used to get the same cookie --
-# a signature of the word "admin" -- which never expired and survived any
-# password change.
-_ADMIN_SESSION_HOURS = 8
+# sooner (admin/credentials.py, store.set_admin_password). Sessions are signed
+# and read in admin/access.py, which also decides what each admin may open.
+_ADMIN_SESSION_HOURS = admin_access.SESSION_HOURS
 
 
 def _sign_admin_session(*, issued: int | None = None) -> str:
-    """A cookie for one admin sign-in: the session version, when, and a nonce."""
-    stamp = int(time.time()) if issued is None else int(issued)
-    payload = (f"admin:{admin_credentials.session_version()}:{stamp}:"
-               f"{secrets.token_hex(8)}").encode()
-    sig = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
-    token = base64.urlsafe_b64encode(payload).decode().rstrip("=")
-    return f"{token}.{sig}"
+    """A cookie for the emergency sign-in (the shared admin password)."""
+    return admin_access.sign_session(None, issued=issued)
 
 def _is_admin_cookie(raw: str) -> bool:
-    if not raw:
-        return False
-    try:
-        token, sig = raw.split(".", 1)
-        padding = "=" * (-len(token) % 4)
-        payload = base64.urlsafe_b64decode((token + padding).encode())
-        expected = hmac.new(_session_secret().encode(), payload, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            return False
-        kind, version, issued, _nonce = payload.decode().split(":")
-        return (kind == "admin"
-                and int(version) == admin_credentials.session_version()
-                and time.time() - int(issued) <= _ADMIN_SESSION_HOURS * 3600)
-    except Exception:
-        return False
+    return admin_access.read_session(raw) is not None
+
+def _admin_path(request) -> str:
+    url = getattr(request, "url", None)
+    path = str(getattr(url, "path", "") or "/admin")
+    return path[len("/admin"):] or "/" if path.startswith("/admin") else path
+
+def _me(request) -> "admin_access.AdminIdentity | None":
+    """The signed-in admin, or None."""
+    return admin_access.identity_of(request)
 
 def _is_auth(request: Request) -> bool:
-    return _is_admin_cookie(request.cookies.get(_COOKIE, ""))
+    """Signed in, and the admin's role reaches this page (admin/access.py; the middleware refused it already)."""
+    identity = _me(request)
+    return identity is not None and admin_access.decide(identity, _admin_path(request)).allowed
 
 def _is_ws_auth(websocket: WebSocket) -> bool:
-    return _is_admin_cookie(websocket.cookies.get(_COOKIE, ""))
+    return _is_auth(websocket)
 
-def _set_admin_cookie(resp: RedirectResponse, request: Request) -> None:
+def _set_admin_cookie(resp: RedirectResponse, request: Request, admin: dict | None = None) -> None:
+    """Signs in a named admin (``admin``), or the emergency sign-in."""
     resp.set_cookie(
         _COOKIE,
-        _sign_admin_session(),
+        admin_access.sign_session(admin),
         max_age=_ADMIN_SESSION_HOURS * 3600,
         httponly=True,
         samesite="lax",
@@ -583,12 +600,18 @@ def _client_health_score(account_id: str, client: dict | None = None) -> dict:
     }
 
 
+def _hears(request) -> Callable[[str], bool] | None:
+    """Which workspaces' notices this admin is told about: None for every one (a super admin)."""
+    me = _me(request)
+    return None if me is None or me.is_super else me.opens
+
+
 # Realtime admin notifications.
 @router.get("/api/semantic-feedback/pending-count")
 async def semantic_feedback_pending_count_api(request: Request):
     if not _is_auth(request):
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return JSONResponse(semantic_feedback_summary())
+    return JSONResponse(scoped_summary(semantic_feedback_summary(), _hears(request)))
 
 
 @router.websocket("/ws/notifications")
@@ -597,12 +620,13 @@ async def admin_notifications_ws(websocket: WebSocket):
         await websocket.close(code=4401)
         return
 
-    await admin_notification_hub.connect(websocket)
+    hears = _hears(websocket)
+    await admin_notification_hub.connect(websocket, hears)
     try:
         await websocket.send_json({
             "type": "semantic_feedback_pending",
             "action": "snapshot",
-            "summary": semantic_feedback_summary(),
+            "summary": scoped_summary(semantic_feedback_summary(), hears),
         })
         while True:
             await websocket.receive_text()
@@ -615,50 +639,14 @@ async def admin_notifications_ws(websocket: WebSocket):
 
 
 # ── Login / logout ────────────────────────────────────────────────────────────
-
-@router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    return _resp(request, "login.html", {"error": None})
+# Signing in (a named admin, or the emergency admin password) is in admin/admin_accounts.py, imported at the end
+# of this file; login_page, login_submit and logout are the names it gives them here too.
 
 _UNREADABLE_ADMIN_PASSWORD = (
     "The admin password stored on this server can't be read: the encryption "
     "key has changed. Set a new one on the server with "
     "python -m admin.reset_password"
 )
-
-
-@router.post("/login")
-async def login_submit(request: Request, password: str = Form(...)):
-    if _first_run():
-        return RedirectResponse("/admin/setup", status_code=303)
-    if not admin_credentials.is_readable():
-        return _resp(request, "login.html", {"error": _UNREADABLE_ADMIN_PASSWORD})
-    # One password and no user name, so attempts are counted per client
-    # address. Behind a reverse proxy that is the proxy's address unless
-    # uvicorn is told to trust its forwarded headers (docs/UPGRADE_RUNBOOK.md).
-    identity = store.sign_in_identity("admin", request.client.host if request.client else "")
-    wait = store.sign_in_wait_seconds(identity)
-    if not wait and not admin_credentials.verify(password):
-        wait = store.record_sign_in_failure(identity, "admin")
-        if not wait:
-            return _resp(request, "login.html", {"error": "Incorrect password"})
-    if wait:
-        response = templates.TemplateResponse(
-            request=request, name="login.html", status_code=429,
-            context={"error": f"Too many attempts. Wait {max(1, -(-wait // 60))} min and try again."})
-        response.headers["Retry-After"] = str(wait)
-        return response
-    store.clear_sign_in_failures(identity)
-    admin_credentials.upgrade_hash(password)
-    resp = RedirectResponse("/admin", status_code=303)
-    _set_admin_cookie(resp, request)
-    return resp
-
-@router.get("/logout")
-async def logout():
-    resp = RedirectResponse("/admin/login", status_code=303)
-    resp.delete_cookie(_COOKIE)
-    return resp
 
 
 # ── First-time setup ──────────────────────────────────────────────────────────
@@ -717,10 +705,14 @@ async def dashboard(request: Request):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
 
-    clients   = store.list_clients()
+    me        = _me(request)
+    clients   = _visible_clients(request, store.list_clients())
     platforms = store.list_platforms()
     dbs       = store.list_db_configs()
-    stats     = store.get_query_stats()
+    if me is None or me.is_super:
+        stats = store.get_query_stats()
+    else:
+        stats = _summed_stats([store.get_query_stats(c["account_id"]) for c in clients])
 
     plat_map = {p["id"]: p["name"] for p in platforms}
     db_map   = {d["id"]: f"{d['name']} ({d['label']})" for d in dbs}
@@ -739,6 +731,16 @@ async def dashboard(request: Request):
         "inbox": inbox, "inbox_summary": inbox_summary(inbox),
         "unreadable_credentials": store.unreadable_credentials(),
     })
+
+
+def _summed_stats(parts: list[dict]) -> dict:
+    """Query totals over several workspaces (an admin who looks after some of them)."""
+    total = sum(int(p.get("total") or 0) for p in parts)
+    summed = {key: sum((p.get(key) or 0) for p in parts)
+              for key in ("total", "succeeded", "total_tokens_in", "total_tokens_out", "total_cost_usd")}
+    summed["avg_duration_ms"] = (sum((p.get("avg_duration_ms") or 0) * int(p.get("total") or 0) for p in parts) / total
+                                 if total else 0)
+    return summed
 
 
 # ── System config ─────────────────────────────────────────────────────────────
@@ -2110,7 +2112,7 @@ async def clients_page(request: Request):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
     search  = request.query_params.get("q", "").strip()
-    clients = store.list_clients(search or None)
+    clients = _visible_clients(request, store.list_clients(search or None))
     dbs     = store.list_db_configs()
     db_map  = {d["id"]: f"{d['name']} ({d['label']})" for d in dbs}
     for c in clients:
@@ -4322,16 +4324,17 @@ def _workspace_group(account_id: str, group_id: int) -> dict:
 
 
 def _admin_actor(request: Request) -> tuple[str, str]:
-    """Who did it, as far as the console knows: which admin session, from where.
-
-    The console has one shared identity, so a session fingerprint is the most
-    specific name available -- enough to tell two admins' sessions apart.
-    """
-    cookie = str(request.cookies.get(_COOKIE, "") or "")
-    session = hashlib.sha256(cookie.encode()).hexdigest()[:10] if cookie else "unknown"
+    """Who did it, from where: the named admin's email, or for the emergency sign-in (one shared password) a
+    fingerprint of its session -- enough to tell two such sessions apart."""
     client = getattr(request, "client", None)
     host = getattr(client, "host", "") if client else ""
-    return f"admin session {session}", host if isinstance(host, str) else ""
+    host = host if isinstance(host, str) else ""
+    me = _me(request)
+    if me is not None and not me.emergency:
+        return me.email, host
+    cookie = str(request.cookies.get(_COOKIE, "") or "")
+    session = hashlib.sha256(cookie.encode()).hexdigest()[:10] if cookie else "unknown"
+    return f"admin session {session}" + (" (emergency sign-in)" if me is not None else ""), host
 
 
 def _record_user_event(request: Request, account_id: str, user: dict, action: str,
@@ -4437,9 +4440,12 @@ async def user_create(
     password:   str = Form(""),
     confirm_password: str = Form(""),
     must_change: str = Form(""),
+    portal_role: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    # A form from before reader roles sends none: such a person could do everything, as a creator can.
+    portal_role = portal_role if isinstance(portal_role, str) and portal_role in PORTAL_ROLES else CREATOR
     if not name.strip() or not email.strip():
         return RedirectResponse(
             f"/admin/clients/{account_id}/users?error=Name+and+email+required",
@@ -4472,7 +4478,7 @@ async def user_create(
         gid  = int(group_id) if group_id else None
         uid, plain_pw = store.create_user(
             account_id, name.strip(), email.strip(), gid, role,
-            password=explicit_pw or None, must_change=temporary,
+            password=explicit_pw or None, must_change=temporary, portal_role=portal_role,
         )
     except Exception as e:
         # Logged, not shown: the text of a database error is not for the page.
@@ -4484,7 +4490,8 @@ async def user_create(
     _record_user_event(request, account_id, created, "created", detail=(
         "temporary password generated" if not explicit_pw
         else "password chosen by the admin, to be changed at first sign-in" if temporary
-        else "password chosen by the admin"))
+        else "password chosen by the admin") + f"; {enum_label('portal_role', portal_role)}"
+        + ("; every table" if role == "admin" else ""))
     token = _stash_reveal(account_id, {
         "name": name.strip(), "email": created.get("email", ""), "password": plain_pw,
         "is_temp": temporary, "kind": "created",
@@ -4502,6 +4509,7 @@ async def user_update(
     group_id:   str = Form(""),
     role:       str = Form(""),
     is_active:  str = Form(""),
+    portal_role: str = Form(""),
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
@@ -4509,17 +4517,23 @@ async def user_update(
     if group_id:
         _workspace_group(account_id, int(group_id))
     active = int(is_active) if is_active in ("0", "1") else None
+    portal_role = portal_role if isinstance(portal_role, str) and portal_role in PORTAL_ROLES else ""
     store.update_user(
         user_id,
         name     = name.strip() or None,
         group_id = int(group_id) if group_id else None,
         role     = role or None,
         is_active= active,
+        portal_role = portal_role or None,
     )
+    if portal_role and portal_role != reader_role(user):
+        _record_user_event(request, account_id, user, "role_changed", detail=(
+            f"{enum_label('portal_role', reader_role(user))} to {enum_label('portal_role', portal_role)}"))
     if active is not None and active != int(user.get("is_active") or 0):
         _record_user_event(request, account_id, user, "reactivated" if active else "deactivated")
     if role and role != user.get("role"):
-        _record_user_event(request, account_id, user, "role_changed", detail=f"{user.get('role')} to {role}")
+        _record_user_event(request, account_id, user, "role_changed", detail=(
+            "every table" if role == "admin" else "their group's tables"))
     if group_id and int(group_id) != (user.get("group_id") or 0):
         _record_user_event(request, account_id, user, "group_changed")
     if name.strip() and name.strip() != user.get("name"):
@@ -12982,3 +12996,6 @@ from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
 from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
 from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
+# Named admins: signing in, your own account, invitations, and who may open which workspace (admin/access.py).
+from admin import admin_accounts as _admin_accounts  # noqa: E402
+from admin.admin_accounts import login_page, login_submit, logout  # noqa: E402,F401

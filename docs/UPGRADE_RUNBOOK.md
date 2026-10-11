@@ -283,10 +283,45 @@ venv/bin/python -m admin.reset_password     # asks twice, without echo
 ```
 
 It also signs out every admin session and ends any wait that failed sign-ins
-built up (section 14).
+built up (section 14), and turns the emergency sign-in back on if a Super
+admin had turned it off (section 13a).
 
 If the service sets `QUERYBOT_DB_PATH`, `DATABASE_URL` or `QUERYBOT_KEY_FILE`,
 export the same values first, or the command writes to a different store.
+
+## 13a. Named admins and roles (the release that adds them)
+
+On its first start the release copies the SQLite store to
+`data/querybot.db.before-roles-<time>.bak` (once; PostgreSQL: back it up with
+its own tools before the deploy), then adds the admin accounts and every
+reader's portal role. Every reader made before keeps all they could do: a
+Creator. Who sees which tables (groups, "every table") is unchanged.
+
+1. Sign in at `/admin/login` with the admin password you use today. It is now
+   the **emergency sign-in**, and the first time it asks you to make your own
+   Super admin account (name, work email, a password of 12 characters or more).
+2. From then on sign in with your email. Invite the other admins under
+   **Admins**: each gets a one-time link (72 hours) to choose a password, and a
+   role — Super admin, Workspace admin or Data steward — with the workspaces
+   they look after. A Workspace admin can add Data stewards to their own
+   workspaces under the workspace's **People › Admins**.
+3. Set each reader's role on the workspace's **People** page: Viewer (opens the
+   dashboards shared with them), Asker (also asks and keeps answers on private
+   dashboards) or Creator (also builds dashboards from a request and shares).
+4. Once a second Super admin can sign in, you may turn the emergency sign-in
+   off under **Admins**. Every use of it is logged and shows a red banner.
+
+Locked out (no Super admin can sign in and emergency sign-in is off): on the
+server, `venv/bin/python -m admin.reset_password` sets a new emergency password
+and turns it on, or make a named account directly:
+
+```bash
+venv/bin/python -m admin.create_admin you@company.com "Your Name"   # a Super admin; asks for a password
+```
+
+To roll back to the release before, stop the service and restore the
+`before-roles` copy (section 12): the older release does not read the admin
+accounts or the reader roles.
 
 ## 14. HTTPS, the reverse proxy and the question API
 

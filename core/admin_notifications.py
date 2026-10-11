@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable, Optional
 
 from fastapi import WebSocket
 
@@ -18,30 +18,59 @@ import store
 log = logging.getLogger("querybot.admin.notifications")
 
 
+Opens = Optional[Callable[[str], bool]]
+
+
+def scoped(payload: dict[str, Any], opens: Opens) -> dict[str, Any] | None:
+    """What one admin is told: nothing about a workspace they do not look after (``opens``: None for every one).
+
+    A notice about another workspace is not sent at all, and a summary across workspaces keeps only theirs."""
+    if opens is None:
+        return payload
+    account_id = payload.get("account_id")
+    if account_id and not opens(str(account_id)):
+        return None
+    summary = payload.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("clients"), list):
+        payload = {**payload, "summary": scoped_summary(summary, opens)}
+    return payload
+
+
+def scoped_summary(summary: dict[str, Any], opens: Opens) -> dict[str, Any]:
+    if opens is None:
+        return summary
+    clients = [c for c in summary.get("clients") or [] if opens(str(c.get("account_id") or ""))]
+    return {**summary, "clients": clients, "total": sum(int(c.get("pending") or 0) for c in clients)}
+
+
 class AdminNotificationHub:
     def __init__(self) -> None:
-        self._connections: set[WebSocket] = set()
+        # Each socket with what its admin may hear about (admin/access.py): None for a super admin.
+        self._connections: dict[WebSocket, Opens] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, opens: Opens = None) -> None:
         await websocket.accept()
         async with self._lock:
-            self._connections.add(websocket)
+            self._connections[websocket] = opens
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            self._connections.discard(websocket)
+            self._connections.pop(websocket, None)
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         async with self._lock:
-            targets = list(self._connections)
+            targets = list(self._connections.items())
         if not targets:
             return
 
         stale: list[WebSocket] = []
-        for websocket in targets:
+        for websocket, opens in targets:
+            told = scoped(payload, opens)
+            if told is None:
+                continue
             try:
-                await websocket.send_json(payload)
+                await websocket.send_json(told)
             except Exception as exc:
                 log.debug("Dropping stale admin notification socket: %s", exc)
                 stale.append(websocket)
@@ -49,7 +78,7 @@ class AdminNotificationHub:
         if stale:
             async with self._lock:
                 for websocket in stale:
-                    self._connections.discard(websocket)
+                    self._connections.pop(websocket, None)
 
 
 admin_notification_hub = AdminNotificationHub()

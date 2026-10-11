@@ -1,6 +1,6 @@
 """The admin shell is the approved one, on every page.
 
-One sidebar: the places (Dashboard, Workspaces, Databases, Chat platforms, System),
+One sidebar: the places (Dashboard, Workspaces, Databases, Chat platforms, Admins, System),
 the workspaces with the open one marked, and who is signed in with the way out. A
 workspace page carries its header across the top: where it is (Workspaces / the
 workspace / the area, and the page above this one), its name and whether it answers,
@@ -54,7 +54,7 @@ def test_the_sidebar_holds_the_places_the_workspaces_and_the_way_out(admin):
     client, account, store = admin
     side = _sidebar(client.get(f"/admin/clients/{account}/measures").text)
     labels = re.findall(r'class="sidebar-link[^"]*"[^>]*>\s*<span class="sidebar-link-icon">.*?</span>\s*([^<]+?)\s*(?:<span|</a>)', side, re.S)
-    assert labels == ["Dashboard", "Workspaces", "Databases", "Chat platforms", "System"]
+    assert labels == ["Dashboard", "Workspaces", "Databases", "Chat platforms", "Admins", "System"]
     assert re.search(r'href="/admin/clients" class="sidebar-link active" aria-current="true"', side)
     names = re.findall(r'class="sidebar-workspace[^"]*"[^>]*title="([^"]+)"', side)
     assert names == ["Retail (invented)", "Zebra stores (invented)"]

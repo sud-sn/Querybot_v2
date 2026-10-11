@@ -543,7 +543,12 @@ async def _talked(adapter: Any, websocket: Any, account_id: str, question: str, 
         return False
     if reading is None:
         return False
-    if row is None:
+    from core.portal_roles import can, refusal
+
+    if not can(portal_user, "talk_edit"):
+        # Changing a dashboard by talking is a creator's (core/portal_roles.py).
+        frame = _say(question, question_id, refusal("talk_edit", str(portal_user.get("lang") or "en")))
+    elif row is None:
         frame = _say(question, question_id, "This conversation has no dashboard to change. Open the dashboard and "
                                             "ask from its chat, or ask for a new one (\u201ccreate an executive "
                                             "dashboard\u201d).")
@@ -652,8 +657,14 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
                                          "detail": t("ui.chat.in_line_detail", lang=lang)})
 
     from core2.dashboards import asked_for
+    from core.portal_roles import can, refusal
 
     key = _session_key(account_id, portal_user, getattr(adapter, "thread_id", "default"))
+    if asked_for(question) is not None and not can(portal_user, "create_dashboard"):
+        # A dashboard made from a request is a creator's (core/portal_roles.py): said before any AI is asked.
+        await _send(adapter, websocket, _say(question, question_id, refusal(
+            "create_dashboard", str((portal_user or {}).get("lang") or "en"))))
+        return True
     if asked_for(question) is None and await _talked(adapter, websocket, account_id, question, portal_user,
                                                      question_id, key, start):
         return True

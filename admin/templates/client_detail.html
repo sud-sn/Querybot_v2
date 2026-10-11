@@ -101,12 +101,14 @@
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem">
   <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+    {% if admin_can is not defined or admin_can(request, '/admin/clients/' ~ client.account_id ~ '/toggle-chat-ui') %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/toggle-chat-ui" style="display:inline;margin:0">
       <button type="submit" class="qb-switch {% if client.chat_ui_enabled %}on{% else %}off{% endif %}" role="switch" aria-checked="{{ 'true' if client.chat_ui_enabled else 'false' }}" title="Toggle the portal chat UI for this workspace">
         <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
         <span class="qb-switch-label">Chat UI {% if client.chat_ui_enabled %}enabled{% else %}disabled{% endif %}</span>
       </button>
     </form>
+    {% endif %}
   </div>
 </div>
 

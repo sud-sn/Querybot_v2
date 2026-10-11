@@ -6,19 +6,22 @@
 {{ breadcrumb([{"label": "Dashboard", "href": ""}]) }}
 {% endblock %}
 {% block content %}
+{# What the signed-in admin's role opens (admin/access.py): a workspace's own admins see no server-wide setup. #}
+{% set _opens = admin_can if admin_can is defined else none %}
+{% set _server = not _opens or _opens(request, '/admin/databases') %}
 
 <div class="page-header">
   <div class="page-header-body">
     <h1>Dashboard</h1>
     <p>What needs you, then the numbers.</p>
   </div>
-  <div class="page-header-actions">
+  {% if _server %}<div class="page-header-actions">
     <a href="/admin/clients/new" class="btn btn-primary btn-sm">{{ ic("plus", 14) }} New workspace</a>
-  </div>
+  </div>{% endif %}
 </div>
 
 {# ── Setup alerts ── #}
-{% if not platforms %}
+{% if not platforms and _server %}
 {{ alert(
     message="Add a platform (Zoom, Teams, or Slack) so users can message the bot.",
     type="amber",
@@ -28,7 +31,7 @@
     action_label="Add platform"
 ) }}
 {% endif %}
-{% if not dbs %}
+{% if not dbs and _server %}
 {{ alert(
     message="Connect a database so the bot can query your data.",
     type="error",
@@ -73,10 +76,12 @@
       progress_cls="success" if ready_count == total_clients else ("warning" if ready_count > 0 else "danger")) }}
   {{ metric_card("Total queries",   stats.total or 0) }}
   {{ metric_card("Total cost",      "$" ~ "%.2f"|format(stats.total_cost_usd or 0)) }}
+  {% if _server %}
   {{ metric_card("Platforms",       platforms|length,
       color_var="--primary" if platforms else "--danger") }}
   {{ metric_card("Databases",       dbs|length,
       color_var="--primary" if dbs else "--danger") }}
+  {% endif %}
 </div>
 
 {# ── Clients table ── #}
@@ -92,8 +97,8 @@
         icon_name="users",
         title="No workspaces yet",
         body="Once a workspace messages your bot, or you register one manually, it will appear here.",
-        action_href="/admin/clients/new",
-        action_label="Add the first workspace"
+        action_href="/admin/clients/new" if _server else "",
+        action_label="Add the first workspace" if _server else ""
     ) }}
   </div>
   {% else %}

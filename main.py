@@ -35,6 +35,8 @@ from portal import router as portal_router
 from gateway.webhooks import router as webhooks_router
 from core.release import KB_FORMAT, code_release, kb_rebuild_needed, product_version
 from core.web_security import RefuseCrossSiteRequests
+from admin.access import AdminAccess
+from portal.access import PortalRoles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +45,11 @@ logging.basicConfig(
 log = logging.getLogger("querybot")
 
 app = FastAPI(title="QueryBot", version=product_version())
+# The last one added runs first: a cross-site request is refused before anything else looks at it, then an
+# admin's role decides which /admin pages they reach (admin/access.py), and a reader's which portal pages
+# (portal/access.py).
+app.add_middleware(PortalRoles)
+app.add_middleware(AdminAccess)
 app.add_middleware(RefuseCrossSiteRequests)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(admin_router)

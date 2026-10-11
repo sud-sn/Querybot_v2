@@ -239,21 +239,29 @@ window.qbEnumLabel = function (group, value) {
       </button>
     </div>
 
+    {# A viewer opens dashboards only: no chat, no data guide (portal/access.py refuses them too). #}
+    {% set _asks = reader_can(user if user is defined else none, 'ask') if reader_can is defined else true %}
+    {% if _asks %}
     <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="{{ t('ui.shell.new_thread') }}" title="{{ t('ui.shell.new_thread') }}">
       <span class="portal-new-thread-icon" aria-hidden="true">+</span>
       <span>{{ t('ui.shell.new_thread') }}</span>
     </a>
+    {% endif %}
 
     <nav class="portal-nav" aria-label="{{ t('ui.shell.nav_primary') }}">
+      {% if _asks %}
       <a href="/portal/chat" title="{{ t('ui.shell.chat') }}" class="{% if '/chat' in request.url.path %}active{% endif %}" {% if '/chat' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("chat", 17) }} <span>{{ t('ui.shell.chat') }}</span>
       </a>
+      {% endif %}
       <a href="/portal/dashboard" title="{{ t('ui.shell.dashboard') }}" class="{% if 'dashboard' in request.url.path %}active{% endif %}" {% if 'dashboard' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("dashboard", 17) }} <span>{{ t('ui.shell.dashboard') }}</span>
       </a>
+      {% if _asks %}
       <a href="/portal/kb" title="{{ t('ui.shell.semantic_layer') }}" class="{% if '/kb' in request.url.path %}active{% endif %}" {% if '/kb' in request.url.path %}aria-current="page"{% endif %}>
         {{ ic("database", 17) }} <span>{{ t('ui.shell.semantic_layer') }}</span>
       </a>
+      {% endif %}
     </nav>
 
     {% block portal_sidebar_context %}{% endblock %}
@@ -272,7 +280,7 @@ window.qbEnumLabel = function (group, value) {
         <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
         <div class="portal-user-meta">
           <div class="topbar-user-name">{{ user.name }}</div>
-          <div class="topbar-user-role">{{ user.group_name or t('ui.shell.no_group') }} &middot; {{ enum_label('role', user.role) }}</div>
+          <div class="topbar-user-role">{{ user.group_name or t('ui.shell.no_group') }} &middot; {{ enum_label('portal_role', reader_role(user)) if reader_role is defined else enum_label('role', user.role) }}</div>
         </div>
       </div>
       <div class="portal-side-actions" aria-label="{{ t('ui.shell.account_actions') }}">

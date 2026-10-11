@@ -86,16 +86,19 @@ class TestTheSidebarIsTranslated:
         assert 'aria-label="Réduire le menu latéral"' in markup
 
     def test_the_role_is_a_label_not_a_raw_column_value(self):
-        """It rendered `{{ user.role }}` -- the lowercase database value."""
-        assert "Analyste" in visible(_shell(lang="fr"))
-        assert "Analyst" in visible(_shell(lang="en"))
-        assert "&middot; analyst" not in visible(_shell(lang="en"))
+        """It rendered `{{ user.role }}` -- the lowercase database value. It is the
+        reader's portal role now (core/portal_roles.py), translated."""
+        assert "Créateur" in visible(_shell(lang="fr"))
+        assert "Lecteur" in visible(_shell(lang="fr", user={**USER, "portal_role": "viewer"}))
+        assert "Creator" in visible(_shell(lang="en"))
+        assert "&middot; creator" not in visible(_shell(lang="en"))
 
     def test_a_role_the_catalogue_does_not_know_still_renders_readably(self):
-        """New roles get added to the database before they get added here."""
-        markup = visible(_shell(lang="fr", user={**USER, "role": "auditor"}))
-        assert "Auditor" in markup
-        assert "ui.enum.role" not in markup
+        """New roles get added to the database before they get added here: the
+        shell still reads, with the portal role every reader has."""
+        markup = visible(_shell(lang="fr", user={**USER, "role": "auditor", "portal_role": "auditor"}))
+        assert "Créateur" in markup
+        assert "ui.enum" not in markup
 
     def test_the_group_fallback_is_translated(self):
         markup = visible(_shell(lang="fr", user={**USER, "group_name": ""}))

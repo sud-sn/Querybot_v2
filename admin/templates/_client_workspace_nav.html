@@ -24,7 +24,7 @@
 {% set _is_overview   = (_seg == '') %}
 {% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures', 'requests'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
-{% set _is_people     = _seg in ['users', 'groups', 'pending-users'] %}
+{% set _is_people     = _seg in ['users', 'groups', 'pending-users', 'admins'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
 {# Diagnostics is for support, reached from Settings: today's pipeline's own
    editors and the developer tooling for its compiler. Nothing here is in the
@@ -36,7 +36,12 @@
 
 {% set _area = 'Overview' if _is_overview else 'Data' if _is_data else 'Questions' if _is_questions else 'People' if _is_people
                else 'Compliance' if _is_compliance else 'Settings' if _is_settings else '' %}
-{% set _area_href = {'Overview': _b, 'Data': _b ~ '/setup', 'Questions': _b ~ '/queries', 'People': _b ~ '/users',
+{# What the signed-in admin's role opens (admin/access.py): a data steward has no Setup, People or Settings; the
+   server refuses those pages whatever is drawn here. #}
+{% set _can = admin_can if admin_can is defined else none %}
+{% macro _opens(seg) %}{{ '1' if (not _can or _can(request, _b ~ ('/' ~ seg if seg else ''))) else '' }}{% endmacro %}
+{% set _data_home = 'setup' if _opens('setup') else 'learned' %}
+{% set _area_href = {'Overview': _b, 'Data': _b ~ '/' ~ _data_home, 'Questions': _b ~ '/queries', 'People': _b ~ '/users',
                      'Compliance': _b ~ '/compliance', 'Settings': _b ~ '/settings'}.get(_area, _b) %}
 
 {# The open area's menu: (path segment, label). #}
@@ -46,7 +51,7 @@
 {% elif _is_questions %}
   {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
 {% elif _is_people %}
-  {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('pending-users', 'Access requests')] %}
+  {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('pending-users', 'Access requests'), ('admins', 'Admins')] %}
 {% elif _is_compliance %}
   {% set _menu = [('compliance', 'Compliance'), ('egress', 'AI egress log')] %}
 {% elif _is_diagnostics %}
@@ -59,6 +64,8 @@
 {% else %}
   {% set _menu = [] %}
 {% endif %}
+{% set _shown = [] %}{% for item in _menu %}{% if _opens(item[0]) %}{% set _ = _shown.append(item) %}{% endif %}{% endfor %}
+{% set _menu = _shown %}
 {% set _here = (_menu | selectattr(0, 'equalto', _seg) | list | first) if _menu else none %}
 
 {% set _status = {'READY': ('Answering', 'ok'), 'SCHEMA_READY': ('Ready to learn', 'info'), 'SCHEMA_BUILDING': ('Reading the database', 'busy'),
@@ -80,11 +87,11 @@
   </div>
   <nav class="client-workspace-primary" aria-label="Workspace areas">
     <a href="{{ _b }}" class="{% if _is_overview %}active{% endif %}" {% if _is_overview %}aria-current="page"{% endif %}>Overview</a>
-    <a href="{{ _b }}/setup" class="{% if _is_data %}active{% endif %}" {% if _is_data %}aria-current="true"{% endif %}>Data</a>
-    <a href="{{ _b }}/queries" class="{% if _is_questions %}active{% endif %}" {% if _is_questions %}aria-current="true"{% endif %}>Questions</a>
-    <a href="{{ _b }}/users" class="{% if _is_people %}active{% endif %}" {% if _is_people %}aria-current="true"{% endif %}>People</a>
-    <a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}" {% if _is_compliance %}aria-current="true"{% endif %}>Compliance</a>
-    <a href="{{ _b }}/settings" class="{% if _is_settings %}active{% endif %}" {% if _is_settings %}aria-current="true"{% endif %}>Settings</a>
+    <a href="{{ _b }}/{{ _data_home }}" class="{% if _is_data %}active{% endif %}" {% if _is_data %}aria-current="true"{% endif %}>Data</a>
+    {% if _opens('queries') %}<a href="{{ _b }}/queries" class="{% if _is_questions %}active{% endif %}" {% if _is_questions %}aria-current="true"{% endif %}>Questions</a>{% endif %}
+    {% if _opens('users') %}<a href="{{ _b }}/users" class="{% if _is_people %}active{% endif %}" {% if _is_people %}aria-current="true"{% endif %}>People</a>{% endif %}
+    {% if _opens('compliance') %}<a href="{{ _b }}/compliance" class="{% if _is_compliance %}active{% endif %}" {% if _is_compliance %}aria-current="true"{% endif %}>Compliance</a>{% endif %}
+    {% if _opens('settings') %}<a href="{{ _b }}/settings" class="{% if _is_settings %}active{% endif %}" {% if _is_settings %}aria-current="true"{% endif %}>Settings</a>{% endif %}
   </nav>
 </section>
 {% if _menu %}
