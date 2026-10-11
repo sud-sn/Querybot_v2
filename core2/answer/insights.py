@@ -43,6 +43,8 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
         return _listing(cols, raw)[:MAX_FINDINGS]
     if not raw or not measures:
         return []
+    if getattr(logical.shape, "kind", None) == "running":
+        return []      # a running total of what adds up only grows: "up 4 months in a row" would say nothing
     periods = cols.of("period")
     members = [c for c in cols.of("attribute") if c.name != logical.unit_group]
     rows = units.main_rows(raw)

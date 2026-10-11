@@ -722,9 +722,11 @@ body:has(.chat-page) .main { background: var(--bg); }
 .dash-draft-failed .dash-draft-title { font-size: var(--font-sm); white-space: normal; }
 .dash-draft-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .dash-draft-extras-label { font-size: var(--font-xs); color: var(--text-muted); }
+.dash-draft-extras .follow-up-chip::before { content: none; }
+.dash-draft-extras .follow-up-chip { display: inline-flex; align-items: center; gap: 4px; }
 .dash-draft-extras .follow-up-chip.is-busy { opacity: .6; cursor: progress; }
 .dash-draft-save { flex-wrap: wrap; gap: 8px; }
-.dash-draft-to { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); color: var(--text-secondary); }
+.dash-draft-to { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); color: var(--text-secondary); white-space: nowrap; }
 @media (max-width: 560px) { .dash-draft-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .dash-draft-grid .dash-draft-tile { grid-column: span 6 !important; grid-row: auto !important; min-height: 64px; }
   .dash-draft-grid .dash-draft-tile.is-number { grid-column: span 3 !important; } }
@@ -3087,7 +3089,7 @@ function appendDashboardEvent(msg){
 // the offered ones added, and saved. dashboardDraftHtml() is pure -- the card's state in, its markup out -- so a
 // test runs it as the page does; appendDashboardDraft() keeps one card per request and wires its buttons.
 // The draft and its plans stay on the server behind msg.token (core2/dashboards.py).
-const _DRAFT_ICONS = {number: 'hash', trend: 'trending-up', breakdown: 'bar-chart', table: 'table'};
+const _DRAFT_ICONS = {trend: 'chart-line', breakdown: 'chart-bar', table: 'table'};     // a number: its value says it
 const _DRAFT_DEFAULT = {number: [3, 3], trend: [12, 10], breakdown: [6, 10], table: [12, 10]};
 
 // A tile drawn small: a number as itself, a trend as a line, a breakdown as its first bars, a table as its first
@@ -3142,7 +3144,8 @@ function dashboardDraftHtml(msg) {
   tiles.forEach(tile => {
     if (tile.error) { failed.push(tile); return; }
     const kind = escHtml(t('ui.chat.dashdraft.kind.' + (tile.kind || 'breakdown')));
-    const head = `<div class="dash-draft-head"><span class="dash-draft-kind" title="${kind}">${qbIcon(_DRAFT_ICONS[tile.kind] || 'bar-chart', 14)}</span>`
+    const icon = _DRAFT_ICONS[tile.kind];
+    const head = `<div class="dash-draft-head">${icon ? `<span class="dash-draft-kind" title="${kind}">${qbIcon(icon, 14)}</span>` : ''}`
       + `<span class="dash-draft-title">${escHtml(tile.title)}</span>`;
     let html;
     if (tile.pending) {

@@ -241,6 +241,7 @@ def test_running_total_this_year_and_a_three_month_moving_average(retail):
     assert [r["net_amount"] for r in rows] == pytest.approx(months[2:])
     assert running["data"]["header_labels"]["net_amount_running"] == "Net amount, year to date"
     assert running["definition"] == "Each month adds to the total since the start of each year."
+    assert running["key_insights"] == []                     # a running total only grows: nothing to find in that
 
     moving = _ask(retail, {"intent": "trend", "measures": ["net_amount"],
                            "rolling": {"kind": "moving_average", "periods": 3},

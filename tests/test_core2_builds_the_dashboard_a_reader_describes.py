@@ -443,6 +443,17 @@ def test_the_admin_sets_which_way_is_good_and_the_chat_colours_the_change(retail
     assert 'class="kpi-change"' in line({**rising, "good": None}) and 'class="kpi-change"' in line(rising)
 
 
+def test_every_icon_the_card_draws_is_in_the_sprite():
+    """The card picks a tile's icon from a table, which the page-wide sprite check cannot see."""
+    import pathlib
+
+    page = pathlib.Path("portal/templates/portal_chat.html").read_text(encoding="utf-8")
+    table = re.search(r"const _DRAFT_ICONS = \{([^}]*)\}", page).group(1)
+    names = re.findall(r"'([a-z0-9-]+)'", table)
+    sprite = set(re.findall(r'id="([a-z0-9-]+)"', pathlib.Path("static/icons/qb-icons.svg").read_text(encoding="utf-8")))
+    assert names and not set(names) - sprite, set(names) - sprite
+
+
 def test_no_reader_string_is_named_twice():
     """Two strings under one name: the second silently replaces the first, wherever it was used."""
     import ast
