@@ -1493,6 +1493,7 @@ def _run_migrations() -> None:
         _ensure_admin_account_tables(conn)
         _ensure_email_tables(conn)
         _ensure_schedule_tables(conn)
+        _ensure_alert_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1841,6 +1842,58 @@ def _ensure_schedule_tables(conn: sqlite3.Connection) -> None:
             detail      TEXT    NOT NULL DEFAULT '',
             UNIQUE(schedule_id, due_at)
         );
+        """
+    )
+
+
+def _ensure_alert_tables(conn: sqlite3.Connection) -> None:
+    """Alerts on a dashboard's number tiles (store/tile_alert_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS tile_alert (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT    NOT NULL,
+            dashboard_id    INTEGER NOT NULL,
+            chart_id        INTEGER NOT NULL,
+            owner_id        INTEGER NOT NULL,
+            condition       TEXT    NOT NULL,
+            threshold       REAL    NOT NULL,
+            value_format    TEXT    NOT NULL DEFAULT '',
+            check_minutes   INTEGER NOT NULL DEFAULT 60,
+            by_email        INTEGER NOT NULL DEFAULT 0,
+            is_active       INTEGER NOT NULL DEFAULT 1,
+            paused_reason   TEXT    NOT NULL DEFAULT '',
+            next_check_at   TEXT    DEFAULT NULL,
+            last_checked_at TEXT    DEFAULT NULL,
+            created_at      TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tile_alert_due ON tile_alert(is_active, next_check_at);
+        CREATE INDEX IF NOT EXISTS idx_tile_alert_tile ON tile_alert(account_id, dashboard_id, chart_id);
+        CREATE TABLE IF NOT EXISTS tile_alert_recipient (
+            alert_id     INTEGER NOT NULL,
+            subject_type TEXT    NOT NULL CHECK(subject_type IN ('user','group')),
+            subject_id   INTEGER NOT NULL,
+            PRIMARY KEY (alert_id, subject_type, subject_id)
+        );
+        CREATE TABLE IF NOT EXISTS tile_alert_state (
+            alert_id   INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            state      TEXT    NOT NULL DEFAULT 'ok',
+            value      REAL    DEFAULT NULL,
+            checked_at TEXT    DEFAULT NULL,
+            changed_at TEXT    DEFAULT NULL,
+            PRIMARY KEY (alert_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS tile_alert_event (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_id INTEGER NOT NULL,
+            user_id  INTEGER NOT NULL,
+            kind     TEXT    NOT NULL,
+            value    REAL    DEFAULT NULL,
+            display  TEXT    NOT NULL DEFAULT '',
+            at       TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tile_alert_event ON tile_alert_event(alert_id, user_id, id);
         """
     )
 

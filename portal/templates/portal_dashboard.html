@@ -220,6 +220,15 @@
         {# Only a card that HAS a chart node can expand: openChartModal does
            `querySelector('[data-chart]'); if (!node) return;`, so on error, KPI
            and table cards this was a button that did nothing and said nothing. #}
+        {# An alert on this number (core/tile_alerts.py): on for whoever it tells, red while it is crossed for them. #}
+        {% if chart.kpi and not chart.error and dashboard_artifact and not (snapshot is defined and snapshot) %}
+        {% set _alert = (tile_alerts or {}).get(chart.id) if tile_alerts is defined else none %}
+        <button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-alert-button{% if _alert %} is-on{% endif %}{% if _alert and _alert.firing %} is-firing{% endif %}"
+                data-alert-tile="{{ chart.id }}" data-alert-title="{{ chart.title }}" data-alert-format="{{ chart.kpi.format or '' }}"
+                data-alert-value="{{ chart.kpi_display or chart.kpi.value }}" aria-haspopup="dialog" aria-controls="dashAlertDialog"
+                title="{{ t('ui.alert.button_firing' if _alert and _alert.firing else ('ui.alert.button_on' if _alert else 'ui.alert.button')) }}"
+                aria-label="{{ t('ui.alert.button_firing' if _alert and _alert.firing else ('ui.alert.button_on' if _alert else 'ui.alert.button')) }}">{{ ic("bell", 15) }}</button>
+        {% endif %}
         {% if chart.chart_json %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="{{ t('ui.dash.expand_title') }}" aria-label="{{ t('ui.dash.expand_title') }}">{{ ic("expand", 15) }}</button>{% endif %}
@@ -409,6 +418,61 @@
     </div>
   </form>
   <p class="sr-only" id="dashSchedStatus" role="status" aria-live="polite"></p>
+</dialog>
+{% endif %}
+
+{# Alerts on a number tile (core/tile_alerts.py): the tile's alerts that tell the reader, what they told them lately,
+   and a form for a new one. Filled for the tile whose bell was pressed. #}
+{% if dashboard_artifact and not (snapshot is defined and snapshot) %}
+<dialog class="dash-dialog" id="dashAlertDialog" aria-labelledby="dashAlertTitle" data-dashboard-id="{{ dashboard_artifact.id }}">
+  <div class="dash-dialog-head">
+    <h2 id="dashAlertTitle"></h2>
+    <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
+  </div>
+  <p class="dash-sched-intro" id="dashAlertNow"></p>
+  <section class="dash-sched-list" aria-labelledby="dashAlertListTitle">
+    <div class="dash-sched-list-head">
+      <h3 id="dashAlertListTitle">{{ t('ui.alert.list') }}</h3>
+      <button type="button" class="btn btn-secondary btn-sm" id="dashAlertNew">{{ ic("plus", 14) }}<span>{{ t('ui.alert.new') }}</span></button>
+    </div>
+    <ul id="dashAlertItems" class="dash-sched-items"></ul>
+    <p class="dash-sched-empty" id="dashAlertEmpty" hidden>{{ t('ui.alert.none') }}</p>
+    <h3 class="dash-alert-recent-title" id="dashAlertRecentTitle" hidden>{{ t('ui.alert.recent') }}</h3>
+    <ul id="dashAlertEvents" class="dash-alert-events" aria-labelledby="dashAlertRecentTitle"></ul>
+  </section>
+  <form class="dash-sched-form" id="dashAlertForm" hidden novalidate>
+    <div class="dash-sched-row">
+      <label class="dash-sched-field"><span>{{ t('ui.alert.tell_me_when') }}</span>
+        <select class="form-input" name="condition">
+          {% for condition in ('above', 'below', 'rise', 'fall', 'move') %}<option value="{{ condition }}">{{ t('ui.alert.cond.' ~ condition) }}</option>{% endfor %}
+        </select></label>
+      <label class="dash-sched-field"><span>{{ t('ui.alert.line') }}</span>
+        <span class="dash-alert-amount"><input class="form-input" type="number" name="threshold" step="any" required>
+        <span class="dash-alert-suffix" id="dashAlertSuffix" hidden>{{ t('ui.alert.on_before') }}</span></span></label>
+      <label class="dash-sched-field"><span>{{ t('ui.alert.every') }}</span>
+        <select class="form-input" name="every"><option value="60">{{ t('ui.alert.every.60') }}</option><option value="1440">{{ t('ui.alert.every.1440') }}</option></select></label>
+    </div>
+    <div class="dash-sched-block">
+      <label class="dash-sched-check" id="dashAlertEmailLine"><input type="checkbox" name="by_email"> {{ t('ui.alert.by_email') }}</label>
+      <p class="dash-sched-filters" id="dashAlertNoMail" hidden>{{ t('ui.alert.no_email') }}</p>
+    </div>
+    <div class="dash-sched-block" id="dashAlertOthers" hidden>
+      <label class="form-label" for="dashAlertSearch">{{ t('ui.alert.others') }}</label>
+      <ul class="dash-sched-picks" id="dashAlertChips" aria-label="{{ t('ui.alert.others') }}"></ul>
+      <div class="dash-combobox">
+        <input class="form-input" id="dashAlertSearch" type="text" role="combobox" autocomplete="off" spellcheck="false"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="dashAlertSuggestions"
+               aria-describedby="dashAlertOthersHint" placeholder="{{ t('ui.dash.share_add_hint') }}" maxlength="80">
+        <ul class="dash-suggestions" id="dashAlertSuggestions" role="listbox" aria-label="{{ t('ui.dash.share_suggestions') }}" hidden></ul>
+      </div>
+      <p class="dash-share-hint" id="dashAlertOthersHint">{{ t('ui.alert.others_hint') }}</p>
+    </div>
+    <div class="dash-dialog-foot">
+      <button type="button" class="btn btn-secondary" id="dashAlertCancel">{{ t('ui.alert.cancel') }}</button>
+      <button type="submit" class="btn btn-primary">{{ t('ui.alert.save') }}</button>
+    </div>
+  </form>
+  <p class="sr-only" id="dashAlertStatus" role="status" aria-live="polite"></p>
 </dialog>
 {% endif %}
 
@@ -1114,10 +1178,188 @@ function initScheduleDialog() {
   });
 }
 
+// ── Alerts on a number tile (core/tile_alerts.py) ──────────────────────────────
+// The bell on a number tile opens this dialog for that tile: the alerts that tell the reader (theirs with Pause,
+// Check now and Delete; others' with Stop telling me), what they told them lately, and a form for a new one.
+function initAlertDialog() {
+  const dialog = document.getElementById('dashAlertDialog');
+  if (!dialog) return;
+  const dashboardId = dialog.dataset.dashboardId;
+  const form = document.getElementById('dashAlertForm');
+  const items = document.getElementById('dashAlertItems');
+  const empty = document.getElementById('dashAlertEmpty');
+  const events = document.getElementById('dashAlertEvents');
+  const status = document.getElementById('dashAlertStatus');
+  const chips = document.getElementById('dashAlertChips');
+  const input = document.getElementById('dashAlertSearch');
+  const list = document.getElementById('dashAlertSuggestions');
+  let tile = null, base = '', chosen = [], options = [], active = -1, timer = null, asked = 0, changed = false;
+
+  const say = (text, tone) => {
+    status.textContent = text;
+    window.qbToast?.notify?.({body: text, tone: tone || 'success', duration: 4000});
+  };
+  const upper = (text) => text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+  const describe = (item) => item.type === 'group'
+    ? `${t('ui.dash.share_group')} · ${plural('ui.dash.share_group_size', item.members || 0)}` : (item.group || '');
+  const showSuffix = () => {
+    document.getElementById('dashAlertSuffix').hidden = !['rise', 'fall', 'move'].includes(form.condition.value);
+  };
+  form.condition.addEventListener('change', showSuffix);
+
+  const drawChips = () => {
+    chips.innerHTML = '';
+    chosen.forEach((item, index) => {
+      const li = document.createElement('li');
+      li.className = 'badge badge-brand dash-sched-pick';
+      li.innerHTML = `<span>${escHtmlDash(item.name)}</span><button type="button" class="btn btn-ghost btn-icon btn-xs" ` +
+        `aria-label="${escHtmlDash(t('ui.sched.remove', {name: item.name}))}">${window.qbIcon ? window.qbIcon('x', 12) : ''}</button>`;
+      li.querySelector('button').addEventListener('click', () => { chosen.splice(index, 1); drawChips(); input.focus(); });
+      chips.appendChild(li);
+    });
+  };
+  const closeList = () => { list.hidden = true; list.innerHTML = ''; options = []; active = -1;
+    input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); };
+  const mark = (index) => {
+    active = index;
+    options.forEach((_, i) => list.children[i]?.setAttribute('aria-selected', i === active ? 'true' : 'false'));
+    if (active >= 0) input.setAttribute('aria-activedescendant', `dashAlertOption${active}`);
+  };
+  const showList = (found) => {
+    options = found.filter(f => !chosen.some(c => c.type === f.type && c.id === f.id));
+    list.innerHTML = options.length ? options.map((item, i) =>
+      `<li role="option" id="dashAlertOption${i}" class="dash-suggestion" aria-selected="false" data-index="${i}">` +
+      `<span class="dash-share-name">${escHtmlDash(item.name)}</span>` +
+      `<span class="dash-share-detail">${escHtmlDash(describe(item))}</span></li>`).join('')
+      : `<li class="dash-suggestion is-empty" role="option" aria-disabled="true">${escHtmlDash(t('ui.dash.share_none_found'))}</li>`;
+    list.hidden = false; input.setAttribute('aria-expanded', 'true'); mark(options.length ? 0 : -1);
+  };
+  const pick = (item) => { closeList(); input.value = ''; chosen.push(item); drawChips(); input.focus(); };
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(async () => {
+    const text = input.value.trim();
+    if (text.length < 2) { closeList(); return; }
+    const mine = ++asked;
+    try {
+      const response = await fetch(`/portal/api/people?q=${encodeURIComponent(text)}`, {credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (mine !== asked) return;
+      if (!response.ok || !data.ok) { closeList(); return; }
+      showList(data.results || []);
+    } catch (_) { if (mine === asked) closeList(); }
+  }, 180); });
+  input.addEventListener('keydown', (e) => {
+    const open = !list.hidden && options.length;
+    if (e.key === 'ArrowDown' && open) { e.preventDefault(); mark((active + 1) % options.length); }
+    else if (e.key === 'ArrowUp' && open) { e.preventDefault(); mark((active - 1 + options.length) % options.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (open && active >= 0) pick(options[active]); }
+    else if (e.key === 'Escape' && !list.hidden) { e.preventDefault(); e.stopPropagation(); closeList(); }
+  });
+  dialog.addEventListener('cancel', (e) => { if (!list.hidden) { e.preventDefault(); closeList(); } });
+  list.addEventListener('mousedown', (e) => e.preventDefault());
+  list.addEventListener('click', (e) => { const o = e.target.closest('[data-index]'); if (o) pick(options[Number(o.dataset.index)]); });
+  input.addEventListener('blur', () => setTimeout(closeList, 150));
+
+  const send = async (method, url, body) => {
+    try {
+      const response = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {},
+                                         body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.detail || data.error || t('ui.alert.failed'));
+      return data;
+    } catch (error) { say(error.message || t('ui.alert.failed'), 'error'); return null; }
+  };
+
+  const openForm = () => {
+    form.reset(); chosen = []; drawChips(); showSuffix();
+    form.hidden = false; form.condition.focus();
+  };
+  const render = (data) => {
+    if (!data || !data.ok) return;
+    const alerts = data.alerts || [];
+    empty.hidden = alerts.length > 0;
+    document.getElementById('dashAlertOthers').hidden = !data.may_tell_others;
+    document.getElementById('dashAlertEmailLine').hidden = !data.mail_ready;
+    document.getElementById('dashAlertNoMail').hidden = !!data.mail_ready;
+    items.innerHTML = '';
+    alerts.forEach(a => {
+      const li = document.createElement('li');
+      li.className = 'dash-sched-item' + (a.active ? '' : ' is-paused') + (a.firing ? ' is-firing' : '');
+      const who = a.mine ? a.recipients.map(r => r.name) : [];
+      const state = !a.active ? (a.paused_reason ? t('ui.alert.paused_reason', {reason: a.paused_reason}) : t('ui.alert.paused'))
+                  : a.stopped ? t('ui.alert.stopped') : t(a.firing ? 'ui.alert.state.firing' : 'ui.alert.state.ok');
+      const meta = [a.mine ? '' : t('ui.alert.set_by', {name: a.owner}), t(`ui.alert.every.${a.every}`),
+                    a.by_email ? t('ui.alert.by_email') : '', state].filter(Boolean).join(' · ');
+      const buttons = a.mine
+        ? [['check', 'ui.alert.check'], [a.active ? 'pause' : 'resume', a.active ? 'ui.alert.pause' : 'ui.alert.resume'], ['delete', 'ui.alert.delete']]
+        : [[a.stopped ? 'start' : 'stop', a.stopped ? 'ui.alert.start' : 'ui.alert.stop']];
+      li.innerHTML = `<div class="dash-sched-when">${escHtmlDash(upper(a.when))}</div>` +
+        (who.length ? `<div class="dash-sched-who">${escHtmlDash(who.join(', '))}</div>` : '') +
+        `<div class="dash-sched-meta">${escHtmlDash(meta)}</div>` +
+        `<div class="dash-sched-actions">${buttons.map(([act, label]) => `<button type="button" class="btn btn-ghost btn-xs` +
+          `${act === 'delete' ? ' dash-sched-delete' : ''}" data-act="${act}">${escHtmlDash(t(label))}</button>`).join('')}</div>`;
+      li.querySelectorAll('[data-act]').forEach(button => button.addEventListener('click', () => act(a, button)));
+      items.appendChild(li);
+    });
+    const recent = data.events || [];
+    document.getElementById('dashAlertRecentTitle').hidden = !recent.length;
+    events.innerHTML = recent.map(e => `<li class="dash-alert-event is-${escHtmlDash(e.kind)}">` +
+      `${escHtmlDash(t(`ui.alert.event.${e.kind}`, {value: e.display, at: e.at}))}</li>`).join('');
+    if (!alerts.length && form.hidden) openForm();
+  };
+  const act = async (a, button) => {
+    const what = button.dataset.act;
+    if (what === 'delete') {
+      if (!window.confirm(t('ui.alert.delete_confirm'))) return;
+      changed = true;
+      render(await send('DELETE', `${base}/${a.id}`));
+      return;
+    }
+    button.disabled = true;
+    const data = await send('POST', `${base}/${a.id}/${what}`);
+    button.disabled = false;
+    if (!data) return;
+    changed = true;
+    render(data);
+    if (what === 'check') {
+      const said = {fired: 'ui.alert.checked.fired', cleared: 'ui.alert.checked.cleared',
+                    unchanged: 'ui.alert.checked.unchanged'}[data.checked] || 'ui.alert.checked.none';
+      say(t(said));
+    }
+  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (form.threshold.value === '') { form.threshold.focus(); return; }
+    const data = await send('POST', base, {
+      condition: form.condition.value, threshold: form.threshold.value, every: Number(form.every.value),
+      by_email: form.by_email.checked, format: tile.dataset.alertFormat || '',
+      recipients: chosen.map(c => ({type: c.type, id: c.id})),
+    });
+    if (!data) return;
+    form.hidden = true;
+    changed = true;
+    render(data);
+    say(t('ui.alert.saved'));
+  });
+  document.getElementById('dashAlertNew').addEventListener('click', openForm);
+  document.getElementById('dashAlertCancel').addEventListener('click', () => { form.hidden = true; closeList(); });
+  dialog.addEventListener('close', () => { closeList(); if (changed) window.location.reload(); });
+
+  document.querySelectorAll('[data-alert-tile]').forEach(button => button.addEventListener('click', async () => {
+    tile = button;
+    base = `/portal/api/dashboard/${encodeURIComponent(dashboardId)}/tiles/${encodeURIComponent(button.dataset.alertTile)}/alerts`;
+    document.getElementById('dashAlertTitle').textContent = t('ui.alert.title', {tile: button.dataset.alertTitle || ''});
+    document.getElementById('dashAlertNow').textContent = t('ui.alert.now', {value: button.dataset.alertValue || ''});
+    form.hidden = true; changed = false;
+    dialog.showModal();
+    render(await send('GET', base));
+  }));
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initDashboardMenu();
   initShareDialog();
   initScheduleDialog();
+  initAlertDialog();
   // The link is to the dashboard as it is seen (its tab and filters), without this visit's one-off notices.
   const shareLink = document.getElementById('dashShareLink');
   if (shareLink) {

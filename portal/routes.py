@@ -1124,6 +1124,10 @@ def _unsubscribe_page(request: Request, token: str, *, done: bool = False):
     name = ""
     if found and kind == "follow" and str(ref).isdigit():
         name = store.dashboard_name(int(ref))
+    elif found and kind == "alert" and str(ref).isdigit():
+        from store import tile_alert_store
+
+        name = tile_alert_store.tile_title(int(ref))
     elif found and kind == "schedule" and str(ref).isdigit():
         from store import schedule_store
 
@@ -1185,6 +1189,18 @@ async def portal_dashboard(request: Request):
         return await _render_dashboard(request, user)
     finally:
         deactivate_language(_lang_token)
+
+
+def _tile_alert_marks(dashboard: dict | None, user: dict) -> dict:
+    if not dashboard:
+        return {}
+    from store import tile_alert_store
+
+    try:
+        return tile_alert_store.tile_marks(int(dashboard["id"]), int(user["id"]), str(user["account_id"]))
+    except Exception as exc:  # noqa: BLE001 - the dashboard is drawn without its bells' state
+        log.warning("Tile alert marks unavailable for dashboard %s: %s", dashboard.get("id"), exc)
+        return {}
 
 
 async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | None = None):
@@ -1317,6 +1333,8 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         "dash_filtered": bool(view["period"] or view["members"]),
         "welcome":       request.query_params.get("welcome") == "1",
         "snapshot":      snapshot,
+        # The bell on each number tile: on for an alert that tells this reader, red while it is crossed for them.
+        "tile_alerts":   _tile_alert_marks(requested_dashboard, user),
         # Its tiles were drawn on this request: the header says when.
         "drawn_at":      (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                           if requested_dashboard else ""),
@@ -2896,6 +2914,153 @@ async def delete_dashboard_schedule_api(request: Request, dashboard_id: int, sch
                                                           lang=_request_language(request))}, status_code=404)
     schedule_store.delete_schedule(int(schedule_id))
     return _schedule_reply(user, dashboard, _request_language(request))
+
+
+# ── Alerts on a number tile (core/tile_alerts.py) ──────────────────────────────
+# Anyone who can open the dashboard, for themselves; its owner, who may share it, for people and groups too. Every
+# call answers with the tile's alerts that tell the reader, and what they told them lately.
+
+def _alert_tile(request: Request, dashboard_id: int, chart_id: int):
+    """(reader, dashboard as they may see it, the tile) or a JSON refusal."""
+    user = _get_portal_user(request)
+    if not user:
+        return None, JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    lang = _request_language(request)
+    dashboard = store.get_dashboard_for_view(int(dashboard_id), user["id"], user["account_id"])
+    chart = None
+    if dashboard:
+        chart = next((c for c in store.list_dashboard_charts_for_view(int(dashboard_id), user["id"], user["account_id"])
+                      if int(c["id"]) == int(chart_id)), None)
+    if not dashboard or not chart:
+        return None, JSONResponse({"ok": False, "error": i18n_t("alert.error.not_found", lang=lang)}, status_code=404)
+    return (user, dashboard, chart), None
+
+
+def _may_tell_others(user: dict, dashboard: dict) -> bool:
+    from core.portal_roles import can
+
+    return bool(dashboard.get("can_edit")) and can(user, "share")
+
+
+def _alert_reply(user: dict, dashboard: dict, chart: dict, lang: str, **extra) -> JSONResponse:
+    from core import tile_alerts
+    from core.mail import settings as mail_settings
+    from store import email_store, tile_alert_store
+
+    items = []
+    for alert in tile_alert_store.alerts_for_tile(int(dashboard["id"]), int(chart["id"]), user["id"],
+                                                  user["account_id"]):
+        mine = int(alert["owner_id"]) == int(user["id"])
+        items.append({
+            "id": alert["id"], "mine": mine, "owner": alert.get("owner_name") or "",
+            "when": tile_alerts.describe(alert, alert.get("value_format") or "", lang),
+            "condition": alert["condition"], "threshold": alert["threshold"], "every": alert["check_minutes"],
+            "by_email": bool(alert["by_email"]), "active": bool(alert["is_active"]),
+            "paused_reason": alert.get("paused_reason") or "", "firing": alert.get("state") == tile_alert_store.FIRING,
+            "stopped": bool(user.get("email")) and email_store.opted_out(str(user["email"]), "alert", str(alert["id"])),
+            "recipients": tile_alert_store.alert_recipients(int(alert["id"])) if mine else [],
+        })
+    events = []
+    for event in tile_alert_store.recent_events(int(dashboard["id"]), int(chart["id"]), user["id"]):
+        from core.dashboard_snapshot import local_time
+
+        moment = _dt.datetime.fromisoformat(str(event["at"])[:19])
+        events.append({"kind": event["kind"], "display": event.get("display") or "",
+                       "at": local_time(moment, "UTC", lang)})
+    return JSONResponse({"ok": True, "alerts": items, "events": events,
+                         "may_tell_others": _may_tell_others(user, dashboard),
+                         "mail_ready": mail_settings.load().configured, **extra})
+
+
+@router.get("/api/dashboard/{dashboard_id}/tiles/{chart_id}/alerts")
+async def tile_alerts_api(request: Request, dashboard_id: int, chart_id: int):
+    found, refused = _alert_tile(request, dashboard_id, chart_id)
+    if refused:
+        return refused
+    return _alert_reply(*found, _request_language(request))
+
+
+@router.post("/api/dashboard/{dashboard_id}/tiles/{chart_id}/alerts")
+async def add_tile_alert_api(request: Request, dashboard_id: int, chart_id: int):
+    from core import tile_alerts
+    from store import tile_alert_store
+
+    found, refused = _alert_tile(request, dashboard_id, chart_id)
+    if refused:
+        return refused
+    user, dashboard, chart = found
+    lang = _request_language(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    fields = tile_alerts.read_form(payload, user, may_tell_others=_may_tell_others(user, dashboard))
+    if isinstance(fields, str):
+        return JSONResponse({"ok": False, "error": i18n_t(fields, lang=lang)}, status_code=400)
+    fields["value_format"] = re.sub(r"[^a-z_]", "", str(payload.get("format") or ""))[:20]
+    owned = store.get_dashboard(int(dashboard["id"]), user["id"], user["account_id"])
+    told = list(fields["recipients"])
+    shared_before = {(s["subject_type"], int(s["subject_id"]))
+                     for s in store.list_dashboard_shares(int(dashboard["id"]), user["id"], user["account_id"])} \
+        if owned else set()
+    alert_id = tile_alerts.save(user, owned or dashboard, int(chart["id"]), fields)
+    for subject_type, subject_id in told:
+        if owned and (subject_type, subject_id) not in shared_before:
+            await _tell_shared(owned, user, subject_type, subject_id)
+    log.info("Tile %s alert %s set by user %s", chart["id"], alert_id, user["id"])
+    return _alert_reply(user, dashboard, chart, lang, saved=alert_id)
+
+
+@router.post("/api/dashboard/{dashboard_id}/tiles/{chart_id}/alerts/{alert_id}/{action}")
+async def tile_alert_action_api(request: Request, dashboard_id: int, chart_id: int, alert_id: int, action: str):
+    """The maker: pause | resume | check (at once). Anyone it tells: stop | start (telling them)."""
+    from core import tile_alerts
+    from store import email_store, tile_alert_store
+
+    found, refused = _alert_tile(request, dashboard_id, chart_id)
+    if refused:
+        return refused
+    user, dashboard, chart = found
+    lang = _request_language(request)
+    alert = next((a for a in tile_alert_store.alerts_for_tile(int(dashboard["id"]), int(chart["id"]), user["id"],
+                                                              user["account_id"]) if int(a["id"]) == int(alert_id)), None)
+    if not alert:
+        return JSONResponse({"ok": False, "error": i18n_t("alert.error.not_found", lang=lang)}, status_code=404)
+    mine = int(alert["owner_id"]) == int(user["id"])
+    if action in ("stop", "start") and user.get("email"):
+        if action == "stop":
+            email_store.opt_out(str(user["email"]), "alert", str(alert_id))
+        else:
+            email_store.opt_back_in(str(user["email"]), "alert", str(alert_id))
+        return _alert_reply(user, dashboard, chart, lang)
+    if not mine or action not in ("pause", "resume", "check"):
+        return JSONResponse({"ok": False, "error": i18n_t("alert.error.not_yours", lang=lang)}, status_code=403)
+    if action == "pause":
+        tile_alert_store.set_alert_active(int(alert_id), False)
+        return _alert_reply(user, dashboard, chart, lang)
+    if action == "resume":
+        tile_alert_store.set_alert_active(int(alert_id), True,
+                                          next_check_at=_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+        return _alert_reply(user, dashboard, chart, lang)
+    told = await asyncio.to_thread(tile_alerts.check, tile_alert_store.get_alert(int(alert_id)))
+    return _alert_reply(user, dashboard, chart, lang, checked=told.get(int(user["id"]), ""))
+
+
+@router.delete("/api/dashboard/{dashboard_id}/tiles/{chart_id}/alerts/{alert_id}")
+async def delete_tile_alert_api(request: Request, dashboard_id: int, chart_id: int, alert_id: int):
+    from store import tile_alert_store
+
+    found, refused = _alert_tile(request, dashboard_id, chart_id)
+    if refused:
+        return refused
+    user, dashboard, chart = found
+    alert = tile_alert_store.get_alert(int(alert_id))
+    if not alert or int(alert["owner_id"]) != int(user["id"]) or int(alert["chart_id"]) != int(chart["id"]):
+        return JSONResponse({"ok": False, "error": i18n_t("alert.error.not_yours",
+                                                          lang=_request_language(request))}, status_code=403)
+    tile_alert_store.delete_alert(int(alert_id))
+    return _alert_reply(user, dashboard, chart, _request_language(request))
 
 
 @router.post("/unpin")

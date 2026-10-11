@@ -44,6 +44,13 @@ def run_due_notifications_once() -> None:
         log.warning("run_due_follows failed: %s", exc)
 
     try:
+        from core.tile_alerts import run_due_tile_alerts
+
+        run_due_tile_alerts()
+    except Exception as exc:
+        log.warning("run_due_tile_alerts failed: %s", exc)
+
+    try:
         from core.dashboard_schedule import run_due_schedules
 
         run_due_schedules()

@@ -61,6 +61,9 @@ RULES: list[tuple[Optional[frozenset[str]], re.Pattern, str]] = [
         # Scheduled reports, and dashboards emailed on a schedule.
         ("", r"^/reports(/.*)?$", "reports"),
         ("", rf"^/api/dashboard/{_ID}/schedules(/.*)?$", "reports"),
+        # Alerts on a dashboard's number tile: anyone who may open it, for themselves (others: its owner, checked
+        # by the route).
+        ("", rf"^/api/dashboard/{_ID}/tiles/{_ID}/alerts(/.*)?$", "follow"),
     ]
 ]
 
