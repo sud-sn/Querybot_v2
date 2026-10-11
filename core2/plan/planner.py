@@ -25,7 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, points_at_period
-from core2.plan.ir import Clarify, Plan, Sort, Window, schema_text
+from core2.plan.ir import Clarify, Compare, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -144,6 +144,7 @@ class Turn:
     plan: Plan | None = None
     masked: Masked | None = None        # what the AI was shown, when member values are withheld
     shown: list[tuple] = field(default_factory=list)   # the answer's members in order: (attribute, value, number)
+    periods: list[str] = field(default_factory=list)   # the answer's periods in order, by their first day (ISO)
 
 
 @dataclass
@@ -326,6 +327,16 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal
         _analyses(model)) if part)
 
 
+def _fiscal(model: SemanticModel) -> tuple[int, str]:
+    """The month the workspace's fiscal year starts in (1: the calendar year), and whether a fiscal year is named
+    by the year it starts or ends in."""
+    start = model.settings.fiscal_year_start_month or next(
+        (c.fiscal_year_start_month for c in model.calendars.values() if c.fiscal_year_start_month), None) or 1
+    named_by = next((c.fiscal_year_named_by for c in model.calendars.values()
+                     if c.fiscal_year_start_month == start and c.fiscal_year_named_by), None) or "end"
+    return start, named_by
+
+
 def fiscal_years_text(model: SemanticModel, today: dt.date) -> str:
     """The workspace's fiscal years as dates, for a question that names one by its number.
 
@@ -333,12 +344,9 @@ def fiscal_years_text(model: SemanticModel, today: dt.date) -> str:
     fiscal, the AI could not know that FY2026 ended months ago (a year starting in April,
     named by the year it ends). Nothing is said where the fiscal year is the calendar year.
     """
-    start = model.settings.fiscal_year_start_month or next(
-        (c.fiscal_year_start_month for c in model.calendars.values() if c.fiscal_year_start_month), None)
-    if not start or start == 1:
+    start, named_by = _fiscal(model)
+    if start == 1:
         return ""
-    named_by = next((c.fiscal_year_named_by for c in model.calendars.values()
-                     if c.fiscal_year_start_month == start and c.fiscal_year_named_by), None) or "end"
     begins = today.year if today.month >= start else today.year - 1      # the year this fiscal year starts in
 
     def span(year: int) -> str:
@@ -473,6 +481,104 @@ def stands_for(value: Any) -> bool:
 _PLACE_WORD = re.compile(r"\b(first|1st|top|second|2nd|third|3rd|fourth|4th|fifth|5th|last|bottom)\b", re.IGNORECASE)
 _PLACES = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
            "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
+
+
+# "From the first to the second half of fiscal year 2026", "H1 against H2 2025": a year's two halves.
+_HALVES = re.compile(r"\b(?:first|1st)\s+half\b.*\b(?:second|2nd)\s+half\b|\b(?:second|2nd)\s+half\b.*\b(?:first|1st)\s+"
+                     r"half\b|\b(?:first|1st)\s+(?:to|and|vs\.?|versus|against)\s+(?:the\s+)?(?:second|2nd)\s+half\b|"
+                     r"\bh1\b.*\bh2\b|\bh2\b.*\bh1\b", re.IGNORECASE)
+_FISCAL_YEAR = re.compile(r"\b(?:fiscal\s+(?:year\s+)?|fy\s?)'?(\d{4}|\d{2})\b", re.IGNORECASE)
+_YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
+
+
+def _halves(question: str, model: SemanticModel) -> tuple[Window, Window] | None:
+    """A year's first and second halves, as the question names them ("the first to the second half of fiscal year
+    2026"): the second, and the first it is compared with."""
+    if not _HALVES.search(question):
+        return None
+    fiscal = _FISCAL_YEAR.search(question)
+    calendar = _YEAR.search(question)
+    if fiscal:
+        number = int(fiscal.group(1))
+        number += 2000 if number < 100 else 0
+        start_month, named_by = _fiscal(model)
+        begins = number - 1 if named_by == "end" and start_month != 1 else number
+        first = dt.date(begins, start_month, 1)
+    elif calendar:
+        first = dt.date(int(calendar.group(1)), 1, 1)
+    else:
+        return None
+    middle = dt.date(first.year + (first.month + 5) // 12, (first.month + 5) % 12 + 1, 1)
+    end = dt.date(first.year + 1, first.month, 1)
+    day = dt.timedelta(days=1)
+    return (Window(kind="between", start=middle, end=end - day, fiscal=bool(fiscal)),
+            Window(kind="between", start=first, end=middle - day, fiscal=bool(fiscal)))
+
+
+_GRAIN_MONTHS = {"month": 1, "quarter": 3, "year": 12, "fiscal_month": 1, "fiscal_quarter": 3, "fiscal_year": 12}
+
+
+def _months_on(day: dt.date, months: int) -> dt.date:
+    at = day.month - 1 + months
+    return dt.date(day.year + at // 12, at % 12 + 1, 1) if day.day == 1 else day.replace(
+        year=day.year + at // 12, month=at % 12 + 1)
+
+
+def why_periods(plan: Plan, model: SemanticModel, question: str, history: list[Turn]) -> Plan:
+    """The two periods a "why" is about, from the question's words or the answers on screen, never the AI's guess.
+
+    Found asking a real model (gpt-4o):
+
+    * "Why did it change from the first to the second half of fiscal year 2026?" kept the months of the trend on
+      screen, and was answered as February against March: the two halves are worked out here;
+    * "Why did it grow?" after "Which month grew the most?" showed May against May a year before, and was answered
+      as May against June: the one period on screen is the one explained, against the period it was compared with;
+    * "Pourquoi cette différence ?" after the same figure on 17 August, then on 27 May, was answered as 27 May
+      against the day before: the two dates on screen are the two compared.
+    """
+    if plan.kind != "query" or plan.intent not in ("drivers", "compare"):
+        return plan
+    time = plan.time
+    halves = _halves(question, model)
+    if halves is not None:
+        window, prior = halves
+        return plan.model_copy(update={"time": time.model_copy(update={
+            "grain": None, "window": window, "compare": Compare(kind="window", window=prior)})})
+    if plan.intent != "drivers" or not history or not keeps_period(question) or history[-1].plan is None or history[-1].plan.kind != "query":
+        return plan
+    last = history[-1]
+    before = last.plan
+    assert before is not None
+    months = _GRAIN_MONTHS.get(before.time.grain or "")
+    if before.time.compare is not None and months and len(last.periods) == 1:
+        try:
+            start = dt.date.fromisoformat(last.periods[0])
+        except ValueError:
+            return plan
+        window = Window(kind="between", start=start, end=_months_on(start, months) - dt.timedelta(days=1),
+                        fiscal=before.time.window.fiscal)
+        compare = before.time.compare
+        if compare.kind == "window" and compare.window is not None and compare.window.start \
+                and before.time.window.start:
+            # The comparison on screen was a stretch against another as long: the month's own match in it.
+            shift = (compare.window.start.year - before.time.window.start.year) * 12 + \
+                (compare.window.start.month - before.time.window.start.month)
+            compare = Compare(kind="window", window=Window(
+                kind="between", start=_months_on(start, shift),
+                end=_months_on(_months_on(start, shift), months) - dt.timedelta(days=1), fiscal=window.fiscal))
+        return plan.model_copy(update={"time": time.model_copy(update={
+            "grain": None, "window": window, "compare": compare, "date": time.date or before.time.date})})
+    earlier = history[-2].plan if len(history) >= 2 else None
+    if earlier is not None and earlier.kind == "query" and time.compare is None \
+            and set(earlier.measures) == set(before.measures) == set(plan.measures) \
+            and before.time.compare is None and earlier.time.compare is None:
+        a, b = earlier.time.window, before.time.window
+        if a.kind == b.kind == "between" and a.start and b.start and (a.start, a.end) != (b.start, b.end):
+            later, sooner = (a, b) if a.start > b.start else (b, a)
+            return plan.model_copy(update={"time": time.model_copy(update={
+                "grain": None, "window": later, "compare": Compare(kind="window", window=sooner),
+                "date": time.date or before.time.date})})
+    return plan
 
 
 # "Average selling price per unit", "what percentage ... did they reject", "the return rate": a ratio asked for.
@@ -916,6 +1022,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                         '"follow_up"' in text)
         plan = pointed_in(plan, model, matches, question, on_screen)
         plan = ratio_alone(plan, model, question)
+        halved = why_periods(plan, model, question, [])       # "the first to the second half of FY2026"
+        if halved is not plan and not check(halved, model, today, shown)[0]:
+            plan = halved
         problems, hint = check(plan, model, today, shown)
         if not problems:
             twin = named_twin(plan, model, question)
@@ -926,6 +1035,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             settled = settle(plan, model, question, history[-1].plan if history else None)
             if settled is not plan and not check(settled, model, today, shown)[0]:
                 plan = settled
+            explained = why_periods(plan, model, question, history)
+            if explained is not plan and not check(explained, model, today, shown)[0]:
+                plan = explained
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
     return Outcome(Plan(kind="clarify", clarify=Clarify(

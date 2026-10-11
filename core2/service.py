@@ -488,8 +488,10 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
                   personal_shown=services.scrub is not None, link_repeats=_link_check(services))
     shown: list[tuple] = []
+    periods: list[str] = []
     try:
-        payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown)
+        payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown,
+                           periods=periods)
     except ResolveError as exc:
         if exc.kind == "ambiguous":
             session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
@@ -549,17 +551,18 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     if following and plan.follow_up == "refine" and last is not None:
         # Said on the answer: what it changed, and the same question asked on its own, one click away.
         payload["following"] = {"question": last.question, "ask_new": f"New question: {question}"}
-    session.turns.append(Turn(question, plan, outcome.masked, shown))
+    session.turns.append(Turn(question, plan, outcome.masked, shown, periods))
     del session.turns[:-HISTORY]
     return payload
 
 
 def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
-             started: float, shown: list[tuple] | None = None) -> dict[str, Any]:
+             started: float, shown: list[tuple] | None = None, periods: list[str] | None = None) -> dict[str, Any]:
     """The answer to a checked plan: one query, or the several a "why" or a forecast needs.
 
     ``shown``, when given, is filled with the answer's members in the order shown, for a
-    follow-up that names one by its place ("the first one").
+    follow-up that names one by its place ("the first one"); ``periods`` with its periods, for a
+    "why" that follows the one month on screen.
     """
     model = services.model
     warehouse = Guarded(services.warehouse)
@@ -590,6 +593,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
         payload["personal"] = True      # its rows name people, or count them by age: no written summary by the AI
     if shown is not None:
         shown.extend(_members_shown(logical, payload))
+    if periods is not None:
+        periods.extend(_periods_shown(logical, payload))
     payload["follow_up_suggestions"] = follow_ups(plan, logical, payload, model, services.allowed_tables)
     chart = payload.get("chart") or {}
     # A bar that is a range of amounts ("5–10") is no member a click could open.
@@ -684,6 +689,15 @@ def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> li
                     {g.attribute: member(row.get(g.name)) for g in groups[1:]},
                     moved if isinstance(moved, (int, float)) and not isinstance(moved, bool) else None))
     return out
+
+
+def _periods_shown(logical: Any, payload: dict[str, Any], most: int = 60) -> list[str]:
+    """The periods of an answer by period, in the order shown, each by its first day ("2026-05-01")."""
+    period = next((g for g in logical.groups if g.kind == "period"), None)
+    if period is None:
+        return []
+    rows = payload.get("export_rows") or (payload.get("data") or {}).get("rows") or []
+    return [str(r[period.name])[:10] for r in rows[:most] if r.get(period.name) not in (None, "")]
 
 
 UNAVAILABLE = ("The database is not available right now: Azure SQL says so while a paused database is resuming, "

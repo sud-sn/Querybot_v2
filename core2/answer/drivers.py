@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
@@ -159,7 +160,9 @@ def base_plan(plan: Plan, model: SemanticModel, ctx: Context) -> tuple[Plan, lis
         notes.append("Explained for the first measure asked about.")
     t = plan.time
     window, compare = t.window, t.compare
-    if t.grain:
+    # A series is explained by its last stretch, unless the question names the two periods compared ("from the
+    # first to the second half", "against the same months last year"): those are compared whole.
+    if t.grain and (compare is None or compare.kind == "previous_period"):
         series = _series_windows(plan, model, ctx)
         if series is not None:
             window, compare, note = series
@@ -429,8 +432,18 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
 
     asked = list(dict.fromkeys(plan.drivers.dimensions)) if plan.drivers and plan.drivers.dimensions else []
     skip = {f.field for f in plan.filters} | ({unit_slug} if unit_slug else set())
-    slugs = asked[:MAX_GROUPINGS] or candidates(model, total_logical.parts[0].table, allowed=ctx.allowed_tables,
-                                               skip=skip)
+    # Filtered to one member ("for formula X"): none of that thing's groupings has two members to set apart.
+    one = {model.attributes[f.field].entity if f.field in model.attributes else f.field
+           for f in plan.filters if f.op in ("eq", "in") and len(f.values) == 1}
+    skip |= {t for t in one if t in model.entities} | {a.slug for a in model.attributes.values() if a.entity in one}
+    if asked:
+        slugs = asked[:MAX_GROUPINGS]
+    else:
+        # The grouping of the answer the "why" follows ("par entrepôt") first, then the most telling others.
+        kept = [g for g in dict.fromkeys(plan.group_by) if not g.startswith("time:") and g not in skip
+                and (g in model.entities or g in model.attributes)]
+        found = candidates(model, total_logical.parts[0].table, allowed=ctx.allowed_tables, skip=skip | set(kept))
+        slugs = [*kept, *found][:MAX_GROUPINGS]
     groupings: list[Grouping] = []
     skipped: list[str] = []
     why_not: list[str] = []
@@ -474,6 +487,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     # The conditions the question applied are named with the measure: "Gross profit for profit centre X rose".
     headline = _headline(scoped_label(total_logical, m.label), fmt_, current, prior, change, pct, now, before,
                          reported, ranked, additive, unit=unit)
+    headline = _against_the_words(question, change) + headline
     tail = conditions_tail(total_logical)
 
     notes = [*notes, *total_logical.notes]
@@ -519,6 +533,21 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
         {"slug": g.slug, "label": g.label, "explained": round(g.explained, 4),
          "leaders": [{"member": x.member, "change": x.change} for x in g.leaders]} for g in ranked]}
     return payload
+
+
+_ASKED_UP = re.compile(r"\b(?:grow|grew|grown|growth|rise|rose|risen|increase[sd]?|go(?:ne)? up|went up|gain(?:ed)?|"
+                       r"jump(?:ed)?|climb(?:ed)?|improve[sd]?|better|higher|augment\w*|hausse|cro[iî]t\w*)\b",
+                       re.IGNORECASE)
+_ASKED_DOWN = re.compile(r"\b(?:fall|fell|fallen|drop(?:ped)?|decline[sd]?|decrease[sd]?|go(?:ne)? down|went down|"
+                         r"shr[iau]nk|lower|worse|slump(?:ed)?|dip(?:ped)?|baisse|diminu\w*)\b", re.IGNORECASE)
+
+
+def _against_the_words(question: str, change: float) -> str:
+    """ "Why did it grow?" of a figure that fell: said first, so the reasons are not read as reasons it grew."""
+    up, down = bool(_ASKED_UP.search(question)), bool(_ASKED_DOWN.search(question))
+    if up == down or not change or (change > 0) == up:
+        return ""
+    return "It did not grow, it fell. " if up else "It did not fall, it rose. "
 
 
 def _headline(label: str, format_: str, current: float, prior: float, change: float, pct: float | None,
