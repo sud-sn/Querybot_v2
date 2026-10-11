@@ -24,8 +24,8 @@ from pydantic import ValidationError
 from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
-from core2.plan.followup import asks_series, keeps_period, points_at_period
-from core2.plan.ir import Clarify, Compare, Plan, Sort, Window, schema_text
+from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
+from core2.plan.ir import Clarify, Compare, Filter, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -1062,6 +1062,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             explained = why_periods(plan, model, question, history)
             if explained is not plan and not check(explained, model, today, shown)[0]:
                 plan = explained
+            if plan.follow_up == "refine":
+                kept = those_members(plan, model, question, history[-1].plan if history else None, on_screen)
+                if kept is not plan and not check(kept, model, today, shown)[0]:
+                    plan = kept
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
     return Outcome(Plan(kind="clarify", clarify=Clarify(
@@ -1100,7 +1104,7 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         return plan
     update: dict[str, Any] = {}
     if previous is not None and previous.kind == "query" and plan.follow_up == "refine":
-        update.update(_reshaped(plan, previous, question))
+        update.update(_reshaped(plan, previous, question, model))
         plan = plan.model_copy(update=update) if update else plan
     time = plan.time
     if previous is not None and previous.kind == "query" and plan.follow_up == "refine":
@@ -1154,7 +1158,7 @@ _SERIES_WORDS = re.compile(r"\b(?:each|every|per|by)\s+(?:day|week|month|quarter
                            r"quarterly|yearly|annually|over time|trend)\b", re.IGNORECASE)
 
 
-def _reshaped(plan: Plan, previous: Plan, question: str) -> dict[str, Any]:
+def _reshaped(plan: Plan, previous: Plan, question: str, model: SemanticModel | None = None) -> dict[str, Any]:
     """What a follow-up's own words say about the shape of the answer it changes, whatever the AI kept."""
     update: dict[str, Any] = {}
     series = asks_series(question) or bool(_SERIES_WORDS.search(question))
@@ -1168,9 +1172,21 @@ def _reshaped(plan: Plan, previous: Plan, question: str) -> dict[str, Any]:
             update["intent"] = "breakdown"
     if _FOR_THOSE.search(question) and previous.group_by and (previous.limit or previous.sort) \
             and set(plan.group_by) <= set(previous.group_by):
-        measures = [*previous.measures, *(m for m in plan.measures if m not in previous.measures)]
-        update.update({"group_by": list(previous.group_by), "sort": list(previous.sort), "limit": previous.limit,
-                       "measures": measures, "intent": previous.intent})
+        if series or not keeps_period(question):
+            # "Show their monthly quantity sold in 2026": the same members, the figure and the shape it asks
+            # (the figure they were ranked by before stays behind, unless the question names it too).
+            named = measures_named(model, question) if model is not None else set()
+            measures = [m for m in plan.measures if m not in previous.measures or m in named] or plan.measures
+            shown = {*measures, *(d.name for d in plan.derived)}
+            sort = [s for s in plan.sort if s.by in shown or s.by in ("change", "pct_change", "share", "period")]
+            if not sort and measures:
+                sort = [Sort(by=measures[0], desc=True)]
+            update.update({"group_by": [*previous.group_by, *(g for g in plan.group_by if g not in previous.group_by)],
+                           "sort": sort, "limit": previous.limit, "measures": measures})
+        else:
+            measures = [*previous.measures, *(m for m in plan.measures if m not in previous.measures)]
+            update.update({"group_by": list(previous.group_by), "sort": list(previous.sort), "limit": previous.limit,
+                           "measures": measures, "intent": previous.intent})
     if _FOR_EACH.search(question) and previous.group_by and not plan.group_by:
         update["group_by"] = list(previous.group_by)                 # "for each" of the members on screen
     if _EITHER.search(question) and len(plan.measures) + len(plan.derived) >= 2 and plan.time.grain and not series:
@@ -1178,6 +1194,40 @@ def _reshaped(plan: Plan, previous: Plan, question: str) -> dict[str, Any]:
         if plan.intent == "trend":
             update["intent"] = "value"
     return update
+
+
+# "Those items", "these stores", "their", "them", "the same customers": the members of the answer on screen.
+_THOSE = re.compile(r"\b(?:those|these|them|their|the\s+same)\b", re.IGNORECASE)
+
+
+def those_members(plan: Plan, model: SemanticModel, question: str, previous: Plan | None,
+                  on_screen: list[tuple] | None) -> Plan:
+    """The members of the ranking on screen, by name, when a follow-up asks about them in another period or as a
+    series: "How did those items do in Q1 2026?" after the top 5 items of Q2 was ranked again in Q1, five other
+    items. In the same period and shape, its order and its limit find them again, and are kept as they are. Once
+    named, they stay named for the next "their" ("show their monthly quantity")."""
+    if plan.kind != "query" or previous is None or previous.kind != "query" or not on_screen \
+            or not _THOSE.search(question or ""):
+        return plan
+    field = str(on_screen[0][0])
+    attribute = model.attributes.get(field)
+    if attribute is None:
+        return plan
+    same = {field, *([attribute.entity] if attribute.entity else [])}     # "item.name", or the entity "item"
+    if not same & set(previous.group_by) or any(f.field in same for f in plan.filters):
+        return plan
+    group_by = plan.group_by if same & set(plan.group_by) else [field, *plan.group_by]
+    named = next((f for f in previous.filters if f.field in same and f.op in ("in", "eq") and f.values), None)
+    if named is not None:                       # named on the answer before: still those
+        return plan.model_copy(update={"filters": [*plan.filters, named], "group_by": group_by, "limit": None})
+    if not previous.limit or (plan.time.window, plan.time.grain, plan.time.compare) == (
+            previous.time.window, previous.time.grain, previous.time.compare):
+        return plan
+    members = list(dict.fromkeys(str(row[1]) for row in on_screen[:previous.limit] if row[1] is not None))
+    if not members:
+        return plan
+    return plan.model_copy(update={"filters": [*plan.filters, Filter(field=field, op="in", values=members)],
+                                   "group_by": group_by, "limit": None})
 
 
 def _short(exc: Exception) -> str:

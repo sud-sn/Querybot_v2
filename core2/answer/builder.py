@@ -954,7 +954,15 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         if (verb == "leads with" and logical.sort_asked and logical.sort and logical.sort[0][1]
                 and logical.sort[0][0] == m.name and not _sums(logical, m)):
             verb = f"has the highest {_lower(m.label)}, at"
-        return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{no_member}."
+        # "Which 5 items brought the most, and what share of the total is that?": the five together, of everything.
+        together = ""
+        if logical.limit and worked_out is not None and not units.mixed and len(named) > 1 and _sums(logical, m):
+            portions = [_number(raw[i].get(worked_out.name)) for i in named]
+            if all(p is not None for p in portions):
+                summed = sum(_number(raw[i][m.name]) or 0.0 for i in named)
+                together = (f"; the {len(named)} together: {fmt(summed, m.format, unit=units.of(top))}, "
+                            f"{sum(portions):.0%} of the total")
+        return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{together}{no_member}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:
             ordered = sorted(raw, key=lambda r: -(_number(r[m.name]) or 0.0))
