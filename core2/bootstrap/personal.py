@@ -59,12 +59,20 @@ def _like(words: set[str], vocabulary: set[str]) -> bool:
 
 def is_first_name(name: str) -> bool:
     t = _tokens(name)
-    return bool(t & _FIRST_ALONE or t & _NAME and _like(t, FIRST_WORDS))
+    return bool(t & _FIRST_ALONE or t & _NAME and _like(t, FIRST_WORDS) or t == {"first"})
 
 
 def is_last_name(name: str) -> bool:
     t = _tokens(name)
-    return bool(t & _LAST_ALONE or t & _NAME and _like(t, LAST_WORDS))
+    return bool(t & _LAST_ALONE or t & _NAME and _like(t, LAST_WORDS) or t == {"last"})
+
+
+# A person's other names, written alone in a table about people (MIDDLE, MAIDEN).
+_OTHER_NAMES = {"middle", "maiden", "mname", "middlename", "maidenname"}
+# A driver's licence number, written alone or with a number word (DRIVERS, DL_NO, LICENSE_NUMBER).
+_LICENCE = {"drivers", "driver", "licence", "license", "lic", "dl"}
+# Where someone lives, as coordinates (LAT, LON) in a table about people.
+_COORDINATES = {"lat", "lon", "lng", "long", "latitude", "longitude"}
 
 
 def is_contact(name: str, pattern: str | None) -> bool:
@@ -102,6 +110,13 @@ def read_table(table: InvTable, profile: TableProfile) -> dict[str, str]:
                 people or words & (_FIRST_ALONE | _LAST_ALONE | FIRST_WORDS | LAST_WORDS)):
             # An abbreviation (FST_NM) only beside its other half: PRC_LST_NM alone is a price list's name.
             out[column.name] = NAME
+        elif people and column.data_type == "text" and words and words <= _OTHER_NAMES:
+            out[column.name] = NAME     # MAIDEN, MIDDLE beside FIRST and LAST
+        elif people and column.data_type == "text" and words & _LICENCE and words <= _LICENCE | {
+                "no", "num", "number", "nbr", "id"}:
+            out[column.name] = PII      # a patient's DRIVERS: their licence number
+        elif people and words and words <= _COORDINATES and column.data_type in ("decimal", "float", "integer"):
+            out[column.name] = PII      # a patient's LAT and LON: where they live
         elif column.data_type == "text" and words & _NAME and (words & _MIDDLE or "full" in words):
             out[column.name] = NAME
         elif column.data_type == "text" and words & _NAME and not _like(words, ORG_WORDS) \

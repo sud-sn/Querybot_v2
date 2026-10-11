@@ -151,6 +151,10 @@ def series_key(warehouse: Warehouse, table: InvTable, profile: TableProfile, sta
     return None
 
 
+# The last word of a document's own number: an order number, an invoice id.
+_DOCUMENT_WORDS = {"number", "no", "nbr", "num", "id", "key", "code", "ref"}
+
+
 def _key_like(table: InvTable, profile: TableProfile) -> list[str]:
     out = []
     for c in table.columns:
@@ -243,8 +247,13 @@ def infer_keys(warehouse: Warehouse, table: InvTable, profile: TableProfile) -> 
                 continue
             dated = sum(1 for n in combo if profile.columns[n].pattern in ("yyyymmdd", "yyyymm")
                         or table.type_of(n) == "date")
-            combos.append((-dated, product, combo))
-        for _, _, combo in sorted(combos):
+            # A document's number and its line number (SalesOrderNumber, SalesOrderLineNumber) first: on a wide
+            # fact table the checks run out before reaching them among the dates and keys.
+            lines = [n for n in combo if _numbers_lines(table, profile, n) and set(names.tokens(n)) & _SEQUENCE_WORDS]
+            document_line = bool(lines) and any((names.tokens(n) or [""])[-1] in _DOCUMENT_WORDS
+                                                for n in combo if n not in lines)
+            combos.append((not document_line, -dated, product, combo))
+        for *_, combo in sorted(combos):
             if checks >= MAX_COMPOSITE_CHECKS or found:
                 break
             checks += 1

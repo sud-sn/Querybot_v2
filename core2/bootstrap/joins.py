@@ -111,6 +111,8 @@ _HIERARCHY = {"parent", "prnt", "par", "mgr", "manager", "reports", "rpt", "supe
 # TOTAL_CUSTOMERS, AVG_ORDER.
 _FIGURE_WORDS = {"qty", "quantity", "cnt", "count", "total", "tot", "sum", "avg", "average", "amt", "amount", "pct",
                  "percent"}
+# Words that, first in a name, make it a count of the things it names: NumberEmployees, NUM_ORDERS, NO_OF_SEATS.
+_COUNT_LEAD = {"number", "num", "nbr", "nb", "no", "count", "cnt", "total", "tot", "qty", "quantity"}
 # A table's own number beside its key: BOOKING_NUMBER beside BOOKING_ID.
 _NUMBER_WORDS = {"number", "nr"}
 # A copy of a table, kept beside it: DEVICES_BAK, ORDERS_OLD, CUSTOMERS_20240101.
@@ -135,8 +137,8 @@ def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, 
     for target, score in ((k, 0.85), (u, 0.8)):
         if target and names.ends_with(a, target) and len(a) > len(target):
             role = a[: len(a) - len(target)]
-            if set(role) & _FIGURE_WORDS:
-                return 0.0, []      # QTY_PRESCRIBED is how much was prescribed, not the prescriber
+            if set(role) & _FIGURE_WORDS or role[0] in _COUNT_LEAD:
+                return 0.0, []      # QTY_PRESCRIBED is how much was prescribed, NumberEmployees how many work there
             return score, role
     words = names.tokens(from_column)
     keyed = bool(words) and words[-1] in names.KEY_SUFFIXES
@@ -153,6 +155,12 @@ def run_of_numbers(a: ColumnProfile) -> bool:
     if a.min_num is None or a.max_num is None or a.distinct < 3:
         return False
     return a.distinct >= RUN * (a.max_num - a.min_num + 1)
+
+
+def identifier_text(p: ColumnProfile) -> bool:
+    """Text whose every value is as long as every other, and long: a machine's identifier (a UUID, a hash).
+    Names and descriptions vary in length; identifiers of this kind never meet by chance."""
+    return p.min_len is not None and p.max_len is not None and p.min_len == p.max_len >= 16
 
 
 def _value_plausible(a: ColumnProfile, k: ColumnProfile, *, a_type: str, k_is_dimension: bool) -> tuple[bool, float]:
@@ -291,8 +299,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
                         continue   # FILM_ID unique on a film's one category row is still the film's key
                     alternates.add((key, unique))
-            if kind == "text" and (p.avg_len or 0) > 24:
-                continue   # names and descriptions are not what keys point at
+            if kind == "text" and (p.avg_len or 0) > 24 and not identifier_text(p):
+                continue   # names and descriptions are not what keys point at; a UUID is a key
             if kind == "decimal" and p.integer_share != 1.0:
                 continue
             targets.append((key, unique))
@@ -339,7 +347,15 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             own_key = column.name in tkeys.primary_key and len(tkeys.primary_key) == 1
             if own_key and _names_its_table(column.name, table.name):
                 continue   # CUSTOMER_ID on CUSTOMERS identifies the row; it points nowhere
-            if column.name in sequence_columns or a.distinct < 2 or column.data_type not in ("integer", "text", "decimal", "date"):
+            column_words = names.tokens(column.name)
+            # A parent pointer used by one parent alone (every department group under Corporate): one value, still a
+            # step up the hierarchy, tested like any other.
+            hierarchy_key = bool(_HIERARCHY & set(column_words)) and bool(column_words) \
+                and column_words[-1] in names.KEY_SUFFIXES and a.distinct == 1
+            # A code that holds one value (every rate converts from USD): linked only where its name says where.
+            single_valued = a.distinct < 2 and not hierarchy_key
+            if column.name in sequence_columns or a.distinct < 1 \
+                    or column.data_type not in ("integer", "text", "decimal", "date"):
                 continue
             if a.pattern in ("flag01", "flag", "flag_yn"):
                 continue
@@ -356,7 +372,16 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     continue
                 ident = (key, column.name, to_table, to_column)
                 is_declared = (key, names_norm(column.name), to_table, names_norm(to_column)) in declared
+                if counts_things(column.name) and not is_declared:
+                    continue          # NumberEmployees on the resellers: how many, not which
+                if to_table != key and not is_declared and (
+                        column.name in tkeys.unique_columns and _of_its_own_table(column.name, table.name)
+                        or _names_its_table(column.name, table.name)):
+                    continue          # the categories' own alternate key, a review's ProductReviewID: its own rows'
+                    #                   number, pointing nowhere, however its values look
                 score, role = name_score(column.name, inventory.tables[to_table].name, to_column)
+                if single_valued and not (is_declared or score >= 0.8):
+                    continue
                 if mixed and not (is_declared or score >= 0.9):
                     continue          # a code kept as text ('0007') points at a number key when the names say so
                 k = profiles[to_table].columns[to_column]
@@ -386,7 +411,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     continue   # a calendar's own period numbers are not foreign keys
                 if own_key and not (is_declared or score >= 0.9):
                     continue   # a table's own key points elsewhere only when it says so (1:1 extensions)
-                if plausible and not (is_declared or score) and not to_calendar \
+                # Identifiers of one length on both sides (UUIDs) meet only where one is the other's: their values
+                # speak for them whatever the column is called (APPOINTMENTID holding the encounters' Id).
+                same_identifiers = identifier_text(a) and identifier_text(k) and a.max_len == k.max_len
+                if plausible and not (is_declared or score) and not to_calendar and not same_identifiers \
                         and not names.opaque(column.name) and not _shares_a_word(column.name, inventory.tables[to_table].name):
                     plausible = False   # whole-number keys collide by chance: a meaningful name must agree
                 plausible = plausible or up_the_hierarchy
@@ -532,6 +560,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score,
                                   not _names_its_table(f.to_column, inventory.tables[f.to_table].name), -f.coverage,
                                   -f.match_rate, f.ident))
+        one = _one_to_one(group, profiles, inventory)
+        if one is not None:
+            kept += one
+            continue
         best = group[0]
         if len(group) > 1 and not best.declared and not best.history and best.name_score == 0:
             rival = group[1]
@@ -548,6 +580,58 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         _measure_target(warehouse, inventory, keys, calendars, f, versions)
     _name_roles(kept, inventory)
     return sorted(kept, key=lambda f: f.ident)
+
+
+def _one_to_one(group: list[JoinFinding], profiles: dict[str, TableProfile],
+                inventory: Inventory) -> list[JoinFinding] | None:
+    """Which of several tables sharing one key a table points at, or None when that is not the question.
+
+    A person's email address, password and phone are each kept once per person, under the person's number,
+    which the business entities hold too: the email column matches all four tables' keys, one for one, and
+    the order of names and trust cannot choose. The tables holding the same members are one family, whose
+    head is the one that says most about them (the person, with names and titles): the others point at it,
+    and it points at the smallest table holding more members (every business entity), or at nothing when
+    none does. A table holding fewer members (the employees) points at the head of the smallest family
+    holding them all.
+    """
+    top = group[0]
+    if top.declared or len(top.pairs) != 1:
+        return None
+    rivals = [f for f in group if f.trust == "verified" and not f.declared and len(f.pairs) == 1
+              and f.name_score == top.name_score and f.to_unique and f.to_table != f.from_table]
+    if len(rivals) < 2:
+        return None
+    if not top.from_unique and top.name_score < 1.0:
+        return None          # only a key of one name shared by the family (BusinessEntityID) is chosen here
+
+    def members(table: str, column: str) -> int:
+        return profiles[table].columns[column].distinct
+
+    def says_most(table: str) -> tuple[int, int, str]:
+        t = inventory.tables[table]
+        return sum(1 for c in t.columns if c.data_type == "text"), len(t.columns), t.name
+
+    own = members(top.from_table, top.from_column)
+
+    def same(f: JoinFinding) -> bool:
+        return abs(members(f.to_table, f.to_column) - own) <= 0.005 * max(own, 1)
+
+    if not top.from_unique:
+        # An employee's pay history, a vendor's products: rows of a member, pointing at the smallest table holding
+        # every member they name (the employees, not every business entity); verified, each holds them all.
+        fewest = min(members(f.to_table, f.to_column) for f in rivals)
+        closest = [f for f in rivals if members(f.to_table, f.to_column) <= fewest * 1.005]
+        return [max(closest, key=lambda f: says_most(f.to_table))]
+    family = [f for f in rivals if same(f)]
+    head = max(family, key=lambda f: says_most(f.to_table), default=None)
+    if head is not None and says_most(head.to_table) > says_most(top.from_table):
+        return [head]
+    larger = [f for f in rivals if not same(f) and members(f.to_table, f.to_column) > own]
+    if not larger:
+        return []                    # the head of the widest family: it points at none of its own
+    fewest = min(members(f.to_table, f.to_column) for f in larger)
+    closest = [f for f in larger if members(f.to_table, f.to_column) <= fewest * 1.005]
+    return [max(closest, key=lambda f: says_most(f.to_table))]
 
 
 def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, TableKeys],
@@ -625,6 +709,19 @@ def _named(table: InvTable, name: str) -> str | None:
 
 def names_norm(name: str) -> str:
     return name.casefold()
+
+
+def counts_things(column: str) -> bool:
+    """NumberEmployees, NUM_ORDERS, TotalChildren: a count of the things the name goes on to name, not a pointer
+    at one of them, however well its values fit inside their keys."""
+    words = names.tokens(column)
+    return len(words) > 1 and words[0] in _COUNT_LEAD and words[-1] not in names.KEY_SUFFIXES
+
+
+def _of_its_own_table(column: str, table: str) -> bool:
+    """PRODUCT_CATEGORY_ALTERNATE_KEY on the product categories: named for its own table, then more."""
+    core, own = names.core_column(column), names.core_table(table)
+    return bool(own) and len(core) >= len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
 
 
 def _names_its_table(column: str, table: str) -> bool:

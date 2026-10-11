@@ -212,6 +212,12 @@ def _apply(model: SemanticModel, table_key: str, reply: dict[str, Any]) -> None:
             rows = measure.business_name.lower().endswith(" rows") or noun.split()[-1:] and \
                 noun.split()[-1] in AMOUNT_NOUNS
             measure.business_name = f"Number of {noun} rows" if rows else f"Number of {names.plural(noun)}"
+        elif column_key and agg == "count_distinct" and measure.kind == "count" and table.provenance == "ai" \
+                and table.primary_key == [column_key]:
+            # A count of the table's own members (a store's BusinessEntityID): "Number of stores", never of the
+            # entities its key is named for. One column of a two-column key (an order number beside its line
+            # number) counts something else: the orders.
+            measure.business_name = f"Number of {names.plural(table.business_name.lower())}"
         elif column_key and agg == "count_distinct" and model.columns[column_key].provenance == "ai":
             named = model.columns[column_key].business_name
             thing = re.sub(r"\s+(number|no\.?|id|key|code|reference)$", "", named, flags=re.I)

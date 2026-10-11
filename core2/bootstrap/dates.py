@@ -69,6 +69,8 @@ _PERSONAL = {"birth", "brth", "bth", "dob", "born", "birthday"}
 # invoice, an item's last receipt): a fact about that thing, repeated on its rows, not the row's event.
 _MILESTONE = {"first", "fst", "frst", "last", "lst", "latest", "earliest", "original", "orig", "initial", "init",
               "previous", "prev", "prior", "next", "nxt"}
+# When something began before the row's own event (a claim's illness, an accident): background to it.
+_BACKGROUND = {"illness", "onset", "symptom", "symptoms", "injury", "accident"}
 MARGIN = 0.1
 
 
@@ -250,6 +252,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             elif word_set & _PERSONAL:
                 c.add("personal_name", -0.5, f"the name ({readable}) is a date in a person's life, not an event "
                       "the table records")
+            elif word_set & _BACKGROUND or _said(c.column, _BACKGROUND):
+                c.add("background_name", -0.4, f"the name ({readable}) is when something began before the event "
+                      "the row records")
             elif word_set & _MILESTONE:
                 c.add("milestone_name", -0.4, f"the name ({readable}) is the first, last or original time "
                       "something happened to what the row describes, not the event the row records")
@@ -289,6 +294,13 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             ranked[0].is_default = True
         out[key] = candidates
     return out
+
+
+def _said(column: str, vocabulary: set[str]) -> bool:
+    """A word of the vocabulary in the name, written apart or glued in capitals (SERVICEDATE)."""
+    words = names.tokens(column)
+    return bool(set(words) & vocabulary) or any(
+        len(v) >= 4 and v in w and w.endswith(("date", "dt", "day")) for w in words for v in vocabulary)
 
 
 def _months(value: exp.Expression, candidate: DateCandidate, data_type: str, dialect: str) -> exp.Expression:

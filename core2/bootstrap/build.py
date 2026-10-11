@@ -20,7 +20,7 @@ from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.history import MIN_QUERIES, links_in, read_query_log
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
-from core2.bootstrap.joins import JoinFinding, discover_joins
+from core2.bootstrap.joins import JoinFinding, discover_joins, identifier_text
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
 from core2.bootstrap.keys import TableKeys, infer_keys, series_key
@@ -570,6 +570,14 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         label_key = _two_part_name(model, key, business, found, profile) if isinstance(found, tuple) else (
             ck[(key, found)] if found else None)
         codes = [c for c in texts if c != found and (profile.columns[c].max_len or 99) <= 16]
+        named = profile.columns.get(found) if isinstance(found, str) else None
+        if not codes and versions is None and named is not None and 10 <= named.distinct < profile.rows:
+            # Names that repeat with no unique code (a product kept once per version, its versions not marked):
+            # the short code that repeats just as the names do is each member's own ("FR-R92R-58"), and tells
+            # members apart where its row number would split one product into its versions.
+            codes = [c.name for c in table.columns if c.name not in (found, *tkeys.primary_key) and c.name not in held
+                     and c.data_type == "text" and (profile.columns[c.name].max_len or 99) <= 25
+                     and profile.columns[c.name].distinct == named.distinct][:1]
         if versions is not None:
             # One member, whatever its version: told apart and counted by its own number.
             codes = [versions.business_key]
@@ -642,6 +650,10 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
 
 
 _NAME_WORDS = {"name", "nm", "title", "label"}
+# Languages a name column says it is kept in, besides English.
+_OTHER_LANGUAGES = {"spanish", "french", "german", "italian", "portuguese", "dutch", "chinese", "japanese", "korean",
+                    "arabic", "hebrew", "thai", "russian", "turkish", "polish", "swedish", "es", "fr", "de", "it",
+                    "pt", "nl", "zh", "ja", "ko", "ar", "he", "th", "ru", "spa", "fre", "fra", "ger", "deu"}
 _DESCRIPTION_WORDS = {"desc", "dsc", "description", "descr"}
 
 
@@ -667,26 +679,34 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
             continue
         if personal.is_first_name(name) or personal.is_last_name(name):
             continue     # half a person's name, however unique: both together name them (below)
+        if set(names.tokens(name)) & _TECHNICAL or identifier_text(p):
+            continue     # a row's GUID names nothing anyone reads
         words = set(names.tokens(name))
         unique = name in keys.unique_columns
         named = bool(words & _NAME_WORDS)
         described = bool(words & _DESCRIPTION_WORDS) and (p.avg_len or 0) <= 60
         near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * min(p.non_null, members or p.non_null)
-        if not (unique or (near_unique and (named or described))):
-            continue
         own = named and ("full" in words or any(names.same_word(w, t) for w in words for t in subject))
+        # The table's own name (EnglishProductName on the products) names its members though they repeat once per
+        # version, when the versions' dates do not say so.
+        repeated = own and p.non_null >= 0.9 * rows and p.distinct >= 0.5 * p.non_null
+        if not (unique or (near_unique and (named or described)) or repeated):
+            continue
         rank = -1 if own else 0 if named else 2 if described else 3
-        best.append((rank, -(p.avg_len or 0), name))
+        # The same name kept in several languages (EnglishProductName, SpanishProductName): English, or the one
+        # that names no language, before the others, whichever is longer.
+        best.append((rank, bool(words & _OTHER_LANGUAGES), -(p.avg_len or 0), name))
     found = min(best) if best else None
-    if found is not None and found[0] <= 0:
-        return found[2]
-    # A person named in two parts: both together, before a description or an id-like text.
+    if found is not None and (found[0] < 0 or found[0] == 0 and people.get(found[-1]) != personal.NAME):
+        return found[-1]     # its own name, or a name that is no one's (a customer's company name)
+    # A person named in two parts: both together, before another person's name the table keeps (an employee's
+    # emergency contact), a description or an id-like text.
     texts = [c.name for c in table.columns if c.data_type == "text"]
     first = next((c for c in texts if personal.is_first_name(c)), None)
     last = next((c for c in texts if personal.is_last_name(c)), None)
     if first and last and profile.columns[first].non_null >= 0.9 * rows and profile.columns[last].non_null >= 0.9 * rows:
         return first, last
-    return found[2] if found else None
+    return found[-1] if found else None
 
 
 def _two_part_name(model: SemanticModel, key: str, business: str, parts: tuple[str, str],
@@ -710,7 +730,8 @@ def _two_part_name(model: SemanticModel, key: str, business: str, parts: tuple[s
 
 
 # Columns that describe the load, not the business: never offered as groupings.
-_TECHNICAL = {"etl", "ext", "src", "sys", "dw", "dwh", "hash", "checksum", "rowid", "guid", "uuid", "az"}
+_TECHNICAL = {"etl", "ext", "src", "sys", "dw", "dwh", "hash", "checksum", "rowid", "guid", "uuid", "az", "rowguid",
+              "msrepl"}
 
 
 def _attribute_worthy(column: InvColumn, col: Column, kind: str) -> bool:

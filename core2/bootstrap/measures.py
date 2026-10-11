@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core2.bootstrap import names
+from core2.bootstrap import names, personal
 from core2.bootstrap.calendar import CalendarFinding
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate
 from core2.bootstrap.inventory import Inventory, InvColumn, InvTable
@@ -47,7 +47,9 @@ _FLOW = names.FLOW_WORDS
 _COST_ONLY = {"cost", "cst"}
 _CODE = {"id", "key", "code", "cd", "no", "nbr", "num", "seq", "sequence", "line", "ln", "lin", "type", "typ", "ind", "indicator",
          "status", "sts", "flag", "flg", "year", "yr", "month", "mth", "day", "week", "wk", "quarter", "qtr",
-         "version", "level", "lvl", "rank", "priority", "grade", "zip", "postal", "phone"}
+         "version", "level", "lvl", "rank", "priority", "grade", "zip", "postal", "phone", "ref", "revision",
+         "frequency", "diagnosis", "dx", "icd", "snomed", "cpt", "ndc", "loinc", "reaction", "fips", "lat", "lon",
+         "lng", "latitude", "longitude"}
 _UNIT_WORDS = {"uom", "unit", "units", "unt", "um", "measure"}
 # What a thing can do (a port's speed, a circuit's bandwidth), not an amount of anything: never added up.
 _CAPACITY = {"speed", "bandwidth", "capacity", "mbps", "gbps", "kbps", "bps", "threshold", "limit", "lmt", "rpm",
@@ -77,8 +79,22 @@ class MeasureFinding:
     review: str | None = None   # a question for an admin when the call rests on little
 
 
+# Code words a name in capitals glues to its noun: DEPARTMENTID, REASONCODE, DIAGNOSISREF.
+_GLUED = ("code", "id", "key", "ref")
+
+
 def _words(column: str) -> set[str]:
-    return set(names.tokens(column))
+    out: set[str] = set()
+    for word in names.tokens(column):
+        out.add(word)
+        glued = next((g for g in _GLUED if word.endswith(g) and len(word) >= len(g) + 4), None)
+        if glued and word not in _MONEY | _QUANTITY:
+            out |= {word[:-len(glued)], glued}
+    return out
+
+
+# The last word that makes a number name a row rather than measure it: a line number, a revision, an id.
+_NAMING_LAST = {"id", "key", "code", "cd", "no", "nbr", "num", "number", "ref", "seq", "sequence"}
 
 
 _NUMBER_WORDS = {"num", "nbr", "no", "number", "cnt", "count"}
@@ -125,10 +141,13 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             evidence.append(Evidence(kind="documents", weight=1, detail=(
                 f"{', '.join(documents[:2])} number documents or their lines: rows are transactions, not balances")))
             periodic = []
-        if incoming and labels:
+        named = _names_members(table, profiles[key], keys[key])
+        if incoming and (labels or named):
+            # Pointed at, and naming its members: a dimension, though it carries figures and dates of its own (a
+            # product's list price, an employee's hire date) and names repeat once per version of a member.
             kind = "dimension"
             evidence.append(Evidence(kind="referenced", weight=1, detail=(
-                f"{len(incoming)} join(s) point at it and it names its members ({', '.join(labels[:2])})")))
+                f"{len(incoming)} join(s) point at it and it names its members ({', '.join((labels or named)[:2])})")))
         elif numbers and periodic:
             kind = "snapshot"
             evidence.append(Evidence(kind="periodic", weight=1, detail=next(
@@ -137,6 +156,11 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
                 len(keys[key].primary_key) != 1 or any(j.from_column == keys[key].primary_key[0] for j in outgoing)):
             kind = "bridge"
             evidence.append(Evidence(kind="bridge", weight=1, detail=f"links {len(outgoing)} tables and holds no measures"))
+        elif not numbers and not incoming and outgoing and any(not c.periodic for c in roles):
+            # A diagnosis, a survey answer: an event of someone, on a date, with nothing to add up but itself.
+            kind = "fact"
+            evidence.append(Evidence(kind="events", weight=1, detail=(
+                f"one dated event per row, linked to {len(outgoing)} table(s): counted, not summed")))
         elif numbers and (outgoing or roles):
             kind = "fact"
             evidence.append(Evidence(kind="measures", weight=1, detail=f"{len(numbers)} measure(s) and "
@@ -165,6 +189,30 @@ def _document_numbers(table: InvTable, links: set[str]) -> list[str]:
         if words[-1] in _NUMBERED and not set(words) & AUDIT_WORDS:
             out.append(column.name)
     return out
+
+
+# Words a member's own name may carry besides the table's noun: EnglishProductName, FULL_NAME.
+_OWN_NAME_EXTRA = {"name", "nm", "full", "display", "english", "en", "eng", "short", "long"}
+
+
+def _names_members(table: InvTable, profile: TableProfile, keys: TableKeys) -> list[str]:
+    """Columns that name the table's own members, unique or not: NAME, ResellerName or EnglishProductName filled
+    on nearly every row (never a customer's name kept on an order), or a person's first and last name."""
+    rows = profile.rows or 0
+    subject = [] if names.opaque(table.name) else names.core_table(table.name)
+
+    def own(column: str) -> bool:
+        words = set(names.tokens(column))
+        rest = words - _OWN_NAME_EXTRA
+        return bool(words & {"name", "nm"}) and all(any(names.same_word(w, t) for t in subject) for w in rest)
+
+    out = [c.name for c in table.columns
+           if c.data_type == "text" and c.name not in keys.primary_key and own(c.name)
+           and profile.columns[c.name].distinct >= 2 and profile.columns[c.name].non_null >= 0.9 * rows]
+    texts = [c.name for c in table.columns if c.data_type == "text"]
+    first = [c for c in texts if personal.is_first_name(c)]
+    last = [c for c in texts if personal.is_last_name(c)]
+    return out or (first[:1] + last[:1] if first and last else [])
 
 
 def _any_label(table: InvTable, profile: TableProfile, keys: TableKeys) -> bool:
@@ -201,6 +249,10 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE) \
                 and not _counted(column.name):
             continue
+        last = [w for w in names.tokens(column.name) if not w.isdigit()][-1:] or [""]
+        if last[0] in _NAMING_LAST and not _counted(column.name) and not (names.tokens(column.name) or [""])[0] in (
+                "number", "num", "nbr", "no", "count", "cnt", "total"):
+            continue   # SalesOrderLineNumber, RevisionNumber: a row's number, never added up
         if words & (_CAPACITY | _ALLOWANCE) and not words & (_MONEY | _QUANTITY):
             continue   # a port's speed, the refills a prescription allows: what may be, not an amount of it
         if "per" in words and not dates.get(key):
@@ -253,6 +305,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                     # On a balance, a "cost" alone may be a unit cost or a value at cost: never summed over time
                     # on that word alone (asked about instead).
                     flow = words & _FLOW - _COST_ONLY
+                    if words & {"in", "out"} and words & _QUANTITY:
+                        flow = flow | {"movement"}  # UnitsIn, QTY_OUT: what moved in the period, added up
                     if _counted(name):
                         flow = flow | {"count"}     # a number of receipts in the month: events, added up
                     level = (bool(words & _LEVEL) or opaque or not flow) and not (flow and not words & _LEVEL)
@@ -269,7 +323,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                                                    detail=f"{label} is an amount for each period: added up over time"))
             # A number named by its own unit ("days supply", "weight oz") is in that unit, whatever else the row holds.
             if m.format in ("number", "integer") and not words & _OWN_UNITS and (words & _QUANTITY or opaque):
-                unit = _unit_column(inventory, profiles, key, reachable, kind="unit")
+                unit = _unit_column(inventory, profiles, key, reachable, kind="unit", measured=words)
                 if unit:
                     m.unit_column, m.unit_values = unit
             if m.format == "currency":
@@ -332,8 +386,13 @@ def _reachable_one_step(joins: list[JoinFinding]) -> dict[str, list[str]]:
     return out
 
 
+# What a unit column can say it measures (WeightUnitMeasureCode, SIZE_UOM): the unit of that alone.
+_MEASURED = {"weight", "wgt", "size", "volume", "vol", "length", "width", "height", "depth", "dimension", "distance"}
+
+
 def _unit_column(inventory: Inventory, profiles: dict[str, TableProfile], key: str,
-                 reachable: dict[str, list[str]], *, kind: str) -> tuple[tuple[str, str], list[str]] | None:
+                 reachable: dict[str, list[str]], *, kind: str,
+                 measured: set[str] = frozenset()) -> tuple[tuple[str, str], list[str]] | None:
     for table_key in [key] + sorted(reachable.get(key, [])):
         table = inventory.tables[table_key]
         for column in table.columns:
@@ -342,6 +401,8 @@ def _unit_column(inventory: Inventory, profiles: dict[str, TableProfile], key: s
                 continue
             values = {(t.value or "").strip().lower() for t in p.top}
             words = _words(column.name)
+            if kind == "unit" and words & _MEASURED and not words & _MEASURED & measured:
+                continue   # WeightUnitMeasureCode is the unit of a weight, not of a count of units in stock
             if kind == "unit" and (words & _UNIT_WORDS or values and values <= _UNIT_VALUES):
                 return (table_key, column.name), sorted(t.value or "" for t in p.top)
             if kind == "currency" and values and values <= _CURRENCIES:
