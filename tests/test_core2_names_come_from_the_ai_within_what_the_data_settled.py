@@ -121,3 +121,61 @@ def test_without_the_ai_a_table_reads_in_words_as_its_columns_do(table, reads):
     from core2.bootstrap.build import _table_name
 
     assert _table_name(table) == reads
+
+
+def test_counts_keep_reading_as_counts_under_the_ais_names():
+    """A real model named a pharmacy's tables well ("Revenue", "Prescription Fill") and the counts were made
+    from its names as "Number of revenues" and "Number of rxes". A table of amounts is counted in rows, and a
+    short code counts its numbers. Invented data."""
+    import duckdb
+
+    from core2.bootstrap.labels import label
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE fact_revenue AS SELECT i AS revenue_id, (i % 50) * 3.5 AS gross_amount, "
+                "DATE '2025-01-01' + CAST(i % 300 AS INTEGER) AS booked_date FROM range(1, 2001) r(i)")
+    con.execute("CREATE TABLE fact_rx_fill AS SELECT i AS rx_fill_id, 'RX' || lpad(CAST(i % 700 AS VARCHAR), 5, '0') "
+                "AS rx_number, i % 30 AS days_supply, DATE '2025-01-01' + CAST(i % 300 AS INTEGER) AS fill_date FROM range(1, 3001) r(i)")
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), options=BuildOptions(workers=1, outliers=False))
+    counts = {m.table: m for m in model.measures.values() if getattr(m.expr, "agg", "") == "count"}
+    revenue = next(k for k, t in model.tables.items() if t.name == "fact_revenue")
+    fills = next(k for k, t in model.tables.items() if t.name == "fact_rx_fill")
+    assert counts[revenue].business_name == "Number of revenue rows"
+
+    def ai(system, user):
+        return json.dumps({"tables": {"fact_revenue": {"name": "Revenue"},
+                                      "fact_rx_fill": {"name": "Prescription Fill",
+                                                       "columns": {"rx_number": {"name": "Rx Number"}}}}})
+
+    label(model, ai)
+    assert counts[revenue].business_name == "Number of revenue rows"
+    assert counts[fills].business_name == "Number of prescription fills"
+    distinct = [m for m in model.measures.values() if getattr(m.expr, "agg", "") == "count_distinct"
+                and m.table == fills]
+    assert distinct and distinct[0].business_name == "Number of rx numbers", [m.business_name for m in distinct]
+
+
+def test_wide_tables_are_named_a_few_at_a_time_and_a_failed_call_is_asked_again_table_by_table(generic):
+    """Four wide tables of a real warehouse were asked for in one call; the reply ran past its ceiling and all four
+    kept the names read from the data. Calls hold no more columns than a reply can name, and a call that fails for
+    several tables is asked again for each alone."""
+    from core2.bootstrap.labels import COLUMNS_PER_CALL, label
+
+    model = _build(generic)
+    asked: list[list[str]] = []
+
+    def ai(system: str, user: str) -> str:
+        tables = [t["table"] for t in json.loads(user.split("\n", 1)[1])]
+        asked.append(tables)
+        if len(tables) > 1:
+            raise RuntimeError("Azure OpenAI completion for gpt-4o was truncated at the 6000-token ceiling")
+        return json.dumps({"tables": {tables[0]: {"name": f"Named {tables[0]}"}}})
+
+    notes = label(model, ai)
+    assert not notes, notes
+    shown = [t for t in model.tables.values() if not t.hidden]
+    assert all(t.business_name == f"Named {t.name}" for t in shown)
+    for call in asked:
+        assert len(call) == 1 or sum(len(next(t for t in shown if t.name == n).columns) for n in call) <= \
+            COLUMNS_PER_CALL

@@ -41,7 +41,7 @@ _OWN_UNITS = {"day", "days", "hour", "hours", "hrs", "hr", "minute", "minutes", 
               "secs", "week", "weeks", "month", "months", "year", "years", "oz", "lb", "lbs", "kg", "kgs", "gram",
               "grams", "mg", "ml", "km", "miles", "pct", "percent", "mbps", "gbps", "gb", "mb", "tb", "kwh", "sqft"}
 # Nouns that name an amount, not a thing counted: a table of them is counted in rows ("revenue rows").
-_AMOUNT_NOUNS = {"revenue", "income", "cost", "costs", "spend", "expense", "expenses", "billing", "inventory",
+AMOUNT_NOUNS = {"revenue", "income", "cost", "costs", "spend", "expense", "expenses", "billing", "inventory",
                  "stock", "usage", "shipping", "payroll", "budget", "finance", "consumption", "demand", "supply"}
 _FLOW = names.FLOW_WORDS
 _COST_ONLY = {"cost", "cst"}
@@ -281,7 +281,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
         # Counting rows and documents.
         noun = names.readable(" ".join(names.core_table(table.name))) if not names.opaque(table.name) else table.name
         counted = f"{noun.lower()} rows" if periodic or noun.lower().split()[-1:] and \
-            noun.lower().split()[-1] in _AMOUNT_NOUNS else names.plural(noun.lower())
+            noun.lower().split()[-1] in AMOUNT_NOUNS else names.plural(noun.lower())
         out.append(MeasureFinding(table=key, column=None, agg="count", additivity="additive", format="count",
                                   name=f"Number of {counted}",
                                   evidence=[Evidence(kind="row_count", weight=1, detail="counts rows")]))

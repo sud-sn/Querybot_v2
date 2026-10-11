@@ -20,6 +20,7 @@ from collections.abc import Callable
 from typing import Any
 
 from core2.bootstrap import names
+from core2.bootstrap.measures import AMOUNT_NOUNS
 from core2.model.schema import SemanticModel
 
 log = logging.getLogger("querybot.core2")
@@ -122,18 +123,42 @@ def _short(text: Any, limit: int) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
 
 
+# Columns named in one call: a reply names each with a description and synonyms in two languages, and four
+# wide tables of a real warehouse ran past the reply's ceiling, so all four kept the names read from the data.
+COLUMNS_PER_CALL = 60
+
+
+def _chunks(model: SemanticModel, keys: list[str], batch: int) -> list[list[str]]:
+    """Tables to name together: at most ``batch``, and no more columns than one reply can name."""
+    out: list[list[str]] = []
+    for key in keys:
+        width = len(model.tables[key].columns)
+        last = out[-1] if out else None
+        if last is not None and len(last) < batch and \
+                sum(len(model.tables[k].columns) for k in last) + width <= COLUMNS_PER_CALL:
+            last.append(key)
+        else:
+            out.append([key])
+    return out
+
+
 def label(model: SemanticModel, complete: Complete, *, batch: int = 4) -> list[str]:
-    """Ask for names, table by table (``batch`` tables per call); returns notes on what failed."""
+    """Ask for names, a few tables per call (``batch`` at most, fewer when they are wide); a call that fails for
+    several tables is asked again for each alone. Returns notes on what failed."""
     notes: list[str] = []
     keys = [k for k, t in model.tables.items() if not t.hidden]
-    for i in range(0, len(keys), batch):
-        chunk = keys[i:i + batch]
+    pending = _chunks(model, keys, batch)
+    while pending:
+        chunk = pending.pop(0)
         briefs = [table_brief(model, k) for k in chunk]
         user = "Tables:\n" + json.dumps(briefs, ensure_ascii=False, default=str)
         try:
             answer = _parse(complete(SYSTEM, user))
         except Exception as exc:  # noqa: BLE001 - names stay as read from the data; the page says so
             log.warning("core2 labels: the AI could not name %s: %s", [model.tables[k].name for k in chunk], exc)
+            if len(chunk) > 1:
+                pending[:0] = [[k] for k in chunk]       # each alone: a shorter reply may fit
+                continue
             notes.append(f"Names for {len(chunk)} table(s) are read from their column names: the AI call failed.")
             continue
         found = answer.get("tables")
@@ -181,10 +206,17 @@ def _apply(model: SemanticModel, table_key: str, reply: dict[str, Any]) -> None:
             measure.business_name = model.columns[column_key].business_name
             measure.synonyms = dict(model.columns[column_key].synonyms)
         elif agg == "count" and table.provenance == "ai":
-            measure.business_name = f"Number of {names.plural(table.business_name.lower())}"
+            # A table of amounts, or of periods, is counted in rows, as the data's own name had it: "Number of
+            # revenue rows", never "Number of revenues" (a real model's name, taken as it came).
+            noun = table.business_name.lower()
+            rows = measure.business_name.lower().endswith(" rows") or noun.split()[-1:] and \
+                noun.split()[-1] in AMOUNT_NOUNS
+            measure.business_name = f"Number of {noun} rows" if rows else f"Number of {names.plural(noun)}"
         elif column_key and agg == "count_distinct" and model.columns[column_key].provenance == "ai":
-            thing = re.sub(r"\s+(number|no\.?|id|key|code|reference)$", "", model.columns[column_key].business_name,
-                           flags=re.I)
+            named = model.columns[column_key].business_name
+            thing = re.sub(r"\s+(number|no\.?|id|key|code|reference)$", "", named, flags=re.I)
+            if len(re.sub(r"\W", "", thing)) <= 3:
+                thing = named          # "Rx Number" counts Rx numbers, not "rxes"
             measure.business_name = f"Number of {names.plural(thing.lower())}"
     for role in model.date_roles.values():
         column = model.columns[role.column]
