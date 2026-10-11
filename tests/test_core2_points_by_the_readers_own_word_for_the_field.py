@@ -85,3 +85,15 @@ def test_the_place_word_written_as_a_value_on_another_field_of_the_thing_on_scre
     filtered the group's code on "TOP", and found nothing."""
     plan = pointed_in(_plan(field, values), retail[1], [], "How much did the top store sell?", SCREEN)
     assert (plan.filters[0].field, plan.filters[0].values) == kept
+
+
+@pytest.mark.parametrize("question, found", [
+    ("How many different items do we hold from the first supplier on that list?", [("the first supplier", "Airport")]),
+    ("What did the second branch in this ranking sell?", [("the second branch", "Harbour")]),
+    ("How much did the first branch sell?", []),                     # no list named, no word of the field: asked
+    ("Sales in the first quarter on that list", []),                 # a period, not a row
+])
+def test_a_list_named_makes_the_readers_word_a_row_of_it(question, found):
+    from core2.plan.values import placed
+
+    assert [(m.text, m.value) for m in placed(question, [s[:3] for s in SCREEN], [])] == found

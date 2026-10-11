@@ -468,13 +468,20 @@ _POINTING = {"first", "second", "third", "last", "top", "bottom", "max", "min", 
 
 # "<top_warehouse_from_previous_answer>", "{first_one}": a stand-in in brackets, whatever is inside.
 _BRACKETED = re.compile(r"^\s*(?:<[^<>]+>|\{[^{}]+\})\s*$")
+# A row's place among the rows: "top", "first", "the lowest one".
+_ROW_PLACES = _POINTING - {"previous", "above", "selected", "given", "chosen", "specific", "same", "that", "this",
+                           "those", "these", "increase", "decrease"}
+# "top 1 from previous answer", "the first one in the list above": a description of a row, in words.
+_DESCRIBED = re.compile(r"\b(?:previous|prior|last|above)\s+(?:answer|result|list|table|ranking|question)\b|"
+                        r"\b(?:from|in|on)\s+the\s+(?:answer|list|table|ranking)\b|\bon\s+screen\b", re.IGNORECASE)
 
 
 def stands_for(value: Any) -> bool:
     """Is this filter value a stand-in for a member the question points at, rather than a name?"""
     if not isinstance(value, str):
         return False
-    return bool(_BRACKETED.match(value)) or bool(_STANDS_FOR.match(value)) and bool(set(value.split("_")) & _POINTING)
+    return bool(_BRACKETED.match(value)) or bool(_STANDS_FOR.match(value)) and bool(set(value.split("_")) & _POINTING) \
+        or bool(_DESCRIBED.search(value)) and bool(set(value.lower().split()) & _ROW_PLACES)
 
 
 # "The first supplier on that list", "the 2nd one": a place in the answer on screen.

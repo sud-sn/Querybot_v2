@@ -132,3 +132,34 @@ def test_a_stand_in_is_replaced_only_by_the_one_member_of_its_field(retail, valu
                                 "filters": [{"field": "store.name", "op": "eq", "values": values}]})
     found = [ValueMatch("the first one", 0, 13, attribute, value) for attribute, value in matches]
     assert pointed_in(plan, retail[1], found).filters[0].values == kept
+
+
+@pytest.mark.parametrize("value, stand_in", [
+    ("top 1 from previous answer", True),
+    ("the first one in the list above", True),
+    ("Top Shelf Hardware", False),               # a name that starts with a place word
+    ("Previous Answer Ltd", False),
+])
+def test_a_row_described_in_words_is_a_stand_in(value, stand_in):
+    from core2.plan.planner import stands_for
+
+    assert stands_for(value) is stand_in
+
+
+def test_a_breakdown_of_members_with_no_name_shows_them_by_their_key(unnamed):
+    """ "Which warehouses hold the most of it?" with no limit came back as one row, "Unknown"."""
+    built, model = unnamed
+    plan = {**RANK, "intent": "breakdown"}
+    plan.pop("limit")
+    payload = answer_question("Net amount by store in Q1 2026", _services(unnamed, [plan]), Session())
+    expected = _by_store(built)
+    assert {r["store_name"]: r["net_amount"] for r in payload["export_rows"]} == pytest.approx(
+        {f"{key} (no name)": float(v) for key, v in expected})
+
+
+def test_another_field_of_a_member_is_never_shown_by_the_members_key(unnamed):
+    """A store's region left empty is no region "12 (no name)": the key the rows hold is the store's."""
+    built, model = unnamed
+    logical = resolve(Plan.model_validate({**RANK, "group_by": ["region.name"]}), model,
+                      Context(today=TODAY, unnamed_by_key=True))
+    assert "(no name)" not in compile_query(logical, model, "duckdb").sql

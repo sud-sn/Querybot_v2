@@ -1230,12 +1230,18 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 part.groups.append(PartGroup(code_name, alias, code_column, "attribute"))
             path = builder.paths_used.get(column.table)
             hop = path.joins[0] if path is not None and path.joins else None
-            if plan.limit and slug != unit_slug and ctx.unnamed_by_key and hop is not None \
-                    and hop.from_table == part.table and len(hop.from_columns) == 1:
-                # Asked again after the ranking found nothing: a member whose table has no row for the key its
-                # rows hold is ranked by that key ("0123 (no name)"); rows with no key at all are still left out.
+            # Only a field that names the member the rows link to (its name or code), never another of its
+            # fields: a product with no category is no category "12 (no name)", its key being the product's.
+            names_member = any(e.table == column.table and column.key in (e.label_column, e.code_column)
+                               for e in model.entities.values())
+            if slug != unit_slug and ctx.unnamed_by_key and hop is not None and names_member \
+                    and hop.from_table == part.table and hop.to_table == column.table and len(hop.from_columns) == 1:
+                # Asked again after the ranking found nothing, or a breakdown found only rows with no name: a
+                # member whose table has no row for the key its rows hold is shown by that key ("0123 (no name)");
+                # a ranking still leaves out rows with no key at all.
                 group.by_key = (part.alias, hop.from_columns[0])
-                part.preds.append(Pred(part.alias, hop.from_columns[0], "not_null", []))
+                if plan.limit:
+                    part.preds.append(Pred(part.alias, hop.from_columns[0], "not_null", []))
                 notes.append(f"Some rows' {attribute.business_name.lower()} is not found in "
                              f"{model.tables[column.table].business_name.lower()}: those are shown by the key the "
                              "rows hold, as \"(no name)\".")

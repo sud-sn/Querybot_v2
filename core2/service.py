@@ -534,7 +534,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                          'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
-    if plan.limit and plan.group_by and _found_nothing(payload):
+    if plan.group_by and (plan.limit and _found_nothing(payload) or shown and all(s[1] is None for s in shown)):
         _by_key(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     if plan.time.date and _found_nothing(payload, zero=True):
         plan = _by_main_date(payload, question, plan, services, ctx, question_id=question_id, shown=shown,
@@ -952,10 +952,11 @@ def _by_main_date(payload: dict[str, Any], question: str, plan: Plan, services: 
 
 def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context, *,
             question_id: str = "", shown: list[tuple] | None = None) -> None:
-    """A ranking that found nothing, asked again with each member whose table has no row for its key (so no name)
-    ranked by that key: "Which 10 warehouses have the least stock?" said "No rows match" on a copy whose warehouse
-    table named none of the warehouses the stock rows held. The answer on screen, and what "the first one" points
-    at, become those rows."""
+    """A ranking that found nothing, or a breakdown whose every row has no name, asked again with each member
+    whose table has no row for its key (so no name) shown by that key: "Which 10 warehouses have the least stock?"
+    said "No rows match" on a copy whose warehouse table named none of the warehouses the stock rows held, and
+    "which warehouses hold the most of it?" one row, "Unknown". The answer on screen, and what "the first one"
+    points at, become those rows."""
     members: list[tuple] = []
     try:
         again = _compute(question, plan, services, replace(ctx, unnamed_by_key=True),

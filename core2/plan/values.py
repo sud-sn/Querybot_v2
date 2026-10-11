@@ -211,6 +211,11 @@ def _field_words(attribute: str) -> set[str]:
 
 _ORDINAL = re.compile(r"\b(?:the\s+)?(first|1st|top|second|2nd|third|3rd|fourth|4th|fifth|5th|last|bottom)"
                       r"\s+(one|1|[a-z]+)\b", re.IGNORECASE)
+# "On that list", "in this ranking", "from the list above": the answer on screen, named as a list.
+_ON_THE_LIST = re.compile(r"\b(?:on|in|from|of)\s+(?:that|this|the|your)\s+(?:list|table|ranking|answer|chart)\b|"
+                          r"\b(?:on|in|from)\s+the\s+(?:list|table|ranking)\s+above\b", re.IGNORECASE)
+# Words after a place word that name a period or a share, never a row: "the first quarter", "the top 10%".
+_NOT_MEMBERS = {"day", "week", "month", "quarter", "half", "year", "time", "period", "percent", "place", "of"}
 _PLACE = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
           "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
 # "The lowest one" is the row with the lowest number, wherever the answer put it.
@@ -277,6 +282,9 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader
     words = _field_words(shown[0][0])
     nouns = {"one", "1"} | words
     out: list[ValueMatch] = []
+    # "The first supplier on that list", the field being called party: the list on screen is named, so the
+    # reader's own word for its members is one ("the top quarter" or "the first week" name no list).
+    on_list = _ON_THE_LIST.search(question)
 
     def free(m: re.Match) -> bool:
         return not any(t.start < m.end() and m.start() < t.end for t in [*taken, *out])
@@ -284,7 +292,8 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader
     for m in _ORDINAL.finditer(question):
         word, noun = m.group(1).lower(), m.group(2).lower()
         # "The top store in March" asks for a ranking; "the top one" points at a row.
-        if noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) or not free(m):
+        listed = on_list is not None and m.end() <= on_list.start() and noun not in _NOT_MEMBERS
+        if not listed and noun not in (nouns if word not in ("top", "bottom") else {"one", "1"}) or not free(m):
             continue
         place = _PLACE[word]
         if place >= len(shown):
