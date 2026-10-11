@@ -70,7 +70,7 @@ def test_the_settings_page_saves_and_every_page_carries_the_choice(fresh_store):
     request.form = form
     with patch.object(routes, "_get_portal_user", return_value=user):
         response = asyncio.run(routes.settings_submit(request))
-    assert response.status_code == 303 and response.headers["location"] == "/portal/settings?saved=1"
+    assert response.status_code == 303 and response.headers["location"] == "/portal/settings?tab=charts&saved=charts"
     stored = fresh_store.get_user(user["id"])
     assert routes.templates.env.globals["chart_prefs"](stored) == {
         "palette": "candy", "line": "smooth", "values": "hide", "motion": "on"}

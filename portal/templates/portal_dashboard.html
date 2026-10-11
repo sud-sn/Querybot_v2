@@ -372,7 +372,8 @@
 {% if dash_view.period %}{% set _ = _filters_now.append(t('ui.dash.period') ~ ': ' ~ t('ui.dash.period.' ~ dash_view.period)) %}{% endif %}
 {% for grouping in dash_groupings if grouping.selected %}{% set _ = _filters_now.append(grouping.label ~ ': ' ~ grouping.selected) %}{% endfor %}
 <dialog class="dash-dialog dash-dialog-wide" id="dashScheduleDialog" aria-labelledby="dashScheduleTitle"
-        data-dashboard-id="{{ dashboard_artifact.id }}" data-view="{{ (dash_view if dash_view is defined else {})|tojson|forceescape }}">
+        data-dashboard-id="{{ dashboard_artifact.id }}" data-view="{{ (dash_view if dash_view is defined else {})|tojson|forceescape }}"
+        data-zone="{{ my_timezone if my_timezone is defined else '' }}">
   <div class="dash-dialog-head">
     <h2 id="dashScheduleTitle">{{ t('ui.sched.title', name=dashboard_artifact.name) }}</h2>
     <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
@@ -1011,8 +1012,8 @@ function initScheduleDialog() {
     ? `${t('ui.dash.share_group')} · ${plural('ui.dash.share_group_size', item.members || 0)}` : (item.group || '');
   const upper = (text) => text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 
-  // The time zones this browser knows, its own first.
-  const here = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+  // The time zones this browser knows; the reader's own first (their profile's, else their browser's).
+  const here = dialog.dataset.zone || (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
   let zones = [];
   try { zones = Intl.supportedValuesOf('timeZone'); } catch (_) { zones = ['UTC', 'Europe/London', 'Europe/Paris',
     'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'Asia/Kolkata', 'Asia/Singapore', 'Australia/Sydney']; }

@@ -278,7 +278,8 @@ window.qbEnumLabel = function (group, value) {
 
     <footer class="portal-sidebar-footer">
       <div class="portal-user-card">
-        <div class="avatar" aria-hidden="true">{{ (user.name or 'U')[0].upper() }}</div>
+        {% set _photo = photo_url(user) if photo_url is defined else '' %}
+        <a class="avatar{% if _photo %} has-photo{% endif %}" href="/portal/settings?tab=profile" title="{{ t('ui.profile.tab.profile') }}" aria-label="{{ t('ui.profile.tab.profile') }}">{% if _photo %}<img src="{{ _photo }}" alt="">{% else %}{{ (user.name or 'U')[0].upper() }}{% endif %}</a>
         <div class="portal-user-meta">
           <div class="topbar-user-name">{{ user.name }}</div>
           <div class="topbar-user-role">{{ user.group_name or t('ui.shell.no_group') }} &middot; {{ enum_label('portal_role', reader_role(user)) if reader_role is defined else enum_label('role', user.role) }}</div>

@@ -574,7 +574,12 @@ def get_client_by_teams_tenant_id(tenant_id: str) -> Optional[dict]:
 
 
 def delete_client(account_id: str) -> None:
+    from store.profile_store import forget_people
+
     with get_db() as conn:
+        people = [int(r["id"]) for r in conn.execute("SELECT id FROM portal_user WHERE account_id=?",
+                                                     (account_id,)).fetchall()]
+        forget_people(conn, people)
         conn.execute("DELETE FROM client WHERE account_id=?", (account_id,))
 
 

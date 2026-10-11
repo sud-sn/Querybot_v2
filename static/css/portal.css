@@ -361,6 +361,10 @@ body { background: var(--bg); }
   background: transparent;
 }
 .portal-user-card .avatar { width: 30px; height: 30px; flex: 0 0 30px; background: var(--primary); box-shadow: none; }
+.portal-user-card a.avatar { text-decoration: none; }
+.portal-user-card a.avatar:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.avatar.has-photo { background: var(--surface-2); overflow: hidden; }
+.avatar.has-photo img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
 .portal-user-meta { display: block; }
 
 .portal-side-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }

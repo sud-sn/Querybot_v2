@@ -389,9 +389,11 @@ def upgrade_password_hash(user: dict, password: str) -> bool:
 
 def delete_user(user_id: int) -> None:
     from store.dashboard_store import forget_kept_rows
+    from store.profile_store import forget_people
 
     with get_db() as conn:
         forget_kept_rows(conn, user_id=user_id)
+        forget_people(conn, [int(user_id)])
         conn.execute("DELETE FROM portal_user WHERE id=?", (user_id,))
 
 
@@ -417,6 +419,7 @@ USER_EVENT_LABELS = {
     "role_changed": "Role changed",
     "group_changed": "Group changed",
     "renamed": "Renamed",
+    "signed_out_elsewhere": "Signed out of other devices by the user",
 }
 
 

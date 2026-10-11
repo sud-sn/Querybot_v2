@@ -924,6 +924,19 @@ def unsubscribe_dashboard(
     return bool(cur.rowcount)
 
 
+def set_follow_status(dashboard_id: int, user_id: int, account_id: str, status: str) -> bool:
+    """Pause a follow, or start it again ("active" | "paused"); its cadence and channel stay."""
+    if status not in ("active", "paused"):
+        raise ValueError(status)
+    with get_db() as conn:
+        cur = conn.execute(
+            """UPDATE dashboard_subscription SET status=?, updated_at=datetime('now')
+                WHERE dashboard_id=? AND user_id=? AND account_id=?""",
+            (status, int(dashboard_id), int(user_id), account_id),
+        )
+    return bool(cur.rowcount)
+
+
 def list_active_follows() -> list[dict]:
     """Every active follow of a person who can sign in, with their language: core/dashboard_follow.py picks the
     ones due."""

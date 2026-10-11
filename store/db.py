@@ -1495,6 +1495,7 @@ def _run_migrations() -> None:
         _ensure_schedule_tables(conn)
         _ensure_alert_tables(conn)
         _ensure_what_changed_table(conn)
+        _ensure_profile_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1911,6 +1912,31 @@ def _ensure_what_changed_table(conn: sqlite3.Connection) -> None:
             created_at   TEXT    DEFAULT (datetime('now')),
             PRIMARY KEY (dashboard_id, user_id)
         );
+        """
+    )
+
+
+def _ensure_profile_tables(conn: sqlite3.Connection) -> None:
+    """A reader's own profile and their sign-ins (store/profile_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS portal_profile (
+            user_id    INTEGER PRIMARY KEY,
+            job_title  TEXT    NOT NULL DEFAULT '',
+            timezone   TEXT    NOT NULL DEFAULT '',
+            start_page TEXT    NOT NULL DEFAULT '',
+            photo_rev  INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT    DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS portal_sign_in (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            account_id TEXT    NOT NULL DEFAULT '',
+            at         TEXT    DEFAULT (datetime('now')),
+            ip         TEXT    NOT NULL DEFAULT '',
+            agent      TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_portal_sign_in_user ON portal_sign_in(user_id, id);
         """
     )
 

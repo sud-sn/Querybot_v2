@@ -7,17 +7,168 @@
 <script src="{{ asset('js/qb-charts.js') }}"></script>
 {% endblock %}
 {% block content %}
+{% set my_photo = photo_url(user) if photo_url is defined else '' %}
 <div class="settings-page">
   <div class="page-header">
     <h1>{{ t('ui.shell.settings') }}</h1>
-    <p>{{ t('ui.settings.lead') }}</p>
+    <p>{{ t('ui.profile.lead') }}</p>
   </div>
-  {% if saved %}<div class="alert alert-success" role="status">{{ t('ui.settings.saved') }}</div>{% endif %}
+  {% if saved %}<div class="alert alert-success" role="status">{{ t('ui.profile.saved.' ~ saved) }}</div>{% endif %}
+  {% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
 
+  <div class="qb-tabs settings-tabs" role="tablist" data-qb-tabs data-qb-tabs-hash aria-label="{{ t('ui.shell.settings') }}">
+    {% for name in ('profile', 'security', 'charts', 'notifications') %}
+    <button type="button" role="tab" class="qb-tab" data-tab="{{ name }}" id="tab-{{ name }}" aria-controls="panel-{{ name }}"
+            aria-selected="{{ 'true' if tab == name else 'false' }}">{{ t('ui.profile.tab.' ~ name) }}</button>
+    {% endfor %}
+  </div>
+
+  {# ── Profile ─────────────────────────────────────────────────────────── #}
+  <section role="tabpanel" id="panel-profile" aria-labelledby="tab-profile" class="settings-panel" {% if tab != 'profile' %}hidden{% endif %}>
+    <div class="card settings-card">
+      <div class="card-body settings-photo-row">
+        <div class="avatar settings-photo{% if my_photo %} has-photo{% endif %}" id="profilePhoto" aria-hidden="true">
+          {% if my_photo %}<img src="{{ my_photo }}" alt="">{% else %}{{ (user.name or 'U')[0].upper() }}{% endif %}
+        </div>
+        <div class="settings-photo-text">
+          <h2 class="settings-title">{{ t('ui.profile.photo') }}</h2>
+          <p class="settings-note">{{ t('ui.profile.photo_note', size=photo_max_mb) }}</p>
+          <div class="settings-photo-actions">
+            <form method="post" action="/portal/settings/photo" enctype="multipart/form-data" id="photoForm" data-no-loading>
+              <label class="btn btn-secondary btn-sm" for="photoFile">{{ ic("pencil", 14) }} <span>{{ t('ui.profile.photo_change') }}</span></label>
+              <input type="file" id="photoFile" name="photo" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only">
+              <noscript><button type="submit" class="btn btn-secondary btn-sm">{{ t('ui.profile.photo_upload') }}</button></noscript>
+            </form>
+            {% if my_photo %}
+            <form method="post" action="/portal/settings/photo/delete">
+              <button type="submit" class="btn btn-ghost btn-sm">{{ ic("trash", 14) }} <span>{{ t('ui.profile.photo_remove') }}</span></button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form method="post" action="/portal/settings/profile" class="card settings-card" id="profileForm">
+      <div class="card-body">
+        <h2 class="settings-title">{{ t('ui.profile.about') }}</h2>
+        <p class="settings-note">{{ t('ui.profile.about_note') }}</p>
+        <div class="settings-fields">
+          <div class="form-group">
+            <label for="profileName">{{ t('ui.profile.name') }}</label>
+            <input class="form-input" id="profileName" name="name" required maxlength="120" value="{{ user.name or '' }}" autocomplete="name">
+          </div>
+          <div class="form-group">
+            <label for="profileEmail">{{ t('ui.profile.email') }}</label>
+            <input class="form-input" id="profileEmail" value="{{ user.email or '' }}" readonly aria-describedby="profileEmailNote">
+            <p class="form-note" id="profileEmailNote">{{ t('ui.profile.email_note') }}</p>
+          </div>
+          <div class="form-group">
+            <label for="profileJob">{{ t('ui.profile.job_title') }}</label>
+            <input class="form-input" id="profileJob" name="job_title" maxlength="120" value="{{ profile.job_title }}"
+                   placeholder="{{ t('ui.profile.job_title_placeholder') }}" autocomplete="organization-title">
+          </div>
+          <div class="form-group">
+            <label for="profileLang">{{ t('ui.profile.language') }}</label>
+            <select class="form-input" id="profileLang" name="lang">
+              {% for option in languages %}<option value="{{ option.code }}"{% if option.code == lang %} selected{% endif %} lang="{{ option.code }}">{{ option.name }}</option>{% endfor %}
+            </select>
+            <p class="form-note">{{ t('ui.profile.language_note') }}</p>
+          </div>
+          <div class="form-group">
+            <label for="profileZone">{{ t('ui.profile.timezone') }}</label>
+            <select class="form-input" id="profileZone" name="timezone" data-qb-select data-zone="{{ profile.timezone }}">
+              <option value="">{{ t('ui.profile.timezone_browser') }}</option>
+              {% for zone in zones %}<option value="{{ zone }}"{% if zone == profile.timezone %} selected{% endif %}>{{ zone|replace('_', ' ') }}</option>{% endfor %}
+            </select>
+            <p class="form-note">{{ t('ui.profile.timezone_note') }}</p>
+          </div>
+          <div class="form-group">
+            <label for="profileStart">{{ t('ui.profile.start') }}</label>
+            <select class="form-input" id="profileStart" name="start_page">
+              {% for choice in starts %}<option value="{{ choice.value }}"{% if choice.value == profile.start_page %} selected{% endif %}>{{ t(choice.label_key) if choice.label_key else t('ui.profile.start.dashboard', name=choice.label) }}</option>{% endfor %}
+            </select>
+            <p class="form-note">{{ t('ui.profile.start_note') }}</p>
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn btn-primary">{{ t('ui.settings.save') }}</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  {# ── Security ────────────────────────────────────────────────────────── #}
+  <section role="tabpanel" id="panel-security" aria-labelledby="tab-security" class="settings-panel" {% if tab != 'security' %}hidden{% endif %}>
+    <form method="post" action="/portal/change-password" class="card settings-card" id="passwordForm">
+      <input type="hidden" name="back" value="settings">
+      <div class="card-body">
+        <h2 class="settings-title">{{ t('ui.auth.change_password_title') }}</h2>
+        <p class="settings-note">{{ t('ui.profile.password_note') }}</p>
+        <div class="settings-fields">
+          <div class="form-group">
+            <label for="pw-current">{{ t('ui.auth.current_password') }}</label>
+            <input class="form-input" id="pw-current" type="password" name="current_pw" required autocomplete="current-password">
+          </div>
+          <div class="form-group">
+            <label for="pw-new">{{ t('ui.auth.new_password') }}</label>
+            <div class="input-reveal-wrap">
+              <input class="form-input" id="pw-new" type="password" name="new_pw" required minlength="8" autocomplete="new-password"
+                     placeholder="{{ t('ui.auth.min_characters') }}">
+              <button type="button" class="input-reveal-btn" data-qb-reveal="pw-new pw-confirm" aria-pressed="false"
+                      aria-label="{{ t('ui.auth.show_password') }}" title="{{ t('ui.auth.toggle_password') }}">{{ ic("eye", 15) }}</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="pw-confirm">{{ t('ui.auth.confirm_new_password') }}</label>
+            <input class="form-input" id="pw-confirm" type="password" name="confirm_pw" required autocomplete="new-password"
+                   placeholder="{{ t('ui.auth.repeat_new_password') }}">
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button type="submit" class="btn btn-primary">{{ t('ui.auth.change_password_title') }}</button>
+        </div>
+      </div>
+    </form>
+
+    <div class="card settings-card">
+      <div class="card-body settings-row">
+        <div>
+          <h2 class="settings-title">{{ t('ui.profile.sign_out_others') }}</h2>
+          <p class="settings-note">{{ t('ui.profile.sign_out_others_note') }}</p>
+        </div>
+        <form method="post" action="/portal/settings/sign-out-others">
+          <button type="submit" class="btn btn-secondary">{{ ic("log-out", 15) }} <span>{{ t('ui.profile.sign_out_others_button') }}</span></button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card settings-card">
+      <div class="card-body">
+        <h2 class="settings-title">{{ t('ui.profile.sign_ins') }}</h2>
+        <p class="settings-note">{{ t('ui.profile.sign_ins_note') }}</p>
+        {% if sign_ins %}
+        <div class="qb-table-wrap">
+          <table class="qb-table settings-sign-ins">
+            <thead><tr><th scope="col">{{ t('ui.profile.sign_in.when') }}</th><th scope="col">{{ t('ui.profile.sign_in.device') }}</th><th scope="col">{{ t('ui.profile.sign_in.address') }}</th></tr></thead>
+            <tbody>
+              {% for row in sign_ins %}<tr><td>{{ row.when }}</td><td>{{ row.device }}</td><td class="settings-mono">{{ row.ip or '—' }}</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="qb-table-empty">{{ t('ui.profile.sign_ins_none') }}</p>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  {# ── Charts ──────────────────────────────────────────────────────────── #}
+  <section role="tabpanel" id="panel-charts" aria-labelledby="tab-charts" class="settings-panel" {% if tab != 'charts' %}hidden{% endif %}>
   <form method="post" action="/portal/settings" class="card settings-card" id="chartSettings">
     <div class="card-body">
       <h2 class="settings-title">{{ t('ui.settings.charts') }}</h2>
-      <p class="settings-note">{{ t('ui.settings.charts_note') }}</p>
+      <p class="settings-note">{{ t('ui.settings.lead') }} {{ t('ui.settings.charts_note') }}</p>
 
       <fieldset class="settings-group">
         <legend>{{ t('ui.settings.palette') }}</legend>
@@ -64,24 +215,82 @@
       </div>
     </div>
   </form>
+  </section>
 
-  <div class="card settings-card">
-    <div class="card-body settings-row">
-      <div>
-        <h2 class="settings-title">{{ t('ui.auth.change_password_title') }}</h2>
-        <p class="settings-note">{{ t('ui.settings.password_note') }}</p>
+  {# ── Notifications ───────────────────────────────────────────────────── #}
+  <section role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" class="settings-panel" {% if tab != 'notifications' %}hidden{% endif %}>
+    <div class="card settings-card">
+      <div class="card-body">
+        <div class="settings-row">
+          <div>
+            <h2 class="settings-title">{{ t('ui.profile.n.title') }}</h2>
+            <p class="settings-note">{{ t('ui.profile.n.note') }}</p>
+          </div>
+          <a class="btn btn-ghost btn-sm" href="/portal/notifications">{{ ic("inbox", 14) }} <span>{{ t('ui.profile.n.inbox') }}</span></a>
+        </div>
+        {% if not notifications %}
+        <p class="qb-table-empty">{{ t('ui.profile.n.none') }}</p>
+        {% endif %}
+        {% for group, kinds in (('follows', ('follow',)), ('schedules', ('schedule', 'schedule-for-me')), ('alerts', ('alert', 'alert-for-me'))) %}
+        {% set items = notifications|selectattr('kind', 'in', kinds)|list %}
+        {% if items %}
+        <h3 class="settings-n-group">{{ t('ui.profile.n.group.' ~ group) }}</h3>
+        <ul class="settings-n-list">
+          {% for n in items %}
+          <li class="settings-n-row" data-kind="{{ n.kind }}" data-id="{{ n.id }}">
+            <div class="settings-n-text">
+              <a class="settings-n-name" href="/portal/dashboard?dashboard_id={{ n.dashboard_id }}">{{ n.dashboard }}</a>{% if n.tile %}<span class="settings-n-tile"> · {{ n.tile }}</span>{% endif %}
+              <div class="settings-n-what">{{ n.what }}</div>
+              <div class="settings-n-meta">
+                {% if n.from %}<span class="badge badge-neutral">{{ t('ui.profile.n.from', name=n.from) }}</span>{% endif %}
+                {% if n.kind in ('schedule', 'alert') %}<span class="badge badge-brand">{{ t('ui.profile.n.yours') }}</span>{% endif %}
+                {% if n.note %}<span class="settings-n-note">{{ n.note }}</span>{% endif %}
+              </div>
+            </div>
+            {% set locked = n.kind == 'schedule' and not n.on and not may_resume_schedules %}
+            <form method="post" action="/portal/settings/notifications/{{ n.kind }}/{{ n.id }}">
+              <input type="hidden" name="on" value="{{ '0' if n.on else '1' }}">
+              <button type="submit" class="qb-switch {{ 'on' if n.on else 'off' }}" role="switch" aria-checked="{{ 'true' if n.on else 'false' }}"
+                      aria-label="{{ t('ui.profile.n.switch', name=n.dashboard) }}"{% if locked %} disabled title="{{ t('ui.profile.n.error.role') }}"{% endif %}>
+                <span class="qb-switch-track"><span class="qb-switch-thumb"></span></span>
+                <span class="qb-switch-label">{{ t('ui.profile.n.on' if n.on else 'ui.profile.n.off') }}</span>
+              </button>
+            </form>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% endfor %}
       </div>
-      <a class="btn btn-secondary" href="/portal/change-password">{{ t('ui.auth.change_password_title') }}</a>
     </div>
-  </div>
+  </section>
 </div>
 
+<dialog class="qb-dialog settings-crop" id="photoCrop" aria-labelledby="photoCropTitle">
+  <form method="dialog" class="qb-dialog-form">
+    <h2 class="qb-dialog-title" id="photoCropTitle">{{ t('ui.profile.crop_title') }}</h2>
+    <p class="qb-dialog-body">{{ t('ui.profile.crop_note') }}</p>
+    <div class="settings-crop-stage" id="photoCropStage"><canvas id="photoCropCanvas" width="280" height="280"></canvas></div>
+    <label class="settings-crop-zoom">{{ t('ui.profile.crop_zoom') }}
+      <input type="range" id="photoCropZoom" min="1" max="4" step="0.01" value="1">
+    </label>
+    <p class="form-error" id="photoCropError" role="alert" hidden></p>
+    <div class="qb-dialog-footer">
+      <button type="submit" value="cancel" class="btn btn-secondary">{{ t('ui.pin.cancel') }}</button>
+      <button type="button" class="btn btn-primary" id="photoCropSave">{{ t('ui.profile.crop_save') }}</button>
+    </div>
+  </form>
+</dialog>
+
 <style>
-.settings-page { max-width: 720px; margin: 2rem auto; padding: 0 16px; }
+.settings-page { max-width: 760px; margin: 2rem auto; padding: 0 16px; }
+.settings-tabs { margin-bottom: 1rem; }
+.settings-panel { animation: qb-fadeIn .17s ease both; }
 .settings-card { margin-bottom: 1rem; }
 .settings-card .card-body { padding: 1.5rem; }
 .settings-title { font-size: var(--font-md); font-weight: var(--weight-bold); margin: 0 0 .25rem; }
 .settings-note { color: var(--text-muted); font-size: var(--font-sm); margin: 0 0 1rem; }
+.settings-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); column-gap: 1rem; }
 .settings-group { border: 0; padding: 0; margin: 0 0 1.1rem; }
 .settings-group legend { font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text); margin-bottom: .4rem; }
 .settings-choice { display: inline-flex; align-items: center; gap: .4rem; margin-right: 1.25rem; font-size: var(--font-sm); cursor: pointer; }
@@ -94,8 +303,43 @@
 .settings-preview-label { font-size: var(--font-sm); font-weight: var(--weight-semibold); margin: .5rem 0 .4rem; }
 .settings-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; }
 .settings-preview { height: 220px; border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); background: var(--surface); }
-.settings-actions { margin-top: 1rem; }
-.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.settings-actions { margin-top: .5rem; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; }
+.settings-row > div { flex: 1 1 320px; min-width: 0; }
+.settings-row > div .settings-note { margin-bottom: 0; }
+.settings-row + .settings-n-group, .settings-row + .qb-table-empty { margin-top: 1.25rem; }
+.settings-photo-row { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
+.settings-photo { width: 88px; height: 88px; flex: 0 0 88px; font-size: 2rem; overflow: hidden; }
+.settings-photo-text { flex: 1 1 260px; }
+.settings-photo-text .settings-note { margin-bottom: .6rem; }
+.settings-photo-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.settings-photo-actions label.btn { cursor: pointer; }
+.settings-mono { font-family: var(--font-mono); font-size: var(--font-xs); }
+.settings-n-group { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text-muted); margin: 1.1rem 0 .4rem;
+  text-transform: uppercase; letter-spacing: .04em; }
+.settings-n-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.settings-n-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; }
+.settings-n-row + .settings-n-row { border-top: 1px solid var(--border); }
+.settings-n-text { min-width: 0; }
+.settings-n-name { font-weight: var(--weight-semibold); color: var(--text); }
+.settings-n-tile { color: var(--text-secondary); }
+.settings-n-what { font-size: var(--font-sm); color: var(--text-secondary); margin-top: .15rem; }
+.settings-n-meta { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-top: .3rem; }
+.settings-n-meta:empty { display: none; }
+.settings-n-note { font-size: var(--font-xs); color: var(--text-muted); }
+.settings-n-row form { flex: 0 0 auto; }
+.settings-n-row .qb-switch[disabled] { opacity: .55; cursor: not-allowed; }
+.settings-crop { width: min(360px, calc(100vw - 32px)); }
+.settings-crop-stage { margin: 1rem auto 0; width: 280px; height: 280px; max-width: 100%; border-radius: var(--radius-lg);
+  overflow: hidden; background: var(--surface-2); cursor: grab; touch-action: none; }
+.settings-crop-stage:active { cursor: grabbing; }
+.settings-crop-stage canvas { display: block; width: 100%; height: 100%; }
+.settings-crop-zoom { display: flex; align-items: center; gap: .75rem; margin: .9rem 1.25rem 0; font-size: var(--font-sm); }
+.settings-crop-zoom input { flex: 1; }
+.settings-crop .form-error { margin: .5rem 1.25rem 0; }
+@media (max-width: 560px) {
+  .settings-n-row { align-items: flex-start; flex-direction: column; gap: .5rem; }
+}
 </style>
 
 <script>
@@ -126,6 +370,8 @@
   };
   function draw() {
     if (!window.QBCharts || !window.echarts) return;
+    const panel = document.getElementById('panel-charts');
+    if (panel && panel.hidden) return;
     const chosen = Object.fromEntries(new FormData(form));
     window.QB_CHART_PREFS = Object.assign({}, window.QB_CHART_PREFS || {}, chosen);
     document.documentElement.dataset.motion = chosen.motion || 'on';
@@ -134,7 +380,110 @@
     if (b) window.QBCharts.render(b, stacked, {grow: false});
   }
   form.addEventListener('change', draw);
-  draw();
+  // A chart drawn in a hidden panel has no size: draw when its tab is opened.
+  document.getElementById('tab-charts')?.addEventListener('click', () => setTimeout(draw, 0));
+  window.addEventListener('hashchange', () => setTimeout(draw, 0));
+  setTimeout(draw, 0);
+})();
+
+// A time zone not yet chosen starts as the browser's own, so saving the form keeps what the reader sees.
+(function () {
+  const zone = document.getElementById('profileZone');
+  if (!zone || zone.dataset.zone) return;
+  const here = (Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+  if (here && Array.from(zone.options).some(o => o.value === here)) {
+    zone.querySelector('option[value=""]').textContent = window.qbT('ui.profile.timezone_browser_named', {zone: here.replace(/_/g, ' ')});
+  }
+})();
+
+// The photo: the reader picks an image, moves and zooms it inside the square, and the square is sent as a PNG.
+// The server draws it again (core/profile.py photo_png), so this only chooses which part is kept.
+(function () {
+  const input = document.getElementById('photoFile');
+  const dialog = document.getElementById('photoCrop');
+  const canvas = document.getElementById('photoCropCanvas');
+  const zoom = document.getElementById('photoCropZoom');
+  const save = document.getElementById('photoCropSave');
+  const error = document.getElementById('photoCropError');
+  if (!input || !dialog || !canvas) return;
+  const ctx = canvas.getContext('2d');
+  const side = canvas.width;
+  let image = null, scale = 1, base = 1, x = 0, y = 0, drag = null;
+
+  function clamp() {
+    const w = image.width * base * scale, h = image.height * base * scale;
+    x = Math.min(0, Math.max(side - w, x));
+    y = Math.min(0, Math.max(side - h, y));
+  }
+  function paint() {
+    if (!image) return;
+    clamp();
+    ctx.clearRect(0, 0, side, side);
+    ctx.drawImage(image, x, y, image.width * base * scale, image.height * base * scale);
+  }
+  function showError(text) { error.textContent = text; error.hidden = !text; }
+
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    showError('');
+    const url = URL.createObjectURL(file);
+    const picture = new Image();
+    picture.onload = () => {
+      image = picture;
+      base = side / Math.min(picture.width, picture.height);
+      scale = 1; zoom.value = '1';
+      x = (side - picture.width * base) / 2; y = (side - picture.height * base) / 2;
+      paint();
+      dialog.showModal();
+    };
+    picture.onerror = () => { window.qbToast?.notify?.({body: window.qbT('ui.profile.error.photo_kind'), tone: 'danger'}); };
+    picture.src = url;
+  });
+
+  zoom.addEventListener('input', () => {
+    if (!image) return;
+    const before = scale, centre = side / 2;
+    scale = parseFloat(zoom.value) || 1;
+    x = centre - (centre - x) * (scale / before);
+    y = centre - (centre - y) * (scale / before);
+    paint();
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    drag = {px: e.clientX, py: e.clientY, x, y, k: side / canvas.getBoundingClientRect().width};
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    x = drag.x + (e.clientX - drag.px) * drag.k; y = drag.y + (e.clientY - drag.py) * drag.k;
+    paint();
+  });
+  canvas.addEventListener('pointerup', () => { drag = null; });
+  canvas.addEventListener('pointercancel', () => { drag = null; });
+  dialog.addEventListener('close', () => { input.value = ''; });
+
+  save.addEventListener('click', () => {
+    if (!image) return;
+    const out = document.createElement('canvas');
+    out.width = out.height = 512;
+    out.getContext('2d').drawImage(canvas, 0, 0, side, side, 0, 0, 512, 512);
+    save.setAttribute('aria-busy', 'true');
+    out.toBlob(async (blob) => {
+      const body = new FormData();
+      body.append('photo', blob, 'photo.png');
+      try {
+        const response = await fetch('/portal/settings/photo', {method: 'POST', body, headers: {'Accept': 'application/json'},
+                                                               credentials: 'same-origin'});
+        const reply = await response.json().catch(() => ({}));
+        if (!response.ok || !reply.ok) { showError(reply.error || window.qbT('ui.profile.error.photo_kind')); return; }
+        window.location.href = '/portal/settings?tab=profile&saved=photo';
+      } catch (_) {
+        showError(window.qbT('ui.profile.error.photo_failed'));
+      } finally {
+        save.removeAttribute('aria-busy');
+      }
+    }, 'image/png');
+  });
 })();
 </script>
 {% endblock %}

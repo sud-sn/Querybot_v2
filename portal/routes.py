@@ -77,6 +77,22 @@ templates.env.globals["reader_can"] = lambda user, action: can_do(user if isinst
 templates.env.globals["reader_role"] = lambda user: reader_role(user if isinstance(user, dict) else None)
 
 
+def _photo_url(user) -> str:
+    """The address of a person's photo, or "" when they have none (the shell then shows their initial)."""
+    if not isinstance(user, dict) or not user.get("id"):
+        return ""
+    try:
+        from store import profile_store
+
+        rev = profile_store.get_profile(int(user["id"]))["photo_rev"]
+    except Exception:  # noqa: BLE001 - no photo is the initial
+        return ""
+    return f"/portal/people/{int(user['id'])}/photo?v={rev}" if rev else ""
+
+
+templates.env.globals["photo_url"] = _photo_url
+
+
 def _mail_ready() -> bool:
     try:
         from core.mail.settings import configured
@@ -952,11 +968,17 @@ def _linked_workspace(value: str | None) -> str:
 
 
 def _landing(user: dict | None) -> str:
-    """Where a reader lands: the chat, where questions are asked, when the workspace has it on."""
+    """Where a reader lands: the page they chose in their profile when they may still open it; else the chat, where
+    questions are asked, when the workspace has it on."""
     try:
         client = store.get_client((user or {}).get("account_id") or "") or {}
     except Exception:  # noqa: BLE001 - an unreadable workspace lands where it always did
         client = {}
+    from core.profile import start_path
+
+    chosen = start_path(user)
+    if chosen:
+        return chosen
     return "/portal/chat" if client.get("chat_ui_enabled") and can_do(user, "ask") else "/portal/dashboard"
 
 
@@ -1027,6 +1049,7 @@ async def portal_login_submit(
     # An old unsalted hash, or fewer rounds than today's, is renewed now: the
     # password is only ever in hand at sign-in.
     store.upgrade_password_hash(user, password)
+    _record_sign_in(request, user)
 
     # A temporary password signs in to the password change and nothing else
     # (_session_user), and not at all once it has expired.
@@ -1044,6 +1067,23 @@ async def portal_login_submit(
     _set_portal_cookie(resp, request, user["id"])
     _carry_language_through_login(resp, request, user)
     return resp
+
+
+def _client_address(request: Request) -> str:
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", "") if client else ""
+    return host if isinstance(host, str) else ""
+
+
+def _record_sign_in(request: Request, user: dict) -> None:
+    """Kept for the reader's Security tab: when, from which address and browser."""
+    from store import profile_store
+
+    try:
+        profile_store.record_sign_in(int(user["id"]), str(user["account_id"]), ip=_client_address(request),
+                                     agent=str(request.headers.get("user-agent") or ""))
+    except Exception as exc:  # noqa: BLE001 - signing in never fails for want of a log line
+        log.warning("Sign-in of user %s not recorded: %s", user.get("id"), exc)
 
 
 @router.post("/api/language")
@@ -1171,6 +1211,16 @@ async def portal_logout():
 # ══════════════════════════════════════════════════════════════════════════════
 # Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _my_timezone(user: dict) -> str:
+    """The time zone in the reader's profile ("" for none: their browser's is used)."""
+    try:
+        from store import profile_store
+
+        return profile_store.get_profile(int(user["id"]))["timezone"]
+    except Exception:  # noqa: BLE001
+        return ""
+
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def portal_dashboard(request: Request):
@@ -1335,6 +1385,7 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         "snapshot":      snapshot,
         # The bell on each number tile: on for an alert that tells this reader, red while it is crossed for them.
         "tile_alerts":   _tile_alert_marks(requested_dashboard, user),
+        "my_timezone":   _my_timezone(user),
         # Its tiles were drawn on this request: the header says when.
         "drawn_at":      (_dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                           if requested_dashboard else ""),
@@ -1982,15 +2033,43 @@ async def portal_dashboard_unsubscribe(request: Request, dashboard_id: int):
 # Change password
 # ══════════════════════════════════════════════════════════════════════════════
 
+_SETTINGS_TABS = ("profile", "security", "charts", "notifications")
+# What a settings form may say it saved or got wrong (the address carries only these).
+_SETTINGS_SAID = {"profile", "photo", "photo_removed", "password", "signed_out", "charts", "notifications"}
+
+
+def _settings_redirect(tab: str, *, saved: str = "", error: str = "") -> RedirectResponse:
+    query = f"tab={tab}" + (f"&saved={saved}" if saved else "") + (f"&error={quote(error)}" if error else "")
+    return RedirectResponse(f"/portal/settings?{query}", status_code=303)
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
-    """The reader's own settings: how their charts are drawn, and a way to change their password."""
+    """The reader's own page: Profile (who they are, their time zone, where signing in lands), Security (password,
+    other devices, sign-ins), Charts (how their charts are drawn) and Notifications (everything that tells them)."""
+    from core import profile
+    from store import profile_store
+
     user = _get_portal_user(request)
     if not user:
         return _login_redirect(request)
+    lang = _request_language(request)
+    tab = request.query_params.get("tab") or "profile"
+    tab = tab if tab in _SETTINGS_TABS else "profile"
+    saved = request.query_params.get("saved") or ""
+    error = request.query_params.get("error") or ""
+    error_text = i18n_t(error, lang=lang) if re.fullmatch(r"ui\.(profile|auth)\.[a-z_.]+", error) else ""
     return _resp(request, "portal_settings.html", {
-        "user": user, "prefs": store.chart_prefs(user), "choices": store.CHART_PREFS,
-        "saved": request.query_params.get("saved") == "1",
+        "user": user, "tab": tab, "prefs": store.chart_prefs(user), "choices": store.CHART_PREFS,
+        "saved": saved if saved in _SETTINGS_SAID else ("charts" if saved == "1" else ""),
+        "error": error_text,
+        "profile": profile_store.get_profile(int(user["id"])),
+        "zones": profile.zones(), "starts": profile.start_choices(user),
+        "sign_ins": profile.sign_ins(user, lang),
+        "notifications": profile.notifications(user, lang),
+        "may_resume_schedules": can_do(user, "reports"),
+        "photo_size": profile.PHOTO_SIZE, "photo_max_mb": profile.PHOTO_MAX_BYTES // (1024 * 1024),
+        "languages": [{"code": code, "name": LANGUAGE_NAMES.get(code, code)} for code in SUPPORTED_LANGUAGES],
     })
 
 
@@ -2001,7 +2080,124 @@ async def settings_submit(request: Request):
         return _login_redirect(request)
     form = await request.form()
     store.set_chart_prefs(user["id"], {key: str(form.get(key) or "") for key in store.CHART_PREFS})
-    return RedirectResponse("/portal/settings?saved=1", status_code=303)
+    return _settings_redirect("charts", saved="charts")
+
+
+@router.post("/settings/profile")
+async def settings_profile_submit(request: Request):
+    """Name, job title, language, time zone and start page, each checked (core/profile.py)."""
+    from core import profile
+    from store import profile_store
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    fields = profile.read_form(await request.form(), user)
+    if isinstance(fields, str):
+        return _settings_redirect("profile", error=fields)
+    if fields["name"] != (user.get("name") or ""):
+        store.update_user(int(user["id"]), name=fields["name"])
+        store.record_user_event(user["account_id"], user["id"], user.get("email", ""), "renamed",
+                                detail=fields["name"], actor="the user", actor_ip=_client_address(request))
+    profile_store.save_profile(int(user["id"]), job_title=fields["job_title"], timezone=fields["timezone"],
+                               start_page=fields["start_page"])
+    resp = _settings_redirect("profile", saved="profile")
+    if fields["lang"]:
+        _set_language_cookie(resp, request, store.set_user_language(int(user["id"]), fields["lang"]))
+    return resp
+
+
+def _wants_json(request: Request) -> bool:
+    return "application/json" in str(request.headers.get("accept") or "")
+
+
+@router.post("/settings/photo")
+async def settings_photo_submit(request: Request):
+    """A new photo: re-drawn as a square PNG (core/profile.py photo_png), so nothing of the uploaded file is kept."""
+    from core import profile
+    from store import profile_store
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    lang = _request_language(request)
+    try:
+        form = await request.form()
+        upload = form.get("photo")
+        data = await upload.read(profile.PHOTO_MAX_BYTES + 1) if hasattr(upload, "read") else b""
+        png = await asyncio.to_thread(profile.photo_png, data)
+    except ValueError as exc:
+        key = str(exc) if str(exc).startswith("ui.profile.") else "ui.profile.error.photo_kind"
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "error": i18n_t(key, lang=lang)}, status_code=400)
+        return _settings_redirect("profile", error=key)
+    rev = profile_store.save_photo(int(user["id"]), png)
+    url = f"/portal/people/{int(user['id'])}/photo?v={rev}"
+    if _wants_json(request):
+        return JSONResponse({"ok": True, "url": url})
+    return _settings_redirect("profile", saved="photo")
+
+
+@router.post("/settings/photo/delete")
+async def settings_photo_delete(request: Request):
+    from store import profile_store
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    profile_store.delete_photo(int(user["id"]))
+    return _settings_redirect("profile", saved="photo_removed")
+
+
+@router.get("/people/{user_id}/photo")
+async def person_photo(request: Request, user_id: int):
+    """A person's photo, to people of their own workspace only."""
+    from fastapi.responses import Response
+
+    from store import profile_store
+
+    viewer = _get_portal_user(request)
+    if not viewer:
+        return Response(status_code=401)
+    person = store.get_user(int(user_id))
+    path = profile_store.photo_path(int(user_id))
+    if not person or person.get("account_id") != viewer.get("account_id") or not path.is_file():
+        return Response(status_code=404)
+    return Response(path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=31536000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@router.post("/settings/sign-out-others")
+async def settings_sign_out_others(request: Request):
+    """Every other session of this reader ends; this browser gets a new one."""
+    from store import profile_store
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    profile_store.end_other_sessions(int(user["id"]))
+    store.record_user_event(user["account_id"], user["id"], user.get("email", ""), "signed_out_elsewhere",
+                            actor="the user", actor_ip=_client_address(request))
+    resp = _settings_redirect("security", saved="signed_out")
+    _set_portal_cookie(resp, request, user["id"])
+    return resp
+
+
+@router.post("/settings/notifications/{kind}/{item_id}")
+async def settings_notification_switch(request: Request, kind: str, item_id: int, on: str = Form("")):
+    """On or off for one follow, schedule or alert (core/profile.py switch)."""
+    from core import profile
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    if kind not in profile.KINDS:
+        return _settings_redirect("notifications", error="ui.profile.n.error.not_found")
+    refused = profile.switch(user, kind, int(item_id), on == "1")
+    if refused:
+        return _settings_redirect("notifications", error=refused)
+    return _settings_redirect("notifications", saved="notifications")
 
 
 @router.get("/change-password", response_class=HTMLResponse)
@@ -2023,10 +2219,13 @@ async def change_pw_submit(
     current_pw: str = Form(""),
     new_pw:     str = Form(...),
     confirm_pw: str = Form(...),
+    back:       str = Form(""),
 ):
     user = _get_portal_user(request, pending_change_ok=True)
     if not user:
         return _login_redirect(request)
+    # From the Security tab (portal Settings): its answer is shown there.
+    from_settings = back == "settings" and not user.get("is_temp_pw")
 
     # Forced only when the user holds a temporary password: they proved it
     # moments ago to get this session. It used to be "forced = the form left
@@ -2036,6 +2235,8 @@ async def change_pw_submit(
     lang = _request_language(request)
 
     def refuse(key: str):
+        if from_settings:
+            return _settings_redirect("security", error=key)
         return _resp(request, "portal_change_password.html", {
             "user": user, "forced": forced,
             "error": i18n_t(key, lang=lang), "saved": False,
@@ -2058,7 +2259,8 @@ async def change_pw_submit(
                             actor_ip=host if isinstance(host, str) else "")
     # The change ended every session this user had, this one included; this
     # browser gets a new one, the others sign in again.
-    resp = RedirectResponse(_landing(user), status_code=303)
+    resp = _settings_redirect("security", saved="password") if from_settings \
+        else RedirectResponse(_landing(user), status_code=303)
     _set_portal_cookie(resp, request, user["id"])
     return resp
 

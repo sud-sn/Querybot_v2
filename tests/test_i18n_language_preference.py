@@ -183,6 +183,9 @@ class TestTheCatalogueIsWellFormed:
                                         # -scale billion, a thousand times more.
         "answer.total",                 # the same word in French
         "email.schedule.subject",       # "{name} · {date}": a name and a date, in any language
+        "ui.profile.photo",             # "Photo" is the same word
+        "ui.profile.crop_zoom",         # and so is "Zoom"
+        "ui.profile.tab.notifications", # and "Notifications"
         "ui.chat.table_count.one",      # "table" is the same word, singular
         "ui.chat.table_count.other",    # and plural
         "ui.chat.trust.source",         # "source" is the same word

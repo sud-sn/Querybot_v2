@@ -372,6 +372,24 @@ service could not take (down, busy, throttling) is tried again after 1, 5, 30,
 and can send a failed one again. Each follow or scheduled email carries a link
 that stops that email for its reader, without signing in.
 
+## 13c. Readers' own page (the release that adds it)
+
+Settings in the portal now has four tabs: Profile, Security, Charts and
+Notifications. Nothing to switch on; after `pip install -r requirements.txt`
+(it adds Pillow, which re-draws each uploaded photo), note two things:
+
+1. **Photos** are kept beside the database, in `profile_photos/` in the same
+   folder as `querybot.db`. Back that folder up with the database. Each is a
+   256-pixel PNG drawn again from what was uploaded, so nothing of the original
+   file is kept; only people of the same workspace can open one.
+2. **Sign-ins** are recorded from now on (the last 20 a person, with the
+   browser and the address the server saw). Behind a reverse proxy the address
+   is the proxy's unless uvicorn trusts its forwarded headers (section 14).
+
+A reader's time zone is the one a new schedule starts from, and the page they
+choose to start on is where signing in lands while they may still open it.
+Deleting a person deletes their photo and sign-ins with them.
+
 ## 14. HTTPS, the reverse proxy and the question API
 
 Session cookies are marked Secure, so they travel over https only, when the
