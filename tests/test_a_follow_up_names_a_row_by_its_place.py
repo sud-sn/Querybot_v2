@@ -61,7 +61,9 @@ def _converse(retail, second: str, *, values_allowed: bool = True, first_plan: d
     services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=planner,
                         index=index or MemberIndex(), today=TODAY, values_allowed=values_allowed)
     session = Session()
-    first = answer_question("Which 5 stores sold the most?", services, session)
+    asked = "Which 5 stores sold the least?" if first_plan.get("sort", [{}])[0].get("desc") is False else \
+        "Which 5 stores sold the most?"          # the words say the order the plan has (they set it if not)
+    first = answer_question(asked, services, session)
     then = answer_question(second, services, session)
     return first, then, tails
 
