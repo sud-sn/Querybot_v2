@@ -948,8 +948,12 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         others = [_valued(fmt(top[c.name], c.format, unit=units.of(top)), c) for c in measures[1:] if c.name in top]
         joined = ", ".join(others[:-1]) + f" and {others[-1]}" if len(others) > 1 else "".join(others)
         also = f", and {joined}{',' if count else ''}" if others else ""
-        # Days between two dates: more is longer, not a lead ("USPS takes longest, at 4.3 days").
+        # Days between two dates: more is longer, not a lead ("USPS takes longest, at 4.3 days"). A ratio ranked
+        # highest first is the highest, not a lead ("Hilltop Store has the highest cost %, at 41.1%").
         verb = "takes longest, at" if m.format == "days" else "leads with"
+        if (verb == "leads with" and logical.sort_asked and logical.sort and logical.sort[0][1]
+                and logical.sort[0][0] == m.name and not _sums(logical, m)):
+            verb = f"has the highest {_lower(m.label)}, at"
         return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{no_member}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:

@@ -1020,6 +1020,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         assert isinstance(a, Measure) and isinstance(b, Measure)
         op = {"ratio": "ratio", "difference": "subtract", "sum": "add", "product": "multiply"}[d.op]
         fmt = "percent" if d.scale == 100 else "number"
+        if d.scale == 1 and (d.op in ("difference", "sum") and a.format == b.format == "currency"
+                             or d.op == "ratio" and a.format == "currency" and b.format != "currency"):
+            fmt = "currency"        # money less money is money; money per unit or per order is a price
         if a.table != b.table:
             # Each measure added up on its own table, then combined.
             combine(None, d.name, fmt, OpExpr(op=op, args=[RefExpr(measure=a.key), RefExpr(measure=b.key)],

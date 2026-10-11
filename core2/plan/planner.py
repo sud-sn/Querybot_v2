@@ -419,10 +419,19 @@ def parse(text: str) -> Plan:
 
 def _forgive(data: dict[str, Any]) -> None:
     """Slips of form that leave the meaning plain, put right where they would refuse the plan (a real model wrote
-    them, and wrote them again when told): a duration counted ("agg": "count", where its rows are counted by the
+    them, and wrote them again when told): a period written as null ("window": null, not set); a duration counted
+    ("agg": "count", where its rows are counted by the
     plan's measure), "measure": false written on the filter on a duration rather than on the duration, and "what
     share of the total is that" written as a share of members with no condition for them to meet (it is the
     share each member has of the total: intent share)."""
+    time = data.get("time")
+    if isinstance(time, dict):
+        # "window": null, "grain": null: not set (a real model wrote them so, and the plan was refused).
+        for key in [k for k, v in time.items() if v is None]:
+            time.pop(key)
+    for key in [k for k in ("per", "rolling", "within", "bands", "absent", "drivers", "chart") if data.get(k) is None
+                and k in data]:
+        data.pop(key)
     durations = [d for d in data.get("durations") or [] if isinstance(d, dict)]
     for d in durations:
         if d.get("agg") not in (None, "avg", "min", "max", "sum"):
@@ -464,6 +473,57 @@ def stands_for(value: Any) -> bool:
 _PLACE_WORD = re.compile(r"\b(first|1st|top|second|2nd|third|3rd|fourth|4th|fifth|5th|last|bottom)\b", re.IGNORECASE)
 _PLACES = {"first": 0, "1st": 0, "top": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
            "fifth": 4, "5th": 4, "last": -1, "bottom": -1}
+
+
+# "Average selling price per unit", "what percentage ... did they reject", "the return rate": a ratio asked for.
+_RATIO_WORDS = re.compile(r"\bper\b|%|\bpercent(?:age)?\b|\brate\b|\bratio\b|\bshare of\b|\bproportion\b|"
+                          r"\baverage\b.*\bper\b", re.IGNORECASE)
+# "Revenue, quantity and price per unit": the parts asked for too.
+_AND_ALSO = re.compile(r"\b(?:and|as well as|plus|along with|with)\b|,", re.IGNORECASE)
+
+
+def _words_name(name: str) -> str:
+    """A derived measure's name as words: "average_selling_price_per_unit" -> "Average selling price per unit"."""
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name.strip()).replace("_", " ")
+    text = " ".join(text.split())
+    return text[:1].upper() + text[1:] if text else name
+
+
+def ratio_alone(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """A ratio the question asks for is the answer, under a name in words.
+
+    "What is our average selling price per unit by item group?" was planned as the amount, the quantity and their
+    ratio, and answered with the amount ("Electrical leads with $4.39M"), the ratio last and named
+    "average_selling_price_per_unit". The ratio's own parts are left out of the answer unless the question asks for
+    them too ("revenue, quantity and price per unit"), and a sort on a part sorts on the ratio. A figure per row of
+    a count ("average days supply per fill", each fill's days supply averaged) is never also split by those rows.
+    """
+    if plan.kind != "query":
+        return plan
+    update: dict[str, Any] = {}
+    renamed = {d.name: _words_name(d.name) for d in plan.derived if _words_name(d.name) != d.name}
+    derived = [d.model_copy(update={"name": renamed.get(d.name, d.name)}) for d in plan.derived]
+    sort = [s.model_copy(update={"by": renamed[s.by]}) if s.by in renamed else s for s in plan.sort]
+    parts = {m for d in derived for m in d.measures}
+    if derived and plan.measures and set(plan.measures) <= parts and _RATIO_WORDS.search(question or "") \
+            and not _AND_ALSO.search(question or ""):
+        update["measures"] = []
+        sort = [s.model_copy(update={"by": derived[0].name}) if s.by in parts else s for s in sort]
+    if renamed or derived != plan.derived:
+        update["derived"] = derived
+    if sort != plan.sort:
+        update["sort"] = sort
+    if plan.per is not None and plan.per.of and plan.group_by:
+        counted = next((m for m in model.measures.values() if m.slug == plan.per.of), None)
+        if counted is not None:
+            rows = counted.table
+            own = [g for g in plan.group_by
+                   if g in model.entities and any(model.columns[c].table == rows
+                                                  for c in model.entities[g].key_columns if c in model.columns)
+                   or g not in model.entities and g not in model.attributes and g.replace(".", "_") in counted.slug]
+            if own:
+                update["group_by"] = [g for g in plan.group_by if g not in own]
+    return plan.model_copy(update=update) if update else plan
 
 
 def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], question: str = "",
@@ -720,6 +780,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
         plan = pointed_in(plan, model, matches, question, on_screen)
+        plan = ratio_alone(plan, model, question)
         problems, hint = check(plan, model, today, shown)
         if not problems:
             if reading in ("refine", "new") and plan.kind == "query":
@@ -812,6 +873,9 @@ _BREAK_DOWN = re.compile(r"\b(?:break|split|divide)\s+(?:that|it|this|them|those
 _FOR_THOSE = re.compile(r"\b(?:for|of|on)\s+(?:those|them|these)(?:\s+ones)?\b|\btheir\b", re.IGNORECASE)
 # "Mostly debits or credits?", "more online or in store?": two totals set side by side.
 _EITHER = re.compile(r"\b(?:mostly|mainly|largely|more|rather)\b[^?]*\bor\b", re.IGNORECASE)
+# "What is the average days supply per fill for each?": for each member of the answer on screen.
+_FOR_EACH = re.compile(r"\b(?:for|of|in)\s+each(?:\s+(?:one|of\s+them|of\s+those))?\s*\??\s*$|\beach\s+of\s+(?:them|those)\b",
+                       re.IGNORECASE)
 _SERIES_WORDS = re.compile(r"\b(?:each|every|per|by)\s+(?:day|week|month|quarter|year)\b|\b(?:daily|weekly|monthly|"
                            r"quarterly|yearly|annually|over time|trend)\b", re.IGNORECASE)
 
@@ -833,6 +897,8 @@ def _reshaped(plan: Plan, previous: Plan, question: str) -> dict[str, Any]:
         measures = [*previous.measures, *(m for m in plan.measures if m not in previous.measures)]
         update.update({"group_by": list(previous.group_by), "sort": list(previous.sort), "limit": previous.limit,
                        "measures": measures, "intent": previous.intent})
+    if _FOR_EACH.search(question) and previous.group_by and not plan.group_by:
+        update["group_by"] = list(previous.group_by)                 # "for each" of the members on screen
     if _EITHER.search(question) and len(plan.measures) + len(plan.derived) >= 2 and plan.time.grain and not series:
         update["time"] = update.get("time", plan.time).model_copy(update={"grain": None})
         if plan.intent == "trend":

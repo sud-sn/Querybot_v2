@@ -42,7 +42,8 @@ _POINTS_FIRST = re.compile(
     r"^\s*(?:the\s+(?:first|second|third|fourth|fifth|last|lowest|highest|largest|smallest|biggest|top|bottom)"
     r"(?:\s+one)?|that\s+\w+|those\s+\w+|these\s+\w+|it|they|them)\b", re.IGNORECASE)
 # "those same customers", "how many of them": the members of the answer on screen, in a turn of any length.
-_POINTS_AT_MEMBERS = re.compile(r"\b(?:those|these|them|the same(?!-))\b", re.IGNORECASE)
+_POINTS_AT_MEMBERS = re.compile(r"\b(?:those|these|them|the same(?!-))\b|\b(?:for|of|in)\s+each(?:\s+one)?\s*\??\s*$",
+                                re.IGNORECASE)
 # "the stores that opened in 2025": a "that" that starts a description points at nothing on screen.
 _RELATIVE = re.compile(r"\b(?:that|which|who)\s+(?:\w+ed|are|were|have|has|had|did|do|does|is|was|can|will|bought|"
                        r"sold|made|got|took|left|went|came|hold|holds|pay|pays|use|uses)\b", re.IGNORECASE)
