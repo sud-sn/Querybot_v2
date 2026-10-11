@@ -2368,6 +2368,32 @@ async def _llm_complete_once(
 # reuse the underlying httpx connection pool, saving ~200-500 ms per call.
 
 _llm_client_cache: dict[tuple, object] = {}
+# The client each key's cached one was made for, and the event loop it was made on.
+_llm_client_loops: dict[tuple, tuple[object, object]] = {}
+
+
+def _cached_client(key: tuple, make):
+    """The cached client for ``key``, made again when it is asked for on another event loop.
+
+    An SDK client's pooled connections belong to the event loop that opened them. A call made with
+    asyncio.run in a worker thread (the new core's planner, and a dashboard's tiles several at once)
+    over connections another loop opened fails as "Connection error", or hangs. One event loop (the
+    server's own) keeps reusing its client; a call on a loop of its own gets a client of its own. A
+    client put in the cache by hand (a test's stand-in) is used as it is.
+    """
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    client = _llm_client_cache.get(key)
+    made = _llm_client_loops.get(key)
+    if client is None or (made is not None and made[0] is client and made[1] is not loop):
+        client = make()
+        _llm_client_cache[key] = client
+        _llm_client_loops[key] = (client, loop)
+    return client
 
 # Both vendor SDKs default to a 600 s per-request timeout and 2 automatic
 # retries, so an unresponsive provider could hold one question for ~30 minutes
@@ -2415,22 +2441,18 @@ def _get_anthropic_client(api_key: str):
     import anthropic as _ant
     timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
     key = ("anthropic", api_key, timeout, retries)
-    if key not in _llm_client_cache:
-        _llm_client_cache[key] = _ant.AsyncAnthropic(
-            api_key=api_key, timeout=timeout, max_retries=retries,
-        )
-    return _llm_client_cache[key]
+    return _cached_client(key, lambda: _ant.AsyncAnthropic(
+        api_key=api_key, timeout=timeout, max_retries=retries,
+    ))
 
 
 def _get_openai_client(api_key: str):
     import openai as _oai
     timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
     key = ("openai", api_key, timeout, retries)
-    if key not in _llm_client_cache:
-        _llm_client_cache[key] = _oai.AsyncOpenAI(
-            api_key=api_key, timeout=timeout, max_retries=retries,
-        )
-    return _llm_client_cache[key]
+    return _cached_client(key, lambda: _oai.AsyncOpenAI(
+        api_key=api_key, timeout=timeout, max_retries=retries,
+    ))
 
 
 def _get_local_client(base_url: str, api_key: str):
@@ -2452,12 +2474,10 @@ def _get_local_client(base_url: str, api_key: str):
     import openai as _oai
     timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
     key = ("local", base, api_key, timeout, retries)
-    if key not in _llm_client_cache:
-        _llm_client_cache[key] = _oai.AsyncOpenAI(
-            api_key=api_key or "local", base_url=base,
-            timeout=timeout, max_retries=retries,
-        )
-    return _llm_client_cache[key]
+    return _cached_client(key, lambda: _oai.AsyncOpenAI(
+        api_key=api_key or "local", base_url=base,
+        timeout=timeout, max_retries=retries,
+    ))
 
 
 def azure_deployment_name(sys_cfg: dict, client: dict, purpose: str) -> str:
@@ -2592,24 +2612,25 @@ def _get_azure_client(api_key: str, endpoint: str, api_version: str):
     base = normalize_azure_endpoint(endpoint)
     timeout, retries = _llm_timeout_seconds(), _llm_max_retries()
     key = ("azure", api_key, base, api_version, timeout, retries)
-    if key not in _llm_client_cache:
+
+    def make():
         if "services.ai.azure.com" in base:
-            _llm_client_cache[key] = _oai.AsyncOpenAI(
+            return _oai.AsyncOpenAI(
                 api_key=api_key,
                 base_url=f"{base}/openai/v1",
                 default_headers={"api-key": api_key},
                 timeout=timeout,
                 max_retries=retries,
             )
-        else:
-            _llm_client_cache[key] = _oai.AsyncAzureOpenAI(
-                api_key=api_key,
-                azure_endpoint=base,
-                api_version=api_version or "2024-02-01",
-                timeout=timeout,
-                max_retries=retries,
-            )
-    return _llm_client_cache[key]
+        return _oai.AsyncAzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=base,
+            api_version=api_version or "2024-02-01",
+            timeout=timeout,
+            max_retries=retries,
+        )
+
+    return _cached_client(key, make)
 
 
 async def _anthropic_complete(system, user, model, api_key, max_tokens, temperature=0.0):
