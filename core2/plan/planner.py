@@ -25,6 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
+from core2.plan.analyses import due_and_done, start_and_end
 from core2.plan.ir import Clarify, Compare, Filter, PerMember, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
@@ -298,7 +299,62 @@ def _analyses(model: SemanticModel) -> str:
                 "time": {"window": {"kind": "last", "unit": "day", "n": 90}}}
         lines.append(f"Q: which {names.plural(e.business_name.lower())} had no {things if count else what} in the "
                      f"last 90 days\nA: {json.dumps(plan)}")
+    if entities and count is not None:
+        e = entities[0]
+        lines.append(
+            "- gap: time between one member's events, in date order; no measures. of: the entity; measure: whose "
+            "rows are the events; summary avg (default) | median | min | max of the days from each event back to "
+            "the one before; nth: days from the first event to the nth instead (\"time to second purchase\" -> 2; "
+            "time.window then holds the first events); within_days: the share of events followed by the next "
+            "within n days instead (\"reordered within 30 days\", \"readmitted within 30 days\"). time.grain for a "
+            "series; group_by only the member's own fields.")
+        plan = {"kind": "query", "intent": "value", "gap": {"of": e.slug, "measure": count.slug},
+                "time": {"window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: average days between {things} per {e.business_name.lower()} this year\n"
+                     f"A: {json.dumps(plan)}")
+        lines.append(
+            "- lifecycle: members by their activity in each period (time.grain; a month by default); no measures. "
+            "status all (active, new, returning, won back and lapsed side by side) | active | new | returning | "
+            "won_back | lapsed | churn_rate (\"churn\", \"attrition of customers\", \"retention rate\" is 100 minus "
+            "it: ask churn_rate). \"New vs returning\" -> all.")
+        plan = {"kind": "query", "intent": "trend", "lifecycle": {"of": e.slug, "measure": count.slug,
+                                                                  "status": "churn_rate"},
+                "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12}}}
+        lines.append(f"Q: monthly {e.business_name.lower()} churn rate over the last year\nA: {json.dumps(plan)}")
+        lines.append(
+            "- cohort: members grouped by the period of their first activity (time.grain; a month by default), and "
+            "the share (value share) or number (value count) of each still active n periods later; no measures, no "
+            "group_by. time.window holds the first periods; periods: how many after the first (12 by default).")
+        plan = {"kind": "query", "intent": "breakdown", "cohort": {"of": e.slug, "measure": count.slug, "periods": 6},
+                "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12}}}
+        lines.append(f"Q: retention by month of first {names.singular(things)} for the last year\n"
+                     f"A: {json.dumps(plan)}")
+    pair = start_and_end(model)
+    if pair is not None:
+        start, end = pair
+        rows = names.plural(model.tables[start.table].business_name.lower())
+        lines.append(
+            "- active: rows in force on each date, from each row's start and end dates (an empty or far-off end is "
+            "none); no measures. status active (in force at each period's end: \"headcount\", \"active "
+            "subscriptions\", \"open at month end\") | starts | ends | all (in force, starts and ends) | end_rate (\"attrition "
+            "rate\", \"turnover\"). time.grain: the periods (a month by default).")
+        plan = {"kind": "query", "intent": "trend", "active": {"start": start.slug, "end": end.slug},
+                "time": {"grain": "month", "window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: how many {rows} were there at each month end this year\nA: {json.dumps(plan)}")
+    pair = due_and_done(model)
+    if pair is not None:
+        due, done = pair
+        rows = names.plural(model.tables[done.table].business_name.lower())
+        lines.append(
+            "- on_time: rows against the date they were due by; no measures. done: when it happened; due: when it "
+            "was expected; grace_days: days late still counted on time. ageing true for the rows not done yet, by "
+            "days past due today (\"AR aging\", \"overdue\", \"open past due\"), with a measure to total (amount "
+            "open) when asked; time.window then only says the day to age on (its end).")
+        plan = {"kind": "query", "intent": "value", "on_time": {"done": done.slug, "due": due.slug},
+                "time": {"window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: what share of {rows} were on time this year\nA: {json.dumps(plan)}")
     return "\n".join(lines)
+
 
 
 def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | None:
@@ -439,8 +495,8 @@ def _forgive(data: dict[str, Any]) -> None:
         # "window": null, "grain": null: not set (a real model wrote them so, and the plan was refused).
         for key in [k for k, v in time.items() if v is None]:
             time.pop(key)
-    for key in [k for k in ("per", "rolling", "within", "bands", "absent", "drivers", "chart") if data.get(k) is None
-                and k in data]:
+    for key in [k for k in ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active",
+                            "on_time", "drivers", "chart") if data.get(k) is None and k in data]:
         data.pop(key)
     durations = [d for d in data.get("durations") or [] if isinstance(d, dict)]
     for d in durations:

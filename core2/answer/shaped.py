@@ -15,9 +15,11 @@ from typing import Any
 from core2.bootstrap.names import plural
 from core2.compile.compiler import Compiled
 from core2.model.schema import AggExpr
-from core2.compile.shapes import LISTED, MEMBERS, TOTAL
+from core2.compile.shapes import LATE, LISTED, MEMBERS, REACHED, TOTAL
 from core2.resolve.resolver import Logical
-from core2.resolve.shapes import AbsentShape, PerShape, RollingShape, WithinShape, condition_words
+from core2.resolve.shapes import (AbsentShape, ActiveShape, CohortShape, GapShape, LifecycleShape, OnTimeShape,
+                                  PerShape, RollingShape, WithinShape, active_definition, cohort_definition,
+                                  condition_words, gap_definition, lifecycle_definition, on_time_definition)
 
 
 def _day(value: Any) -> dt.date | None:
@@ -157,6 +159,20 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
             answer["headline"] = said
         top = f" the first {shape.top} of each are shown;" if shape.top else ""
         definition = f"Ranked within each group by the figure shown;{top} ties are put in name order."
+    elif isinstance(shape, LifecycleShape):
+        definition = lifecycle_definition(shape)
+    elif isinstance(shape, CohortShape):
+        definition = cohort_definition(shape, span)
+    elif isinstance(shape, ActiveShape):
+        definition = active_definition(shape)
+    elif isinstance(shape, OnTimeShape):
+        one = len(rows) == 1 and not shape.ageing
+        definition = on_time_definition(shape, span, _hidden(columns, rows, MEMBERS) if one else None,
+                                        _hidden(columns, rows, LATE) if one else None)
+    elif isinstance(shape, GapShape):
+        grouped = len(rows) > 1
+        definition = gap_definition(shape, span, None if grouped else _hidden(columns, rows, MEMBERS),
+                                    None if grouped else _hidden(columns, rows, REACHED))
     elif isinstance(shape, AbsentShape):
         total = _hidden(columns, rows, TOTAL)
         things = plural(shape.member)

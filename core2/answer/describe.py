@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel, value_names
+from core2.plan.analyses import questions
 from core2.plan.catalog import definition
 from core2.plan.ir import ALL_TIMES
 from core2.resolve import paths as P
@@ -34,6 +35,7 @@ from core2.resolve.resolver import find_slug
 
 MEASURES_LISTED = 8
 EXAMPLES = 4
+ANALYSES = 3        # analyses offered after the examples
 SMALL = 50          # a breakdown short enough to read as a chart
 
 # How a measure adds up, said to a reader.
@@ -214,7 +216,10 @@ def _overview(reader: _Reader) -> Described:
     named = _listed([reader.name(t) for t in subjects])
     head = (f"This data covers {len(subjects)} subjects: {named}{covered}." if len(subjects) > 1
             else f"This data covers {named}{covered}.")
-    return Described(head, [_subject_section(reader, t) for t in subjects], _example_questions(reader, subjects),
+    # Then an analysis or two the data can give (how long between orders, who came back, headcount, on time).
+    analyses = questions(reader.model, this_year=reader.today.year, may=reader.may)[:ANALYSES]
+    return Described(head, [_subject_section(reader, t) for t in subjects],
+                     _example_questions(reader, subjects) + analyses,
                      "Ask for a total, a breakdown, a trend, a ranking or a comparison of any of them, "
                      "or what a measure means.")
 

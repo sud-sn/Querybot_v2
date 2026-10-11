@@ -7,11 +7,13 @@ matched. Raw keys appear only where an admin decision has to name its object.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any
 
 from core2.model.overrides import target
 from core2.model.schema import SemanticModel
+from core2.plan.analyses import questions as analyses_questions
 
 _KIND_ORDER = {"fact": 0, "snapshot": 1, "dimension": 2, "bridge": 3, "calendar": 4, "other": 5}
 KIND_WORDS = {
@@ -141,6 +143,8 @@ def learned_view(model: SemanticModel) -> dict[str, Any]:
                     "evidence": _evidence(r.evidence)[:4], "object": r.object, **_leave_out(model, r.key, r.object)}
                    for r in model.review],
         "notes": list(model.notes),
+        # What the data can answer beyond totals and trends: how long between orders, who came back, headcount.
+        "analyses": analyses_questions(model, this_year=dt.date.today().year),
     }
 
 

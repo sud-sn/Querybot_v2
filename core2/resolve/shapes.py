@@ -19,16 +19,18 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from core2.bootstrap.names import plural
-from core2.model.schema import AggExpr, Attribute, Entity, Measure, SemanticModel
+from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel
 from core2.plan.ir import Plan
 from core2.resolve import bands as B
 from core2.resolve import paths as P
 from core2.resolve.resolver import (
     Condition,
     Context,
+    DateUse,
     DaysBetween,
     Group,
     Logical,
@@ -40,6 +42,7 @@ from core2.resolve.resolver import (
     _Aliases,
     _attribute_label,
     _date_role_for,
+    _duration_dates,
     _entity_label,
     _first_last,
     _named_filter,
@@ -110,7 +113,104 @@ class AbsentShape:
     member_key: str = ""           # the listed part's output name for each member's key (never shown)
 
 
+@dataclass
+class Events:
+    """Each member's days with activity, each day once (``core2/compile/shapes.py`` reads them in date order)."""
+
+    part: Part                     # SELECT DISTINCT member key, day [, the member's own groupings]
+    key: str                       # the part's output name for each member's key
+    day: str                       # the part's output name for the day
+    groups: list[str]              # the part's output names of the member's own groupings ("customer segment")
+    member: str                    # "customer"
+    activity: str                  # "orders"
+    grain: str | None              # the periods the answer is in (a series), or None
+    window: Range                  # the answer's window: the days it is about
+
+
+@dataclass
+class GapShape:
+    events: Events
+    summary: str                   # avg | median | min | max | within | nth
+    nth: int | None = None
+    within_days: int | None = None
+
+
+@dataclass
+class LifecycleShape:
+    events: Events
+    status: str                    # all | active | new | returning | won_back | lapsed | churn_rate
+    columns: dict[str, str]        # each figure worked out -> its output name
+
+
+@dataclass
+class CohortShape:
+    events: Events
+    periods: int                   # periods after the first shown
+    value: str                     # share | count
+    cohort: str                    # the output name of the cohort's first period
+    age: str                       # the output name of the periods after it
+
+
+@dataclass
+class ActiveShape:
+    part: Part                     # the rows, with their groupings (a department) and both dates
+    start: DateUse
+    end: DateUse
+    periods: list[tuple[dt.date, dt.date]]   # each period's first day and the next one's
+    status: str                    # all | active | starts | ends | end_rate
+    columns: dict[str, str]        # each figure worked out -> its output name
+    groups: list[str]              # the part's own groupings, by output name
+    things: str                    # "employees"
+    start_name: str                # "hire date"
+    end_name: str                  # "termination date"
+    grain: str
+
+
+MAX_PERIODS = 60
+
+
+@dataclass
+class OnTimeShape:
+    part: Part                     # on time: the rows done (a receipt); ageing: the rows due (an order line)
+    due: DateUse
+    done: DateUse | None           # on the part's rows (or ones they reach); None: ageing against another table
+    grace: int
+    ageing: bool
+    as_of: dt.date                 # ageing: the day open rows are aged on
+    groups: list[str]              # the part's own groupings, by output name (a period first, when a series)
+    columns: dict[str, str]        # each figure worked out -> its output name
+    band: str = ""                 # ageing: the range grouping's output name
+    # Ageing with the done rows on another table (receipts of an order line): (their table, their column pointing
+    # at the due rows, the due rows' column it equals). A due row with no such row is open.
+    done_elsewhere: tuple[str, str, str] | None = None
+    things: str = ""               # "receipts", "purchase order lines"
+    due_name: str = ""
+    done_name: str = ""
+
+
+AGEING = ["Not yet due", "1-30 days", "31-60 days", "61-90 days", "Over 90 days"]
+
+
+LIFECYCLE = {"active": "Active", "new": "New", "returning": "Returning", "won_back": "Won back",
+             "lapsed": "Lapsed", "churn_rate": "Churn rate"}
+
+
 def resolve_shaped(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    if plan.gap is not None:
+        _alone(plan, "gap")
+        return _gap(plan, model, ctx)
+    if plan.lifecycle is not None:
+        _alone(plan, "lifecycle")
+        return _lifecycle(plan, model, ctx)
+    if plan.cohort is not None:
+        _alone(plan, "cohort")
+        return _cohort(plan, model, ctx)
+    if plan.active is not None:
+        _alone(plan, "active")
+        return _active(plan, model, ctx)
+    if plan.on_time is not None:
+        _alone(plan, "on_time")
+        return _on_time(plan, model, ctx)
     shapes = [n for n in ("per", "rolling", "within", "absent") if getattr(plan, n) is not None]
     if plan.bands is not None and plan.bands.per is not None:
         shapes.append("bands")
@@ -625,3 +725,539 @@ def absent_note(shape: AbsentShape, window: Range, active_before: bool) -> str:
     who = f"the {things} with {activity} before then" if active_before else f"every {shape.member} listed"
     return (f"Listed: {who}, minus those with {activity} {when}. The list follows what you may see and the rows "
             "each table leaves out by default.")
+
+
+# ── each member's days with activity (time between events, lifecycle, cohorts) ─
+
+
+_CALENDAR_GRAINS = ("day", "week", "month", "quarter", "year")
+
+
+def _alone(plan: Plan, name: str) -> None:
+    others = [n for n in ("per", "rolling", "within", "absent", "gap", "lifecycle", "cohort", "active", "on_time")
+              if n != name and getattr(plan, n) is not None]
+    if plan.bands is not None:
+        others.append("bands")
+    if others:
+        raise ResolveError("unsupported", f"one analytical shape at a time ({' and '.join([name, *others])} were "
+                           "asked)")
+    if plan.time.compare is not None:
+        raise ResolveError("unsupported", "comparing two periods of this kind of figure is not worked out yet: ask "
+                           "for each period on its own")
+
+
+def _events(plan: Plan, model: SemanticModel, ctx: Context, of: str, measure_slug: str, *,
+            read: Callable[[Range], Range], grain: str | None) -> tuple[Events, list[Group]]:
+    """Each member's days with activity (the measure's rows), each day once, with the member's own groupings.
+
+    ``read`` turns the answer's window into the days read: a gap's earlier event may be before the window, a
+    first order long before it."""
+    found = find_slug(model, of)
+    if not found or found[0] != "entity":
+        raise ResolveError("unknown", f"nothing listed called {of}: name the customers, patients or other things "
+                           "the data lists whose activity it is", sorted(model.entities)[:12])
+    entity = found[1]
+    assert isinstance(entity, Entity)
+    if len(entity.key_columns) != 1:
+        raise ResolveError("unsupported", f"{plural(entity.business_name)} are told apart by more than one column")
+    key = entity.key_columns[0]
+    found_m = find_slug(model, measure_slug)
+    if not found_m or found_m[0] != "measure":
+        raise ResolveError("unknown", f"no measure called {measure_slug}: name the activity (orders, fills)", [])
+    measure = found_m[1]
+    assert isinstance(measure, Measure)
+    if not measure.table:
+        raise ResolveError("unsupported", f"{measure.business_name} is worked out over several tables: name the "
+                           "activity of one (orders, fills)")
+    if grain is not None and grain not in _CALENDAR_GRAINS:
+        raise ResolveError("unsupported", f"this figure is worked out by calendar periods: ask by month, quarter or "
+                           f"year rather than by {grain.replace('_', ' ')}")
+    role = _date_role_for(model, plan, measure, measure.table)
+    if role is None:
+        raise ResolveError("unsupported", f"{measure.business_name} has no date to put its rows in order by")
+    first, last = _first_last(role)
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=model.settings.fiscal_year_start_month)
+    if plan.time.window.kind == "all":
+        window = Range(None, None)
+
+    aliases = _Aliases()
+    builder = _PartBuilder(model, measure.table, aliases, ctx)
+    builder._allowed(measure.table)
+    part = builder.part
+    part.distinct_only = True
+    reached = builder.reach(entity.table, label=entity.business_name)
+    taken: set[str] = set()
+    key_out = _output_name("member_key", taken)
+    taken.add(key_out)
+    part.groups.append(PartGroup(key_out, reached, key, "attribute"))
+    part.preds.append(Pred(reached, key, "not_null", []))
+    use = builder.date(role)
+    day_out = _output_name("event_day", taken)
+    taken.add(day_out)
+    part.groups.append(PartGroup(day_out, part.alias, None, "period", grain="day", date=use))
+    # The days read, never the answer's own window (part.date): a gap's earlier event may be before it.
+    part.date_ranges.append((use, read(window)))
+    for df in model.tables[measure.table].default_filters:
+        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
+        part.preds.append(Pred(part.alias, mf.column, mf.op, list(mf.values)))
+    for f in plan.filters:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the activity by called {f.field}", [])
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        f, stored = _named_filter(column, f)
+        alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
+            if column.table != measure.table else part.alias
+        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+
+    # Groupings: the member's own (a customer's segment): each member's days stay one sequence. A grouping of the
+    # rows (a store) would cut one customer's orders into several sequences.
+    out_groups: list[Group] = []
+    names: list[str] = []
+    for slug in plan.group_by:
+        if slug.startswith("time:"):
+            raise ResolveError("unsupported", "by the period of each event only (by month, quarter or year)")
+        found_g = find_slug(model, slug)
+        if not found_g or found_g[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to group by called {slug}", [])
+        attribute = _entity_label(model, slug) if found_g[0] == "entity" else found_g[1]
+        assert isinstance(attribute, Attribute)
+        column = model.columns[attribute.column]
+        if column.table != entity.table and not _reaches(model, entity.table, column.table):
+            raise ResolveError("unsupported", f"{_attribute_label(model, attribute)} is not one of each "
+                               f"{entity.business_name.lower()}'s own: their activity is one sequence, not split by "
+                               "what each row is about")
+        _shown(model, attribute, slug, entity=found_g[0] == "entity", personal=ctx.personal_shown)
+        alias = builder.reach(column.table, label=attribute.business_name) if column.table != measure.table \
+            else part.alias
+        name = _output_name(attribute.slug.replace(".", "_"), taken)
+        taken.add(name)
+        part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+        out_groups.append(Group(name, _attribute_label(model, attribute), "attribute", attribute=attribute.slug))
+        names.append(name)
+    activity = measure.business_name.lower()
+    for lead in ("number of ", "count of ", "no. of "):
+        activity = activity[len(lead):] if activity.startswith(lead) else activity
+    events = Events(part=part, key=key_out, day=day_out, groups=names, member=entity.business_name.lower(),
+                    activity=activity, grain=grain, window=window)
+    if grain is not None:
+        out_groups.insert(0, Group(_output_name("period", taken), grain.capitalize(), "period", grain=grain))
+    return events, out_groups
+
+
+def _gap(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    g = plan.gap
+    assert g is not None
+    if g.nth is not None and g.within_days is not None:
+        raise ResolveError("unsupported", "days to the nth event, or the share followed within n days: one at a time")
+    if g.nth is not None:
+        read = lambda w: Range(None, None)          # noqa: E731 - the first event may be long before the window
+    elif g.within_days is not None:
+        days = g.within_days
+        read = lambda w: Range(None, w.end + dt.timedelta(days=days) if w.end else None)   # noqa: E731
+    else:
+        read = lambda w: Range(None, w.end)         # noqa: E731 - the earlier event of a gap may be before it
+    events, groups = _events(plan, model, ctx, g.of, g.measure, read=read, grain=plan.time.grain)
+    summary = "nth" if g.nth is not None else "within" if g.within_days is not None else g.summary
+    shape = GapShape(events=events, summary=summary, nth=g.nth, within_days=g.within_days)
+    label, fmt = gap_label(shape)
+    taken = {gr.name for gr in groups}
+    out = [OutMeasure(name=_output_name("days" if fmt == "days" else "share", taken), label=label,
+                      expr=AggExpr(agg="avg"), format=fmt, measure=None)]
+    period = next((gr.name for gr in groups if gr.kind == "period"), None)
+    sort = [(period, False)] if period else [(out[0].name, False)] if groups else []
+    return Logical(intent="trend" if period else "breakdown" if groups else "value", parts=[events.part],
+                   groups=groups, measures=out, window=events.window, sort=sort, limit=plan.limit,
+                   max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
+                   conditions=[], shape=shape)
+
+
+def gap_label(shape: GapShape) -> tuple[str, str]:
+    """The figure's name and format: "Average days between orders", "Days to the 2nd order", "Orders followed by
+    another within 30 days"."""
+    e = shape.events
+    single = _singular(e.activity)
+    if shape.summary == "nth":
+        return f"Days from the first {single} to the {_ordinal(shape.nth or 2)}", "days"
+    if shape.summary == "within":
+        return f"{e.activity[:1].upper()}{e.activity[1:]} followed by another within {shape.within_days} days", \
+            "percent"
+    word = SUMMARY_WORDS.get(shape.summary, "Average")
+    return f"{word} days between {e.activity}", "days"
+
+
+def gap_definition(shape: GapShape, span: str, counted: float | None, reached: float | None) -> str:
+    e = shape.events
+    things = plural(e.member)
+    when = f" {span}" if span else ""
+    single = _singular(e.activity)
+    if shape.summary == "nth":
+        made = f"; {int(reached):,} of the {int(counted):,} {things} have one" if counted is not None and \
+            reached is not None else ""
+        return (f"For each {e.member} whose first {single} was{when or ' at any time'}, the days from it to their "
+                f"{_ordinal(shape.nth or 2)} {single}, then the average over those who made one{made}. Each day "
+                f"with {e.activity} counts once.")
+    if shape.summary == "within":
+        n = f" (of {int(counted):,})" if counted is not None else ""
+        return (f"Each {single} of each {e.member}{when}{n}, followed by that {e.member}'s next {single} within "
+                f"{shape.within_days} days or not: the share that was. Each day with {e.activity} counts once.")
+    how = {"avg": "their average", "median": "the middle value", "min": "the shortest", "max": "the longest"}[
+        shape.summary]
+    n = f" (the {int(counted):,} gaps)" if counted is not None else ""
+    return (f"For each {e.member}, the days from each {single}{when} back to their {single} before it (which may "
+            f"be earlier), then {how}{n}. Each day with {e.activity} counts once; a first {single} has no gap.")
+
+
+# ── new, returning, won back, lapsed ───────────────────────────────────────
+
+
+def _period_grain(plan: Plan) -> str:
+    """The periods a member's activity is counted in: the plan's own, the window's unit, or a month."""
+    grain = plan.time.grain or (plan.time.window.unit if plan.time.window.unit in ("month", "quarter", "year")
+                                else None) or "month"
+    if grain not in ("month", "quarter", "year"):
+        raise ResolveError("unsupported", f"members are counted by month, quarter or year, not by "
+                           f"{grain.replace('_', ' ')}")
+    return grain
+
+
+def _lifecycle(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    lc = plan.lifecycle
+    assert lc is not None
+    grain = _period_grain(plan)
+    # Every period of activity up to the window's end: who is new, who was away and came back.
+    events, groups = _events(plan, model, ctx, lc.of, lc.measure, read=lambda w: Range(None, w.end), grain=grain)
+    taken = {g.name for g in groups}
+    things = plural(events.member)
+    shown = ["active", "new", "returning", "won_back", "lapsed"] if lc.status == "all" else [lc.status]
+    columns: dict[str, str] = {}
+    out: list[OutMeasure] = []
+    for status in shown:
+        name = _output_name(status, taken)
+        taken.add(name)
+        columns[status] = name
+        label = "Churn rate" if status == "churn_rate" else f"{LIFECYCLE[status]} {things}"
+        out.append(OutMeasure(name=name, label=label, expr=AggExpr(agg="sum"),
+                              format="percent" if status == "churn_rate" else "number", measure=None))
+    shape = LifecycleShape(events=events, status=lc.status, columns=columns)
+    period = next(g.name for g in groups if g.kind == "period")
+    return Logical(intent="trend", parts=[events.part], groups=groups, measures=out, window=events.window,
+                   sort=[(period, False)], limit=plan.limit, max_rows=ctx.max_rows, notes=[],
+                   fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
+
+
+def lifecycle_definition(shape: LifecycleShape) -> str:
+    e = shape.events
+    period = e.grain or "month"
+    things, single = plural(e.member), _singular(e.activity)
+    parts = {
+        "active": f"active: with {e.activity} in the {period}",
+        "new": f"new: their first {single} ever was in the {period}",
+        "returning": f"returning: they had {e.activity} the {period} before too",
+        "won_back": f"won back: they had {e.activity} before, but none the {period} before",
+        "lapsed": f"lapsed: {e.activity} the {period} before, none in this one",
+        "churn_rate": f"churn rate: the lapsed as a share of the {things} with {e.activity} the {period} before",
+    }
+    asked = list(parts) if shape.status == "all" else [shape.status]
+    if shape.status == "churn_rate":
+        asked = ["lapsed", "churn_rate"]
+    said = "; ".join(parts[k] for k in asked)
+    return (f"{things[:1].upper()}{things[1:]} by {period}, each counted once a {period}: {said}. The latest "
+            f"{period} may not be over yet.")
+
+
+# ── cohorts ────────────────────────────────────────────────────────────────
+
+
+def _cohort(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    co = plan.cohort
+    assert co is not None
+    if plan.group_by:
+        raise ResolveError("unsupported", "a cohort grid is by first period and periods after it: ask for one "
+                           "group of members at a time with a filter instead of a grouping")
+    grain = _period_grain(plan)
+    # Every period of activity: a member's first one makes their cohort, however long ago.
+    events, groups = _events(plan, model, ctx, co.of, co.measure, read=lambda w: Range(None, None), grain=grain)
+    first = groups[0]
+    things = plural(events.member)
+    first.label = f"First {grain}"
+    age = Group(_output_name("periods_after", {first.name}), f"{grain.capitalize()}s after the first", "attribute")
+    shape = CohortShape(events=events, periods=co.periods, value=co.value, cohort=first.name, age=age.name)
+    share = co.value == "share"
+    out = [OutMeasure(name="retained" if share else "members",
+                      label=f"Share of {things} still with {events.activity}" if share else
+                      f"{things[:1].upper()}{things[1:]} with {events.activity}", expr=AggExpr(agg="avg"),
+                      format="percent" if share else "number", measure=None)]
+    return Logical(intent="breakdown", parts=[events.part], groups=[first, age], measures=out,
+                   window=events.window, sort=[(first.name, False), (age.name, False)], limit=plan.limit,
+                   max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
+                   conditions=[], shape=shape)
+
+
+def cohort_definition(shape: CohortShape, span: str) -> str:
+    e = shape.events
+    things, single, period = plural(e.member), _singular(e.activity), e.grain or "month"
+    when = f" {span}" if span else ""
+    value = "the share of the cohort" if shape.value == "share" else "how many of them"
+    return (f"{things[:1].upper()}{things[1:]} by the {period} of their first {single} ever{when} (each a cohort), "
+            f"and {value} with {e.activity} in each {period} after it, up to {shape.periods}; 0 is the first "
+            f"{period} itself. Only {period}s that have happened are shown, the latest perhaps not over yet.")
+
+
+# ── in force on each date ──────────────────────────────────────────────────
+
+
+def _active(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    from core2.plan.ir import Duration
+
+    a = plan.active
+    assert a is not None
+    start_role, end_role = _duration_dates(model, Duration(name="in force", start=a.start, end=a.end))
+    grain = _period_grain(plan)
+    first, last = _first_last(start_role)
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=model.settings.fiscal_year_start_month)
+    if window.start is None:
+        window = Range(first, window.end)
+    end_cap = min(d for d in (window.end, ctx.today + dt.timedelta(days=1)) if d is not None)
+    starts = periods(Range(window.start, end_cap), grain)
+    if not starts:
+        raise ResolveError("unsupported", "no period to count in: name a window that has started")
+    if len(starts) > MAX_PERIODS:
+        raise ResolveError("unsupported", f"{len(starts)} {grain}s are more than {MAX_PERIODS} counted at once: "
+                           "ask for a shorter time, or by quarter or year")
+    table = start_role.table
+    aliases = _Aliases()
+    builder = _PartBuilder(model, table, aliases, ctx)
+    builder._allowed(table)
+    part = builder.part
+    for df in model.tables[table].default_filters:
+        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    for f in plan.filters:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the rows by called {f.field}", [])
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        f, stored = _named_filter(column, f)
+        alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
+            if column.table != table else part.alias
+        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+    taken: set[str] = set()
+    groups: list[Group] = []
+    names: list[str] = []
+    for slug in plan.group_by:
+        found_g = find_slug(model, slug)
+        if not found_g or found_g[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to group by called {slug}", [])
+        attribute = _entity_label(model, slug) if found_g[0] == "entity" else found_g[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, slug, entity=found_g[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        alias = builder.reach(column.table, label=attribute.business_name) if column.table != table else part.alias
+        name = _output_name(attribute.slug.replace(".", "_"), taken)
+        taken.add(name)
+        part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+        groups.append(Group(name, _attribute_label(model, attribute), "attribute", attribute=attribute.slug))
+        names.append(name)
+    period = Group(_output_name("period", taken), grain.capitalize(), "period", grain=grain)
+    taken.add(period.name)
+    things = plural(model.tables[table].business_name.lower())
+    labels = {"active": f"{things[:1].upper()}{things[1:]} at {grain} end",
+              "starts": f"Started ({start_role.name.lower()})", "ends": f"Ended ({end_role.name.lower()})",
+              "end_rate": "End rate"}
+    shown = ["active", "starts", "ends"] if a.status == "all" else [a.status]
+    columns: dict[str, str] = {}
+    out: list[OutMeasure] = []
+    for status in shown:
+        name = _output_name(status, taken)
+        taken.add(name)
+        columns[status] = name
+        out.append(OutMeasure(name=name, label=labels[status], expr=AggExpr(agg="sum"),
+                              format="percent" if status == "end_rate" else "number", measure=None))
+    shape = ActiveShape(part=part, start=builder.date(start_role, kind="left"), end=builder.date(end_role, kind="left"),
+                        periods=[(p, add_units(p, grain, 1)) for p in starts], status=a.status, columns=columns,
+                        groups=names, things=things, start_name=start_role.name.lower(),
+                        end_name=end_role.name.lower(), grain=grain)
+    return Logical(intent="trend", parts=[part], groups=[period, *groups], measures=out,
+                   window=Range(starts[0], add_units(starts[-1], grain, 1)), sort=[(period.name, False)],
+                   limit=plan.limit, max_rows=ctx.max_rows, notes=[],
+                   fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
+
+
+def active_definition(shape: ActiveShape) -> str:
+    things, g = shape.things, shape.grain
+    parts = {"active": f"in force at the end of each {g}: a {shape.start_name} on or before its last day, and no "
+                       f"{shape.end_name} by then (an empty or far-off {shape.end_name} is none)",
+             "starts": f"started: a {shape.start_name} in the {g}", "ends": f"ended: a {shape.end_name} in the {g}",
+             "end_rate": f"end rate: those ended in the {g} as a share of those in force when it began"}
+    asked = ["active", "starts", "ends"] if shape.status == "all" else [shape.status]
+    return f"{things[:1].upper()}{things[1:]} {'; '.join(parts[k] for k in asked)}."
+
+
+# ── on time, and ageing ────────────────────────────────────────────────────
+
+
+def _date_role(model: SemanticModel, slug: str) -> DateRole:
+    found = find_slug(model, slug)
+    if not found or found[0] != "date":
+        raise ResolveError("unknown", f"no date called {slug}", [])
+    role = found[1]
+    assert isinstance(role, DateRole)
+    if role.granularity == "month":
+        raise ResolveError("unsupported", f"{role.name} is kept by month, so days late cannot be counted from it")
+    return role
+
+
+def _rows_part(plan: Plan, model: SemanticModel, ctx: Context, table: str, taken: set[str]
+               ) -> tuple[_PartBuilder, list[Group], list[str]]:
+    """The rows of ``table``, narrowed by the plan's filters, with its groupings (each reached from it)."""
+    builder = _PartBuilder(model, table, _Aliases(), ctx)
+    builder._allowed(table)
+    part = builder.part
+    for df in model.tables[table].default_filters:
+        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    for f in plan.filters:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the rows by called {f.field}", [])
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        f, stored = _named_filter(column, f)
+        alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
+            if column.table != table else part.alias
+        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+    groups: list[Group] = []
+    names: list[str] = []
+    for slug in plan.group_by:
+        found_g = find_slug(model, slug)
+        if not found_g or found_g[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to group by called {slug}", [])
+        attribute = _entity_label(model, slug) if found_g[0] == "entity" else found_g[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, slug, entity=found_g[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        alias = builder.reach(column.table, label=attribute.business_name) if column.table != table else part.alias
+        name = _output_name(attribute.slug.replace(".", "_"), taken)
+        taken.add(name)
+        part.groups.append(PartGroup(name, alias, column.key, "attribute"))
+        groups.append(Group(name, _attribute_label(model, attribute), "attribute", attribute=attribute.slug))
+        names.append(name)
+    return builder, groups, names
+
+
+def _on_time(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    ot = plan.on_time
+    assert ot is not None
+    due_role, done_role = _date_role(model, ot.due), _date_role(model, ot.done)
+    taken: set[str] = set()
+    if ot.ageing:
+        return _ageing(plan, model, ctx, due_role, done_role, taken)
+    # Each row done (a receipt), against the date its own row, or the row it points at (its order line), was due by.
+    table = done_role.table
+    if due_role.table != table and not _reaches(model, table, due_role.table):
+        raise ResolveError("unsupported", f"{due_role.name} is not on the rows of {done_role.name} nor on rows they "
+                           "point at")
+    builder, groups, names = _rows_part(plan, model, ctx, table, taken)
+    part = builder.part
+    done = builder.date(done_role)
+    due = builder.date(due_role, kind="left")
+    first, last = _first_last(done_role)
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=model.settings.fiscal_year_start_month)
+    if plan.time.window.kind == "all":
+        window = Range(None, None)
+    part.date_ranges.append((done, window))
+    out_groups = list(groups)
+    if plan.time.grain is not None:
+        name = _output_name("period", taken)
+        taken.add(name)
+        part.groups.insert(0, PartGroup(name, done.alias, None, "period", grain=plan.time.grain, date=done))
+        out_groups.insert(0, Group(name, plan.time.grain.capitalize(), "period", grain=plan.time.grain))
+        names.insert(0, name)
+    on_time = _output_name("on_time", taken)
+    shape = OnTimeShape(part=part, due=due, done=done, grace=ot.grace_days, ageing=False, as_of=ctx.today,
+                        groups=names, columns={"on_time": on_time},
+                        things=plural(model.tables[table].business_name.lower()), due_name=due_role.name.lower(),
+                        done_name=done_role.name.lower())
+    out = [OutMeasure(name=on_time, label="On time", expr=AggExpr(agg="avg"), format="percent", measure=None)]
+    period = next((g.name for g in out_groups if g.kind == "period"), None)
+    sort = [(period, False)] if period else [(on_time, False)] if out_groups else []
+    return Logical(intent="trend" if period else "breakdown" if out_groups else "value", parts=[part],
+                   groups=out_groups, measures=out, window=window, sort=sort, limit=plan.limit,
+                   max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
+                   conditions=[], shape=shape)
+
+
+def _ageing(plan: Plan, model: SemanticModel, ctx: Context, due_role: DateRole, done_role: DateRole,
+            taken: set[str]) -> Logical:
+    """The rows due and not done yet, by days past due on the day they are aged on (today, or the window's end)."""
+    table = due_role.table
+    builder, groups, names = _rows_part(plan, model, ctx, table, taken)
+    part = builder.part
+    due = builder.date(due_role)
+    done: DateUse | None = None
+    elsewhere = None
+    if done_role.table == table:
+        done = builder.date(done_role, kind="left")
+    else:
+        link = next((j for j in model.joins.values() if j.from_table == done_role.table and j.to_table == table
+                     and len(j.from_columns) == 1 and P.usable(j)), None)
+        if link is None:
+            raise ResolveError("unsupported", f"{done_role.name} is on rows that do not point at the "
+                               f"{plural(model.tables[table].business_name.lower())}: nothing tells which are open")
+        elsewhere = (done_role.table, link.from_columns[0], link.to_columns[0])
+    if plan.time.window.kind in ("between", "until") and plan.time.window.end is not None:
+        as_of = plan.time.window.end
+    else:
+        as_of = ctx.today
+    band = _output_name("days_past_due", taken)
+    taken.add(band)
+    out_groups = [Group(band, "Days past due", "attribute", bands=list(AGEING)), *groups]
+    names = [band, *names]
+    things = plural(model.tables[table].business_name.lower())
+    count = _output_name("open", taken)
+    taken.add(count)
+    out = [OutMeasure(name=count, label=f"Open {things}", expr=AggExpr(agg="count"), format="number", measure=None)]
+    columns = {"open": count}
+    for slug in plan.measures[:1]:
+        found = find_slug(model, slug)
+        if not found or found[0] != "measure":
+            raise ResolveError("unknown", f"no measure called {slug}", [])
+        m = found[1]
+        assert isinstance(m, Measure)
+        if m.table != table or not isinstance(m.expr, AggExpr) or m.expr.agg not in ("sum", "count"):
+            raise ResolveError("unsupported", f"{m.business_name} is not a total of the "
+                               f"{things}' own rows: ask for the open {things} alone")
+        name = _output_name(m.slug, taken)
+        taken.add(name)
+        out.append(OutMeasure(name=name, label=f"{m.business_name} open", expr=m.expr, format=m.format, measure=m))
+        columns["measure"] = name
+    shape = OnTimeShape(part=part, due=due, done=done, grace=0, ageing=True, as_of=as_of, groups=names[1:],
+                        columns=columns, band=band, done_elsewhere=elsewhere, things=things,
+                        due_name=due_role.name.lower(), done_name=done_role.name.lower())
+    return Logical(intent="breakdown", parts=[part], groups=out_groups, measures=out, window=Range(None, None),
+                   sort=[], limit=plan.limit, max_rows=ctx.max_rows, notes=[],
+                   fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
+
+
+def on_time_definition(shape: OnTimeShape, span: str, counted: float | None, late: float | None) -> str:
+    if shape.ageing:
+        open_how = (f"no {shape.done_name} yet" if shape.done_elsewhere is None else
+                    f"no row with a {shape.done_name} pointing at it yet")
+        return (f"{shape.things[:1].upper()}{shape.things[1:]} with {open_how}, by the days from their "
+                f"{shape.due_name} to {shape.as_of:%d %B %Y}: not yet due when the {shape.due_name} is still ahead.")
+    grace = f", or within {shape.grace} days after it" if shape.grace else ""
+    when = f" {span}" if span else ""
+    n = f" Of {int(counted):,}, {int(late or 0):,} were late." if counted is not None else ""
+    return (f"Each of the {shape.things}{when} on time when its {shape.done_name} is on or before its "
+            f"{shape.due_name}{grace}; those without both dates are left out.{n}")

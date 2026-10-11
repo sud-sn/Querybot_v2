@@ -75,11 +75,15 @@ def test_the_whole_data_is_a_lead_a_section_per_subject_and_questions_that_answe
     assert order_line[1] == "Broken down by: customer, product, store, category and region"
     assert order_line[2] == "Dates: order date (the default), delivered date and ship date; January 2023 to June 2026"
     assert "…" not in json.dumps(said.sections)                                   # nothing cut mid-list
-    # Every example question names a measure and a breakdown that reach each other, in a year with data.
+    # Every example question names a measure and a breakdown that reach each other, in a year with data; the
+    # analyses the data gives follow (each answered in test_core2_learn_offers_the_analyses_its_data_can_answer).
     assert said.examples == ["Net amount by store in 2026", "Refund amount by category in 2026",
-                             "Target amount by store in 2026", "Net amount by month in 2026"]
+                             "Target amount by store in 2026", "Net amount by month in 2026",
+                             "Average days between orders per customer in 2026",
+                             "New, returning and lapsed customers by month in 2026",
+                             "Customer retention by month of first order"]
     warehouse = DuckDBWarehouse(built.con)
-    for question in said.examples:
+    for question in said.examples[:4]:
         logical = resolve(_plan_for(model, question), model, Context(today=TODAY))
         rows = warehouse.query(compile_query(logical, model, "duckdb").sql).rows
         assert rows, question

@@ -153,6 +153,62 @@ class Absent(_Strict):
     active_before: bool = False      # only members with activity before the window (lapsed, not never active)
 
 
+class Gap(_Strict):
+    """Time between one member's events, in date order: "average days between orders per customer", "refill gap",
+    "days from a customer's first order to their second", "share of admissions followed by another within 30
+    days". Each member's days with an event count once each; the window holds the later event of each gap (the
+    first event, with nth)."""
+
+    of: str                          # an entity slug: whose events (customer, patient, machine)
+    measure: str                     # a measure slug whose rows are the events (orders, fills, admissions)
+    summary: Literal["avg", "median", "min", "max"] = "avg"
+    nth: int | None = Field(default=None, ge=2, le=20)     # days from the first event to the nth ("second order": 2)
+    within_days: int | None = Field(default=None, ge=1, le=3650)   # share of events with the next within n days
+
+
+class Lifecycle(_Strict):
+    """Members by their activity in each period (time.grain, a month by default): new (first activity ever),
+    returning (active the period before too), won back (back after at least a period with none), lapsed (active
+    the period before, not in this one), and the churn rate (lapsed over those active the period before): "new vs
+    returning customers by month", "churn rate by quarter", "how many patients lapsed this year"."""
+
+    of: str                          # an entity slug: whose activity
+    measure: str                     # a measure slug whose rows are the activity
+    status: Literal["all", "active", "new", "returning", "won_back", "lapsed", "churn_rate"] = "all"
+
+
+class Cohort(_Strict):
+    """Members grouped by the period of their first activity (time.grain, a month by default), and how many are
+    active in each period after it: "retention by month of first purchase", "subscription retention by start
+    month". The window holds the cohorts' first periods."""
+
+    of: str                          # an entity slug
+    measure: str                     # a measure slug whose rows are the activity
+    periods: int = Field(default=12, ge=1, le=36)          # periods after the first shown
+    value: Literal["share", "count"] = "share"
+
+
+class Active(_Strict):
+    """Rows in force on each date, from each row's start and end: "headcount by month", "active subscriptions at
+    each month end", "open tickets at month end"; with the starts, the ends and the end rate ("hires and leavers",
+    "attrition rate"). An end that is empty or a placeholder far ahead means the row is still in force."""
+
+    start: str                       # date slug: when each row starts (hire date, start date, opened)
+    end: str                         # date slug: when it ends (termination, end date, closed)
+    status: Literal["all", "active", "starts", "ends", "end_rate"] = "active"
+
+
+class OnTime(_Strict):
+    """Rows against the date they were expected by: "on time %", "deliveries more than 3 days late", "AR aging"
+    (rows not done yet, in ranges of days past due today). On time: done on or before the expected date, plus
+    grace_days."""
+
+    done: str                        # date slug: when it happened (delivered, paid, received)
+    due: str                         # date slug: when it was expected (promised, due)
+    grace_days: int = Field(default=0, ge=0, le=365)
+    ageing: bool = False             # the rows not done yet, by days past due today (current, 1-30, 31-60, ...)
+
+
 class Plan(_Strict):
     kind: Literal["query", "clarify", "describe_data", "unsupported", "smalltalk"] = "query"
     intent: Intent | None = None
@@ -180,11 +236,17 @@ class Plan(_Strict):
     within: Within | None = None
     bands: Bands | None = None
     absent: Absent | None = None
+    gap: Gap | None = None
+    lifecycle: Lifecycle | None = None
+    cohort: Cohort | None = None
+    active: Active | None = None
+    on_time: OnTime | None = None
     notes: list[str] = Field(default_factory=list)
 
     def shaped(self) -> bool:
         """Does the plan ask for an analytical shape (worked out over the plain answer's rows)?"""
-        return any(x is not None for x in (self.per, self.rolling, self.within, self.bands, self.absent))
+        return any(x is not None for x in (self.per, self.rolling, self.within, self.bands, self.absent, self.gap,
+                                           self.lifecycle, self.cohort, self.active, self.on_time))
 
 
 def schema_text() -> str:

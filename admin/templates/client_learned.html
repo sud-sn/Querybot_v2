@@ -224,6 +224,16 @@
   <div class="lq-section"><div class="lq-body">{% for n in view.notes %}<p class="lq-intro">{{ n }}</p>{% endfor %}</div></div>
   {% endif %}
 
+  {% if view.analyses %}
+  <section class="lq-section" aria-labelledby="lq-analyses">
+    <h2 id="lq-analyses">Analyses this data can answer</h2>
+    <div class="lq-body">
+      <p class="lq-intro">Beyond totals, breakdowns and trends, what Learn found makes these possible. Readers are offered them on What you can ask.</p>
+      <ul class="lq-review">{% for q in view.analyses %}<li>{{ q }}</li>{% endfor %}</ul>
+    </div>
+  </section>
+  {% endif %}
+
   {% if view.review %}
   <section class="lq-section" aria-labelledby="lq-review">
     <h2 id="lq-review">Worth a look</h2>
