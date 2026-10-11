@@ -98,6 +98,7 @@ from store.admin_store import (
 )
 from store.dashboard_store import (
     save_built_dashboard, change_dashboard, undo_dashboard,
+    get_what_changed_note, keep_what_changed_note,
     create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread, dashboard_name,
     list_dashboards, list_editable_dashboards, migrate_legacy_charts,
     create_data_source, list_data_sources, list_data_sources_for_view,

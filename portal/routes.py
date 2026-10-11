@@ -1406,15 +1406,21 @@ def _refresh_chart(
     """Re-execute stored SQL and prepare interactive chart data. ``view``: the dashboard's period and member
     filters, for a new-core tile (_view_plan)."""
     result = _blank_tile(chart)
-
-    if not db_cfg:
-        result["error"] = "Database not configured"
-        return result
-
     try:
         display = json.loads(chart.get("display_config") or "{}")
     except (TypeError, ValueError):
         display = {}
+    if isinstance(display, dict) and display.get("what_changed"):
+        # The "What changed" tile (core/what_changed.py): worked out from the dashboard's own number tiles, as this
+        # reader may see them.
+        from core import what_changed
+
+        result["what_changed"] = what_changed.draw(chart, user)
+        return result
+
+    if not db_cfg:
+        result["error"] = "Database not configured"
+        return result
     if isinstance(display, dict) and display.get("core2_plan"):
         return _refresh_core2_tile(chart, result, user, display["core2_plan"], filters=filters, view=view)
 
@@ -3061,6 +3067,38 @@ async def delete_tile_alert_api(request: Request, dashboard_id: int, chart_id: i
                                                           lang=_request_language(request))}, status_code=403)
     tile_alert_store.delete_alert(int(alert_id))
     return _alert_reply(user, dashboard, chart, _request_language(request))
+
+
+@router.post("/dashboard/{dashboard_id}/what-changed")
+async def add_what_changed(request: Request, dashboard_id: int, tab: str = Form("Overview")):
+    """A "What changed" tile at the top of the tab, full width; the tiles there move down. Its owner's only."""
+    from core.what_changed import TITLE
+
+    user = _get_portal_user(request)
+    if not user:
+        return _login_redirect(request)
+    dashboard = store.get_dashboard(int(dashboard_id), user["id"], user["account_id"])
+    if not dashboard:
+        return RedirectResponse("/portal/dashboard", status_code=303)
+    charts = store.list_dashboard_charts(int(dashboard_id), user["id"])
+    on_tab = [c for c in charts if str(c.get("dashboard_tab") or "Overview") == tab]
+    if any(_pin_display_config(c).get("what_changed") for c in on_tab):
+        return RedirectResponse(f"/portal/dashboard?dashboard_id={int(dashboard_id)}&tab={quote(tab)}", status_code=303)
+    db_id = next((c.get("db_config_id") for c in charts if c.get("db_config_id")), None) \
+        or (store.get_client(user["account_id"]) or {}).get("db_config_id")
+    chart_id = store.pin_chart(user["id"], user["account_id"], TITLE, "", "", "what_changed", db_id,
+                               dashboard_id=int(dashboard_id), display_config={"what_changed": True}, title_set=True)
+    store.add_chart_to_dashboard(int(dashboard_id), chart_id, user["id"], user["account_id"], tab=tab)
+    # As tall as its figures need: one row of them for one or two number tiles, two rows for three or four.
+    numbers = sum(1 for c in on_tab if str(c.get("chart_type") or "") == "kpi")
+    height = 4 if numbers <= 2 else 6
+    layouts = [{"chart_id": chart_id, "x": 0, "y": 0, "w": 12, "h": height, "position": 1}]
+    for index, chart in enumerate(sorted(on_tab, key=lambda c: (int(c.get("grid_y") or 0), int(c.get("grid_x") or 0)))):
+        layouts.append({"chart_id": chart["id"], "x": int(chart.get("grid_x") or 0),
+                        "y": int(chart.get("grid_y") or 0) + height, "w": int(chart.get("grid_w") or 6),
+                        "h": int(chart.get("grid_h") or 10), "position": index + 2})
+    store.update_dashboard_layouts(int(dashboard_id), user["id"], user["account_id"], layouts)
+    return RedirectResponse(f"/portal/dashboard?dashboard_id={int(dashboard_id)}&tab={quote(tab)}", status_code=303)
 
 
 @router.post("/unpin")

@@ -44,7 +44,7 @@ WAIT_MS = 20000              # how long a page may take to draw its charts
 class Tile:
     id: int
     title: str
-    kind: str                                 # number | chart | table | error | empty
+    kind: str                                 # number | chart | table | changed | error | empty
     note: str = ""
     value: str = ""                           # number
     label: str = ""
@@ -57,6 +57,7 @@ class Tile:
     width: int = 0                            # its size on the page, in CSS pixels
     height: int = 0
     error: str = ""
+    changed: Optional[dict] = None            # "What changed": {"summary", "figures"} (core/what_changed.py)
 
 
 @dataclass
@@ -140,6 +141,10 @@ def _tiles(charts: list[dict]) -> list[Tile]:
         tile.note = " · ".join(n for n in (str(chart.get("top_note") or ""), str(chart.get("subtitle") or "")) if n)
         if chart.get("error"):
             tile.kind, tile.error = "error", str(chart["error"])
+        elif chart.get("what_changed"):
+            changed = chart["what_changed"] or {}
+            tile.kind = "empty" if changed.get("empty") else "changed"
+            tile.changed = changed
         elif chart.get("kpi"):
             kpi = chart["kpi"] or {}
             tile.kind = "number"

@@ -1737,3 +1737,20 @@ def undo_dashboard(dashboard_id: int, user_id: int, account_id: str) -> tuple[di
     board = rollback_dashboard(dashboard_id, user_id, account_id, target,
                                summary=f"Rolled back to version {target}: undid {what}")
     return (board, what) if board else None
+
+
+# ── The "What changed" tile's kept summary (core/what_changed.py) ──
+
+def get_what_changed_note(dashboard_id: int, user_id: int, digest: str) -> str | None:
+    """The summary kept for these figures (``digest``), or None when the figures changed or none was kept."""
+    with get_db() as conn:
+        row = conn.execute("SELECT note FROM what_changed_note WHERE dashboard_id=? AND user_id=? AND digest=?",
+                           (int(dashboard_id), int(user_id), str(digest))).fetchone()
+    return None if row is None else str(row["note"] or "")
+
+
+def keep_what_changed_note(dashboard_id: int, user_id: int, digest: str, note: str) -> None:
+    with get_db() as conn:
+        conn.execute("DELETE FROM what_changed_note WHERE dashboard_id=? AND user_id=?", (int(dashboard_id), int(user_id)))
+        conn.execute("INSERT INTO what_changed_note (dashboard_id, user_id, digest, note) VALUES (?,?,?,?)",
+                     (int(dashboard_id), int(user_id), str(digest), str(note or "")))

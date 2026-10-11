@@ -167,6 +167,29 @@ def _table_html(tile, lang: str) -> str:
             f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{more}')
 
 
+def _changed_html(tile, lang: str) -> str:
+    """The "What changed" tile: a few sentences when the workspace's AI wrote them, then each number against the
+    period before and what moved it most."""
+    from core.i18n import t
+
+    changed = tile.changed or {}
+    parts = [_heading(tile)]
+    if changed.get("summary"):
+        parts.append(f'<p style="margin:0 0 10px;font-size:15px;line-height:1.55;color:{INK}">{esc(changed["summary"])}</p>')
+    for f in changed.get("figures") or []:
+        colour = {"up": GOOD, "down": BAD}.get(str(f.get("direction")), LINE)
+        leaders = ""
+        if f.get("leaders"):
+            names = " · ".join(f'{esc(x["member"])} <b style="color:{INK}">{esc(x["change"])}</b>' for x in f["leaders"])
+            leaders = (f'<div style="margin-top:4px;font-size:13px;color:{MUTED}">'
+                       f'{esc(t("ui.changed.most", lang=lang, grouping=str(f.get("grouping") or "").lower()))} {names}</div>')
+        parts.append(f'<div style="margin:0 0 8px;padding:10px 12px;border-left:3px solid {colour};background:{PAPER};'
+                     f'border-radius:0 8px 8px 0;font-size:14px;color:{INK}"><b>{esc(f.get("title"))}</b> '
+                     f'<b>{esc(f.get("value"))}</b> <span style="color:{MUTED}">{esc(f.get("comparison"))}</span>'
+                     f'{leaders}</div>')
+    return "".join(parts)
+
+
 def dashboard(snapshot, *, link: str, title: str, note: str = "", note_from: str = "", pdf_attached: bool = False,
               test: bool = False, why: str = "", unsubscribe: str = "", lang: str = "en") -> str:
     """The HTML of a scheduled dashboard email for one reader (``snapshot``: core/dashboard_snapshot.Snapshot)."""
@@ -202,6 +225,8 @@ def dashboard(snapshot, *, link: str, title: str, note: str = "", note_from: str
                 parts.append(_chart_html(tile, link, lang))
             elif tile.kind == "table":
                 parts.append(_table_html(tile, lang))
+            elif tile.kind == "changed":
+                parts.append(_changed_html(tile, lang))
             elif tile.kind == "error":
                 parts.append(_heading(tile) + f'<p style="margin:0;font-size:14px;color:{BAD}">'
                              f'{esc(t("email.schedule.tile_failed", lang=lang, error=tile.error))}</p>')
@@ -266,6 +291,16 @@ def dashboard_text(snapshot, *, link: str, note: str = "", note_from: str = "", 
                 lines.append("")
             elif tile.kind == "chart":
                 lines.append(f"{tile.title}: {t('email.schedule.chart_in_html', lang=lang)}")
+            elif tile.kind == "changed":
+                changed = tile.changed or {}
+                lines += ["", tile.title] + ([changed["summary"]] if changed.get("summary") else [])
+                for f in changed.get("figures") or []:
+                    most = ""
+                    if f.get("leaders"):
+                        most = " " + t("ui.changed.most", lang=lang, grouping=str(f.get("grouping") or "").lower()) + " " + \
+                            ", ".join(f"{x['member']} {x['change']}" for x in f["leaders"])
+                    lines.append(f"- {f.get('title')}: {f.get('value')}, {f.get('comparison')}.{most}")
+                lines.append("")
             elif tile.kind == "error":
                 lines.append(f"{tile.title}: {t('email.schedule.tile_failed', lang=lang, error=tile.error)}")
         lines.append("")

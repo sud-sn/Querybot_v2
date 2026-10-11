@@ -54,6 +54,7 @@ RULES: list[tuple[Optional[frozenset[str]], re.Pattern, str]] = [
         ("POST", r"^/api/update-chart(-layout)?$", "own_dashboards"),
         ("POST", rf"^/api/dashboard/{_ID}/tidy$", "own_dashboards"),
         ("POST", rf"^/dashboard/{_ID}/rollback$", "own_dashboards"),
+        ("POST", rf"^/dashboard/{_ID}/what-changed$", "own_dashboards"),
         # Sharing and publishing, and looking people up to share with.
         ("", rf"^/api/dashboard/{_ID}/shares(/.*)?$", "share"),
         ("POST", rf"^/dashboard/{_ID}/(share|publish)$", "share"),

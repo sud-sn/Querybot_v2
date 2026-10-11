@@ -142,6 +142,13 @@
         {% endif %}
         <div class="dash-menu-sep" role="separator"></div>
         {% if _asks %}<a class="dash-menu-item" role="menuitem" href="/portal/chat?thread={{ dashboard_artifact.thread_id }}&dashboard={{ dashboard_artifact.id }}">{{ ic("chat", 15) }}<span>{{ t('ui.dash.chat_with') }}</span></a>{% endif %}
+        {# A "What changed" tile at the top of this tab (core/what_changed.py), once. #}
+        {% if _arrange and charts and not (charts|selectattr('what_changed')|list) %}
+        <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/what-changed" style="margin:0">
+          <input type="hidden" name="tab" value="{{ selected_tab }}">
+          <button class="dash-menu-item" role="menuitem" type="submit" title="{{ t('ui.changed.menu_hint') }}">{{ ic("sparkles", 15) }}<span>{{ t('ui.changed.menu') }}</span></button>
+        </form>
+        {% endif %}
         {% if _arrange and charts %}
         <button class="dash-menu-item" role="menuitem" type="button" id="dashTidy" title="{{ t('ui.dash.tidy_title') }}"
                 onclick="tidyDashboard(this)">{{ ic("layout-grid", 15) }}<span>{{ t('ui.dash.tidy') }}</span></button>
@@ -244,6 +251,20 @@
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      {% elif chart.what_changed %}
+      {# What changed (core/what_changed.py): each number against the period before, the members that moved it most,
+         and, when the workspace lets the figures reach its AI, a few sentences written from them alone. #}
+      {% set _wc = chart.what_changed %}
+      <div class="dash-changed">
+        {% if _wc.empty %}<p class="dash-changed-empty">{{ t('ui.changed.empty') }}</p>{% else %}
+        {% if _wc.summary %}<p class="dash-changed-summary">{{ _wc.summary }}</p>{% endif %}
+        <ul class="dash-changed-list">
+          {% for f in _wc.figures %}<li class="dash-changed-item is-{{ f.direction }}">
+            <div class="dash-changed-head"><span class="dash-changed-name">{{ f.title }}</span> <span class="dash-changed-value">{{ f.value }}</span> <span class="dash-changed-move">{{ f.comparison }}</span></div>
+            {% if f.leaders %}<div class="dash-changed-leaders">{{ t('ui.changed.most', grouping=f.grouping|lower) }} {% for l in f.leaders %}<span class="dash-changed-leader">{{ l.member }} <b>{{ l.change }}</b></span>{% if not loop.last %}<span aria-hidden="true"> · </span>{% endif %}{% endfor %}</div>{% endif %}
+          </li>{% endfor %}
+        </ul>{% endif %}
+      </div>
       {% elif chart.kpi %}
       {# A number as the design has it: its value, and its change against the period before -- the arrow and the
          change coloured (red down, green up), "vs Oct–Dec 2025" beside it; the exact value is its tooltip. #}

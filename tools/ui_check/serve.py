@@ -276,6 +276,17 @@ def metric_writer(account_id, client, *, description=""):
 
 ai.metric_writer = metric_writer
 
+
+def summary_writer(account_id, client, *, question="", question_id=""):
+    """A summary as the AI would write one, from what it is given alone: its first two findings, said again."""
+    def complete(stable, tail):
+        found = [line[2:].strip() for line in tail.splitlines() if line.startswith("- ")]
+        return " ".join(found[:2])
+    return complete
+
+
+ai.summary_writer = summary_writer
+
 if __name__ == "__main__":
     import uvicorn
 

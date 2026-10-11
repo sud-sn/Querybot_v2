@@ -692,6 +692,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.alert.checked.none": {"en": "Checked: this number cannot be read now.",
                               "fr": "Vérifié : ce chiffre ne peut pas être lu pour l'instant."},
     "ui.alert.failed": {"en": "The change was not saved.", "fr": "La modification n'a pas été enregistrée."},
+    # ── The "What changed" tile (core/what_changed.py) ──
+    "ui.changed.menu": {"en": "Add “What changed”", "fr": "Ajouter « Ce qui a changé »"},
+    "ui.changed.menu_hint": {"en": "A tile at the top: each number against the period before, and what moved it most.",
+                             "fr": "Une vignette en haut : chaque chiffre par rapport à la période précédente, et ce "
+                                   "qui l'a le plus fait bouger."},
+    "ui.changed.empty": {"en": "No number on this tab can be compared with the period before yet.",
+                         "fr": "Aucun chiffre de cet onglet ne peut encore être comparé à la période précédente."},
+    "ui.changed.most": {"en": "Most of it by {grouping}:", "fr": "Surtout par {grouping} :"},
     "ui.sched.menu": {"en": "Email on a schedule", "fr": "Envoyer par courriel"},
     "ui.sched.title": {"en": "Email “{name}”", "fr": "Envoyer « {name} »"},
     "ui.sched.intro": {"en": "The dashboard goes in the email itself, numbers, tables and charts, drawn for each "

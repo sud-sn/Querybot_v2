@@ -1494,6 +1494,7 @@ def _run_migrations() -> None:
         _ensure_email_tables(conn)
         _ensure_schedule_tables(conn)
         _ensure_alert_tables(conn)
+        _ensure_what_changed_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1894,6 +1895,22 @@ def _ensure_alert_tables(conn: sqlite3.Connection) -> None:
             at       TEXT    DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_tile_alert_event ON tile_alert_event(alert_id, user_id, id);
+        """
+    )
+
+
+def _ensure_what_changed_table(conn: sqlite3.Connection) -> None:
+    """The "What changed" tile's summary, kept per reader until its figures change (core/what_changed.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS what_changed_note (
+            dashboard_id INTEGER NOT NULL,
+            user_id      INTEGER NOT NULL,
+            digest       TEXT    NOT NULL,
+            note         TEXT    NOT NULL DEFAULT '',
+            created_at   TEXT    DEFAULT (datetime('now')),
+            PRIMARY KEY (dashboard_id, user_id)
+        );
         """
     )
 
