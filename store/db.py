@@ -1491,6 +1491,7 @@ def _run_migrations() -> None:
         _ensure_dashboard_share_table(conn)
         _ensure_portal_notice_table(conn)
         _ensure_admin_account_tables(conn)
+        _ensure_email_tables(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1784,6 +1785,46 @@ def _ensure_dashboard_share_table(conn: sqlite3.Connection) -> None:
             UNIQUE(dashboard_id, subject_type, subject_id)
         );
         CREATE INDEX IF NOT EXISTS idx_dashboard_share_subject ON dashboard_share(account_id, subject_type, subject_id);
+        """
+    )
+
+
+def _ensure_email_tables(conn: sqlite3.Connection) -> None:
+    """The email the product sends, kept as its delivery log, and who stopped which email (store/email_store.py)."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS email_outbox (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id          TEXT    NOT NULL DEFAULT '',
+            kind                TEXT    NOT NULL,
+            ref                 TEXT    NOT NULL DEFAULT '',
+            to_address          TEXT    NOT NULL,
+            user_id             INTEGER,
+            subject             TEXT    NOT NULL DEFAULT '',
+            body_text           TEXT    NOT NULL DEFAULT '',
+            body_html           TEXT    NOT NULL DEFAULT '',
+            attachments_json    TEXT    NOT NULL DEFAULT '[]',
+            unsubscribe_url     TEXT    NOT NULL DEFAULT '',
+            status              TEXT    NOT NULL DEFAULT 'queued',
+            attempts            INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at     TEXT    DEFAULT NULL,
+            claimed_at          TEXT    DEFAULT NULL,
+            last_error          TEXT    NOT NULL DEFAULT '',
+            provider            TEXT    NOT NULL DEFAULT '',
+            provider_message_id TEXT    NOT NULL DEFAULT '',
+            dedupe_key          TEXT    UNIQUE,
+            created_at          TEXT    DEFAULT (datetime('now')),
+            sent_at             TEXT    DEFAULT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_outbox_due ON email_outbox(status, next_attempt_at);
+        CREATE INDEX IF NOT EXISTS idx_email_outbox_account ON email_outbox(account_id, id);
+        CREATE TABLE IF NOT EXISTS email_opt_out (
+            address    TEXT NOT NULL,
+            kind       TEXT NOT NULL,
+            ref        TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (address, kind, ref)
+        );
         """
     )
 

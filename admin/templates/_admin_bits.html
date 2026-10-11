@@ -19,8 +19,11 @@
 <div class="alert alert-success adm-invite" role="status">
   <span class="alert-icon">{{ ic("link", 16) }}</span>
   <div class="alert-body">
-    <b>Send this link to {{ invite[0] }}.</b> It works once, for 72 hours, and is not shown again: they open it to choose
-    their password.
+    {% set _mailed = invite[2] if invite|length > 2 else '' %}
+    {% if _mailed == 'sent' %}<b>Emailed to {{ invite[0] }}.</b> The link in it works once, for 72 hours. It is here too,
+    once, in case the email does not arrive.
+    {% else %}<b>Send this link to {{ invite[0] }}.</b> It works once, for 72 hours, and is not shown again: they open it to
+    choose their password.{% if _mailed %} (The email did not go: {{ _mailed }}){% endif %}{% endif %}
     <div class="adm-invite-row">
       <input type="text" readonly value="{{ invite[1] }}" id="inviteLink" aria-label="One-time sign-in link" onfocus="this.select()">
       <button type="button" class="btn btn-secondary btn-sm" onclick="(function(b){var i=document.getElementById('inviteLink');

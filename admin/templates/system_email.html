@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
+{% block title %}Email — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "Dashboard", "href": "/admin"}, {"label": "System", "href": "/admin/system"}, {"label": "Email", "href": ""}]) }}
+{% endblock %}
+{% block head %}
+<style>
+.em-providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 1rem; }
+.form-group .em-provider, .em-provider { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.em-provider:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.em-provider b { display: block; }
+.em-provider small { color: var(--text-muted); font-size: var(--font-xs); line-height: 1.4; }
+.em-part[hidden] { display: none; }
+.em-state { display: flex; align-items: center; gap: 8px; font-size: var(--font-sm); }
+.em-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); }
+.em-dot.on { background: var(--success); }
+.em-counts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: .75rem; }
+.em-counts a { text-decoration: none; }
+.em-log td { vertical-align: top; }
+.em-why { color: var(--text-muted); font-size: var(--font-xs); max-width: 380px; }
+.em-status-sent { color: var(--success); } .em-status-failed { color: var(--danger); }
+.em-status-skipped { color: var(--text-muted); } .em-status-queued, .em-status-sending { color: var(--warning); }
+.em-tested { margin-bottom: 1rem; }
+fieldset.form-group { border: 0; padding: 0; margin: 0 0 1rem; min-width: 0; }
+fieldset.form-group legend { padding: 0; margin-bottom: 6px; font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text-soft); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div class="page-header-body">
+    <h1>Email</h1>
+    <p>How QueryBot sends invitations, dashboard updates, scheduled dashboards and alerts.</p>
+  </div>
+</div>
+
+{% if saved %}<div class="alert alert-success" role="status">Saved.</div>{% endif %}
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+{% if tested %}
+<div class="alert {{ 'alert-success' if tested.status == 'sent' else 'alert-error' }} em-tested" role="status">
+  <span class="alert-icon">{{ ic("check-circle" if tested.status == 'sent' else "x-circle", 16) }}</span>
+  <div class="alert-body">
+    {% if tested.status == 'sent' %}<b>Sent</b> to {{ tested.to_address }}. Check the inbox (and the junk folder the first time).
+    {% elif tested.status == 'queued' %}<b>Not sent yet:</b> {{ tested.last_error }} It is tried again in a minute.
+    {% else %}<b>Not sent:</b> {{ tested.last_error or 'see the log below' }}{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header"><h2>How email is sent</h2>
+    <span class="em-state"><span class="em-dot {% if config.configured %}on{% endif %}"></span>{{ describe if config.configured else 'Not set up yet' }}</span>
+  </div>
+  <div class="card-body">
+    {% if missing and config.provider %}<p class="text-sm" style="color:var(--warning);margin-top:0">Still needed: {{ missing | join(', ') }}.</p>{% endif %}
+    <form method="post" action="/admin/system/email/save" id="emailForm" autocomplete="off">
+      <fieldset class="form-group">
+        <legend>Send through</legend>
+        <div class="em-providers">
+          <label class="em-provider"><input type="radio" name="provider" value="graph" {% if config.provider == 'graph' %}checked{% endif %}>
+            <span><b>Microsoft 365 (recommended)</b><small>Through Microsoft Graph, as one mailbox. An app registration in your Entra ID with the Mail.Send application permission; no mailbox password is kept.</small></span></label>
+          <label class="em-provider"><input type="radio" name="provider" value="smtp" {% if config.provider == 'smtp' %}checked{% endif %}>
+            <span><b>SMTP server</b><small>Any mail server or relay: Google Workspace, SendGrid, Amazon SES, your own Exchange connector.</small></span></label>
+          <label class="em-provider"><input type="radio" name="provider" value="" {% if not config.provider %}checked{% endif %}>
+            <span><b>Off</b><small>Nothing is sent by email; updates stay in the app. Invitations show a link to copy.</small></span></label>
+        </div>
+      </fieldset>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="from_address">From address</label>
+          <input type="email" id="from_address" name="from_address" value="{{ config.from_address }}" placeholder="reports@company.com">
+          <p class="form-note">For Microsoft 365, the mailbox the app sends as.</p>
+        </div>
+        <div class="form-group">
+          <label for="from_name">From name</label>
+          <input type="text" id="from_name" name="from_name" value="{{ config.from_name }}">
+        </div>
+        <div class="form-group">
+          <label for="reply_to">Replies go to <span class="text-muted">(optional)</span></label>
+          <input type="email" id="reply_to" name="reply_to" value="{{ config.reply_to }}" placeholder="data-team@company.com">
+        </div>
+        <div class="form-group">
+          <label for="allowed_domains">Only to these domains <span class="text-muted">(optional)</span></label>
+          <input type="text" id="allowed_domains" name="allowed_domains" value="{{ config.allowed_domains | join(', ') }}" placeholder="company.com, subsidiary.com">
+          <p class="form-note">Email to any other address is not sent, and the log says so.</p>
+        </div>
+      </div>
+
+      <div class="em-part" data-part="graph">
+        <div class="form-grid">
+          <div class="form-group"><label for="graph_tenant_id">Directory (tenant) ID</label>
+            <input type="text" id="graph_tenant_id" name="graph_tenant_id" value="{{ config.graph_tenant_id }}" spellcheck="false"></div>
+          <div class="form-group"><label for="graph_client_id">Application (client) ID</label>
+            <input type="text" id="graph_client_id" name="graph_client_id" value="{{ config.graph_client_id }}" spellcheck="false"></div>
+          <div class="form-group"><label for="graph_client_secret">Client secret</label>
+            <input type="password" id="graph_client_secret" name="graph_client_secret" placeholder="{{ 'Saved: leave blank to keep it' if has_graph_secret else 'The secret value' }}" autocomplete="new-password">
+            <p class="form-note">Kept encrypted on this server. Microsoft secrets expire: set a reminder for the date Entra shows.</p></div>
+        </div>
+      </div>
+
+      <div class="em-part" data-part="smtp">
+        <div class="form-grid">
+          <div class="form-group"><label for="smtp_host">SMTP server</label>
+            <input type="text" id="smtp_host" name="smtp_host" value="{{ config.smtp_host }}" placeholder="smtp.company.com" spellcheck="false"></div>
+          <div class="form-group"><label for="smtp_port">Port</label>
+            <input type="text" id="smtp_port" name="smtp_port" value="{{ config.smtp_port }}" inputmode="numeric"></div>
+          <div class="form-group"><label for="smtp_security">Encryption</label>
+            <select id="smtp_security" name="smtp_security">
+              {% for value, label in [('starttls', 'STARTTLS (port 587)'), ('ssl', 'TLS (port 465)'), ('none', 'None (a relay inside your network)')] %}
+              <option value="{{ value }}" {% if config.smtp_security == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></div>
+          <div class="form-group"><label for="smtp_username">User <span class="text-muted">(if the server asks)</span></label>
+            <input type="text" id="smtp_username" name="smtp_username" value="{{ config.smtp_username }}" autocomplete="off"></div>
+          <div class="form-group"><label for="smtp_password">Password</label>
+            <input type="password" id="smtp_password" name="smtp_password" placeholder="{{ 'Saved: leave blank to keep it' if has_smtp_password else '' }}" autocomplete="new-password">
+            {% if has_smtp_password %}<label class="text-sm"><input type="checkbox" name="clear_smtp_password" value="1"> Remove the saved password</label>{% endif %}</div>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Send a test email</h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/system/email/test" class="inline-form" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="margin:0;min-width:280px;flex:1"><label for="test_to">To</label>
+        <input type="email" id="test_to" name="to" value="{{ test_to }}" required placeholder="you@company.com"></div>
+      <button type="submit" class="btn btn-secondary" {% if not config.configured %}disabled title="Set up email first"{% endif %}>{{ ic("arrow-right", 14) }} Send now</button>
+    </form>
+    <p class="form-note">Links in email open {{ base_url }} (the server's PORTAL_BASE_URL).</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Delivery log</h2></div>
+  <div class="card-body" style="padding-bottom:0">
+    <div class="em-counts">
+      <a href="/admin/system/email" class="badge {% if not status %}badge-indigo{% else %}badge-gray{% endif %}">All</a>
+      {% for s, label in [('sent', 'Sent'), ('queued', 'Waiting'), ('failed', 'Failed'), ('skipped', 'Not sent')] %}
+      <a href="/admin/system/email?status={{ s }}" class="badge {% if status == s %}badge-indigo{% else %}badge-gray{% endif %}">{{ label }} {{ counts[s] }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="qb-table-wrap" style="border:none;border-radius:0">
+    <table class="qb-table em-log">
+      <thead><tr><th>When</th><th>To</th><th>What</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+      {% for e in emails %}
+        <tr>
+          <td class="text-sm" data-label="When">{{ (e.sent_at or e.created_at or '')[:16] }}</td>
+          <td class="text-sm" data-label="To">{{ e.to_address }}</td>
+          <td class="text-sm" data-label="What"><a href="/admin/system/email/{{ e.id }}">{{ e.subject }}</a>
+            <div class="em-why">{{ e.kind }}{% if e.attachments %} · {{ e.attachments | length }} attachment{{ 's' if e.attachments|length != 1 }}{% endif %}</div></td>
+          <td class="text-sm" data-label="Status"><span class="em-status-{{ e.status }}">{{ {'sent': 'Sent', 'queued': 'Waiting', 'sending': 'Sending', 'failed': 'Failed', 'skipped': 'Not sent'}.get(e.status, e.status) }}</span>
+            {% if e.attempts > 1 %}<div class="em-why">{{ e.attempts }} tries</div>{% endif %}
+            {% if e.last_error %}<div class="em-why">{{ e.last_error }}</div>{% endif %}</td>
+          <td>{% if e.status in ('failed', 'skipped') %}
+            <form method="post" action="/admin/system/email/{{ e.id }}/retry" class="inline-form"><button type="submit" class="btn btn-ghost btn-xs">{{ ic("refresh", 13) }} Send again</button></form>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted">No email yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  var form = document.getElementById('emailForm');
+  function show(){
+    var chosen = (form.querySelector('input[name=provider]:checked') || {}).value || '';
+    form.querySelectorAll('.em-part').forEach(function(part){ part.hidden = part.dataset.part !== chosen; });
+  }
+  form.querySelectorAll('input[name=provider]').forEach(function(r){ r.addEventListener('change', show); });
+  show();
+})();
+</script>
+{% endblock %}

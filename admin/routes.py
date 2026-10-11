@@ -239,8 +239,9 @@ def _set_admin_cookie(resp: RedirectResponse, request: Request, admin: dict | No
 
 def _first_run() -> bool:
     # A row that exists but cannot be decrypted is not a first run: see
-    # admin/credentials.py.
-    return not admin_credentials.is_set()
+    # admin/credentials.py. Nor is a server with named admins and no shared
+    # password (one set up with python -m admin.create_admin).
+    return not admin_credentials.is_set() and not store.any_admin_accounts()
 
 def _resp(request, name, ctx=None):
     return templates.TemplateResponse(request=request, name=name, context=ctx or {})
@@ -3983,34 +3984,34 @@ async def compliance_grant_attestation(request: Request, account_id: str):
             status_code=303,
         )
     _workspace_user(account_id, int(portal_user_id))      # someone in this workspace, or a 404
+    attestation = await _attestation_from_form(account_id, form)
+    if isinstance(attestation, str):
+        return RedirectResponse(f"/admin/clients/{account_id}/{page}?error={attestation}", status_code=303)
+    store.save_user_attestation(account_id, portal_user_id, granted_by=_admin_actor(request)[0], **attestation)
+    return RedirectResponse(
+        f"/admin/clients/{account_id}/{page}?saved=attestation", status_code=303
+    )
+
+
+async def _attestation_from_form(account_id: str, form) -> dict | str:
+    """A signed attestation as a form describes it (what was signed, for how long, which kinds of people's
+    data, the document): the fields store.save_user_attestation takes, or the error code that says what is
+    missing. The same form on the Users page, the Compliance page and the Add person dialog."""
     # Limited to the data classes ticked; "only these" with none ticked never widens to every class.
     scope = ",".join(str(s) for s in form.getlist("scope") if str(s).strip())
     if not scope and str(form.get("scope_all") or "1") == "0":
-        return RedirectResponse(
-            f"/admin/clients/{account_id}/{page}?error=attestation_scope_required",
-            status_code=303,
-        )
+        return "attestation_scope_required"
     document_name, digest = "", ""
     upload = form.get("document")
     if upload is not None and getattr(upload, "filename", ""):
         kept = await _attestation_document(account_id, upload)
         if isinstance(kept, str):
-            return RedirectResponse(f"/admin/clients/{account_id}/{page}?error={kept}", status_code=303)
+            return kept
         document_name, digest = kept
-    store.save_user_attestation(
-        account_id,
-        portal_user_id,
-        attestation_type=str(form.get("attestation_type") or "confidentiality"),
-        document_ref=str(form.get("document_ref") or "").strip(),
-        granted_by="admin",
-        expires_at=_attestation_ends(str(form.get("valid_months") or "")),
-        scope=scope or "*",
-        document_name=document_name,
-        document_sha256=digest,
-    )
-    return RedirectResponse(
-        f"/admin/clients/{account_id}/{page}?saved=attestation", status_code=303
-    )
+    return {"attestation_type": str(form.get("attestation_type") or "confidentiality"),
+            "document_ref": str(form.get("document_ref") or "").strip(),
+            "expires_at": _attestation_ends(str(form.get("valid_months") or "")),
+            "scope": scope or "*", "document_name": document_name, "document_sha256": digest}
 
 
 _ATTESTATION_DOCUMENT_TYPES = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -4457,6 +4458,21 @@ async def user_create(
             status_code=303)
     if group_id:
         _workspace_group(account_id, int(group_id))
+    # People's data, in a workspace under compliance: masked for them unless they are cleared now, with the
+    # attestation they signed. Clearing is the Compliance page's to grant (a Super admin's, admin/access.py).
+    attestation = None
+    try:
+        form = await request.form()             # parsed already for the fields above: read from the request
+    except Exception:  # noqa: BLE001 - a call with no form body (a script, a test) asks for no clearance
+        form = {}
+    if str(form.get("clearance") or "") == "cleared" and _workspace_regulated(account_id):
+        me = _me(request)
+        if me is not None and not admin_access.can(me, f"/admin/clients/{account_id}/compliance/attestation"):
+            return RedirectResponse(f"/admin/clients/{account_id}/users?error=" + quote(
+                "Only a Super admin records a clearance to see people's data."), status_code=303)
+        attestation = await _attestation_from_form(account_id, form)
+        if isinstance(attestation, str):
+            return RedirectResponse(f"/admin/clients/{account_id}/users?error={attestation}", status_code=303)
 
     # If admin supplied an explicit password, validate it matches and is strong enough
     explicit_pw = password.strip()
@@ -4487,11 +4503,15 @@ async def user_create(
             f"/admin/clients/{account_id}/users?error=" + quote("The user could not be created."),
             status_code=303)
     created = store.get_user(uid) or {"id": uid, "email": email.strip().lower()}
+    if attestation:
+        store.save_user_attestation(account_id, str(uid), granted_by=_admin_actor(request)[0], **attestation)
     _record_user_event(request, account_id, created, "created", detail=(
         "temporary password generated" if not explicit_pw
         else "password chosen by the admin, to be changed at first sign-in" if temporary
         else "password chosen by the admin") + f"; {enum_label('portal_role', portal_role)}"
-        + ("; every table" if role == "admin" else ""))
+        + ("; every table" if role == "admin" else "")
+        + (f"; cleared to see people's data ({'every kind' if attestation['scope'] == '*' else attestation['scope']})"
+           if attestation else ""))
     token = _stash_reveal(account_id, {
         "name": name.strip(), "email": created.get("email", ""), "password": plain_pw,
         "is_temp": temporary, "kind": "created",
@@ -12996,6 +13016,7 @@ from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
 from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
 from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
+from admin import email_routes as _email_routes  # noqa: E402,F401
 # Named admins: signing in, your own account, invitations, and who may open which workspace (admin/access.py).
 from admin import admin_accounts as _admin_accounts  # noqa: E402
 from admin.admin_accounts import login_page, login_submit, logout  # noqa: E402,F401

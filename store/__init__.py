@@ -98,7 +98,7 @@ from store.admin_store import (
 )
 from store.dashboard_store import (
     save_built_dashboard, change_dashboard, undo_dashboard,
-    create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread,
+    create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread, dashboard_name,
     list_dashboards, list_editable_dashboards, migrate_legacy_charts,
     create_data_source, list_data_sources, list_data_sources_for_view,
     get_data_source, add_chart as add_chart_to_dashboard, add_answer as add_answer_to_dashboard,
@@ -199,6 +199,7 @@ from store.llm_usage_store import (
 )
 
 __all__ = [
+    "dashboard_name",
     "SUPER_ADMIN", "WORKSPACE_ADMIN", "DATA_STEWARD", "ADMIN_ROLES", "ADMIN_ROLE_LABELS", "ADMIN_ROLE_RANK",
     "any_admin_accounts", "count_active_super_admins", "create_admin", "get_admin", "get_admin_by_email",
     "list_admins", "admin_workspaces", "set_admin_workspaces", "add_admin_workspace", "remove_admin_workspace",

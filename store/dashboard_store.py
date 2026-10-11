@@ -113,6 +113,13 @@ def _may_view(alias: str, viewer: str = "?") -> str:
             f" AND v.id IS NOT NULL))")
 
 
+def dashboard_name(dashboard_id: int) -> str:
+    """A dashboard's name, for a page reached without signing in (an email's unsubscribe link): nothing else."""
+    with get_db() as conn:
+        row = conn.execute("SELECT name FROM dashboard_artifact WHERE id=?", (int(dashboard_id),)).fetchone()
+    return str(row["name"] or "") if row else ""
+
+
 def get_dashboard(dashboard_id: int, user_id: int, account_id: str) -> dict | None:
     with get_db() as conn:
         row = conn.execute(
@@ -922,8 +929,8 @@ def list_active_follows() -> list[dict]:
     ones due."""
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT s.id, s.dashboard_id, s.account_id, s.user_id, s.cadence, s.created_at, s.last_sent_at,
-                      u.lang
+            """SELECT s.id, s.dashboard_id, s.account_id, s.user_id, s.cadence, s.channel, s.created_at,
+                      s.last_sent_at, u.lang
                  FROM dashboard_subscription s
                  JOIN portal_user u ON u.id=s.user_id AND u.account_id=s.account_id
                 WHERE s.status='active' AND u.is_active=1

@@ -216,6 +216,24 @@ class TestSigningIn:
         assert _sign_in(_client(app), email, GOOD).status_code == 303
 
 
+def test_a_server_set_up_with_named_admins_only_signs_them_in(tmp_path, monkeypatch):
+    """No shared password was ever set (python -m admin.create_admin on a new server): not a first run."""
+    path = str(tmp_path / "querybot.db")
+    monkeypatch.setenv("QUERYBOT_DB_PATH", path)
+    monkeypatch.setenv("DB_PATH", path)
+    import main
+    from admin import create_admin
+
+    main.store.init_db()
+    assert create_admin.main(["root@example.com", "Root", "--stdin"], stdin=io.StringIO(GOOD + "\n")) == 0
+    client = TestClient(main.app)
+    assert _sign_in(client, "root@example.com").headers["location"] == "/admin"
+    assert client.get("/admin", follow_redirects=False).status_code == 200
+    assert client.get("/admin/setup", follow_redirects=False).headers["location"] == "/admin"
+    assert "no emergency admin password" in _emergency(_client(main), "anything").text
+    assert "emergency=1" not in client.get("/admin/login").text
+
+
 class TestInvitations:
 
     def _invite(self, app, client, role="data_steward", workspaces=()):

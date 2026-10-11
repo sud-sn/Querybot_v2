@@ -1,7 +1,8 @@
 """Dashboard follows delivered (store/dashboard_store.py, dashboard_subscription).
 
 A reader who follows a dashboard daily, weekly or monthly is told at that pace: a notice kept on their
-Notifications page and shown at once on a page of theirs that is open (core/notices.py). It names the
+Notifications page and shown at once on a page of theirs that is open (core/notices.py), and an email too when
+they chose it and email is set up (core/mail/outbox.py; one link in it stops them). It names the
 dashboard's headline numbers -- its first number tiles, drawn as this reader is allowed to see them -- in their
 own language, with a link. Someone who can no longer open the dashboard stops following it and is sent nothing.
 Run every minute by core/notification_scheduler.py; the first update comes one period after following.
@@ -69,8 +70,31 @@ def _deliver(follow: dict) -> bool:
     title = t("notice.follow.title", lang=lang, name=board.get("name") or "",
               cadence=t(f"notice.follow.cadence.{cadence}", lang=lang))
     body = " · ".join(f"{name}: {value}" for name, value in numbers) or t("notice.follow.no_numbers", lang=lang)
-    tell(account_id, user_id, "dashboard_follow", title, body, f"/portal/dashboard?dashboard_id={dashboard_id}")
+    link = f"/portal/dashboard?dashboard_id={dashboard_id}"
+    tell(account_id, user_id, "dashboard_follow", title, body, link)
+    if str(follow.get("channel") or "") == "email" and user.get("email"):
+        _email(follow, user, board, title, numbers, link, lang)
     return True
+
+
+def _email(follow: dict, user: dict, board: dict, title: str, numbers: list[tuple[str, str]], link: str,
+           lang: str) -> None:
+    """The same update by email, once per period (its dedupe key is the follow and the moment it was due)."""
+    from core.i18n import t
+    from core.mail import links, outbox, render
+
+    base = outbox.portal_base()
+    address = str(user["email"])
+    ref = str(board["id"])
+    stop = links.unsubscribe_url(base, address, "follow", ref)
+    why = t("email.follow.why", lang=lang, name=board.get("name") or "")
+    paragraphs = [] if numbers else [t("notice.follow.no_numbers", lang=lang)]
+    button = (t("email.open_dashboard", lang=lang), base + link)
+    outbox.queue(kind="follow", to=address, subject=title, account_id=str(follow["account_id"]),
+                 user_id=int(user["id"]), ref=ref, opt_out_kind="follow", unsubscribe_url=stop,
+                 dedupe_key=f"follow:{follow['id']}:{str(follow.get('last_sent_at') or follow.get('created_at'))}",
+                 text=render.text(title, paragraphs, rows=numbers, button=button, why=why, unsubscribe=stop, lang=lang),
+                 html=render.page(title, paragraphs, rows=numbers, button=button, why=why, unsubscribe=stop, lang=lang))
 
 
 def _headlines(board: dict, user: dict, lang: str) -> list[tuple[str, str]]:

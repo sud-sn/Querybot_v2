@@ -43,6 +43,14 @@ def run_due_notifications_once() -> None:
     except Exception as exc:
         log.warning("run_due_follows failed: %s", exc)
 
+    # Last: what the checks above queued goes out in the same minute.
+    try:
+        from core.mail.outbox import deliver_due
+
+        deliver_due()
+    except Exception as exc:
+        log.warning("email delivery failed: %s", exc)
+
 
 async def scheduled_notification_loop(poll_seconds: int = 60) -> None:
     while True:

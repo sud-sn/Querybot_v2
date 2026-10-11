@@ -76,6 +76,18 @@ templates.env.globals["chart_prefs"] = lambda user: store.chart_prefs(user if is
 templates.env.globals["reader_can"] = lambda user, action: can_do(user if isinstance(user, dict) else None, action)
 templates.env.globals["reader_role"] = lambda user: reader_role(user if isinstance(user, dict) else None)
 
+
+def _mail_ready() -> bool:
+    try:
+        from core.mail.settings import configured
+
+        return configured()
+    except Exception:  # noqa: BLE001 - no email choice drawn rather than a page that fails
+        return False
+
+
+templates.env.globals["mail_ready"] = _mail_ready
+
 _COOKIE = "qb_portal_session"  # different from admin cookie
 
 # The portal language, mirrored out of portal_user.lang into a plain cookie.
@@ -1102,6 +1114,44 @@ async def portal_set_language(request: Request):
     return resp
 
 
+# ── Stopping an email, from the link in it ────────────────────────────────────
+
+def _unsubscribe_page(request: Request, token: str, *, done: bool = False):
+    from core.mail import links
+
+    found = links.read(token)
+    kind, ref, address = (found or {}).get("k", ""), (found or {}).get("r", ""), (found or {}).get("a", "")
+    name = ""
+    if found and kind == "follow" and str(ref).isdigit():
+        name = store.dashboard_name(int(ref))
+    response = _resp(request, "portal_unsubscribe.html", {
+        "ok": bool(found and address and kind), "done": done, "token": token, "kind": kind, "name": name,
+        "address": address, "user": None})
+    if hasattr(response, "headers"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@router.get("/unsubscribe/{token}", response_class=HTMLResponse)
+async def portal_unsubscribe_page(request: Request, token: str):
+    """Asks first: a mail scanner that opens every link must not stop anyone's email."""
+    return _unsubscribe_page(request, token)
+
+
+@router.post("/unsubscribe/{token}")
+async def portal_unsubscribe(request: Request, token: str):
+    from core.mail import links
+
+    found = links.read(token)
+    if found and found.get("a") and found.get("k"):
+        from store import email_store
+
+        email_store.opt_out(found["a"], found["k"], str(found.get("r") or ""))
+        log.info("Email %s stopped for %s (%s)", found["k"], found["a"], found.get("r") or "all")
+    return _unsubscribe_page(request, token, done=bool(found))
+
+
 @router.get("/logout")
 async def portal_logout():
     resp = RedirectResponse("/portal/login", status_code=303)
@@ -1866,10 +1916,13 @@ async def portal_dashboard_subscribe(
     dashboard_id: int,
     cadence: str = Form("daily"),
     channel: str = Form("in_app"),
+    by_email: str = Form(""),
 ):
     user = _get_portal_user(request)
     if not user:
         return _login_redirect(request)
+    if isinstance(by_email, str) and by_email:
+        channel = "email"
     try:
         store.subscribe_dashboard(
             dashboard_id, user["id"], user["account_id"],

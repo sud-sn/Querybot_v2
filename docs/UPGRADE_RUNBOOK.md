@@ -323,6 +323,40 @@ To roll back to the release before, stop the service and restore the
 `before-roles` copy (section 12): the older release does not read the admin
 accounts or the reader roles.
 
+## 13b. Email (the release that adds it)
+
+Invitations, dashboard follows and scheduled dashboards can go by email. Until
+email is set up nothing is sent: each message is kept in the delivery log as
+skipped, with the reason. A Super admin sets it up under **System › Email**.
+
+**Microsoft 365 (recommended).** In Microsoft Entra ID, register an app, add
+the Microsoft Graph *application* permission `Mail.Send`, grant admin consent,
+and make a client secret. On the Email page enter the tenant ID, the app's
+client ID, the secret and the mailbox it sends as (for example
+`reports@company.com`). `Mail.Send` lets the app send as any mailbox in the
+tenant; to hold it to the one mailbox, add an Exchange application access
+policy for that app and mailbox.
+
+**SMTP.** Host, port (587 with STARTTLS, or 465 with SSL), and a user and
+password if the server asks for them.
+
+Then:
+
+1. **Allowed domains**: the email domains mail may go to (for example
+   `company.com`). Mail to any other domain is skipped and logged. Leave it
+   empty only if any domain is allowed.
+2. **Send a test** to yourself from the same page. It says at once whether the
+   service took it and, if not, why (a wrong secret, a sender the app may not
+   send as).
+3. Links in an email open `PORTAL_BASE_URL` (section 14). Set it to the
+   address readers use, or the links point at `localhost`.
+
+The secret and the SMTP password are stored encrypted. A message the mail
+service could not take (down, busy, throttling) is tried again after 1, 5, 30,
+120 and 360 minutes, then marked failed; the delivery log lists every message
+and can send a failed one again. Each follow or scheduled email carries a link
+that stops that email for its reader, without signing in.
+
 ## 14. HTTPS, the reverse proxy and the question API
 
 Session cookies are marked Secure, so they travel over https only, when the

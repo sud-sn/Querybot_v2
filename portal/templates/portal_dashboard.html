@@ -121,13 +121,14 @@
         {# Sent to the reader as it changes: once a day, a week or a month. #}
         {% if dashboard_subscription %}
         <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/unsubscribe">
-          <button class="dash-menu-item" role="menuitem" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ ic("bell", 15) }}<span>{{ t('ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</span></button>
+          <button class="dash-menu-item" role="menuitem" type="submit" title="{{ t('ui.dash.unfollow_hint') }}">{{ ic("bell", 15) }}<span>{{ t('ui.dash.following_email' if dashboard_subscription.channel == 'email' else 'ui.dash.following', cadence=enum_label('cadence', dashboard_subscription.cadence)) }}</span></button>
         </form>
         {% else %}
         <div class="dash-menu-label" id="dashFollowLabel">{{ ic("bell", 15) }}<span>{{ t('ui.dash.subscribe') }}</span></div>
         <form method="post" action="/portal/dashboard/{{ dashboard_artifact.id }}/subscribe" class="dash-menu-row" role="group" aria-labelledby="dashFollowLabel">
           <input type="hidden" name="channel" value="in_app">
           {% for cadence in ('daily', 'weekly', 'monthly') %}<button class="btn btn-secondary btn-xs" role="menuitem" type="submit" name="cadence" value="{{ cadence }}">{{ enum_label('cadence', cadence) }}</button>{% endfor %}
+          {% if mail_ready is defined and mail_ready() %}<label class="dash-menu-check"><input type="checkbox" name="by_email" value="1"> {{ t('ui.dash.follow_by_email') }}</label>{% endif %}
         </form>
         {% endif %}
         <div class="dash-menu-sep" role="separator"></div>

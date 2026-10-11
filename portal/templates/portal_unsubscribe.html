@@ -1,0 +1,27 @@
+{% extends "portal_base.html" %}
+{% from "macros.html" import brand_motion %}
+{% block title %}{{ t('portal.unsubscribe.title') }} — {{ t('ui.title.suffix') }}{% endblock %}
+{% block content %}
+{# Reached from a link in an email, signed in or not (core/mail/links.py). #}
+<div class="login-shell">
+  <div class="login-brand-identity">
+    {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
+    <div class="login-brand">Query<span>Bot</span></div>
+  </div>
+  <div class="card">
+    <div class="card-body login-card-body">
+      {% if not ok %}
+      <p>{{ t('portal.unsubscribe.bad') }}</p>
+      {% elif done %}
+      <h1 style="font-size:var(--font-lg);margin:0 0 .5rem">{{ t('portal.unsubscribe.done', address=address) }}</h1>
+      {% else %}
+      <h1 style="font-size:var(--font-lg);margin:0 0 .5rem">{{ t('portal.unsubscribe.title') }}</h1>
+      <p style="margin:0 0 1rem;color:var(--text-soft)">{{ t('portal.unsubscribe.follow', name=name) if kind == 'follow' and name else t('portal.unsubscribe.other', address=address) }}</p>
+      <form method="post" action="/portal/unsubscribe/{{ token }}">
+        <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">{{ t('portal.unsubscribe.confirm') }}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

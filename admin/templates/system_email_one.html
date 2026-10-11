@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "macros.html" import breadcrumb %}
+{% from "icons.html" import ic %}
+{% block title %}{{ email.subject }} — Email — QueryBot Admin{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([{"label": "System", "href": "/admin/system"}, {"label": "Email", "href": "/admin/system/email"}, {"label": email.subject, "href": ""}]) }}
+{% endblock %}
+{% block content %}
+<div class="page-header"><div class="page-header-body"><h1>{{ email.subject }}</h1>
+  <p>To {{ email.to_address }} · {{ email.kind }} · queued {{ (email.created_at or '')[:16] }}{% if email.sent_at %} · sent {{ email.sent_at[:16] }}{% endif %}</p></div></div>
+<div class="card"><div class="card-body">
+  <p><b>{{ {'sent': 'Sent', 'queued': 'Waiting to go', 'sending': 'Sending', 'failed': 'Failed', 'skipped': 'Not sent'}.get(email.status, email.status) }}</b>
+    {% if email.attempts %} after {{ email.attempts }} {{ 'try' if email.attempts == 1 else 'tries' }}{% endif %}{% if email.provider %} through {{ email.provider }}{% endif %}.</p>
+  {% if email.last_error %}<p class="text-sm" style="color:var(--danger)">{{ email.last_error }}</p>{% endif %}
+  {% if email.attachments %}<p class="text-sm">Attached: {% for a in email.attachments %}{{ a.name }} ({{ (a.size / 1024) | round(0) | int }} KB){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if email.status in ('failed', 'skipped') %}
+  <form method="post" action="/admin/system/email/{{ email.id }}/retry" class="inline-form"><button type="submit" class="btn btn-secondary btn-sm">{{ ic("refresh", 13) }} Send again</button></form>
+  {% endif %}
+</div></div>
+<div class="card"><div class="card-header"><h2>What it says</h2></div>
+  <div class="card-body"><pre style="white-space:pre-wrap;font-family:inherit;font-size:var(--font-sm);margin:0">{{ email.body_text }}</pre></div></div>
+{% endblock %}

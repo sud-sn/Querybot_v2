@@ -12,6 +12,8 @@
 {% endblock %}
 {% block content %}
 {% set _attest = attestations or {} %}
+{# Who may record a clearance to see people's data: whoever reaches the Compliance page (admin/access.py). #}
+{% set _clears = admin_can is not defined or admin_can(request, '/admin/clients/' ~ client.account_id ~ '/compliance/attestation') %}
 {% set _active = users|selectattr("is_active","equalto",1)|list|length %}
 {% set _temp = users|selectattr("is_temp_pw")|selectattr("is_active","equalto",1)|list|length %}
 {% set _cleared = namespace(n=0, soon=0) %}
@@ -226,6 +228,7 @@
               <span class="pp-sub">sees it masked</span>
             {% endif %}
             <div class="pp-clear-actions">
+              {% if _clears %}
               <button type="button" class="btn btn-ghost btn-xs"
                       aria-label="{{ 'Renew clearance' if _state in ('signed', 'expired') else 'Record attestation' }} for {{ u.name }}"
                       data-attest-user="{{ u.id }}" data-user-name="{{ u.name }}" data-user-email="{{ u.email }}">
@@ -238,6 +241,7 @@
                   data-confirm-title="Revoke this attestation?" data-confirm="{{ u.name }} will see people's data masked again from their next question, and answers shown to them before are not shown again as they were." data-confirm-label="Revoke">
                   {{ ic("x-circle", 13) }} Revoke</button>
               </form>
+              {% endif %}
               {% endif %}
             </div>
           </td>
@@ -296,7 +300,7 @@
 {# ── Add a person ── #}
 <dialog id="addDialog" class="pp-dialog pp-dialog-wide" aria-labelledby="addDialogTitle">
   <form method="post" action="/admin/clients/{{ client.account_id }}/users/create"
-        id="createUserForm" novalidate>
+        id="createUserForm" enctype="multipart/form-data" novalidate>
     <h3 id="addDialogTitle">Add person</h3>
     <div class="form-grid">
       <div class="form-group">
@@ -370,6 +374,64 @@
       <input type="checkbox" id="cu_must_change" name="must_change" value="1" checked>
       Ask them to choose their own password at first sign-in
     </label>
+
+    {% if regulated %}
+    {# People's data: masked for them unless cleared now with the attestation they signed. Recording one is the
+       Compliance page's to grant (a Super admin's); the server refuses it to any other role. #}
+    <div class="form-divider"><span>People's data</span></div>
+    {% if _clears %}
+    <fieldset class="pp-clear-choice">
+      <legend class="sr-only">How they see people's data</legend>
+      <label><input type="radio" name="clearance" value="masked" checked data-clearance>
+        <span><b>Masked</b><small>Names become aliases and contact details tokens. The usual choice.</small></span></label>
+      <label><input type="radio" name="clearance" value="cleared" data-clearance>
+        <span><b>Cleared</b><small>They signed an attestation: they see people's data as stored, and every time is logged.</small></span></label>
+    </fieldset>
+    <div class="pp-clear-detail" id="cuClearance" hidden>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="cu_at_type">What they signed</label>
+          <select id="cu_at_type" name="attestation_type">
+            <option value="confidentiality">Confidentiality agreement</option>
+            <option value="hipaa_workforce">HIPAA workforce training</option>
+            <option value="access_authorization">Access authorization</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="cu_at_term">Valid for</label>
+          <select id="cu_at_term" name="valid_months">
+            <option value="3">3 months</option><option value="6">6 months</option>
+            <option value="12" selected>12 months</option><option value="24">24 months</option>
+            <option value="">No end date</option>
+          </select>
+        </div>
+      </div>
+      <fieldset class="pp-scope">
+        <legend>What it covers</legend>
+        <label><input type="radio" name="scope_all" value="1" checked data-cu-scope-all> Every kind of personal data</label>
+        <label><input type="radio" name="scope_all" value="0" data-cu-scope-all> Only these:</label>
+        <div class="pp-scope-list" id="cuScopes" hidden>
+          <label><input type="checkbox" name="scope" value="PII"> Personal details (names, contacts)</label>
+          <label><input type="checkbox" name="scope" value="PHI"> Health information</label>
+          <label><input type="checkbox" name="scope" value="PCI"> Payment card data</label>
+        </div>
+      </fieldset>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="cu_at_ref">Document reference <span class="text-muted" style="font-weight:var(--weight-regular)">(optional)</span></label>
+          <input id="cu_at_ref" name="document_ref" placeholder="HR system or document store reference">
+        </div>
+        <div class="form-group">
+          <label for="cu_at_doc">Signed document <span class="text-muted" style="font-weight:var(--weight-regular)">(optional: PDF, PNG or JPG, under 5 MB)</span></label>
+          <input type="file" id="cu_at_doc" name="document" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg">
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p class="form-note pp-pw-note">They see people's data masked. A Super admin records a signed attestation on the
+      Compliance page to clear someone.</p>
+    {% endif %}
+    {% endif %}
     <div class="form-actions">
       <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
       <button type="submit" class="btn btn-primary" id="createUserBtn">Create user</button>
@@ -408,7 +470,7 @@
   </form>
 </dialog>
 
-{% if regulated %}
+{% if regulated and _clears %}
 {# ── Record a signed attestation ── #}
 <dialog id="attestDialog" class="pp-dialog" aria-labelledby="attestDialogTitle">
   <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/attestation"
@@ -542,6 +604,13 @@
   border-radius: 999px; background: none; font: inherit; font-size: var(--font-xs); color: var(--text-muted); cursor: pointer; }
 .pp-tables.every { border-color: var(--warning); color: var(--warning); }
 .pp-tables:hover { color: var(--text); border-color: var(--text-muted); }
+.pp-clear-choice { border: 0; padding: 0; margin: .25rem 0 .75rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pp-clear-choice label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.pp-clear-choice label:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.pp-clear-choice span { display: flex; flex-direction: column; gap: 2px; font-size: var(--font-sm); }
+.pp-clear-choice small { color: var(--text-muted); font-size: var(--font-xs); line-height: 1.35; }
+.pp-clear-detail { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); margin-bottom: .75rem; }
+@media (max-width: 640px) { .pp-clear-choice { grid-template-columns: 1fr; } }
 .pp-roles { border: 0; padding: 0; margin: .25rem 0 .75rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pp-roles legend { font-size: var(--font-sm); font-weight: var(--weight-semibold); margin-bottom: 6px; }
 .pp-role { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
@@ -577,7 +646,8 @@
 .pp-dialog-wide { max-width: 640px; }
 .pp-dialog::backdrop { background: color-mix(in srgb, var(--shadow-tint) 45%, transparent); }
 .pp-dialog h3 { margin: 0 0 .35rem; }
-.pp-dialog .form-actions { position: sticky; bottom: -1.25rem; background: inherit; padding: .75rem 0 .25rem; margin-top: .5rem; }
+.pp-dialog .form-actions { position: sticky; bottom: -1.25rem; z-index: 1; background: var(--surface-raised);
+  border-top: 1px solid var(--border); padding: .75rem 0 1.25rem; margin: .5rem 0 -1.25rem; }
 .pp-scope { border: 0; padding: 0; margin: .25rem 0 .75rem; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
 .pp-scope legend { font-weight: var(--weight-semibold); font-size: var(--font-sm); margin-bottom: 4px; }
 .pp-scope-list { display: flex; flex-direction: column; gap: 6px; padding-left: 1.5rem; }
@@ -771,5 +841,22 @@ function copyTempPw(btn) {
     setTimeout(function() { btn.innerHTML = orig; btn.disabled = false; }, 2200);
   });
 }
+
+// Add person: the clearance's details show once "Cleared" is chosen, the list of kinds once "Only these" is.
+(function () {
+  var form = document.getElementById('createUserForm');
+  var detail = document.getElementById('cuClearance');
+  if (!form || !detail) return;
+  function sync() {
+    var cleared = form.querySelector('input[data-clearance][value="cleared"]');
+    detail.hidden = !(cleared && cleared.checked);
+    var only = form.querySelector('input[data-cu-scope-all][value="0"]');
+    document.getElementById('cuScopes').hidden = !(only && only.checked);
+  }
+  form.addEventListener('change', function (event) {
+    if (event.target.hasAttribute('data-clearance') || event.target.hasAttribute('data-cu-scope-all')) sync();
+  });
+  sync();
+})();
 </script>
 {% endblock %}

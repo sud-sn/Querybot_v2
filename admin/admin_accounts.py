@@ -68,10 +68,12 @@ def _event(request: Request, action: str, *, admin: dict | None = None, detail: 
 def _login_page(request: Request, *, error: str | None = None, emergency: bool | None = None, email: str = "",
                 status: int = 200):
     accounts = store.any_admin_accounts()
+    # The emergency sign-in exists only where a shared password was set, and only while it is on.
+    available = admin_access.emergency_enabled() and admin_credentials.is_set()
     if emergency is None:
         emergency = str(request.query_params.get("emergency") or "") == "1" or not accounts
-    context = {"error": error, "emergency": bool(emergency) and admin_access.emergency_enabled(),
-               "emergency_on": admin_access.emergency_enabled(), "accounts": accounts, "email": email}
+    context = {"error": error, "emergency": bool(emergency) and available, "emergency_on": available,
+               "accounts": accounts, "email": email}
     if status == 200:
         return _resp(request, "login.html", context)
     return _routes.templates.TemplateResponse(request=request, name="login.html", status_code=status,
@@ -119,6 +121,9 @@ async def login_submit(request: Request, password: str = Form(...), email: str =
     # The emergency admin password (the one every server had before named admins).
     if not admin_access.emergency_enabled():
         return _login_page(request, error="Emergency sign-in is turned off. Sign in with your email and password.",
+                           emergency=False)
+    if not admin_credentials.is_set():
+        return _login_page(request, error="This server has no emergency admin password: sign in with your email.",
                            emergency=False)
     if not admin_credentials.is_readable():
         return _login_page(request, error=_routes._UNREADABLE_ADMIN_PASSWORD, emergency=True)
@@ -203,6 +208,32 @@ async def account_setup_submit(request: Request, name: str = Form(""), email: st
 
 def _invite_link(request: Request, token: str) -> str:
     return f"{str(request.base_url).rstrip('/')}/admin/invite/{token}"
+
+
+async def _mail_invite(admin: dict, link: str, who) -> str:
+    """The invitation by email when email is set up: "sent", why it was not, or "" (email is off)."""
+    import asyncio
+
+    from core.mail import outbox, render
+    from core.mail.settings import configured
+
+    if not configured():
+        return ""
+    title = "You are invited to the QueryBot admin panel"
+    inviter = who.label if who is not None and not who.emergency else "A Super admin"
+    paragraphs = [f"{inviter} gave you the {admin.get('role_label') or 'admin'} role in QueryBot.",
+                  f"Choose your password with the button below. The link works once, for {store.admin_store.INVITE_HOURS} "
+                  "hours; then you sign in with this email address."]
+    button = ("Choose my password", link)
+    email_id = outbox.queue(kind="admin_invite", to=str(admin["email"]), subject=title,
+                            text=render.text(title, paragraphs, button=button,
+                                             why="Sent because an admin invited you. Not expecting it? Ignore it."),
+                            html=render.page(title, paragraphs, button=button,
+                                             why="Sent because an admin invited you. Not expecting it? Ignore it."))
+    sent = await asyncio.to_thread(outbox.send_now, email_id) if email_id else {}
+    if sent.get("status") == "sent":
+        return "sent"
+    return str(sent.get("last_error") or "it could not be sent")
 
 
 @router.get("/invite/{token}", response_class=HTMLResponse)
@@ -339,7 +370,8 @@ async def admins_invite(request: Request):
                                   created_by=who.actor)
     token = store.issue_admin_invite(admin_id)
     _event(request, "admin_invited", detail=f"{email} as {store.ADMIN_ROLE_LABELS[role]}", identity=who)
-    return _admins_page(request, invite=(email, _invite_link(request, token)))
+    link = _invite_link(request, token)
+    return _admins_page(request, invite=(email, link, await _mail_invite(store.get_admin(admin_id), link, who)))
 
 
 def _last_super(admin: dict) -> bool:
@@ -396,7 +428,8 @@ async def admins_reinvite(request: Request, admin_id: int):
         return RedirectResponse("/admin/admins?error=" + quote("No such admin."), status_code=303)
     token = store.issue_admin_invite(admin_id)
     _event(request, "admin_link_issued", detail=admin["email"], identity=who)
-    return _admins_page(request, invite=(admin["email"], _invite_link(request, token)))
+    link = _invite_link(request, token)
+    return _admins_page(request, invite=(admin["email"], link, await _mail_invite(admin, link, who)))
 
 
 @router.post("/admins/{admin_id}/delete")
@@ -491,7 +524,9 @@ async def workspace_admins_add(request: Request, account_id: str, email: str = F
     token = store.issue_admin_invite(admin_id)
     _event(request, "admin_invited", detail=f"{email} as {store.ADMIN_ROLE_LABELS[role]}", account_id=account_id,
            identity=who)
-    return _workspace_admins_page(request, account_id, invite=(email, _invite_link(request, token)))
+    link = _invite_link(request, token)
+    return _workspace_admins_page(request, account_id,
+                                  invite=(email, link, await _mail_invite(store.get_admin(admin_id), link, who)))
 
 
 @router.post("/clients/{account_id}/admins/{admin_id}/remove")

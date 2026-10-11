@@ -65,6 +65,12 @@ SYSTEM_KEYS = {
     # "off": the admin password above no longer signs in (the emergency sign-in, admin/access.py). Turned off
     # by a named super admin, on again by python -m admin.reset_password.
     "admin_emergency_sign_in",
+    # Email (core/mail/settings.py): Microsoft 365 through Graph, or SMTP.
+    "email_provider", "email_from_address", "email_from_name", "email_reply_to", "email_allowed_domains",
+    "email_graph_tenant_id", "email_graph_client_id", "email_graph_client_secret",
+    "email_smtp_host", "email_smtp_port", "email_smtp_security", "email_smtp_username", "email_smtp_password",
+    # The key email links (unsubscribe) are signed with (core/mail/links.py).
+    "email_link_secret",
 }
 
 
@@ -184,7 +190,7 @@ PLATFORM_FIELDS: dict[str, list[str]] = {
 # with them, and no settings page takes them again (python -m
 # admin.reset_password sets the password; the sign-in page says when it
 # cannot be read).
-_NOT_CREDENTIALS = ("admin_password_hash", "admin_session_version", "admin_emergency_sign_in")
+_NOT_CREDENTIALS = ("admin_password_hash", "admin_session_version", "admin_emergency_sign_in", "email_link_secret")
 
 
 def unreadable_credentials() -> list[dict]:
