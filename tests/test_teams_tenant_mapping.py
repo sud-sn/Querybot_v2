@@ -115,6 +115,10 @@ class ClientUpdateRouteTests(unittest.TestCase):
         import admin.routes as routes
         self._crypto_globals = routes.store.get_platform.__globals__["decrypt_json"].__globals__
         self._orig_key_file = self._crypto_globals["KEY_FILE"]
+        # This module's copy of store.crypto may be another object than the routes' one: it is put back too (as
+        # it was before either was changed), or every later test in the same process that saves a credential
+        # reads a key from a deleted folder.
+        self._crypto, self._orig_crypto_key_file = crypto, crypto.KEY_FILE
         self._crypto_globals["KEY_FILE"] = Path(self._key_tmpdir) / "test_key"
         crypto.KEY_FILE = self._crypto_globals["KEY_FILE"]
 
@@ -150,6 +154,7 @@ class ClientUpdateRouteTests(unittest.TestCase):
             )
         import shutil
         self._crypto_globals["KEY_FILE"] = self._orig_key_file
+        self._crypto.KEY_FILE = self._orig_crypto_key_file
         shutil.rmtree(self._key_tmpdir, ignore_errors=True)
 
     def _update(self, account_id, **kwargs):
