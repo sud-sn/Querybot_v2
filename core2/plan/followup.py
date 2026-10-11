@@ -190,6 +190,27 @@ def narrowed(plan: Plan | None) -> bool:
     return bool(plan.filters or window.kind != "all" or plan.time.compare is not None)
 
 
+# Words of a measure's name that say nothing of what it is.
+_PLAIN_MEASURE_WORDS = {"amount", "number", "total", "count", "value", "sum", "of", "the", "rows", "row", "quantity",
+                        "qty", "invoice", "line", "lines", "net", "gross", "cad", "usd", "sop", "customer", "order"}
+
+
+def _says_measure_on_screen(model: SemanticModel | None, words: str, previous: Plan) -> bool:
+    """Does ``words`` name a measure of the answer on screen by a word of its own ("discount" of "invoice discount
+    amount"), never one of the plain words every measure has?"""
+    if model is None:
+        return False
+    said = set(re.findall(r"[a-z]+", words.lower()))
+    for slug in previous.measures:
+        measure = next((m for m in model.measures.values() if m.slug == slug), None)
+        if measure is None:
+            continue
+        own = set(re.findall(r"[a-z]+", measure.business_name.lower())) - _PLAIN_MEASURE_WORDS
+        if own & said or {w + "s" for w in own} & said:
+            return True
+    return False
+
+
 def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | None = None,
               members: list[str] | int = 0, previous_narrowed: bool | None = None) -> Reading:
     """How this turn relates to the answer on screen (``previous``, the plan behind it), by its words alone.
@@ -257,10 +278,13 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         if short and not head_measure and not any(k == "count" for k, _, _ in head_found):
             return Reading("refine", "a fragment that only changes the answer on screen")
     if (kinds & {"measure", "field"}) and not pointing:
-        if own and grouped and not period and not own_members and not _CONDITION.search(question) \
-                and measures_named(model, head) & set(previous.measures) and previous.time.window.kind != "all":
-            # "Show the returns by warehouse" after the returns of Q1: a measure on screen split another way, for
-            # no period of its own, keeps the answer's ("Ask as a new question" is one click away).
+        if own and (grouped or which) and not period and not own_members and not _CONDITION.search(question) \
+                and (measures_named(model, head if grouped else question) & set(previous.measures)
+                     or which and _says_measure_on_screen(model, question[which.end():], previous)) \
+                and previous.time.window.kind != "all":
+            # "Show the returns by warehouse" after the returns of Q1, "which customer types got the most discount?"
+            # after the discount of 2025: a measure on screen split or ranked another way, for no period of its
+            # own, keeps the answer's ("Ask as a new question" is one click away).
             return Reading("refine", "it splits a measure of the answer on screen and names no period of its own")
         if own:
             return Reading("new", "it names what it measures and its own scope")

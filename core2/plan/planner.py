@@ -754,11 +754,19 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
       before it ("which customer type cancels the most" after a monthly trend was ranked month by month)
       ("which channel grew the most" came back month by month: "Auto-Refill rose most; Auto-Refill fell
       most");
-    * "the most" sorts highest first and "the least" lowest first ("lost the most" was sorted lowest first).
+    * "the most" sorts highest first and "the least" lowest first ("lost the most" was sorted lowest first);
+    * "and by referral source?" splits by that field instead of the one on screen (it was split by gender and
+      referral source); "break that down by channel" after a monthly trend splits the whole period by channel,
+      unless it asks for each month; "the cost for those" keeps the members on screen and adds the cost (it
+      ranked the formulas again by cost); "mostly debits or credits?" sets the two totals side by side, with no
+      months kept from a trend before it.
     """
     if plan.kind != "query":
         return plan
     update: dict[str, Any] = {}
+    if previous is not None and previous.kind == "query" and plan.follow_up == "refine":
+        update.update(_reshaped(plan, previous, question))
+        plan = plan.model_copy(update=update) if update else plan
     time = plan.time
     if previous is not None and previous.kind == "query" and plan.follow_up == "refine":
         if keeps_period(question):
@@ -792,6 +800,44 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         if most != least and plan.sort[0].desc != most:
             update["sort"] = [Sort(by=plan.sort[0].by, desc=most), *plan.sort[1:]]
     return plan.model_copy(update=update) if update else plan
+
+
+# "And by referral source?", "what about by region", "now by store": the same answer split another way.
+_AND_BY = re.compile(r"^\s*(?:and|what about|how about|now|then|ok|okay)?[\s,]*(?:split|broken down|broken)?\s*"
+                     r"(?:by|per)\s+[^?]+\??\s*$", re.IGNORECASE)
+# "Break that down by channel", "split it by region": the same total split by a field.
+_BREAK_DOWN = re.compile(r"\b(?:break|split|divide)\s+(?:that|it|this|them|those)\s+(?:down\s+)?(?:by|per|into)\b"
+                         r"|\bbreakdown\s+by\b", re.IGNORECASE)
+# "The cost for those", "and their margin", "same for them": the members on screen, another figure.
+_FOR_THOSE = re.compile(r"\b(?:for|of|on)\s+(?:those|them|these)(?:\s+ones)?\b|\btheir\b", re.IGNORECASE)
+# "Mostly debits or credits?", "more online or in store?": two totals set side by side.
+_EITHER = re.compile(r"\b(?:mostly|mainly|largely|more|rather)\b[^?]*\bor\b", re.IGNORECASE)
+_SERIES_WORDS = re.compile(r"\b(?:each|every|per|by)\s+(?:day|week|month|quarter|year)\b|\b(?:daily|weekly|monthly|"
+                           r"quarterly|yearly|annually|over time|trend)\b", re.IGNORECASE)
+
+
+def _reshaped(plan: Plan, previous: Plan, question: str) -> dict[str, Any]:
+    """What a follow-up's own words say about the shape of the answer it changes, whatever the AI kept."""
+    update: dict[str, Any] = {}
+    series = asks_series(question) or bool(_SERIES_WORDS.search(question))
+    added = [g for g in plan.group_by if g not in previous.group_by]
+    if _AND_BY.match(question) and previous.group_by and added and len(plan.group_by) > len(added):
+        update["group_by"] = added                                   # instead of the field on screen
+    if _BREAK_DOWN.search(question) and previous.time.grain and not previous.group_by and plan.group_by \
+            and plan.time.grain == previous.time.grain and not series:
+        update["time"] = plan.time.model_copy(update={"grain": None})
+        if plan.intent == "trend":
+            update["intent"] = "breakdown"
+    if _FOR_THOSE.search(question) and previous.group_by and (previous.limit or previous.sort) \
+            and set(plan.group_by) <= set(previous.group_by):
+        measures = [*previous.measures, *(m for m in plan.measures if m not in previous.measures)]
+        update.update({"group_by": list(previous.group_by), "sort": list(previous.sort), "limit": previous.limit,
+                       "measures": measures, "intent": previous.intent})
+    if _EITHER.search(question) and len(plan.measures) + len(plan.derived) >= 2 and plan.time.grain and not series:
+        update["time"] = update.get("time", plan.time).model_copy(update={"grain": None})
+        if plan.intent == "trend":
+            update["intent"] = "value"
+    return update
 
 
 def _short(exc: Exception) -> str:
