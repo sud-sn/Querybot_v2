@@ -364,31 +364,36 @@ async def _with_pin(account_id: str, portal_user: dict | None, question: str, pa
             payload["chart"]["pin_token"] = token
 
 
-def _drafted(account_id: str, portal_user: dict | None, payload: dict[str, Any], question_id: str) -> dict[str, Any]:
-    """A described dashboard's preview, its draft kept on the server behind a token for its reader: the tiles'
-    plans never travel to the page. With the reader's own dashboards, to save it onto one of them."""
+def _created(account_id: str, portal_user: dict | None, payload: dict[str, Any], question_id: str,
+             thread_id: str = "default") -> dict[str, Any]:
+    """A dashboard the reader asked for, saved at once as a new dashboard of theirs (one version, "Built from your
+    request", on the design's tabs): the chat says its name, its tabs, what could not be built, and links to it.
+    The tiles' plans never travel to the page."""
     import store
+    from urllib.parse import quote
 
-    tiles = payload.pop("draft_tiles", [])
-    payload["question_id"] = question_id                # the card it replaces, filled in as its tiles landed
+    from core.i18n import t
+
+    lang = str((portal_user or {}).get("lang") or "en")
     if not portal_user or not portal_user.get("id"):
-        payload["draft"]["saveable"] = False
-        return payload
-    token = store.save_dashboard_draft(account_id, int(portal_user["id"]), {
-        "name": payload.get("draft_name") or "Dashboard", "request": payload.get("question") or "", "tiles": tiles,
-        "extras": list(payload["draft"].get("extras") or [])})
-    payload["token"] = token
-    payload["draft"]["saveable"] = True
-    payload["dashboards"] = [{"id": d["id"], "name": d["name"]}
-                             for d in store.list_editable_dashboards(account_id, int(portal_user["id"]))][:50]
-    return payload
-
-
-async def tile_answer(account_id: str, question: str, portal_user: dict | None, token: str) -> tuple[str, dict | None]:
-    """One more tile for a described dashboard (one it offered, which the reader added): answered as a new
-    conversation of its own, in the fair line, within a question's time."""
-    return await _answer(account_id, question, portal_user, f"dashboard-draft:{token}:{uuid.uuid4().hex[:8]}",
-                         "core2", new_question_id())
+        return {"type": "message", "role": "assistant", "question_id": question_id, "state": "failed",
+                "content": t("ui.chat.dashmade.sign_in", lang=lang)}
+    client = store.get_client(account_id) or {}
+    tiles = payload.get("dashboard_tiles") or []
+    saved = store.save_built_dashboard(account_id, int(portal_user["id"]), name=str(payload.get("name") or "Dashboard"),
+                                       tiles=tiles, db_config_id=int(client.get("db_config_id") or 0) or None,
+                                       thread_id=thread_id, tab_names=payload.get("tabs"))
+    url = f"/portal/dashboard?dashboard_id={saved['id']}"
+    tabs = json.loads(saved.get("tabs_json") or "[]") or ["Overview"]
+    on = collections.Counter(str(tile.get("tab") or tabs[0]) for tile in tiles)
+    log.info("A dashboard was built from a request for %s: %s tiles on %s tabs, dashboard %s", account_id,
+             len(tiles), len(tabs), saved["id"])
+    return {"type": "dashboard_created", "engine": "core2", "question": payload.get("question") or "",
+            "question_id": question_id,
+            "dashboard": {"id": saved["id"], "name": saved["name"], "url": url},
+            "tiles": len(tiles),
+            "tabs": [{"name": tab, "tiles": on.get(tab, 0), "url": f"{url}&tab={quote(tab)}"} for tab in tabs],
+            "not_built": list(payload.get("not_built") or [])}
 
 
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
@@ -461,7 +466,7 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
 
     progress, limit = None, TIMEOUT_SECONDS
     if asked_for(question) is not None:
-        # "Build me a dashboard of ...": its card is sent as it is designed, then again as each tile lands.
+        # "Create a revenue dashboard": how far it is, said once it is designed and again as each tile lands.
         loop = asyncio.get_running_loop()
         limit = DASHBOARD_SECONDS
 
@@ -474,9 +479,9 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
     if payload is None:
         await _send(adapter, websocket, _could_not(question, status, question_id, beside=False, seconds=limit))
         return True
-    if payload.get("type") == "dashboard_draft":
-        await _send(adapter, websocket, await asyncio.to_thread(_drafted, account_id, portal_user, payload,
-                                                                question_id))
+    if payload.get("type") == "dashboard_built":
+        await _send(adapter, websocket, await asyncio.to_thread(
+            _created, account_id, portal_user, payload, question_id, str(getattr(adapter, "thread_id", "") or "default")))
         return True
     rows = payload.pop("export_rows", None)
     try:

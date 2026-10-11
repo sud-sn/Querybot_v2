@@ -1,14 +1,16 @@
-"""A dashboard the reader describes in the chat is designed, built, previewed and saved as one version.
+"""A dashboard the reader asks for in the chat is designed, built and saved as theirs at once, on named tabs.
 
-"Build me a dashboard of sales by store and month" is recognised before any plan is asked for. One AI call
-designs the tiles from the workspace's names (never its values): what was asked for, and a few more offered as
-chips, never added. Each tile is a question of its own, planned and answered as a new conversation would be,
-several at once, and the reader's card fills in as each lands, on a time of its own. A tile that cannot be built
-says why and offers to define what is missing; the others are built. The reader previews the draft (kept on the
-server behind a token) laid out as the dashboard will be, renames it, takes tiles out, adds the offered ones, and
-saves it as a new dashboard or onto one of theirs, as one version. Each tile's figures are the chat answer's, its
-tile is drawn again from its plan with no AI, and the dashboard's filters change each tile's SQL. A trend in two
-units gets a panel each, and a metric says which way is good news.
+"Create an executive dashboard", "create a revenue dashboard" or "I need net amount by month, top 10 customers
+and orders" is recognised before any plan is asked for. One AI call designs the tiles from the workspace's names
+(never its values): the tiles a list names, a subject's headline numbers, trend, breakdowns and top 10, or the
+whole business's figures by area; a subject's design too thin to be a dashboard is asked for again, once. Each
+tile is a question of its own, planned and answered as a new conversation would be, several at once, on a time of
+its own, while the chat says how many are ready (never what they show). A tile that cannot be built says why and
+offers to define what is missing; the others are saved at once as a new dashboard of the reader's, one version,
+on the design's tabs ("Overview" first, then a tab per area), and the chat says its name, its tabs and links to
+it. Each tile's figures are the chat answer's, its tile is drawn again from its plan with no AI, and the
+dashboard's filters change each tile's SQL. A trend in two units gets a panel each, and a metric says which way
+is good news.
 """
 
 from __future__ import annotations
@@ -48,15 +50,17 @@ PLANS = {
     "Margin percent this year": {"measures": ["margin_percent"], "time": YEAR},
 }
 DESIGN = {"name": "Sales overview", "tiles": [
-    {"title": "Net amount", "kind": "number", "question": "Net amount this year"},
-    {"title": "Orders", "kind": "number", "question": "Number of orders this year"},
-    {"title": "Net amount by month", "kind": "trend", "question": "Net amount by month for the last 12 months"},
-    {"title": "Net amount by store", "kind": "breakdown", "question": "Net amount by store this year"},
-    {"title": "Net amount by segment", "kind": "breakdown", "question": "Net amount by segment this year"},
-    {"title": "Top customers", "kind": "table", "question": "Top 10 customers by net amount this year"},
-    {"title": "Unicorns", "kind": "number", "question": "Unicorns sold this year"}], "extras": [
-    {"title": "Margin %", "kind": "number", "question": "Margin percent this year"},
-    {"title": "Net amount again", "kind": "number", "question": "Net amount this year"}]}     # asked for already
+    {"title": "Net amount", "kind": "number", "question": "Net amount this year", "tab": "Overview"},
+    {"title": "Orders", "kind": "number", "question": "Number of orders this year", "tab": "Overview"},
+    {"title": "Net amount by month", "kind": "trend", "question": "Net amount by month for the last 12 months",
+     "tab": "Overview"},
+    {"title": "Net amount by store", "kind": "breakdown", "question": "Net amount by store this year",
+     "tab": "Stores"},
+    {"title": "Net amount by segment", "kind": "breakdown", "question": "Net amount by segment this year",
+     "tab": "Customers"},
+    {"title": "Top customers", "kind": "table", "question": "Top 10 customers by net amount this year",
+     "tab": "customers"},
+    {"title": "Unicorns", "kind": "number", "question": "Unicorns sold this year", "tab": "Overview"}]}
 
 
 @pytest.fixture(scope="module")
@@ -65,16 +69,17 @@ def retail():
 
 
 class AI:
-    """The workspace's AI, scripted: the design for a dashboard request, each tile's plan by its question."""
+    """The workspace's AI, scripted: the design for a dashboard request (the next of several, when it is asked
+    again), each tile's plan by its question."""
 
-    def __init__(self, design=DESIGN):
-        self.design, self.asked, self.prompts = design, [], []
+    def __init__(self, *designs):
+        self.designs, self.asked, self.prompts = list(designs or [DESIGN]), [], []
 
     def __call__(self, stable: str, tail: str) -> str:
         self.asked.append(tail)
         if tail.startswith("REQUEST:"):
             self.prompts.append(stable)
-            return json.dumps(self.design)
+            return json.dumps(self.designs.pop(0) if len(self.designs) > 1 else self.designs[0])
         question = re.search(r"^QUESTION: (.*)$", tail, re.MULTILINE).group(1).strip()
         return json.dumps({"kind": "query", **PLANS[question]})
 
@@ -91,6 +96,9 @@ def _services(retail, ai) -> Services:
     ("show me the dashboard", None), ("what is on my dashboard", None), ("net amount by store", None),
     ("build me a sales dashboard please", "sales"), ("create dashboard for margin by region", "margin by region"),
     ("Crée-moi un tableau de bord des ventes par magasin", "ventes par magasin"),
+    ("Create an executive dashboard", "executive"), ("Prepare a CFO dashboard", "CFO"),
+    ("Generate a revenue dashboard for 2026", "revenue 2026"), ("Show me a dashboard", ""),
+    ("I'd like a dashboard of fills by pharmacy", "fills by pharmacy"),
     # about a dashboard the reader has: never a new one
     ("make the dashboard chart a bar", None), ("create a new tab on the dashboard", None),
     ("can you make my dashboard refresh daily", None), ("set up the dashboard filters", None),
@@ -103,34 +111,66 @@ def test_one_design_call_sees_names_never_values_and_each_tile_is_its_own_questi
     built, model = retail
     ai = AI()
     payload = answer_question("Build me a dashboard of sales by store and month", _services(retail, ai), Session())
-    assert payload["type"] == "dashboard_draft"
+    assert payload["type"] == "dashboard_built"
     assert len(ai.prompts) == 1                                      # one design call
+    assert ai.asked[0] == "REQUEST: Build me a dashboard of sales by store and month"     # the whole request
     member = built.con.execute("SELECT customer_name FROM customers LIMIT 1").fetchone()[0]
     assert member not in ai.prompts[0] and "net_amount" in ai.prompts[0]
     tile_calls = [t for t in ai.asked if not t.startswith("REQUEST:")]
     assert all("PREVIOUS QUESTION" not in t for t in tile_calls)     # each a new conversation
-    draft = payload["draft"]
-    assert draft["name"] == "Sales overview" and draft["built"] == 6 and draft["failed"] == 1
-    failed = next(t for t in draft["tiles"] if t["error"])
+    assert payload["name"] == "Sales overview" and len(payload["dashboard_tiles"]) == 6
+    (failed,) = payload["not_built"]
     assert failed["title"] == "Unicorns" and failed["error"].startswith("I could not work out how to answer that")
     assert failed["definable"] is True                              # nothing measures it: the reader may define it
-    assert [t["title"] for t in payload["draft_tiles"]] == [t["title"] for t in DESIGN["tiles"][:6]]
-    assert all(t["plan"] and t["layout"] for t in payload["draft_tiles"])
-    # What the request did not ask for is offered, never built; one that repeats a tile is not offered at all.
-    assert draft["extras"] == [{"title": "Margin %", "kind": "number", "question": "Margin percent this year"}]
-    assert not any("Margin percent" in t for t in ai.asked)
+    assert [t["title"] for t in payload["dashboard_tiles"]] == [t["title"] for t in DESIGN["tiles"][:6]]
+    assert all(t["plan"] and t["layout"] for t in payload["dashboard_tiles"])
+    assert "export_rows" not in json.dumps(payload["dashboard_tiles"])        # its plans, never its rows
 
 
-def test_the_card_fills_in_as_each_tile_lands(retail):
+THIN = {"name": "Revenue", "tiles": [{"title": "Net amount", "kind": "number", "question": "Net amount this year"}]}
+
+
+def test_a_subjects_dashboard_of_one_tile_is_asked_for_again_once(retail):
+    """"Create a revenue dashboard" came back from a real model as one number: a subject is never one tile."""
+    ai = AI(THIN, DESIGN)
+    payload = answer_question("Create a revenue dashboard", _services(retail, ai), Session())
+    designs = [t for t in ai.asked if t.startswith("REQUEST:")]
+    assert len(designs) == 2 and "is not a dashboard" in designs[1] and "YOUR PREVIOUS ANSWER" in designs[1]
+    assert len(payload["dashboard_tiles"]) == 6
+    # Asked again, still thin: the one tile it has is built, never a third call.
+    ai = AI(THIN)
+    payload = answer_question("Create a revenue dashboard", _services(retail, ai), Session())
+    assert len(ai.prompts) == 2 and [t["title"] for t in payload["dashboard_tiles"]] == ["Net amount"]
+
+
+def test_a_list_of_what_the_reader_needs_is_built_as_named(retail):
+    """"I need a dashboard with net amount, orders": one tile each, never asked to be more."""
+    ai = AI({"name": "Mine", "tiles": [
+        {"title": "Net amount", "kind": "number", "question": "Net amount this year"},
+        {"title": "Orders", "kind": "number", "question": "Number of orders this year"}]})
+    payload = answer_question("I need a dashboard with net amount, orders", _services(retail, ai), Session())
+    assert len(ai.prompts) == 1 and [t["title"] for t in payload["dashboard_tiles"]] == ["Net amount", "Orders"]
+    assert payload["tabs"] == ["Overview"] and {t["tab"] for t in payload["dashboard_tiles"]} == {"Overview"}
+
+
+def test_the_design_is_asked_for_by_kind_and_on_tabs():
+    for words in ("executive", "subject", "whole business", "list of what the reader needs", "Overview",
+                  "its own tab", "at most 6 tabs and at most 16 tiles"):
+        assert words in dashboards.RULES, words
+
+
+def test_the_chat_is_told_how_far_it_is_never_what_the_tiles_show(retail):
     seen: list[dict] = []
     services = _services(retail, AI())
     services.progress = seen.append
     payload = answer_question("Build me a dashboard of sales", services, Session())
-    assert payload["type"] == "dashboard_draft" and len(seen) == 8            # once designed, then once per tile
-    first, last = seen[0]["draft"], seen[-1]["draft"]
-    assert all(c["type"] == "dashboard_building" for c in seen)
-    assert first["pending"] == 7 and all(t["pending"] and t["layout"] for t in first["tiles"])    # placed already
-    pending = [c["draft"]["pending"] for c in seen]
+    assert payload["type"] == "dashboard_built" and len(seen) == 8            # once designed, then once per tile
+    assert all(c["type"] == "dashboard_building" and set(c) == {"type", "engine", "question", "building"}
+               for c in seen)
+    first, last = seen[0]["building"], seen[-1]["building"]
+    assert first == {"name": "Sales overview", "count": 7, "tabs": ["Overview", "Stores", "Customers"],
+                     "built": 0, "failed": 0, "pending": 7}
+    pending = [c["building"]["pending"] for c in seen]
     assert pending == sorted(pending, reverse=True) and last["pending"] == 0
     assert (last["built"], last["failed"]) == (6, 1)
 
@@ -152,7 +192,7 @@ def test_each_tile_is_the_chat_answer_and_is_drawn_again_from_its_plan_with_no_a
     built, model = retail
     payload = answer_question("Build me a dashboard of sales", _services(retail, AI()), Session())
     silent = _services(retail, lambda s, t: pytest.fail("a tile was redrawn through the AI"))
-    for tile in payload["draft_tiles"]:
+    for tile in payload["dashboard_tiles"]:
         chat = answer_question(tile["question"], _services(retail, AI()), Session())
         from core2.plan.ir import Plan
 
@@ -163,15 +203,35 @@ def test_each_tile_is_the_chat_answer_and_is_drawn_again_from_its_plan_with_no_a
 
 def test_the_layout_puts_numbers_in_a_row_trends_across_and_breakdowns_side_by_side(retail):
     payload = answer_question("Build me a dashboard of sales", _services(retail, AI()), Session())
-    places = {t["title"]: t["layout"] for t in payload["draft_tiles"]}
+    assert payload["tabs"] == ["Overview", "Stores", "Customers"]        # "customers" is the Customers tab
+    places = {t["title"]: t["layout"] for t in payload["dashboard_tiles"]}
     assert places["Net amount"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 3, "tab": 0}
     assert places["Orders"]["grid_x"] == 6 and places["Orders"]["grid_y"] == 0
     assert places["Net amount by month"] == {"grid_x": 0, "grid_y": 3, "grid_w": 12, "grid_h": 10, "tab": 0}
-    assert (places["Net amount by store"]["grid_w"], places["Net amount by segment"]["grid_x"]) == (6, 6)
-    assert places["Top customers"]["grid_w"] == 12
+    assert places["Net amount by store"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 10, "tab": 1}
+    assert places["Net amount by segment"] == {"grid_x": 0, "grid_y": 0, "grid_w": 6, "grid_h": 10, "tab": 2}
+    assert places["Top customers"] == {"grid_x": 0, "grid_y": 10, "grid_w": 12, "grid_h": 10, "tab": 2}
+    assert {t["title"]: t["tab"] for t in payload["dashboard_tiles"]}["Top customers"] == "Customers"
+
+
+def test_tabs_go_overview_first_at_most_six_and_twelve_tiles_a_tab():
+    tiles = [dashboards.Tile("a", "breakdown", "q", tab="Revenue"), dashboards.Tile("b", "number", "q"),
+             dashboards.Tile("c", "trend", "q", tab="overview")]
+    assert dashboards.lay_out(tiles) == ["overview", "Revenue"]          # a tile with none goes on the first
+    assert [(t.tab, t.layout["tab"]) for t in tiles] == [("Revenue", 1), ("overview", 0), ("overview", 0)]
     many = [dashboards.Tile(f"t{i}", "breakdown", "q") for i in range(15)]
-    dashboards.lay_out(many)
+    assert dashboards.lay_out(many) == ["Overview", "Overview 2"]
     assert [t.layout["tab"] for t in many] == [0] * 12 + [1] * 3
+    areas = [dashboards.Tile(f"t{i}", "number", "q", tab=f"Area {i}") for i in range(8)]
+    assert dashboards.lay_out(areas) == [f"Area {i}" for i in range(6)]
+    assert [t.tab for t in areas[6:]] == ["Area 0", "Area 0"]            # past the sixth: on the first
+
+
+def test_a_design_of_more_than_sixteen_tiles_keeps_sixteen(retail):
+    design = {"name": "Big", "tiles": [{"title": f"t{i}", "kind": "number", "question": "Net amount this year"}
+                                       for i in range(20)]}
+    name, tiles = dashboards.design(retail[1], "Create an executive dashboard", AI(design))
+    assert len(tiles) == dashboards.MOST_ALL == 16
 
 
 def test_a_design_that_names_nothing_the_data_has_is_said(retail):
@@ -195,67 +255,60 @@ def reader(retail):
     payload = answer_question("Build me a dashboard of sales", _services(retail, AI()), Session())
     yield account, owner, other, payload
     with store.get_db() as conn:
-        for table in ("pinned_chart", "dashboard_artifact_version", "dashboard_artifact", "core2_dashboard_draft",
-                      "portal_user", "client"):
+        for table in ("pinned_chart", "dashboard_artifact_version", "dashboard_artifact", "portal_user", "client"):
             conn.execute(f"DELETE FROM {table} WHERE account_id=?", (account,))
 
 
-def _client(user_id):
-    from fastapi import FastAPI
-    from starlette.testclient import TestClient
-
-    import portal.routes as routes
-
-    app = FastAPI()
-    app.include_router(routes.router)
-    client = TestClient(app)
-    client.cookies.set(routes._COOKIE, routes._sign_session_value(user_id))
-    return client
-
-
-def test_the_draft_is_renamed_trimmed_and_saved_as_one_version(reader):
-    from gateway.core2_bridge import _drafted
+def test_it_is_saved_at_once_as_a_new_dashboard_on_its_tabs(reader):
+    from gateway.core2_bridge import _created
 
     account, owner, other, payload = reader
-    sent = _drafted(account, {"id": owner, "account_id": account}, dict(payload), "q-1")
-    assert "draft_tiles" not in sent and sent["token"] and sent["draft"]["saveable"] is True
-    token = sent["token"]
-    me, them = _client(owner), _client(other)
-    assert them.post(f"/portal/api/core2/dashboard-draft/{token}/rename", json={"name": "x"}).status_code == 404
-    assert me.post(f"/portal/api/core2/dashboard-draft/{token}/rename", json={"name": "Store sales"}).json()["ok"]
-    removed = me.post(f"/portal/api/core2/dashboard-draft/{token}/remove", json={"tile": 1}).json()
-    assert (removed["ok"], removed["removed"], removed["left"]) == (True, "Orders", 5)
-    assert removed["layouts"][0] == {"grid_x": 0, "grid_y": 0, "grid_w": 12, "grid_h": 3, "tab": 0}   # closes up
-    saved = me.post(f"/portal/api/core2/dashboard-draft/{token}/save", json={"dashboard_id": "new"}).json()
-    assert saved["ok"] and saved["tiles"] == 5 and saved["dashboard"]["name"] == "Store sales"
-    board = saved["dashboard"]["id"]
-    versions = store.list_dashboard_versions(board, owner, account)
-    assert [v["change_summary"] for v in versions] == ["Built from your request"]
-    charts = store.list_dashboard_charts(board, owner)
-    assert [c["title"] for c in sorted(charts, key=lambda c: c["position"])] == [
-        "Net amount", "Net amount by month", "Net amount by store", "Net amount by segment", "Top customers"]
+    sent = _created(account, {"id": owner, "account_id": account}, dict(payload), "q-1", "thread-9")
+    assert sent["type"] == "dashboard_created" and sent["question_id"] == "q-1" and "dashboard_tiles" not in sent
+    board = sent["dashboard"]
+    assert board["name"] == "Sales overview" and board["url"] == f"/portal/dashboard?dashboard_id={board['id']}"
+    assert sent["tiles"] == 6
+    assert [(t["name"], t["tiles"]) for t in sent["tabs"]] == [("Overview", 3), ("Stores", 1), ("Customers", 2)]
+    assert sent["tabs"][1]["url"] == f"{board['url']}&tab=Stores"
+    assert [t["title"] for t in sent["not_built"]] == ["Unicorns"] and sent["not_built"][0]["definable"]
+    saved = store.get_dashboard(board["id"], owner, account)
+    assert json.loads(saved["tabs_json"]) == ["Overview", "Stores", "Customers"]
+    assert saved["thread_id"] == "thread-9"
+    assert [v["change_summary"] for v in store.list_dashboard_versions(board["id"], owner, account)] == [
+        "Built from your request"]
+    charts = store.list_dashboard_charts(board["id"], owner)
+    assert {c["title"]: c["dashboard_tab"] for c in charts} == {
+        "Net amount": "Overview", "Orders": "Overview", "Net amount by month": "Overview",
+        "Net amount by store": "Stores", "Net amount by segment": "Customers", "Top customers": "Customers"}
     assert all(json.loads(c["display_config"])["core2_plan"] for c in charts)
-    assert me.post(f"/portal/api/core2/dashboard-draft/{token}/save", json={}).status_code == 404   # used once
+    assert store.get_dashboard(board["id"], other, account) is None               # theirs alone
+    # Asked for again: a second dashboard, named so the two are told apart.
+    again = _created(account, {"id": owner, "account_id": account}, dict(payload), "q-2")
+    assert again["dashboard"]["name"] == "Sales overview 2" and again["dashboard"]["id"] != board["id"]
 
 
-def test_a_draft_saved_onto_a_dashboard_of_theirs_goes_below_what_it_has(reader):
-    from gateway.core2_bridge import _drafted
-
+def test_a_tile_on_a_tab_the_dashboard_has_goes_below_what_it_has(reader):
     account, owner, other, payload = reader
     mine = store.create_dashboard(account, owner, "thread", "Mine")
     store.pin_chart(owner, account, "Already here", "q", "SELECT 1", "kpi", None, dashboard_id=mine["id"])
-    token = _drafted(account, {"id": owner}, dict(payload), "q-1")["token"]
-    theirs = store.create_dashboard(account, other, "thread", "Theirs")
-    me = _client(owner)
-    assert me.post(f"/portal/api/core2/dashboard-draft/{token}/save",
-                   json={"dashboard_id": theirs["id"]}).status_code == 403
-    saved = me.post(f"/portal/api/core2/dashboard-draft/{token}/save", json={"dashboard_id": mine["id"]}).json()
-    assert saved["ok"] and saved["dashboard"]["id"] == mine["id"]
+    tiles = [dict(t) for t in payload["dashboard_tiles"]]
+    store.save_built_dashboard(account, owner, name="x", tiles=tiles, db_config_id=None, dashboard_id=mine["id"],
+                               tab_names=payload["tabs"])
     charts = store.list_dashboard_charts(mine["id"], owner)
     first = next(c for c in charts if c["title"] == "Already here")
-    added = [c for c in charts if c["title"] != "Already here"]
-    assert len(added) == 6 and min(c["grid_y"] for c in added) >= first["grid_y"] + first["grid_h"]
-    assert store.list_dashboard_versions(mine["id"], owner, account)[0]["change_summary"] == "Built from your request"
+    overview = [c for c in charts if c["dashboard_tab"] == "Overview" and c["title"] != "Already here"]
+    assert len(overview) == 3 and min(c["grid_y"] for c in overview) >= first["grid_y"] + first["grid_h"]
+    assert json.loads(store.get_dashboard(mine["id"], owner, account)["tabs_json"]) == [
+        "Overview", "Stores", "Customers"]
+    assert store.save_built_dashboard(account, other, name="x", tiles=tiles, db_config_id=None,
+                                      dashboard_id=mine["id"]) is None                # not theirs to change
+
+
+def test_a_dashboard_needs_a_reader_to_be_saved_as():
+    from gateway.core2_bridge import _created
+
+    sent = _created("acct", None, {"dashboard_tiles": [{"title": "x"}]}, "q-1")
+    assert sent["type"] == "message" and sent["state"] == "failed" and "Sign in" in sent["content"]
 
 
 def test_the_dashboards_filters_change_each_tiles_sql(retail):
@@ -266,46 +319,12 @@ def test_the_dashboards_filters_change_each_tiles_sql(retail):
 
     built, model = retail
     payload = answer_question("Build me a dashboard of sales", _services(retail, AI()), Session())
-    for tile in payload["draft_tiles"]:
+    for tile in payload["dashboard_tiles"]:
         viewed, _ = _view_plan(tile["plan"], {"period": "last_year", "members": {"region.name": "North"}})
         before = compile_query(resolve(Plan.model_validate(tile["plan"]), model, Context(today=TODAY)), model,
                                "duckdb").sql
         after = compile_query(resolve(Plan.model_validate(viewed), model, Context(today=TODAY)), model, "duckdb").sql
         assert after != before and "'North'" in after, tile["title"]
-
-
-def test_an_offered_tile_is_added_built_as_the_rest_and_laid_out_with_them(reader, retail, monkeypatch):
-    from gateway.core2_bridge import _drafted
-
-    account, owner, other, payload = reader
-    store.set_query_engine(account, "core2")
-    asked: list[str] = []
-
-    async def tile_answer(account_id, question, portal_user, token):
-        asked.append(question)
-        return "answered", answer_question(question, _services(retail, AI()), Session())
-
-    monkeypatch.setattr("gateway.core2_bridge.tile_answer", tile_answer)
-    token = _drafted(account, {"id": owner}, dict(payload), "q-1")["token"]
-    me, them = _client(owner), _client(other)
-    assert them.post(f"/portal/api/core2/dashboard-draft/{token}/add", json={"extra": 0}).status_code == 404
-    added = me.post(f"/portal/api/core2/dashboard-draft/{token}/add", json={"extra": 0}).json()
-    assert asked == ["Margin percent this year"] and added["ok"]
-    assert added["tile"]["title"] == "Margin %" and added["tile"]["value"].endswith("%") and added["extras"] == []
-    kept = store.get_dashboard_draft(token, account, owner)
-    assert kept["tiles"][-1]["title"] == "Margin %" and kept["tiles"][-1]["plan"]["measures"] == ["margin_percent"]
-    numbers = [t["layout"] for t in kept["tiles"] if t["kind"] == "number"]
-    assert [(n["grid_x"], n["grid_w"], n["grid_y"]) for n in numbers] == [(0, 4, 0), (4, 4, 0), (8, 4, 0)]
-    assert added["layouts"] == [t["layout"] for t in kept["tiles"]]
-    assert me.post(f"/portal/api/core2/dashboard-draft/{token}/add", json={"extra": 0}).status_code == 400  # once
-    # An offered tile the data cannot answer says why, offers to define it, and stays offered.
-    kept["extras"] = [{"title": "Unicorns", "kind": "number", "question": "Unicorns sold this year"}]
-    store.update_dashboard_draft(token, account, owner, kept)
-    refused = me.post(f"/portal/api/core2/dashboard-draft/{token}/add", json={"extra": 0})
-    assert refused.status_code == 422 and refused.json()["definable"] is True
-    assert len(store.get_dashboard_draft(token, account, owner)["extras"]) == 1
-    store.set_query_engine(account, "legacy")
-    assert me.post(f"/portal/api/core2/dashboard-draft/{token}/add", json={"extra": 0}).status_code == 400
 
 
 def _socket(sent: list):
@@ -316,7 +335,7 @@ def _socket(sent: list):
     return SimpleNamespace(thread_id="t", send_lock=asyncio.Lock(), session_id="s"), Socket()
 
 
-def test_the_chat_sends_the_card_as_it_fills_in_on_a_time_of_its_own(reader, retail, monkeypatch):
+def test_the_chat_says_how_far_it_is_then_where_it_is_on_a_time_of_its_own(reader, retail, monkeypatch):
     import time
 
     import gateway.core2_bridge as bridge
@@ -338,11 +357,11 @@ def test_the_chat_sends_the_card_as_it_fills_in_on_a_time_of_its_own(reader, ret
     adapter, socket = _socket(sent)
     asyncio.run(bridge.answer_instead("core2", adapter, socket, account, "Build me a dashboard of sales", user))
     kinds = [p["type"] for p in sent]
-    assert kinds == ["dashboard_building"] * 8 + ["dashboard_draft"]
-    assert len({p["question_id"] for p in sent}) == 1                 # one card, filled in, then finished
+    assert kinds == ["dashboard_building"] * 8 + ["dashboard_created"]
+    assert len({p["question_id"] for p in sent}) == 1                 # one card: how far it is, then where it is
     final = sent[-1]
-    assert final["token"] and "draft_tiles" not in final
-    assert store.get_dashboard_draft(final["token"], account, owner)["extras"][0]["title"] == "Margin %"
+    assert "dashboard_tiles" not in final and store.get_dashboard(final["dashboard"]["id"], owner, account)
+    assert len(store.list_dashboard_charts(final["dashboard"]["id"], owner)) == 6
     # The same wait on a question is past its time.
     plain: list[dict] = []
     adapter, socket = _socket(plain)
@@ -350,54 +369,42 @@ def test_the_chat_sends_the_card_as_it_fills_in_on_a_time_of_its_own(reader, ret
     assert plain[-1]["kind"] == "could_not" and "within 0 seconds" in plain[-1]["answer"]["headline"]
 
 
-_CARD = dict(functions=["function dashboardDraftHtml(msg)", "function _draftDrawing(tile)", "function _draftPlace(tile)",
-                        "function escHtml(str)"], consts=["_DRAFT_ICONS", "_DRAFT_DEFAULT"],
+_CARD = dict(functions=["function dashboardMadeHtml(msg)", "function escHtml(str)"],
              preamble="function qbIcon(n){return '<svg></svg>';}")
-_TILES = [
-    {"id": 0, "title": "Net amount", "kind": "number", "value": "$1.20M", "error": "",
-     "layout": {"grid_x": 0, "grid_y": 0, "grid_w": 12, "grid_h": 3, "tab": 0}},
-    {"id": 1, "title": "Net amount by month", "kind": "trend", "error": "", "headline": "Rising",
-     "layout": {"grid_x": 0, "grid_y": 3, "grid_w": 12, "grid_h": 10, "tab": 0},
-     "chart": {"chart_type": "line", "rows": [{"x": "2026-01-01", "y": 10}, {"x": "2026-02-01", "y": 30}]}},
-    {"id": 2, "title": "By store", "kind": "breakdown", "error": "", "headline": "Airport leads",
-     "layout": {"grid_x": 0, "grid_y": 13, "grid_w": 6, "grid_h": 10, "tab": 0},
-     "chart": {"chart_type": "bar", "rows": [{"x": "Airport", "y": 200}, {"x": "Harbour", "y": -50}]}},
-    {"id": 3, "title": "Top customers", "kind": "table", "error": "",
-     "layout": {"grid_x": 0, "grid_y": 0, "grid_w": 12, "grid_h": 10, "tab": 1},
-     "chart": {"chart_type": "table", "columns": ["Customer", "Net amount"], "rows": [["Blue & Co", "$9.00"]]}},
-    {"id": 4, "title": "Fills", "kind": "number", "error": "There is no measure called fills.", "definable": True}]
+MADE = {"type": "dashboard_created", "question_id": "q-1", "tiles": 6,
+        "dashboard": {"id": 4, "name": "Sales & margin", "url": "/portal/dashboard?dashboard_id=4"},
+        "tabs": [{"name": "Overview", "tiles": 3, "url": "/portal/dashboard?dashboard_id=4&tab=Overview"},
+                 {"name": "Stores", "tiles": 1, "url": "/portal/dashboard?dashboard_id=4&tab=Stores"},
+                 {"name": "Customers", "tiles": 2, "url": "/portal/dashboard?dashboard_id=4&tab=Customers"}],
+        "not_built": [{"title": "Fills", "error": "There is no measure called fills.", "definable": True}]}
 
 
 def _card(msg: dict) -> str:
     pytest.importorskip("dukpy")
     from tests.chat_js import run
 
-    return run(f"JSON.stringify(dashboardDraftHtml({json.dumps(msg)}));", lang="en", **_CARD)
+    return run(f"JSON.stringify(dashboardMadeHtml({json.dumps(msg)}));", lang="en", **_CARD)
 
 
-def test_the_card_is_laid_out_as_the_dashboard_with_each_tile_drawn_small():
-    markup = _card({"type": "dashboard_draft", "token": "tok", "dashboards": [{"id": 7, "name": "Mine"}],
-                    "draft": {"name": "Sales overview", "built": 4, "saveable": True, "tiles": _TILES,
-                              "extras": [{"title": "Margin %", "kind": "number", "question": "Margin percent"}]}})
-    assert 'value="Sales overview"' in markup and "Built from your request: 4 tiles · 1 could not be built" in markup
-    assert 'style="grid-column:1 / span 12;grid-row:4 / span 10"' in markup             # where it will be
-    assert "<polyline" in markup and 'aria-label="Rising"' in markup                     # the trend, as a line
-    assert "width:100%" in markup and "is-negative" in markup and "width:25%" in markup  # the bars, to scale
-    assert "<td>Blue &amp; Co</td>" in markup and "Tab 2" in markup                      # the table, on its tab
-    assert [int(n) for n in re.findall(r'data-draft-remove="(\d+)"', markup)] == [0, 1, 2, 3]
-    assert "There is no measure called fills." in markup and 'data-draft-define="Fills"' in markup
-    assert 'data-draft-add="0"' in markup and "Margin %" in markup and '<option value="7">Mine</option>' in markup
+def test_the_card_names_the_dashboard_its_tabs_and_links_to_it():
+    markup = _card(MADE)
+    assert "Dashboard created" in markup and "“Sales &amp; margin” is ready in your dashboards." in markup
+    assert "6 tiles on 3 tabs, built from your request." in markup
+    assert 'href="/portal/dashboard?dashboard_id=4&amp;tab=Stores">Stores<span class="dash-made-count">1</span>' in markup
+    assert "There is no measure called fills." in markup and 'data-dash-define="Fills"' in markup
+    assert 'class="btn btn-primary btn-sm" href="/portal/dashboard?dashboard_id=4"' in markup and "Open dashboard" in markup
+    assert "<svg" in markup and "dash-draft" not in markup                    # nothing of the dashboard drawn
+    one = _card({**MADE, "tiles": 1, "tabs": MADE["tabs"][:1], "not_built": []})
+    assert "1 tile, built from your request." in one and "dash-made-tabs" not in one and "could not" not in one
 
 
-def test_the_card_says_what_is_still_being_built_and_offers_nothing_until_done():
-    tiles = [dict(t, pending=True, chart=None) if t["id"] in (2, 3) else t for t in _TILES[:4]]
-    markup = _card({"type": "dashboard_building", "draft": {"name": "Sales overview", "tiles": tiles,
-                                                            "extras": [{"title": "Margin %", "question": "q"}]}})
-    assert "Building your dashboard: 2 of 4 tiles ready" in markup and markup.count("Building…") == 2
-    assert 'aria-busy="true"' in markup and "data-draft-" not in markup and "dash-draft-name" not in markup
-    saved = _card({"type": "dashboard_draft", "token": "tok", "saved": "/portal/dashboard?dashboard_id=4",
-                   "draft": {"name": "Sales overview", "built": 4, "saveable": True, "tiles": _TILES[:4]}})
-    assert 'href="/portal/dashboard?dashboard_id=4"' in saved and "data-draft-" not in saved
+def test_while_it_is_built_the_card_is_one_line_of_how_far_it_is():
+    markup = _card({"type": "dashboard_building", "building": {"name": "Sales overview", "count": 7, "built": 2,
+                                                               "failed": 1, "pending": 4}})
+    assert "Building your dashboard" in markup and "3 of 7 tiles ready" in markup and 'aria-busy="true"' in markup
+    assert 'aria-valuenow="3"' in markup and "width:43%" in markup and "href" not in markup
+    designing = _card({"type": "dashboard_building", "building": {}})
+    assert "Choosing what it shows…" in designing
 
 
 def test_a_trend_in_two_units_is_drawn_in_a_panel_each(retail):
@@ -441,17 +448,6 @@ def test_the_admin_sets_which_way_is_good_and_the_chat_colours_the_change(retail
     assert 'class="kpi-change is-bad"' in line({**rising, "good": False})
     assert 'class="kpi-change is-good"' in line({**rising, "good": True})
     assert 'class="kpi-change"' in line({**rising, "good": None}) and 'class="kpi-change"' in line(rising)
-
-
-def test_every_icon_the_card_draws_is_in_the_sprite():
-    """The card picks a tile's icon from a table, which the page-wide sprite check cannot see."""
-    import pathlib
-
-    page = pathlib.Path("portal/templates/portal_chat.html").read_text(encoding="utf-8")
-    table = re.search(r"const _DRAFT_ICONS = \{([^}]*)\}", page).group(1)
-    names = re.findall(r"'([a-z0-9-]+)'", table)
-    sprite = set(re.findall(r'id="([a-z0-9-]+)"', pathlib.Path("static/icons/qb-icons.svg").read_text(encoding="utf-8")))
-    assert names and not set(names) - sprite, set(names) - sprite
 
 
 def test_no_reader_string_is_named_twice():

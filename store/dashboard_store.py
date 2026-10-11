@@ -1530,47 +1530,17 @@ def rollback_dashboard(
 
 
 
-# ── Dashboards a reader described (core2/dashboards.py) ──────────────────────
-
-DRAFT_DAYS = 7          # a draft not saved within a week is let go
-
-
-def save_dashboard_draft(account_id: str, user_id: int, draft: dict) -> str:
-    """Keep a described dashboard's draft for its reader, behind a token only they can use."""
-    import secrets
-
-    token = secrets.token_urlsafe(18)
-    with get_db() as conn:
-        conn.execute("DELETE FROM core2_dashboard_draft WHERE created_at < datetime('now', ?)", (f"-{DRAFT_DAYS} days",))
-        conn.execute("INSERT INTO core2_dashboard_draft (token, account_id, user_id, draft_json) VALUES (?, ?, ?, ?)",
-                     (token, account_id, int(user_id), _json(draft)))
-    return token
-
-
-def get_dashboard_draft(token: str, account_id: str, user_id: int) -> dict | None:
-    with get_db() as conn:
-        row = conn.execute("SELECT draft_json FROM core2_dashboard_draft WHERE token=? AND account_id=? AND user_id=?",
-                           (str(token or ""), account_id, int(user_id))).fetchone()
-    return json.loads(row["draft_json"]) if row else None
-
-
-def update_dashboard_draft(token: str, account_id: str, user_id: int, draft: dict) -> bool:
-    with get_db() as conn:
-        cur = conn.execute("UPDATE core2_dashboard_draft SET draft_json=? WHERE token=? AND account_id=? AND user_id=?",
-                           (_json(draft), str(token or ""), account_id, int(user_id)))
-    return cur.rowcount > 0
-
-
-def delete_dashboard_draft(token: str, account_id: str, user_id: int) -> None:
-    with get_db() as conn:
-        conn.execute("DELETE FROM core2_dashboard_draft WHERE token=? AND account_id=? AND user_id=?",
-                     (str(token or ""), account_id, int(user_id)))
+# ── Dashboards a reader asks for in the chat (core2/dashboards.py) ──────────
 
 
 def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: list[dict], db_config_id: int | None,
-                         dashboard_id: int | None = None, thread_id: str = "default") -> dict | None:
+                         dashboard_id: int | None = None, thread_id: str = "default",
+                         tab_names: list[str] | None = None) -> dict | None:
     """A described dashboard saved as one version ("Built from your request"): a new dashboard, or one of the
-    reader's own with the tiles added below what it has. Each tile keeps its plan, its title and its place."""
+    reader's own with the tiles added below what it has. Each tile keeps its plan, its title, its place and its
+    tab: a tab of the draft ("Overview", "Revenue") is the dashboard's tab of that name, or a new one after its
+    own (at most eight; a tile past those goes on the draft's first)."""
+    drafted = [_clean_name(t)[:60] for t in (tab_names or []) if str(t or "").strip()]
     with get_db() as conn:
         if dashboard_id:
             board = conn.execute("SELECT * FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
@@ -1580,17 +1550,39 @@ def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: lis
             board_id = int(board["id"])
             tabs = json.loads(board["tabs_json"] or '["Overview"]') or ["Overview"]
         else:
+            # A second "Executive overview" of theirs is "Executive overview 2": each is found by its name.
+            taken = {str(r["name"]).casefold() for r in conn.execute(
+                "SELECT name FROM dashboard_artifact WHERE user_id=? AND account_id=?", (int(user_id), account_id))}
+            title, n = _clean_name(name), 1
+            while (title if n == 1 else f"{title} {n}").casefold() in taken:
+                n += 1
             cur = conn.execute(
                 """INSERT INTO dashboard_artifact (account_id, user_id, thread_id, name, description, visibility,
                                                    grid_scale) VALUES (?, ?, ?, ?, ?, 'personal', ?)""",
-                (account_id, int(user_id), str(thread_id or "default")[:80], _clean_name(name),
+                (account_id, int(user_id), str(thread_id or "default")[:80], title if n == 1 else f"{title} {n}",
                  "Built from your request", GRID_SCALE))
-            board_id, tabs = int(cur.lastrowid), ["Overview"]
+            board_id, tabs = int(cur.lastrowid), ([drafted[0]] if drafted else ["Overview"])
         names = list(tabs)
-        for tile in tiles:
-            index = int((tile.get("layout") or {}).get("tab") or 0)
-            while len(names) <= index:
-                names.append(f"{names[0]} {len(names) + 1}")
+
+        def on(tile: dict) -> str:
+            """The dashboard's tab a tile goes on: the one of its draft tab's name, made when there is room."""
+            at = (tile.get("layout") or {}).get("tab")
+            at = int(at) if isinstance(at, (int, float, str)) and str(at).lstrip("-").isdigit() else 0
+            wanted = _clean_name(str(tile.get("tab") or ""))[:60] if tile.get("tab") else (
+                drafted[at] if 0 <= at < len(drafted) else "")
+            if not wanted:
+                if at <= 0:
+                    return names[0]
+                wanted = f"{names[0]} {at + 1}"
+            same = next((n for n in names if n.casefold() == wanted.casefold()), None)
+            if same is not None:
+                return same
+            if len(names) >= 8:
+                return next((n for n in names if drafted and n.casefold() == drafted[0].casefold()), names[0])
+            names.append(wanted)
+            return wanted
+
+        placed = [on(tile) for tile in tiles]
         below = {}
         for tab in names:
             row = conn.execute("""SELECT COALESCE(MAX(grid_y + grid_h), 0) AS bottom FROM pinned_chart
@@ -1600,9 +1592,8 @@ def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: lis
         last = conn.execute("SELECT COALESCE(MAX(position), 0) AS last FROM pinned_chart WHERE dashboard_id=? "
                             "AND user_id=?", (board_id, int(user_id))).fetchone()
         position = int(last["last"] or 0)
-        for tile in tiles:
+        for tile, tab in zip(tiles, placed):
             layout = tile.get("layout") or {}
-            tab = names[int(layout.get("tab") or 0)]
             position += 1
             conn.execute(
                 """INSERT INTO pinned_chart (user_id, account_id, title, question, sql_query, chart_type, db_config_id,

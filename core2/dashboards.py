@@ -1,16 +1,22 @@
-"""Dashboards a reader describes: "I need revenue, cost % and fills; revenue by month as a line".
+"""Dashboards a reader asks for in the chat: "create an executive dashboard", "a revenue dashboard", "I need
+revenue by month, top 10 formulas and fills by pharmacy".
 
 Recognised in code, before any plan is asked for. One AI call designs the tiles from the workspace's measures and
-fields (their names only: no member value, and the request as the AI may see it): one tile for each thing the
-request names, titled in the reader's own words, and a few more it did not ask for, offered as chips and never
-added. Each tile is then a question of its own, planned and answered as a new conversation would be, several at
-once, and the reader's card fills in as each one lands. A tile that cannot be built says why, and when the data has
-nothing that measures it, offers to define it. The draft (each tile's plan and its answer) is what the reader
-previews in the chat: they can rename it, take tiles out, add the ones offered, and save it as a new dashboard or
-onto one of theirs, as one version. Its tiles are drawn again from their plans, with no AI.
+fields (their names only: no member value, and the request as the AI may see it). Each tile is then a question of
+its own, planned and answered as a new conversation would be, several at once, while the chat says how many are
+ready. The tiles built are saved at once as a new dashboard of the reader's (gateway/core2_bridge.py), drawn again
+from their plans with no AI, and the chat says its name, its tabs and where it is. A tile that cannot be built
+says why, and when the data has nothing that measures it, offers to define it.
 
-Layout: the numbers in one row (at most six), a trend across the width (two side by side), breakdowns side by
-side, tables across the width, and at most 12 tiles on a tab (the rest on a second).
+Three kinds of request: a list of what the reader needs ("revenue by month, top 10 formulas and fills by
+pharmacy": those tiles, in that order), a subject ("a revenue dashboard": its headline numbers, trend,
+breakdowns and a top 10), or the whole business ("an executive dashboard": the headline figures of each main
+area). A design too thin for a subject or the whole business (one tile for "a revenue dashboard") is asked for
+again, once. A dashboard of several areas, or of more tiles than one page holds, is on named tabs: "Overview"
+first, then a tab per area ("Revenue", "Fills").
+
+Layout, on each tab: the numbers in one row (at most six), a trend across the width (two side by side),
+breakdowns side by side, tables across the width; at most 12 tiles on a tab, at most 16 on a dashboard.
 """
 
 from __future__ import annotations
@@ -26,14 +32,17 @@ from typing import Any, Callable
 log = logging.getLogger("core2.dashboards")
 
 MOST_TILES = 12           # on one tab
+MOST_ALL = 16             # on a dashboard: each tile is a planner call, and a workspace's AI has a rate a minute
+MOST_TABS = 6
+FEWEST = 3                # tiles a subject's or the whole business's dashboard has at least
 MOST_NUMBERS = 6          # in the row of numbers
 AT_ONCE = 4               # tiles built at the same time
-MOST_EXTRAS = 4           # tiles offered beside what was asked for
 GRID = 12                 # the dashboard's columns
 HEIGHT = {"number": 3, "trend": 10, "breakdown": 10, "table": 10}
 
 _ASKS = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:build|make|create|design|set up|give me|"
-                   r"i (?:want|need|would like))\s+(?:me\s+|us\s+)?(?:(?:a|an)\s+)?(?:new\s+)?"
+                   r"prepare|generate|produce|draft|put together|show me|get me|"
+                   r"i(?: want| need| would like|'d like|’d like))\s+(?:me\s+|us\s+)?(?:(?:a|an)\s+)?(?:new\s+)?"
                    r"(?P<before>(?:[\w&'-]+\s+){0,4}?)dashboards?\b(?P<about>.*)$", re.IGNORECASE)
 _DEMANDE = re.compile(r"^\s*(?:(?:peux|pourrais)-tu\s+|(?:pouvez|pourriez)-vous\s+)?(?:cr[ée]e[rz]?|construi(?:s|re|sez)|"
                       r"fai(?:s|re|tes)|pr[ée]pare[rz]?|je veux|j'aimerais|il me faut)(?:-moi|\s+moi)?\s+un\s+"
@@ -51,22 +60,32 @@ _POLITE = re.compile(r"[\s.?!]*(?:\b(?:please|thanks|thank you|merci|s'il (?:te|
                      re.IGNORECASE)
 
 RULES = """You design a dashboard for QueryBot from a reader's request. You never write SQL.
-Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"title": "...", "kind": "number|trend|breakdown|table", "question": "..."}], "extras": [<tiles in the same shape>]}.
-- tiles: what the request asks for, one tile for each thing it names, in its order, each titled in the reader's own
-  words ("I need revenue, cost % and fills": three number tiles titled "Revenue", "Cost %" and "Fills"). When the
-  request names only a subject ("a sales dashboard"), choose 4 to 8 tiles that show it: the headline numbers
-  first, then trends, then breakdowns, then at most two tables. At most 12 tiles.
-- extras: at most 4 more tiles that would help and that the request did not ask for. They are offered to the
-  reader as suggestions, never added.
+Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"title": "...", "kind": "number|trend|breakdown|table", "question": "...", "tab": "..."}]}.
+- The request is one of three kinds:
+  1. A list of what the reader needs ("revenue by month, top 10 formulas and fills by pharmacy", "I need revenue,
+     cost % and fills"): one tile for each thing it names, in its order, titled in the reader's own words, and
+     nothing else in tiles.
+  2. A subject ("a revenue dashboard", "shipping performance", "our fills in 2026", "a sales and margin
+     dashboard"): 6 to 10 tiles about that subject: its 2 to 4 headline numbers first, then its trend over time,
+     then its breakdowns by the main groupings of the catalog, then at most two tables (a top 10). Never fewer
+     than 4 tiles for a subject.
+  3. The whole business ("an executive dashboard", "an overview", "a KPI dashboard", "a CFO dashboard", or no
+     subject at all): the headline figures of each main area of the catalog (sales or revenue, volumes, costs,
+     operations), with a trend and one or two breakdowns for each area: 10 to 16 tiles.
+- tab: the tab the tile is on, in a word or two. A list of up to 12 tiles, or a subject's dashboard, is on one
+  tab, "Overview". A dashboard of several areas (the whole business), or of more than 12 tiles, puts the headline
+  numbers and the main trend on "Overview" and gives each area its own tab named for it ("Revenue", "Fills",
+  "Shipping"); at most 6 tabs and at most 16 tiles in all.
 - kind: number for one figure (one measure each: "revenue and cost" is two numbers), trend for a figure over
   time, breakdown for a figure by a grouping, table for a list or a ranking of rows.
 - Each question is a complete question a reader could ask on its own, in plain words, using the measure and field
   names of the catalog below ("Net amount by month for the last 12 months", "Top 10 customers by net amount this
-  year"). Never a member's name or a value: only names of measures, fields and periods.
+  year"), with the request's period when it names one. Never a member's name or a value: only names of
+  measures, fields and periods.
 - A title is what the tile shows, in a few words ("Net amount", "Net amount by month"), never a question.
 - When the request names something the catalog has not, still make its tile, titled in the reader's words and
   asking for exactly what they named: the reader is told it is missing and can define it.
-- Write the name, the titles and the questions in the language of the request.
+- Write the name, the titles, the tabs and the questions in the language of the request.
 """
 
 
@@ -89,10 +108,11 @@ class Tile:
     kind: str                       # number | trend | breakdown | table
     question: str
     plan: dict | None = None        # the plan its answer was given from: the tile is drawn again from it
-    payload: dict | None = None     # its answer, for the preview (never sent with its rows to the AI)
+    payload: dict | None = None     # its answer (never sent with its rows to the AI)
     error: str = ""                 # why it could not be built
     definable: bool = False         # it failed for want of a measure: the reader is offered to define it
-    layout: dict = field(default_factory=dict)   # grid_x, grid_y, grid_w, grid_h, tab
+    layout: dict = field(default_factory=dict)   # grid_x, grid_y, grid_w, grid_h, tab (its place in the tabs)
+    tab: str = ""                   # the tab the design put it on ("Overview", "Revenue")
 
 
 @dataclass
@@ -100,30 +120,53 @@ class Draft:
     name: str
     request: str
     tiles: list[Tile]
-    extras: list[Tile] = field(default_factory=list)     # offered as chips, never built unless the reader adds one
+    tabs: list[str] = field(default_factory=list)        # the tabs' names, in order; a tile's layout tab is a place here
 
 
 def design(model, request: str, complete: Callable[[str, str], str], *, scrub: Callable[[str], str] | None = None,
-           personal_shown: bool = False) -> tuple[str, list[Tile], list[Tile]]:
-    """The dashboard's name, its tiles' questions and the tiles offered beside them, from one AI call that sees
-    names, never values."""
+           personal_shown: bool = False) -> tuple[str, list[Tile]]:
+    """The dashboard's name and its tiles' questions, from one AI call that sees names, never values (two, when a
+    subject's or the whole business's design came back too thin)."""
     from core2.plan.catalog import catalog_text
 
     stable = RULES + "\n\n" + catalog_text(model, values_allowed=False, personal_shown=personal_shown)
     asked = scrub(request) if scrub else request
-    text = complete(stable, f"REQUEST: {asked or 'the main figures of this data'}")
+    tail = f"REQUEST: {asked or 'the main figures of this data (the whole business)'}"
+    text = complete(stable, tail)
+    data = _read(text)
+    tiles = _tiles(data.get("tiles"), MOST_ALL)
+    if len(tiles) < FEWEST and not _lists(asked):
+        # "A dashboard of our revenue" came back as one number: a subject's dashboard is never one tile.
+        again = _read(complete(stable, f"{tail}\n\nYOUR PREVIOUS ANSWER:\n{text}\n\nPROBLEM: {len(tiles)} tile(s) "
+                                       "is not a dashboard. The request names a subject or the whole business, not a "
+                                       "list of tiles: return 6 to 10 tiles for a subject (its headline numbers, its "
+                                       "trend, its breakdowns, a top 10), 10 to 16 for the whole business. "
+                                       "Return the corrected design as one JSON object."))
+        more = _tiles(again.get("tiles"), MOST_ALL)
+        if len(more) > len(tiles):
+            data, tiles = again, more
+    if not tiles:
+        raise DesignError("nothing in this data fits that dashboard")
+    return str(data.get("name") or "Dashboard")[:80], tiles
+
+
+def _read(text: str) -> dict[str, Any]:
     try:
         data = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", str(text).strip(), flags=re.MULTILINE))
     except ValueError:
         raise DesignError("the design could not be read") from None
     if not isinstance(data, dict):
         raise DesignError("the design could not be read")
-    tiles = _tiles(data.get("tiles"), MOST_TILES)
-    if not tiles:
-        raise DesignError("nothing in this data fits that dashboard")
-    asked = {t.question.casefold() for t in tiles}
-    extras = [t for t in _tiles(data.get("extras"), MOST_EXTRAS * 2) if t.question.casefold() not in asked]
-    return str(data.get("name") or "Dashboard")[:80], tiles, extras[:MOST_EXTRAS]
+    return data
+
+
+# "revenue, cost % and fills", "revenue by month and top 10 formulas": a request that lists what it needs.
+_LIST = re.compile(r",|;|\band\b.*\b(?:by|top|per)\b|\b(?:by|top|per)\b.*\band\b|\bet\b.*\bpar\b", re.IGNORECASE)
+
+
+def _lists(request: str) -> bool:
+    """Does the request list the tiles it needs, rather than name a subject?"""
+    return bool(_LIST.search(request or ""))
 
 
 def _tiles(items: Any, most: int) -> list[Tile]:
@@ -132,8 +175,10 @@ def _tiles(items: Any, most: int) -> list[Tile]:
         if not isinstance(item, dict) or not str(item.get("question") or "").strip():
             continue
         kind = str(item.get("kind") or "breakdown")
+        tab = " ".join(str(item.get("tab") or "").split())[:30]
         out.append(Tile(title=str(item.get("title") or item["question"]).strip()[:80],
-                        kind=kind if kind in HEIGHT else "breakdown", question=str(item["question"]).strip()))
+                        kind=kind if kind in HEIGHT else "breakdown", question=str(item["question"]).strip(),
+                        tab=tab))
     return out[:most]
 
 
@@ -144,14 +189,14 @@ class DesignError(ValueError):
 def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[[str], dict], *,
           scrub: Callable[[str], str] | None = None, personal_shown: bool = False,
           progress: Callable[[Draft], None] | None = None) -> Draft:
-    """The draft: designed by one AI call, each tile answered on its own (several at once), laid out.
+    """The dashboard: designed by one AI call, each tile answered on its own (several at once), laid out.
 
     ``answer(question)`` answers a question as a new conversation would (its own planner call, its own query).
     A tile that cannot be built says why; the others are built. ``progress(draft)`` is told the draft once it is
     designed and again as each tile lands, from the thread that built it, one call at a time."""
-    name, tiles, extras = design(model, request, complete, scrub=scrub, personal_shown=personal_shown)
-    draft = Draft(name=name, request=request, tiles=tiles, extras=extras)
-    lay_out(list(tiles))                           # where each tile goes, while they are built
+    name, tiles = design(model, request, complete, scrub=scrub, personal_shown=personal_shown)
+    draft = Draft(name=name, request=request, tiles=tiles)
+    draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
 
     def tell() -> None:
@@ -173,7 +218,7 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     for tile in tiles:
         if tile.error:
             tile.layout = {}
-    lay_out([t for t in tiles if not t.error])
+    draft.tabs = lay_out([t for t in tiles if not t.error])
     return draft
 
 
@@ -195,22 +240,32 @@ def answered(tile: Tile, answer: Callable[[str], dict]) -> Tile:
     return tile
 
 
-def relayout(kept_tiles: list[dict]) -> None:
-    """Places for a draft's kept tiles again, once one is taken out or added, in their order."""
-    tiles = [Tile(title=str(k.get("title") or ""), kind=k.get("kind") if k.get("kind") in HEIGHT else "breakdown",
-                  question="") for k in kept_tiles]
-    lay_out(list(tiles))
-    for k, t in zip(kept_tiles, tiles):
-        k["layout"] = dict(t.layout)
-
-
-def lay_out(tiles: list[Tile]) -> None:
-    """Grid places: the numbers in a row, a trend across (or two side by side), breakdowns side by side, tables
-    across; at most 12 tiles on a tab, the rest on the next."""
+def lay_out(tiles: list[Tile]) -> list[str]:
+    """Grid places, tab by tab: the numbers in a row, a trend across (or two side by side), breakdowns side by side,
+    tables across. The tabs are the design's, "Overview" first, at most six; a tile with none (or on a tab past
+    the sixth) goes on the first, and a tab of more than 12 tiles goes on over a second ("Revenue 2"). Each tile's
+    tab is set to the one it is on. Returns the tabs' names in order."""
     order = {"number": 0, "trend": 1, "breakdown": 2, "table": 3}
-    tiles.sort(key=lambda t: order.get(t.kind, 2))
-    for tab in range(0, len(tiles), MOST_TILES):
-        _tab(tiles[tab:tab + MOST_TILES], tab // MOST_TILES)
+    named: dict[str, str] = {}                      # the tab's name as compared, as written first
+    for t in tiles:
+        if t.tab:
+            named.setdefault(t.tab.casefold(), t.tab)
+    tabs = sorted(named.values(), key=lambda n: 0 if n.casefold() in _FIRST_TABS else 1)[:MOST_TABS] or ["Overview"]
+    on: dict[str, list[Tile]] = {}
+    for t in tiles:
+        on.setdefault(next((n for n in tabs if n.casefold() == t.tab.casefold()), tabs[0]), []).append(t)
+    names: list[str] = []
+    for tab in (n for n in tabs if n in on):
+        group = sorted(on[tab], key=lambda t: order.get(t.kind, 2))
+        for part in range(0, len(group), MOST_TILES):
+            names.append(tab if part == 0 else f"{tab} {part // MOST_TILES + 1}")
+            _tab(group[part:part + MOST_TILES], len(names) - 1)
+            for t in group[part:part + MOST_TILES]:
+                t.tab = names[-1]
+    return names or ["Overview"]
+
+
+_FIRST_TABS = {"overview", "summary", "headlines", "vue d'ensemble", "synthèse"}
 
 
 def _tab(tiles: list[Tile], tab: int) -> None:
@@ -241,75 +296,29 @@ def _tab(tiles: list[Tile], tab: int) -> None:
         y += HEIGHT["table"]
 
 
-def preview(draft: Draft) -> dict[str, Any]:
-    """The draft as the chat shows it: each tile's name, kind, place and a small view of its answer, or why it
-    failed, or that it is still being built; and the tiles offered beside it."""
-    out = [preview_tile(t, i) for i, t in enumerate(draft.tiles)]
-    return {"name": draft.name, "request": draft.request, "tiles": out,
-            "extras": [{"title": e.title, "kind": e.kind, "question": e.question} for e in draft.extras],
+def status(draft: Draft) -> dict[str, Any]:
+    """How far the dashboard is, as the chat says it while the tiles are built: never a tile's answer."""
+    return {"name": draft.name, "count": len(draft.tiles), "tabs": list(draft.tabs or ["Overview"]),
             "built": sum(1 for t in draft.tiles if t.payload is not None and not t.error),
             "failed": sum(1 for t in draft.tiles if t.error),
             "pending": sum(1 for t in draft.tiles if t.payload is None and not t.error)}
 
 
-def preview_tile(t: Tile, i: int) -> dict[str, Any]:
-    answer = (t.payload or {}).get("answer") or {}
-    kpi = (t.payload or {}).get("kpi") or {}
-    return {"id": i, "title": t.title, "kind": t.kind, "question": t.question,
-            "value": str(answer.get("short_value") or "") if kpi else "",
-            "headline": str(answer.get("headline") or ""), "error": t.error, "definable": t.definable,
-            "pending": t.payload is None and not t.error, "layout": t.layout,
-            "chart": _small(t.payload, t.kind) if t.payload else None}
-
-
-def _small(payload: dict, kind: str) -> dict | None:
-    """A tile's answer drawn small in the preview: a trend's latest points, a breakdown's first bars, a table's
-    first rows. Never all its rows."""
-    chart = payload.get("chart") or {}
-    data = payload.get("data") or {}
-    if payload.get("kpi") and not chart:
-        return None                                  # a number: its value says it
-    x = chart.get("x_key")
-    ys = [y for y in (chart.get("y_keys") or []) if isinstance(y, str)]
-    if kind == "table" or not (x and ys):
-        rows = data.get("rows") or []
-        columns = [str(c) for c in (data.get("headers") or [])][:3]
-        labels = data.get("header_labels") if isinstance(data.get("header_labels"), dict) else {}
-        formats = data.get("column_formats") if isinstance(data.get("column_formats"), dict) else {}
-        return {"chart_type": "table", "columns": [str(labels.get(c) or c) for c in columns],
-                "rows": [[_cell(r, c, i, formats.get(c)) for i, c in enumerate(columns)] for r in rows[:4]]}
-    rows = chart.get("rows") or []
-    taken = rows[-24:] if kind == "trend" else rows[:6]
-    return {"chart_type": "line" if kind == "trend" else "bar", "x_key": x, "y_key": ys[0],
-            "rows": [{"x": str(r.get(x) if isinstance(r, dict) else ""),
-                      "y": r.get(ys[0]) if isinstance(r, dict) and isinstance(r.get(ys[0]), (int, float)) else None}
-                     for r in taken]}
-
-
-def _cell(row: Any, column: str, at: int, format_: str | None) -> str:
-    from core2.answer.builder import fmt
-
-    value = row.get(column) if isinstance(row, dict) else (row[at] if isinstance(row, (list, tuple)) and
-                                                             at < len(row) else None)
-    if value is None:
-        return ""
-    if format_ and isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            return fmt(value, format_)[:40]
-        except Exception:  # noqa: BLE001 - a cell the preview cannot format is shown as it came
-            pass
-    return str(value)[:40]
+def not_built(draft: Draft) -> list[dict[str, Any]]:
+    """The tiles that could not be built, and why: the chat names them, and offers to define what nothing measures."""
+    return [{"title": t.title, "question": t.question, "error": t.error, "definable": t.definable}
+            for t in draft.tiles if t.error]
 
 
 def kept(tile: Tile) -> dict[str, Any]:
-    """A built tile as the draft keeps it on the server until it is saved: its plan (the tile is drawn again from
-    it, with no AI), its place, and how its answer was drawn. Never its rows."""
+    """A built tile as it is saved: its plan (the tile is drawn again from it, with no AI), its place and tab, and
+    how its answer was drawn. Never its rows."""
     payload = tile.payload or {}
     chart = payload.get("chart") or {}
     kpi = payload.get("kpi") or {}
     chart_type = "kpi" if kpi and tile.kind == "number" else str(chart.get("chart_type") or ("kpi" if kpi else "table"))
     return {"title": tile.title, "kind": tile.kind, "question": tile.question, "plan": tile.plan,
-            "layout": dict(tile.layout), "chart_type": chart_type,
+            "layout": dict(tile.layout), "tab": tile.tab, "chart_type": chart_type,
             "sql": str((payload.get("trust") or {}).get("sql") or ""),
             "display_config": {"core2_plan": tile.plan, "column_formats": chart.get("column_formats") or {},
                                "title": tile.title}}

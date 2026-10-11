@@ -322,9 +322,8 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     from core2 import dashboards
     from core2.plan import own_metric
 
-    about = dashboards.asked_for(question)
-    if about is not None:
-        return _described(question, about, services)     # "build me a dashboard of ...": recognised before planning
+    if dashboards.asked_for(question) is not None:
+        return _described(question, services)     # "build me a dashboard of ...": recognised before planning
     defined = own_metric.definition_in(question) if services.write_metric is not None else None
     made: Measure | None = None
     if defined is not None:
@@ -355,20 +354,22 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     return payload
 
 
-def _described(question: str, about: str, services: Services) -> dict[str, Any]:
-    """A dashboard the reader described: designed by one AI call over the workspace's names, each tile then
-    answered as a question of its own (a new conversation each), several at once. The draft's tiles, with their
-    plans, are for the server to keep (``draft_tiles``); the reader sees the preview."""
+def _described(question: str, services: Services) -> dict[str, Any]:
+    """A dashboard the reader asked for: designed by one AI call over the workspace's names (it reads the whole
+    request: "create a revenue dashboard" names a subject, where "revenue" alone reads as one tile), each tile then
+    answered as a question of its own (a new conversation each), several at once. The built tiles, with their
+    plans, are for the server to save as the reader's (``dashboard_tiles``); the chat is told how far it is while
+    they are built, never what they show."""
     from core2 import dashboards
 
     told = services.progress
     try:
-        draft = dashboards.build(services.model, about or question, services.complete,
+        draft = dashboards.build(services.model, question, services.complete,
                                  lambda asked: _answer_question(asked, services, Session()),
                                  scrub=services.scrub, personal_shown=services.scrub is not None,
                                  progress=None if told is None else lambda d: told(
                                      {"type": "dashboard_building", "engine": "core2", "question": question,
-                                      "draft": dashboards.preview(d)}))
+                                      "building": dashboards.status(d)}))
     except dashboards.DesignError as exc:
         return _frame(question, f"I could not design that dashboard: {exc}. Try naming what it should show, "
                                 "as \"a dashboard of net sales by store and month\".", kind="dashboard_refused")
@@ -376,8 +377,9 @@ def _described(question: str, about: str, services: Services) -> dict[str, Any]:
     if not built:
         return _frame(question, "I could not build any tile of that dashboard: " + "; ".join(
             sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
-    return {"type": "dashboard_draft", "engine": "core2", "question": question, "draft": dashboards.preview(draft),
-            "draft_name": draft.name, "draft_tiles": [dashboards.kept(t) for t in built]}
+    return {"type": "dashboard_built", "engine": "core2", "question": question, "name": draft.name,
+            "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
+            "not_built": dashboards.not_built(draft)}
 
 
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",

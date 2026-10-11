@@ -440,15 +440,6 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_source     ON dashboard_data_source(das
 CREATE INDEX IF NOT EXISTS idx_dashboard_cache_due  ON dashboard_source_cache(account_id, expires_at);
 CREATE INDEX IF NOT EXISTS idx_dashboard_version    ON dashboard_artifact_version(dashboard_id, version DESC);
 
--- A dashboard a reader described in the chat, before they save it: each tile's plan and place, never its rows.
-CREATE TABLE IF NOT EXISTS core2_dashboard_draft (
-    token       TEXT    PRIMARY KEY,
-    account_id  TEXT    NOT NULL,
-    user_id     INTEGER NOT NULL,
-    draft_json  TEXT    NOT NULL,
-    created_at  TEXT    DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_core2_dashboard_draft_owner ON core2_dashboard_draft(account_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_dashboard_subscription ON dashboard_subscription(account_id, user_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_query_log_account ON query_log(account_id);

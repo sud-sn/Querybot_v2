@@ -3503,5 +3503,3 @@ async def portal_suggestions_event(request: Request):
 
 # A reader's suggestions to the new core live in portal/core2_requests.py, registered on this router here.
 from portal import core2_requests as _core2_requests  # noqa: E402,F401
-# Dashboards a reader described in the chat: renamed, tiles taken out, saved (portal/core2_dashboards.py).
-from portal import core2_dashboards as _core2_dashboards  # noqa: E402,F401
