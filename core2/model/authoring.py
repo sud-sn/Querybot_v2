@@ -720,12 +720,14 @@ def editor_state(model: SemanticModel, m: Any | None) -> dict[str, Any]:
     """A metric as the editor shows it: its formula as text, conditions, names and behaviour."""
     if m is None:
         return {"key": "", "formula": "", "conditions": [], "name": "", "synonyms": [], "description": "",
-                "format": "number", "over_time": "", "default_date": "", "hidden": False, "table": ""}
+                "format": "number", "over_time": "", "default_date": "", "hidden": False, "table": "",
+                "better": "higher"}
     return {"key": m.key, "formula": to_text(model, m.expr),
             "conditions": [{"column": f.column, "op": f.op, "values": list(f.values)} for f in m.filters],
             "name": m.business_name, "synonyms": sorted({w for ws in m.synonyms.values() for w in ws}),
             "description": m.description, "format": m.format, "over_time": over_time(m.additivity, m.time_aggregation),
-            "default_date": m.default_date or "", "hidden": m.hidden, "table": m.table}
+            "default_date": m.default_date or "", "hidden": m.hidden, "table": m.table,
+            "better": m.better}
 
 
 def parts(model: SemanticModel, expr: MeasureExpr) -> list[dict[str, str]]:

@@ -234,7 +234,8 @@
         {% set change = chart.kpi.change %}
         {% if change and change.direction %}
         {% set _moved = (change.change if change.direction == 'flat' else (change.pct or change.change))|replace('+', '')|replace('-', '') %}
-        <div class="dash-kpi-change is-{{ change.direction }}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
+        {% set _good = change.good if change.good is defined else change.direction == 'up' %}
+        <div class="dash-kpi-change is-{{ change.direction }}{% if change.direction != 'flat' and _good is not none %} {{ 'is-good' if _good else 'is-bad' }}{% endif %}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
         {% endif %}
       </div>
       {% elif chart.table_rows %}

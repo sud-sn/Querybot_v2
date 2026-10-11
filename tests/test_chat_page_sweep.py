@@ -313,6 +313,9 @@ class TestNothingObviousWasLeftBehind:
             # Two already-translated values joined by a separator; the static
             # part is the separator.
             "visual · ·",
+            # Inline CSS placing a described dashboard's tile on the card's
+            # grid before its place is known, with its spans stripped.
+            "grid-column:span ;grid-row:span",
         }
         leftover = sorted(self._literals() - allowed)
         assert not leftover, leftover

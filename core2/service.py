@@ -69,6 +69,8 @@ class Services:
     split_units: bool = True                    # a quantity in several units is answered per unit (issue E4)
     # The workspace's AI writing a metric from a reader's words ("X = ..." in the chat); None: not offered.
     write_metric: Callable[[str], Complete] | None = None
+    # A described dashboard's card as its tiles land (from the threads that build them); None: shown when done.
+    progress: Callable[[dict[str, Any]], None] | None = None
 
 
 @dataclass
@@ -317,8 +319,12 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     workspace's AI and kept in this chat (core2.plan.own_metric); the rest of the question is answered with it,
     and the frame carries the metric so the reader sees how it was counted and can ask their admin to keep it.
     """
+    from core2 import dashboards
     from core2.plan import own_metric
 
+    about = dashboards.asked_for(question)
+    if about is not None:
+        return _described(question, about, services)     # "build me a dashboard of ...": recognised before planning
     defined = own_metric.definition_in(question) if services.write_metric is not None else None
     made: Measure | None = None
     if defined is not None:
@@ -347,6 +353,31 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     if mine:
         payload["own_metrics_used"] = mine
     return payload
+
+
+def _described(question: str, about: str, services: Services) -> dict[str, Any]:
+    """A dashboard the reader described: designed by one AI call over the workspace's names, each tile then
+    answered as a question of its own (a new conversation each), several at once. The draft's tiles, with their
+    plans, are for the server to keep (``draft_tiles``); the reader sees the preview."""
+    from core2 import dashboards
+
+    told = services.progress
+    try:
+        draft = dashboards.build(services.model, about or question, services.complete,
+                                 lambda asked: _answer_question(asked, services, Session()),
+                                 scrub=services.scrub, personal_shown=services.scrub is not None,
+                                 progress=None if told is None else lambda d: told(
+                                     {"type": "dashboard_building", "engine": "core2", "question": question,
+                                      "draft": dashboards.preview(d)}))
+    except dashboards.DesignError as exc:
+        return _frame(question, f"I could not design that dashboard: {exc}. Try naming what it should show, "
+                                "as \"a dashboard of net sales by store and month\".", kind="dashboard_refused")
+    built = [t for t in draft.tiles if not t.error]
+    if not built:
+        return _frame(question, "I could not build any tile of that dashboard: " + "; ".join(
+            sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
+    return {"type": "dashboard_draft", "engine": "core2", "question": question, "draft": dashboards.preview(draft),
+            "draft_name": draft.name, "draft_tiles": [dashboards.kept(t) for t in built]}
 
 
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
@@ -703,8 +734,10 @@ def _against_before(question: str, plan: Plan, services: Services, ctx: Context,
     prior = next((c for c in compiled.columns if c.role == "prior"), None)
     names = [n.casefold() for n in result.columns]
     if kpi is not None and prior is not None and len(result.rows) == 1 and prior.name.casefold() in names:
+        measure = compared.measures[0].measure if compared.measures else None
         change = against(kpi.get("value"), result.rows[0][names.index(prior.name.casefold())], prior.format,
-                         _period_badge(compared.compare))
+                         _period_badge(compared.compare),
+                         better=measure.better if measure is not None else "higher")
         if change is not None:
             kpi["change"] = change
     return f"{said[:1].upper()}{said[1:]}, the period before."
@@ -1192,11 +1225,14 @@ def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, q
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
-                  question_id: str = "") -> dict[str, Any]:
-    """The new core's answer in the web portal (compare mode, or core2 mode)."""
+                  question_id: str = "", progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    """The new core's answer in the web portal (compare mode, or core2 mode). ``progress`` is shown a described
+    dashboard's card as its tiles land."""
     services, refused = _portal_services(account_id, question, portal_user, question_id)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
+    if progress is not None:
+        services = replace(services, progress=progress)
     payload = answer_question(question, services, _session(session_key), question_id=question_id)
     if getattr(services.warehouse, "released", False):
         # People's data went out as stored, to a cleared reader: kept with the answer, so a reopened thread

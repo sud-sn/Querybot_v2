@@ -614,6 +614,8 @@ body:has(.chat-page) .main { background: var(--bg); }
 .kpi-exact { font-size: var(--font-xs); color: var(--text-muted); margin-bottom: 2px; overflow-wrap: anywhere; }
 .kpi-note { font-size: var(--font-sm); color: var(--text-muted); }
 .kpi-change { font-size: var(--font-sm); color: var(--text-secondary); font-weight: var(--weight-semibold); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-change.is-good { color: var(--success); }
+.kpi-change.is-bad { color: var(--danger); }
 .kpi-arrow { font-size: .8em; margin-right: 4px; }
 .kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); }
 .kpi-spark { display: block; width: 100%; height: 32px; margin: 8px 0 2px; overflow: visible; }
@@ -685,6 +687,47 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-next .follow-up-chip.is-setting { border-style: dashed; }
 .answer-next .follow-up-chip.is-setting::before { content: "\21C4"; }
 .answer-card .answer-definition { margin: 0; font-size: var(--font-sm); line-height: 1.5; color: var(--text-muted); text-wrap: pretty; }
+/* A described dashboard's draft, as it will be laid out: 12 columns, each tile drawn small; then the tiles that
+   could not be built, the ones offered, and where to save it. */
+.dash-draft .dash-draft-name { font-size: var(--font-lg); font-weight: var(--weight-semibold); max-width: 100%; }
+.dash-draft-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 13px; gap: 6px; }
+.dash-draft-tile { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow: hidden; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.dash-draft-tile.is-pending { border-style: dashed; background: var(--surface-2); }
+.dash-draft.is-building .dash-draft-tile.is-pending .dash-draft-said { animation: qb-draft-wait 1.4s ease-in-out infinite; }
+@keyframes qb-draft-wait { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .dash-draft.is-building .dash-draft-tile.is-pending .dash-draft-said { animation: none; } }
+.dash-draft-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dash-draft-head .btn { margin-left: auto; margin-right: -4px; }
+.dash-draft-kind { color: var(--text-muted); display: inline-flex; flex: none; }
+.dash-draft-title { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-soft); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-draft-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
+.dash-draft-value { font-size: var(--font-md); font-weight: var(--weight-bold); color: var(--text-strong); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-draft-said { font-size: var(--font-xs); color: var(--text-muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.dash-draft-line { width: 100%; height: 100%; min-height: 40px; color: var(--primary); }
+.dash-draft-bars { display: grid; gap: 3px; }
+.dash-draft-bar { display: grid; grid-template-columns: minmax(0, 40%) minmax(0, 1fr); align-items: center; gap: 6px; font-size: var(--font-2xs); }
+.dash-draft-bar-label { color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-draft-bar-track { display: block; height: 8px; }
+.dash-draft-bar-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--primary); }
+.dash-draft-bar-fill.is-negative { background: var(--text-muted); }
+.dash-draft-table { width: 100%; border-collapse: collapse; font-size: var(--font-2xs); table-layout: fixed; }
+.dash-draft-table th, .dash-draft-table td { text-align: left; padding: 2px 4px; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-draft-table th { color: var(--text-muted); font-weight: var(--weight-semibold); }
+.dash-draft-tab { margin: 6px 0 2px; font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.dash-draft-failed { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--font-sm); }
+.dash-draft-failed li { padding: 6px 8px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--text-muted); }
+.dash-draft-failed .dash-draft-title { font-size: var(--font-sm); white-space: normal; }
+.dash-draft-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dash-draft-extras-label { font-size: var(--font-xs); color: var(--text-muted); }
+.dash-draft-extras .follow-up-chip.is-busy { opacity: .6; cursor: progress; }
+.dash-draft-save { flex-wrap: wrap; gap: 8px; }
+.dash-draft-to { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-sm); color: var(--text-secondary); }
+@media (max-width: 560px) { .dash-draft-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .dash-draft-grid .dash-draft-tile { grid-column: span 6 !important; grid-row: auto !important; min-height: 64px; }
+  .dash-draft-grid .dash-draft-tile.is-number { grid-column: span 3 !important; } }
 .answer-next .follow-up-chip:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
 .answer-card .feedback-panel { margin: 0; }
 .answer-card .rc-panel { margin: 0; }
@@ -3039,6 +3082,207 @@ function appendDashboardEvent(msg){
   scrollBottom();
 }
 
+// A dashboard the reader described: its card shows the dashboard as it will be laid out (the numbers in a row, trends across, breakdowns side by
+// side, tables across), each tile drawn small: filled in as each tile lands, then renamed, tiles taken out or
+// the offered ones added, and saved. dashboardDraftHtml() is pure -- the card's state in, its markup out -- so a
+// test runs it as the page does; appendDashboardDraft() keeps one card per request and wires its buttons.
+// The draft and its plans stay on the server behind msg.token (core2/dashboards.py).
+const _DRAFT_ICONS = {number: 'hash', trend: 'trending-up', breakdown: 'bar-chart', table: 'table'};
+const _DRAFT_DEFAULT = {number: [3, 3], trend: [12, 10], breakdown: [6, 10], table: [12, 10]};
+
+// A tile drawn small: a number as itself, a trend as a line, a breakdown as its first bars, a table as its first
+// rows. Never a colour alone: the tile's title names what is drawn, and the line or bars carry its headline.
+function _draftDrawing(tile) {
+  const chart = tile.chart;
+  if (tile.kind === 'number' || !chart) {
+    return tile.value ? `<span class="dash-draft-value">${escHtml(tile.value)}</span>`
+                      : `<span class="dash-draft-said">${escHtml(tile.headline || '')}</span>`;
+  }
+  if (chart.chart_type === 'table') {
+    const columns = Array.isArray(chart.columns) ? chart.columns : [];
+    const rows = Array.isArray(chart.rows) ? chart.rows : [];
+    return `<table class="dash-draft-table"><thead><tr>${columns.map(c => `<th scope="col">${escHtml(c)}</th>`).join('')}</tr></thead>`
+      + `<tbody>${rows.map(r => `<tr>${(Array.isArray(r) ? r : []).map(v => `<td>${escHtml(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  const points = (Array.isArray(chart.rows) ? chart.rows : []).filter(r => r && typeof r.y === 'number' && isFinite(r.y));
+  if (!points.length) return `<span class="dash-draft-said">${escHtml(tile.headline || '')}</span>`;
+  if (chart.chart_type === 'line') {
+    const ys = points.map(p => p.y);
+    const low = Math.min.apply(null, ys), high = Math.max.apply(null, ys);
+    const span = high - low || 1;
+    const path = points.map((p, i) => `${points.length > 1 ? (i / (points.length - 1) * 100).toFixed(2) : 50},${(30 - (p.y - low) / span * 28).toFixed(2)}`).join(' ');
+    return `<svg class="qb-graphic dash-draft-line" viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="${escHtml(tile.headline || tile.title || '')}">`
+      + `<polyline points="${path}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+  const most = Math.max.apply(null, points.map(p => Math.abs(p.y))) || 1;
+  return `<div class="dash-draft-bars" role="img" aria-label="${escHtml(tile.headline || tile.title || '')}">`
+    + points.map(p => `<div class="dash-draft-bar"><span class="dash-draft-bar-label">${escHtml(p.x)}</span>`
+      + `<span class="dash-draft-bar-track"><span class="dash-draft-bar-fill${p.y < 0 ? ' is-negative' : ''}" style="width:${Math.max(2, Math.round(Math.abs(p.y) / most * 100))}%"></span></span></div>`).join('')
+    + `</div>`;
+}
+
+function _draftPlace(tile) {
+  const layout = tile.layout || {};
+  const size = _DRAFT_DEFAULT[tile.kind] || _DRAFT_DEFAULT.breakdown;
+  const x = Number.isFinite(Number(layout.grid_x)) ? Number(layout.grid_x) : null;
+  const y = Number.isFinite(Number(layout.grid_y)) ? Number(layout.grid_y) : null;
+  const width = Number(layout.grid_w) || size[0], height = Number(layout.grid_h) || size[1];
+  return (x === null || y === null) ? `grid-column:span ${width};grid-row:span ${height}`
+    : `grid-column:${x + 1} / span ${width};grid-row:${y + 1} / span ${height}`;
+}
+
+function dashboardDraftHtml(msg) {
+  const draft = msg.draft || {};
+  const tiles = Array.isArray(draft.tiles) ? draft.tiles : [];
+  const building = msg.type === 'dashboard_building';
+  const editable = !building && !!draft.saveable && !msg.saved;
+  let slot = 0;
+  const tabs = {};
+  const failed = [];
+  tiles.forEach(tile => {
+    if (tile.error) { failed.push(tile); return; }
+    const kind = escHtml(t('ui.chat.dashdraft.kind.' + (tile.kind || 'breakdown')));
+    const head = `<div class="dash-draft-head"><span class="dash-draft-kind" title="${kind}">${qbIcon(_DRAFT_ICONS[tile.kind] || 'bar-chart', 14)}</span>`
+      + `<span class="dash-draft-title">${escHtml(tile.title)}</span>`;
+    let html;
+    if (tile.pending) {
+      html = `<div class="dash-draft-tile is-pending is-${escHtml(tile.kind || 'breakdown')}" style="${_draftPlace(tile)}">${head}</div>`
+        + `<span class="dash-draft-said">${escHtml(t('ui.chat.dashdraft.pending'))}</span></div>`;
+    } else {
+      const here = slot++;
+      const remove = editable ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-draft-remove="${here}" aria-label="${escHtml(t('ui.chat.dashdraft.remove', {title: tile.title}))}" title="${escHtml(t('ui.chat.dashdraft.remove', {title: tile.title}))}">${qbIcon('x', 14)}</button>` : '';
+      html = `<div class="dash-draft-tile is-${escHtml(tile.kind || 'breakdown')}" data-slot="${here}" style="${_draftPlace(tile)}">${head}${remove}</div>`
+        + `<div class="dash-draft-body">${_draftDrawing(tile)}</div></div>`;
+    }
+    const tab = Number((tile.layout || {}).tab || 0);
+    (tabs[tab] = tabs[tab] || []).push(html);
+  });
+  const tabKeys = Object.keys(tabs).map(Number).sort((a, b) => a - b);
+  const grids = tabKeys.map(k => (tabKeys.length > 1 ? `<p class="dash-draft-tab">${escHtml(t('ui.chat.dashdraft.tab', {n: String(k + 1)}))}</p>` : '')
+    + `<div class="dash-draft-grid">${tabs[k].join('')}</div>`).join('');
+  const notBuilt = failed.length ? `<ul class="dash-draft-failed" aria-label="${escHtml(t('ui.chat.dashdraft.not_built'))}">`
+    + failed.map(tile => `<li><span class="dash-draft-title">${escHtml(tile.title)}</span> <span class="dash-draft-error">${escHtml(tile.error)}</span>`
+      + (tile.definable && !building ? ` <button type="button" class="btn btn-ghost btn-sm" data-draft-define="${escHtml(tile.title)}">${qbIcon('plus', 14)}${escHtml(t('ui.chat.dashdraft.define'))}</button>` : '')
+      + `</li>`).join('') + `</ul>` : '';
+  const extras = (Array.isArray(draft.extras) ? draft.extras : []).filter(e => e && e.title);
+  const offered = editable && extras.length ? `<div class="answer-next dash-draft-extras"><span class="dash-draft-extras-label">${escHtml(t('ui.chat.dashdraft.extras'))}</span>`
+    + extras.map((e, i) => `<button type="button" class="follow-up-chip" data-draft-add="${i}" title="${escHtml(e.question || '')}">${qbIcon('plus', 13)}${escHtml(e.title)}</button>`).join('') + `</div>` : '';
+  const count = tiles.length;
+  const done = tiles.filter(tile => !tile.pending).length;
+  const status = building ? t('ui.chat.dashdraft.building', {done: String(done), count: String(count)})
+    : `${t('ui.chat.dashdraft.built', {count: String(draft.built || 0)})}${failed.length ? ' · ' + t('ui.chat.dashdraft.failed', {count: String(failed.length)}) : ''}`;
+  const boards = Array.isArray(msg.dashboards) ? msg.dashboards : [];
+  const saveHtml = msg.saved
+    ? `<div class="answer-actions dash-draft-save"><a class="btn btn-secondary btn-sm" href="${escHtml(msg.saved)}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashdraft.open'))}</a></div>`
+    : editable
+      ? `<div class="answer-actions dash-draft-save"><label class="dash-draft-to">${escHtml(t('ui.chat.dashdraft.save_to'))}`
+        + `<select class="form-input form-input-sm" data-draft-target><option value="new">${escHtml(t('ui.chat.dashdraft.new'))}</option>`
+        + boards.map(b => `<option value="${escHtml(String(b.id))}">${escHtml(b.name)}</option>`).join('') + `</select></label>`
+        + `<button type="button" class="btn btn-primary btn-sm" data-draft-save>${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashdraft.save'))}</button></div>`
+      : '';
+  return `<article class="answer-card dash-draft${building ? ' is-building' : ''}" aria-label="${escHtml(t('ui.chat.dashdraft.kicker'))}" aria-busy="${building ? 'true' : 'false'}" data-token="${escHtml(msg.token || '')}">`
+    + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashdraft.kicker'))}</span>`
+    + (editable ? `<input type="text" class="form-input dash-draft-name" maxlength="80" value="${escHtml(draft.name || '')}" aria-label="${escHtml(t('ui.chat.dashdraft.name'))}">`
+                : `<p class="answer-headline is-lead">${escHtml(draft.name || '')}</p>`)
+    + `<p class="answer-definition" role="status">${escHtml(status)}</p>`
+    + grids + notBuilt + offered + saveHtml + `</article>`;
+}
+
+function _draftHolder(msg) {
+  const key = String(msg.question_id || '');
+  if (!key) return null;
+  return Array.from(thread().querySelectorAll('[data-draft-for]')).find(el => el.getAttribute('data-draft-for') === key) || null;
+}
+
+function appendDashboardDraft(msg) {
+  hideWelcome();
+  let holder = _draftHolder(msg);
+  // A late card from a tile landing never covers the finished one.
+  if (holder && holder._draft && holder._draft.type === 'dashboard_draft' && msg.type === 'dashboard_building') return;
+  if (!holder) {
+    holder = document.createElement('div');
+    holder.className = 'msg msg-bot';
+    if (msg.question_id) holder.setAttribute('data-draft-for', String(msg.question_id));
+    thread().appendChild(holder);
+  }
+  holder._draft = msg;
+  _paintDraft(holder);
+  if (msg.type === 'dashboard_draft' && msg.token && !holder._wired) _wireDraft(holder);
+  scrollBottom();
+}
+
+function _paintDraft(holder) {
+  holder.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div>${dashboardDraftHtml(holder._draft)}</div>`;
+}
+
+function _wireDraft(holder) {
+  holder._wired = true;
+  const msg = () => holder._draft;
+  const post = (path, body) => fetch(`/portal/api/core2/dashboard-draft/${encodeURIComponent(msg().token)}/${path}`, {
+    method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+    .then(r => r.json()).catch(() => ({ok: false, error: t('ui.chat.dashdraft.unreachable')}));
+  const warn = r => { if (window.qbToast) window.qbToast.warning((r && r.error) || ''); };
+  const built = () => (msg().draft.tiles || []).filter(tile => !tile.error && !tile.pending);
+  const placed = layouts => { built().forEach((tile, i) => { if (layouts && layouts[i]) tile.layout = layouts[i]; }); };
+  holder.addEventListener('change', e => {
+    const name = e.target.closest('.dash-draft-name');
+    if (!name) return;
+    post('rename', {name: name.value}).then(r => { if (!r.ok) { warn(r); return; } msg().draft.name = r.name; });
+  });
+  holder.addEventListener('click', e => {
+    const remove = e.target.closest('[data-draft-remove]');
+    if (remove) {
+      const slot = Number(remove.getAttribute('data-draft-remove'));
+      remove.disabled = true;
+      post('remove', {tile: slot}).then(r => {
+        if (!r.ok) { remove.disabled = false; warn(r); return; }
+        const gone = built()[slot];
+        msg().draft.tiles = msg().draft.tiles.filter(tile => tile !== gone);
+        msg().draft.built = Math.max(0, Number(msg().draft.built || 0) - 1);
+        placed(r.layouts);
+        _paintDraft(holder);
+      });
+      return;
+    }
+    const add = e.target.closest('[data-draft-add]');
+    if (add) {
+      add.disabled = true;
+      add.classList.add('is-busy');
+      post('add', {extra: Number(add.getAttribute('data-draft-add'))}).then(r => {
+        if (!r.ok) { add.disabled = false; add.classList.remove('is-busy'); warn(r); return; }
+        msg().draft.tiles.push(r.tile);
+        msg().draft.built = Number(msg().draft.built || 0) + 1;
+        msg().draft.extras = r.extras || [];
+        placed(r.layouts);
+        _paintDraft(holder);
+      });
+      return;
+    }
+    const define = e.target.closest('[data-draft-define]');
+    if (define) {
+      // Through the chat's own metric request: "<name> = how it is counted", then ask an admin to keep it.
+      const input = document.getElementById('input');
+      if (input) { input.value = define.getAttribute('data-draft-define') + ' = '; input.focus(); }
+      return;
+    }
+    const save = e.target.closest('[data-draft-save]');
+    if (save) {
+      save.disabled = true;
+      const target = holder.querySelector('[data-draft-target]');
+      const name = holder.querySelector('.dash-draft-name');
+      post('save', {dashboard_id: target ? target.value : 'new', name: name ? name.value : '', thread_id: String(window.QB_THREAD_ID || 'default')}).then(r => {
+        if (!r.ok) { save.disabled = false; warn(r); return; }
+        const done = t('ui.chat.dashdraft.saved', {name: r.dashboard.name, count: String(r.tiles)});
+        if (window.qbToast) window.qbToast.notify({body: done, tone: 'success', duration: 7000,
+                                                   action: {label: t('ui.chat.dashdraft.open'), href: r.dashboard.url}});
+        msg().draft.name = r.dashboard.name;
+        msg().saved = r.dashboard.url;
+        _paintDraft(holder);
+      });
+    }
+  });
+}
+
 // Registry of active inline chat panels keyed by rcId
 const _rcPanels = {};
 
@@ -3140,14 +3384,16 @@ function _answerTilesHtml(tiles) {
     + (tile.note ? `<div class="kpi-note">${escHtml(tile.note)}</div>` : '')
     + `</div>`).join('')}</div>`;
 }
-// Against the period before: an arrow and a sign carry the direction, never a colour alone -- and no green or
-// red, since up is good for sales and bad for costs. The amount and the earlier value are in its tooltip.
+// Against the period before: an arrow and a sign carry the direction, never a colour alone. Green or red only
+// when the metric says which way is good news (a rising cost is bad); plain ink when it says neither, or an
+// older answer does not say. The amount and the earlier value are in its tooltip.
 function _kpiChangeHtml(change) {
   if (!change || !change.direction) return '';
   const arrow = {up: '▲', down: '▼'}[change.direction] || '→';
   const main = change.direction === 'flat' ? change.change : (change.pct || change.change);
   const tip = t('ui.kpi.was', {change: change.change, period: change.vs, before: change.before});
-  return `<div class="kpi-change" title="${escHtml(tip)}"><span class="kpi-arrow" aria-hidden="true">${arrow}</span>`
+  const news = change.direction !== 'flat' && typeof change.good === 'boolean' ? (change.good ? ' is-good' : ' is-bad') : '';
+  return `<div class="kpi-change${news}" title="${escHtml(tip)}"><span class="kpi-arrow" aria-hidden="true">${arrow}</span>`
     + `${escHtml(main)} <span class="kpi-vs">${escHtml(t('ui.kpi.vs', {period: change.vs}))}</span></div>`;
 }
 // The periods up to this one, as a line: its last segment dashed while that period is not over.
@@ -4597,6 +4843,13 @@ function connect(){
       refreshQueryLimitStatus({toast:true});
       window.dispatchEvent(new CustomEvent('qb-query-success'));
       return; // prevent falling through to setProcessing(false) in 'typing' event
+    } else if (msg.type === 'dashboard_building') {
+      appendDashboardDraft(msg);          // the card fills in as each tile lands; the turn is still working
+    } else if (msg.type === 'dashboard_draft') {
+      finishAnalysisAction(msg);
+      _markActiveOutbound('complete');
+      setAgentRunState('completed', msg);
+      appendDashboardDraft(msg);
     } else if (msg.type === 'assistant_dashboard') {
       finishAnalysisAction(msg);
       _markActiveOutbound('complete');

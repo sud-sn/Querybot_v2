@@ -211,6 +211,15 @@
         <div class="me-f"><label for="me-date">Default date</label><select id="me-date" class="form-input"></select>
           <p class="me-help">“By ship date” in a question still works.</p></div>
       </div>
+      <div class="me-three">
+        <div class="me-f"><label for="me-better">Good news is</label>
+          <select id="me-better" class="form-input">
+            <option value="higher">Higher is better</option>
+            <option value="lower">Lower is better</option>
+            <option value="neither">Neither</option>
+          </select>
+          <p class="me-help">How a change is coloured on dashboards and in the chat: a rising cost shows red.</p></div>
+      </div>
     </div>
   </section>
 
@@ -479,7 +488,7 @@
     return {key: S.key, formula: formula.value, conditions: readConds(), name: $('me-name').value,
             synonyms: $('me-syn').value.split(',').map(function (w) { return w.trim(); }).filter(Boolean),
             description: $('me-desc').value, format: $('me-format').value, over_time: $('me-time').value,
-            default_date: $('me-date').value, draft: !!asDraft};
+            default_date: $('me-date').value, better: $('me-better').value, draft: !!asDraft};
   }
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function dayName(d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? (+m[3]) + ' ' + MONTHS[+m[2] - 1] : d; }
@@ -602,6 +611,7 @@
   options($('me-format'), Object.keys(E.formats).map(function (k) { return [k, E.formats[k]]; }), S.format);
   options($('me-time'), [['', 'Decided from the formula']].concat(Object.keys(E.over_time).map(function (k) { return [k, E.over_time[k]]; })), S.over_time);
   dates(E.dates[S.table] || []);
+  $('me-better').value = S.better || 'higher';
   formula.value = S.formula; $('me-name').value = S.name; $('me-syn').value = S.synonyms.join(', '); $('me-desc').value = S.description;
   paintConds(); paintBlocks(); scheduleCheck();
   tab(S.formula ? 'blocks' : 'formula');

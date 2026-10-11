@@ -1058,7 +1058,7 @@ def _kpi(logical: Logical, cols: _Columns, raw: list[dict], formats: dict[str, s
     return kpi
 
 
-def against(now: Any, then: Any, format_: str, before: str) -> dict | None:
+def against(now: Any, then: Any, format_: str, before: str, *, better: str = "higher") -> dict | None:
     """A KPI against the period before, as its tile says it: "▲ +4.0% vs March 2026" (the amount, "+$1,200.00",
     and the earlier value beside it). A percentage moves by points, never by a percent of itself."""
     a, b = _number(now), _number(then)
@@ -1070,8 +1070,11 @@ def against(now: Any, then: Any, format_: str, before: str) -> dict | None:
     if (f"{abs(by):,.1f}" == "0.0") if points else _moved(by, None, format_, None) == "unchanged":
         return {"direction": "flat", "change": "unchanged", "pct": "", "vs": before, "before": was}
     ratio = by / abs(b) if b and not points else None
+    # Whether the move is good news: a rise, unless lower is better for the metric (costs, days to deliver);
+    # neither, for one where no way is better.
     return {"direction": "up" if by > 0 else "down", "change": f"{by:+,.1f} pts" if points else _signed(by, format_),
-            "pct": f"{ratio * 100:+.1f}%" if ratio is not None else "", "vs": before, "before": was}
+            "pct": f"{ratio * 100:+.1f}%" if ratio is not None else "", "vs": before, "before": was,
+            "good": None if better == "neither" else (by > 0) == (better != "lower")}
 
 
 def sparkline(values: list[float | None], *, partial: bool = False, width: int = 120,
@@ -1352,7 +1355,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         if said:
             warnings.append(said)
     facets: list[list[str]] = []
-    if len(ys) > 1 and kind == "bar" and compare is None:
+    if len(ys) > 1 and kind in ("bar", "line") and compare is None:     # a trend in two units: a panel each
         by_unit: dict[str, list[str]] = {}
         for y in ys:
             by_unit.setdefault(str(roles[y]["format"]), []).append(y)

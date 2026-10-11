@@ -291,8 +291,10 @@
 .dash-kpi-change { display: flex; align-items: baseline; gap: 4px; font-size: var(--font-sm); color: var(--text-muted); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .dash-kpi-delta { display: inline-flex; align-items: baseline; gap: 4px; font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
-.dash-kpi-change.is-up .dash-kpi-delta { color: var(--success); }
-.dash-kpi-change.is-down .dash-kpi-delta { color: var(--danger); }
+/* Good news in green, bad in red: a rise, unless lower is better for the metric (a cost, days to deliver); in
+   plain ink when neither way is better. */
+.dash-kpi-change.is-good .dash-kpi-delta { color: var(--success); }
+.dash-kpi-change.is-bad .dash-kpi-delta { color: var(--danger); }
 .dash-kpi-change.is-flat .dash-kpi-delta { color: var(--text-muted); }
 .dash-kpi-arrow { font-size: .85em; }
 .dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); overflow: hidden; text-overflow: ellipsis; }

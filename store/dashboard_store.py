@@ -1527,3 +1527,96 @@ def rollback_dashboard(
             )
         _snapshot_locked(conn, dashboard_id, user_id, account_id, f"Rolled back to version {int(target_version)}")
     return get_dashboard(dashboard_id, user_id, account_id)
+
+
+
+# ── Dashboards a reader described (core2/dashboards.py) ──────────────────────
+
+DRAFT_DAYS = 7          # a draft not saved within a week is let go
+
+
+def save_dashboard_draft(account_id: str, user_id: int, draft: dict) -> str:
+    """Keep a described dashboard's draft for its reader, behind a token only they can use."""
+    import secrets
+
+    token = secrets.token_urlsafe(18)
+    with get_db() as conn:
+        conn.execute("DELETE FROM core2_dashboard_draft WHERE created_at < datetime('now', ?)", (f"-{DRAFT_DAYS} days",))
+        conn.execute("INSERT INTO core2_dashboard_draft (token, account_id, user_id, draft_json) VALUES (?, ?, ?, ?)",
+                     (token, account_id, int(user_id), _json(draft)))
+    return token
+
+
+def get_dashboard_draft(token: str, account_id: str, user_id: int) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT draft_json FROM core2_dashboard_draft WHERE token=? AND account_id=? AND user_id=?",
+                           (str(token or ""), account_id, int(user_id))).fetchone()
+    return json.loads(row["draft_json"]) if row else None
+
+
+def update_dashboard_draft(token: str, account_id: str, user_id: int, draft: dict) -> bool:
+    with get_db() as conn:
+        cur = conn.execute("UPDATE core2_dashboard_draft SET draft_json=? WHERE token=? AND account_id=? AND user_id=?",
+                           (_json(draft), str(token or ""), account_id, int(user_id)))
+    return cur.rowcount > 0
+
+
+def delete_dashboard_draft(token: str, account_id: str, user_id: int) -> None:
+    with get_db() as conn:
+        conn.execute("DELETE FROM core2_dashboard_draft WHERE token=? AND account_id=? AND user_id=?",
+                     (str(token or ""), account_id, int(user_id)))
+
+
+def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: list[dict], db_config_id: int | None,
+                         dashboard_id: int | None = None, thread_id: str = "default") -> dict | None:
+    """A described dashboard saved as one version ("Built from your request"): a new dashboard, or one of the
+    reader's own with the tiles added below what it has. Each tile keeps its plan, its title and its place."""
+    with get_db() as conn:
+        if dashboard_id:
+            board = conn.execute("SELECT * FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+                                 (int(dashboard_id), int(user_id), account_id)).fetchone()
+            if not board:
+                return None
+            board_id = int(board["id"])
+            tabs = json.loads(board["tabs_json"] or '["Overview"]') or ["Overview"]
+        else:
+            cur = conn.execute(
+                """INSERT INTO dashboard_artifact (account_id, user_id, thread_id, name, description, visibility,
+                                                   grid_scale) VALUES (?, ?, ?, ?, ?, 'personal', ?)""",
+                (account_id, int(user_id), str(thread_id or "default")[:80], _clean_name(name),
+                 "Built from your request", GRID_SCALE))
+            board_id, tabs = int(cur.lastrowid), ["Overview"]
+        names = list(tabs)
+        for tile in tiles:
+            index = int((tile.get("layout") or {}).get("tab") or 0)
+            while len(names) <= index:
+                names.append(f"{names[0]} {len(names) + 1}")
+        below = {}
+        for tab in names:
+            row = conn.execute("""SELECT COALESCE(MAX(grid_y + grid_h), 0) AS bottom FROM pinned_chart
+                                   WHERE dashboard_id=? AND user_id=? AND dashboard_tab=?""",
+                               (board_id, int(user_id), tab)).fetchone()
+            below[tab] = int(row["bottom"] or 0)
+        last = conn.execute("SELECT COALESCE(MAX(position), 0) AS last FROM pinned_chart WHERE dashboard_id=? "
+                            "AND user_id=?", (board_id, int(user_id))).fetchone()
+        position = int(last["last"] or 0)
+        for tile in tiles:
+            layout = tile.get("layout") or {}
+            tab = names[int(layout.get("tab") or 0)]
+            position += 1
+            conn.execute(
+                """INSERT INTO pinned_chart (user_id, account_id, title, question, sql_query, chart_type, db_config_id,
+                                             position, color_palette, grid_x, grid_y, grid_w, grid_h, dashboard_id,
+                                             display_config, dashboard_tab, title_set, layout_locked)
+                   VALUES (?,?,?,?,?,?,?,?,'default',?,?,?,?,?,?,?,1,1)""",
+                (int(user_id), account_id, str(tile.get("title") or "Tile")[:120], str(tile.get("question") or ""),
+                 str(tile.get("sql") or ""), str(tile.get("chart_type") or "table"), db_config_id, position,
+                 int(layout.get("grid_x") or 0), below[tab] + int(layout.get("grid_y") or 0),
+                 int(layout.get("grid_w") or 6), int(layout.get("grid_h") or 10), board_id,
+                 _json(tile.get("display_config") or {}), tab[:60]))
+        conn.execute("""UPDATE dashboard_artifact SET tabs_json=?, version=version+?, status='draft',
+                               updated_at=datetime('now') WHERE id=?""",
+                     (_json(names), 1 if dashboard_id else 0, board_id))
+        _snapshot_locked(conn, board_id, int(user_id), account_id, "Built from your request")
+        row = conn.execute("SELECT * FROM dashboard_artifact WHERE id=?", (board_id,)).fetchone()
+    return dict(row)

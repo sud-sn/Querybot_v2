@@ -22,7 +22,7 @@ ALLOWED = {
     "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
-                "filters", "default_date", "expr", "table"},
+                "filters", "default_date", "expr", "table", "better"},
     "entity": {"business_name", "label_column", "code_column", "synonyms"},
     "attribute": {"business_name", "synonyms"},
     "settings": {"fiscal_year_start_month"},      # one object: settings:workspace

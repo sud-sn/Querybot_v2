@@ -5204,6 +5204,31 @@ MESSAGES: dict[str, dict[str, str]] = {
     # A follow-up answer says which answer it changed, and offers the same question asked on its own.
     "ui.chat.following": {"en": "Following: {question}", "fr": "Suite de : {question}"},
     "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},
+    # A dashboard the reader described: its preview in the chat, before it is saved ("ui.chat.draft.*" is the
+    # composer's unsent message).
+    "ui.chat.dashdraft.kicker": {"en": "Dashboard draft", "fr": "Brouillon de tableau de bord"},
+    "ui.chat.dashdraft.name": {"en": "Dashboard name", "fr": "Nom du tableau de bord"},
+    "ui.chat.dashdraft.building": {"en": "Building your dashboard: {done} of {count} tiles ready",
+                                   "fr": "Construction de votre tableau de bord : {done} tuiles prêtes sur {count}"},
+    "ui.chat.dashdraft.pending": {"en": "Building…", "fr": "En cours…"},
+    "ui.chat.dashdraft.built": {"en": "Built from your request: {count} tiles",
+                                "fr": "Construit à partir de votre demande : {count} tuiles"},
+    "ui.chat.dashdraft.failed": {"en": "{count} could not be built", "fr": "{count} n’ont pas pu être construites"},
+    "ui.chat.dashdraft.not_built": {"en": "Tiles that could not be built", "fr": "Tuiles qui n’ont pas pu être construites"},
+    "ui.chat.dashdraft.define": {"en": "Define it", "fr": "Le définir"},
+    "ui.chat.dashdraft.extras": {"en": "Also worth adding:", "fr": "À ajouter aussi :"},
+    "ui.chat.dashdraft.tab": {"en": "Tab {n}", "fr": "Onglet {n}"},
+    "ui.chat.dashdraft.remove": {"en": "Remove {title}", "fr": "Retirer {title}"},
+    "ui.chat.dashdraft.save_to": {"en": "Save to", "fr": "Enregistrer dans"},
+    "ui.chat.dashdraft.new": {"en": "A new dashboard", "fr": "Un nouveau tableau de bord"},
+    "ui.chat.dashdraft.save": {"en": "Save dashboard", "fr": "Enregistrer le tableau de bord"},
+    "ui.chat.dashdraft.saved": {"en": "{name} saved with {count} tiles.", "fr": "{name} enregistré avec {count} tuiles."},
+    "ui.chat.dashdraft.open": {"en": "Open dashboard", "fr": "Ouvrir le tableau de bord"},
+    "ui.chat.dashdraft.unreachable": {"en": "The server could not be reached.", "fr": "Le serveur n’a pas pu être joint."},
+    "ui.chat.dashdraft.kind.number": {"en": "Number", "fr": "Nombre"},
+    "ui.chat.dashdraft.kind.trend": {"en": "Trend", "fr": "Tendance"},
+    "ui.chat.dashdraft.kind.breakdown": {"en": "Breakdown", "fr": "Répartition"},
+    "ui.chat.dashdraft.kind.table": {"en": "Table", "fr": "Tableau"},
     # ── The Data guide: suggestions to the admin (the new core) ──────────────
     "ui.ask.intro": {
         "en": "What your data covers and exactly how each number is counted. If something is wrong or missing, "

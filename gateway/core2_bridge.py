@@ -37,6 +37,9 @@ from typing import Any
 log = logging.getLogger("querybot.core2")
 
 TIMEOUT_SECONDS = 120.0
+# A dashboard the reader described: about a chat turn per tile, built several at once on their own threads, its
+# card filling in as each lands. It may take longer than one question.
+DASHBOARD_SECONDS = 600.0
 PREVIEW_BADGE = "New core (preview)"
 MAX_KEPT_FRAME = 2_000_000      # characters of a kept answer; a larger one is reopened from its rows
 
@@ -134,11 +137,15 @@ def _over_limit(account_id: str, lang: str = "en") -> str:
 
 
 async def _answer(account_id: str, question: str, portal_user: dict | None, session_key: str,
-                  mode: str, question_id: str, *, waiting: Any = None) -> tuple[str, dict[str, Any] | None]:
+                  mode: str, question_id: str, *, waiting: Any = None, progress: Any = None,
+                  limit: float | None = None) -> tuple[str, dict[str, Any] | None]:
     """How the new core did (answered, replied, unsupported, timeout, busy, failed) and its frame, if any.
 
     The question takes its place in the fair line first; ``waiting`` (a coroutine function) is awaited once
-    when it has to wait, to tell the reader. The answering limit starts when a thread takes it."""
+    when it has to wait, to tell the reader. The answering limit (``limit`` seconds) starts when a thread takes
+    it; a question's (TIMEOUT_SECONDS) unless said. ``progress`` is shown a described dashboard's card as its tiles
+    land, from the answering thread."""
+    limit = TIMEOUT_SECONDS if limit is None else limit
     from core2.service import portal_answer
 
     start = time.perf_counter()
@@ -161,7 +168,8 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
         loop = asyncio.get_running_loop()
         try:
             work = _POOL.submit(functools.partial(portal_answer, account_id, question, portal_user,
-                                                  session_key=session_key, question_id=question_id))
+                                                  session_key=session_key, question_id=question_id,
+                                                  progress=progress))
         except BaseException:
             line.leave(account_id)       # no thread took it: its place goes back now
             raise
@@ -173,13 +181,13 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
                 pass
 
         work.add_done_callback(done)
-        payload = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(work)), TIMEOUT_SECONDS)
+        payload = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(work)), limit)
         status = ("unsupported" if payload.get("unsupported") else
                   "answered" if payload.get("data") else "replied")
     except asyncio.TimeoutError:
         if entered:
             status = "timeout"
-            log.warning("core2 took over %.0fs on a question for %s", TIMEOUT_SECONDS, account_id)
+            log.warning("core2 took over %.0fs on a question for %s", limit, account_id)
         else:
             status = "busy"
             log.warning("core2 was too busy to start a question for %s within %.0fs", account_id,
@@ -349,6 +357,33 @@ async def _with_pin(account_id: str, portal_user: dict | None, question: str, pa
             payload["chart"]["pin_token"] = token
 
 
+def _drafted(account_id: str, portal_user: dict | None, payload: dict[str, Any], question_id: str) -> dict[str, Any]:
+    """A described dashboard's preview, its draft kept on the server behind a token for its reader: the tiles'
+    plans never travel to the page. With the reader's own dashboards, to save it onto one of them."""
+    import store
+
+    tiles = payload.pop("draft_tiles", [])
+    payload["question_id"] = question_id                # the card it replaces, filled in as its tiles landed
+    if not portal_user or not portal_user.get("id"):
+        payload["draft"]["saveable"] = False
+        return payload
+    token = store.save_dashboard_draft(account_id, int(portal_user["id"]), {
+        "name": payload.get("draft_name") or "Dashboard", "request": payload.get("question") or "", "tiles": tiles,
+        "extras": list(payload["draft"].get("extras") or [])})
+    payload["token"] = token
+    payload["draft"]["saveable"] = True
+    payload["dashboards"] = [{"id": d["id"], "name": d["name"]}
+                             for d in store.list_editable_dashboards(account_id, int(portal_user["id"]))][:50]
+    return payload
+
+
+async def tile_answer(account_id: str, question: str, portal_user: dict | None, token: str) -> tuple[str, dict | None]:
+    """One more tile for a described dashboard (one it offered, which the reader added): answered as a new
+    conversation of its own, in the fair line, within a question's time."""
+    return await _answer(account_id, question, portal_user, f"dashboard-draft:{token}:{uuid.uuid4().hex[:8]}",
+                         "core2", new_question_id())
+
+
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
             payload: dict[str, Any] | None, duration_ms: int, question_id: str = "") -> None:
     """One row per new-core answer, for comparison. The question is kept as QueryBot keeps
@@ -415,11 +450,26 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
                                          "label": t("ui.chat.in_line", lang=lang),
                                          "detail": t("ui.chat.in_line_detail", lang=lang)})
 
+    from core2.dashboards import asked_for
+
+    progress, limit = None, TIMEOUT_SECONDS
+    if asked_for(question) is not None:
+        # "Build me a dashboard of ...": its card is sent as it is designed, then again as each tile lands.
+        loop = asyncio.get_running_loop()
+        limit = DASHBOARD_SECONDS
+
+        def progress(card: dict[str, Any]) -> None:
+            asyncio.run_coroutine_threadsafe(_send(adapter, websocket, {**card, "question_id": question_id}), loop)
+
     status, payload = await _answer(account_id, question, portal_user,
                                     _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id,
-                                    waiting=in_line)
+                                    waiting=in_line, progress=progress, limit=limit)
     if payload is None:
-        await _send(adapter, websocket, _could_not(question, status, question_id, beside=False))
+        await _send(adapter, websocket, _could_not(question, status, question_id, beside=False, seconds=limit))
+        return True
+    if payload.get("type") == "dashboard_draft":
+        await _send(adapter, websocket, await asyncio.to_thread(_drafted, account_id, portal_user, payload,
+                                                                question_id))
         return True
     rows = payload.pop("export_rows", None)
     try:
@@ -502,9 +552,10 @@ _COULD_NOT = {
 }
 
 
-def _could_not(question: str, status: str, question_id: str, *, beside: bool = True) -> dict[str, Any]:
+def _could_not(question: str, status: str, question_id: str, *, beside: bool = True,
+               seconds: float | None = None) -> dict[str, Any]:
     """A card saying the new core gave no answer, and why: beside today's answer, or alone in ``core2`` mode."""
-    text = _COULD_NOT.get(status, _COULD_NOT["failed"]).format(seconds=TIMEOUT_SECONDS)
+    text = _COULD_NOT.get(status, _COULD_NOT["failed"]).format(seconds=TIMEOUT_SECONDS if seconds is None else seconds)
     after = "Today's answer above stands." if beside else "Ask again in a moment, or ask it another way."
     return {"type": "assistant_response", "engine": "core2", "question": question, "kind": "could_not",
             "answer": {"headline": f"{text} {after}", "short_value": "", "comparison": "",

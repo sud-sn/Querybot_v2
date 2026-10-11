@@ -327,6 +327,9 @@ class Measure(Belief):
     default_date: str | None = None
     filters: list[ColumnFilter] = Field(default_factory=list)
     kind: Literal["metric", "import", "model", "proposed", "column", "count"] = "column"
+    # Which way is good news: "higher" (sales), "lower" (costs, days to deliver, returns), or "neither" (a count
+    # of stores): its tiles and the chat's numbers colour a change by it.
+    better: Literal["higher", "lower", "neither"] = "higher"
     tested: bool = False
     hidden: bool = False
 
