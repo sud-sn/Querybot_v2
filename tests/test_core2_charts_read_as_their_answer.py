@@ -195,8 +195,10 @@ def test_a_rest_that_would_dwarf_the_bars_is_said_under_them(retail):  # noqa: F
     rest = sum(r["net_amount"] for r in largest[10:])
     assert len(chart["rows"]) == 10 and chart["other"] is None, "230 customers added up: twenty times the largest"
     share = rest / sum(r["net_amount"] for r in rows) * 100
+    # As short as the chart's own labels: "$766.2K", never "$766,211.67".
+    said = f"${rest / 1e6:,.2f}M" if rest >= 1e6 else (f"${rest / 1e3:,.1f}K" if rest >= 1e3 else f"${rest:,.2f}")
     assert chart["chart_warnings"] == [f"Showing the 10 largest: the other {len(rows) - 10} customers add up to "
-                                       f"${rest:,.2f}, {share:.0f}% of the total. Every one is in the table."]
+                                       f"{said}, {share:.0f}% of the total. Every one is in the table."]
 
 
 def test_an_average_is_never_added_up_into_one_bar(retail):  # noqa: F811

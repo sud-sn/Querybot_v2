@@ -1247,8 +1247,11 @@ def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None,
     whole = rest_total + (total(ys[0], kept) or 0.0)
     part = f", {rest_total / whole * 100:.0f}% of the total" if whole > 0 and all(
         (r.get(ys[0]) or 0) >= 0 for r in rows) else ""
+    # Said as short as the chart's own labels: "$766.2K", never "$766,211.67".
+    said = (f"{'-' if rest_total < 0 else ''}${abs(rest_total) / 1e3:,.1f}K"
+            if format_ == "currency" and 1e3 <= abs(rest_total) < 1e6 else fmt(rest_total, format_))
     return kept, None, (f"Showing the {keep} largest: the other {len(rest):,} {things} add up to "
-                        f"{fmt(rest_total, format_)}{part}. Every one is in the table.")
+                        f"{said}{part}. Every one is in the table.")
 
 
 def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date]) -> list[dict]:

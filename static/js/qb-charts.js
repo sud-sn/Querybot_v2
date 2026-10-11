@@ -367,6 +367,39 @@
     return points;
   }
 
+  // Names cut at the axis's width read as one name when they share a long start ("Cedar Point Compounding
+  // Pharmacy - Phoenix", "... - Dallas"): each such name is shown as its first words and the part that tells it
+  // apart ("Cedar Point… Phoenix"); its whole name stays in the tooltip. Null when no name needs it.
+  function shortNames(labels, width) {
+    const names = labels.map(l => String(l == null ? '' : l));
+    const fit = Math.max(8, Math.floor(width / 7));
+    const out = {};
+    let any = false;
+    names.forEach((name, i) => {
+      if (name.length <= fit) return;
+      let shared = 0;
+      names.forEach((other, j) => {
+        if (j === i) return;
+        let k = 0;
+        while (k < name.length && k < other.length && name[k] === other[k]) k++;
+        shared = Math.max(shared, k);
+      });
+      if (shared < fit - 3) return;                       // the cut leaves the difference in sight
+      const start = name.lastIndexOf(' ', shared) + 1;     // the whole word the difference is in
+      const tail = name.slice(start).replace(/^[\s\-–—:|/,]+/, '');
+      const room = fit - tail.length - 2;
+      if (!tail || room < 0) return;
+      let head = '';
+      for (const word of name.slice(0, start).split(/\s+/).filter(Boolean)) {
+        if ((head ? head.length + 1 : 0) + word.length > room) break;
+        head = head ? `${head} ${word}` : word;
+      }
+      out[name] = head ? `${head}… ${tail}` : `…${tail}`;
+      any = true;
+    });
+    return any ? out : null;
+  }
+
   // ── On a dashboard tile ───────────────────────────────────────────────────
   // The lowest point of a single line, named ("Low $168.0K") below it -- never on a line that does not dip.
   function lowPoint(values, labels, written, c) {
@@ -594,6 +627,11 @@
     // The names beside a ranking take at most 180px, and never more than a third of a narrow card (a
     // phone): past that, the bars are squeezed to slivers and the ranking cannot be read.
     const nameWidth = Math.round(Math.min(180, Math.max(96, ((layout && layout.width) || 600) / 3)));
+    const shortened = shortNames(labels, nameWidth);
+    const nameOf = v => {
+      const name = String(v == null ? '' : v);
+      return (shortened && shortened[name]) || name;
+    };
     const longLabels = maxLabel > 14;
     // A dashboard tile is half a page wide: past six members its columns crowd their names, so it lists them as
     // bars, as the approved design does (five regions as columns, nine categories as bars).
@@ -1221,7 +1259,8 @@
                 splitLine: {lineStyle: {color: c.grid, width: 1}}, axisLine: {show: false}, axisTick: {show: false}},
         yAxis: {type: 'category', data: labels, inverse: true, axisTick: {show: false},
                 axisLine: {show: false},
-                axisLabel: {color: c.ink2, fontSize: 12, width: nameWidth, overflow: 'truncate', ellipsis: '…'}},
+                axisLabel: {color: c.ink2, fontSize: 12, width: nameWidth, overflow: 'truncate', ellipsis: '…',
+                            formatter: nameOf}},
         series: [
           // One neutral line per member, earlier to current.
           ...labels.map((l, i) => ({
@@ -1277,7 +1316,7 @@
       yAxis: horizontal
         ? Object.assign({}, categoryAxis, {inverse: true, axisLabel: Object.assign({}, categoryAxis.axisLabel, {
             rotate: 0, interval: 0, hideOverlap: false, width: nameWidth, overflow: 'truncate', ellipsis: '…',
-            formatter: v => String(v == null ? '' : v)})})
+            formatter: nameOf})})
         : valueAxis,
       dataZoom: zoom ? [
         {type: 'inside', throttle: 50},
@@ -1317,6 +1356,7 @@
       // category sits at the same place in each: the labels are drawn in a
       // fixed margin rather than measured into each panel.
       const labelW = Math.max(72, Math.min(180, Math.round(width * 0.3)));
+      const facetNames = shortNames(labels, labelW);
       const across = (100 - (labelW + 14) / width * 100 - 3 - 7 * (n - 1)) / n;
       const down = (100 - head - 12 - 11 * (n - 1)) / n;
       facets.forEach((group, i) => {
@@ -1329,7 +1369,10 @@
           yAxes.push(Object.assign({}, categoryAxis, {gridIndex: i, inverse: true,
             axisLabel: Object.assign({}, categoryAxis.axisLabel, {show: i === 0, rotate: 0, interval: 0,
               hideOverlap: false, width: labelW, overflow: 'truncate', ellipsis: '…',
-              formatter: v => String(v == null ? '' : v)})}));
+              formatter: v => {
+                const name = String(v == null ? '' : v);
+                return ((facetNames || {})[name]) || name;
+              }})}));
           xAxes.push(Object.assign({}, valueAxis, {gridIndex: i, position: 'top', splitNumber: 3,
             name: named(group), nameLocation: 'middle', nameGap: 26, nameTextStyle: panelTitle,
             nameTruncate: {maxWidth: Math.max(60, across / 100 * width - 8), ellipsis: '…'},
@@ -1423,13 +1466,17 @@
         const values = rows.map(r => num(r && r[k]));
         const color = otherName && k === otherName ? c.muted : colors[i % colors.length];
         const marks = i === 0 ? annotationMarkPoints(payload, labels, values) : [];
-        if (onTile && i === 0) marks.push(...lowPoint(values, labels, v => valueFmt(v, k, true), c));
+        const low = onTile && i === 0 ? lowPoint(values, labels, v => valueFmt(v, k, true), c) : [];
+        marks.push(...low);
+        // The lowest point says its value in its own label ("Low $18.5K"): never twice, one over the other.
+        const lowAt = low.length ? labels.indexOf(low[0].coord[0]) : -1;
         return {
           name: k, type: 'line', data: values,
           smooth: smooth ? 0.35 : false,
           smoothMonotone: smooth ? 'x' : undefined,
           label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
-                                fontFamily: c.font, formatter: p => valueFmt(p.value, k, true)} : undefined,
+                                fontFamily: c.font,
+                                formatter: p => (p.dataIndex === lowAt ? '' : valueFmt(p.value, k, true))} : undefined,
           labelLayout: pointLabels ? {hideOverlap: true} : undefined,
           showSymbol: rows.length <= MARKER_MAX_POINTS,
           symbol: 'circle', symbolSize: 8,
