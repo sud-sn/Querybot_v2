@@ -156,11 +156,15 @@ def _own_conditions(o: OutMeasure) -> set[str]:
 class PartGroup:
     name: str
     alias: str
-    column: str | None       # column key, for attributes
-    kind: str                # attribute | period | time
+    column: str | None       # column key, for attributes (and a band of a number attribute)
+    kind: str                # attribute | period | time | band
     grain: str | None = None
     time_attr: str | None = None
     date: DateUse | None = None
+    edges: list[float] = field(default_factory=list)       # a band: the ranges' lower edges after the first
+    labels: list[str] = field(default_factory=list)        # a band: each range's name, in order
+    days: tuple[DateUse, DateUse] | None = None            # a band of days from one date of each row to another
+    style: dict = field(default_factory=dict)              # a band: how its ranges are named (bands.labels' words)
 
 
 @dataclass
@@ -196,6 +200,7 @@ class Part:
     snapshot: bool = False
     distinct_only: bool = False
     reached: dict[str, str] = field(default_factory=dict)   # table key -> alias, for columns a measure reads there
+    row_level: bool = False  # each row's own value, not added up (a figure per row, summarised over the rows)
 
 
 @dataclass
@@ -221,6 +226,7 @@ class Group:
     kind: str                # attribute | member_code | period | time
     grain: str | None = None
     attribute: str | None = None
+    bands: list[str] = field(default_factory=list)      # a range grouping: its ranges' names, in order
 
 
 @dataclass
@@ -245,6 +251,7 @@ class Logical:
     conditions: list[Condition] = field(default_factory=list)  # what narrowed the rows, for the answer's words
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
+    shape: object | None = None         # an analytical shape worked out over these rows (core2/resolve/shapes.py)
 
 
 class _Aliases:
@@ -824,6 +831,15 @@ def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
 def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.kind != "query":
         raise ResolveError("unsupported", f"a {plan.kind} plan is not a query")
+    if plan.shaped():
+        from core2.resolve.shapes import resolve_shaped
+
+        return resolve_shaped(plan, model, ctx)
+    return resolve_plain(plan, model, ctx)
+
+
+def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
+    """A plan with no analytical shape (or the plain rows a shape is worked out over)."""
     aliases = _Aliases()
     out_names: set[str] = set()
     notes: list[str] = []
@@ -1014,6 +1030,14 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 identity_names[slug] = (code_name, identity)
         group_names[slug] = name
 
+    # Ranges of a value of each row ("orders by delivery time: under 3 days, 3-7, over a week"): one more grouping.
+    band = _row_band(plan, model, durations) if plan.bands is not None and plan.bands.per is None \
+        and plan.per is None else None
+    if band is not None:
+        name = _output_name("band", out_names)
+        groups.append(Group(name, band.label, "attribute", bands=band.labels))
+        group_names["__band__"] = name
+
     parts: list[Part] = []
     measures_out: list[OutMeasure] = []
     component_of = {id(item[1]): (c, i) for c in composites for i, item in enumerate(c.items)}
@@ -1072,6 +1096,8 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 part.preds.append(Pred(alias, column.key, "not_null", []))
                 if _can_lack(model, builder.paths_used.get(column.table), column):
                     notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
+        if band is not None:
+            part.groups.append(_band_part_group(model, builder, band, group_names["__band__"]))
         if plan.time.grain:
             if part.date is None:
                 raise ResolveError("unsupported", f"{model.tables[part.table].business_name} has no date")
@@ -1420,6 +1446,56 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
                    expected=expected, data_last=last if plan.time.grain else None, conditions=conditions)
+
+
+@dataclass
+class _Band:
+    """A range grouping of each row's value: of a number attribute, or of days between two dates of the row."""
+
+    label: str
+    labels: list[str]
+    edges: list[float]
+    attribute: Attribute | None = None
+    slug: str = ""
+    days: tuple[DateRole, DateRole] | None = None
+    style: dict = field(default_factory=dict)
+
+
+def _row_band(plan: Plan, model: SemanticModel, durations: dict) -> _Band:
+    from core2.resolve import bands as B
+
+    assert plan.bands is not None
+    edges = sorted(set(plan.bands.edges))
+    if _plain(plan.bands.of) in durations:
+        duration, start_role, end_role = durations[_plain(plan.bands.of)]
+        style = {"whole": True, "unit": "days"}
+        return _Band(duration.name, B.labels(edges, **style), edges, days=(start_role, end_role), style=style)
+    found = find_slug(model, plan.bands.of)
+    if found is None or found[0] != "attribute" or getattr(found[1], "kind", "") != "number":
+        raise ResolveError("unknown", f"nothing to put in ranges called {plan.bands.of}: ranges are of a number "
+                           "each row or member has, a duration, or a measure with per",
+                           [a.slug for a in model.attributes.values() if a.kind == "number"][:12])
+    attribute = found[1]
+    assert isinstance(attribute, Attribute)
+    _shown(model, attribute, attribute.slug)
+    column = model.columns[attribute.column]
+    style = {"whole": column.data_type == "integer", "money": column.format == "currency"}
+    return _Band(_attribute_label(model, attribute), B.labels(edges, **style), edges, attribute=attribute,
+                 slug=attribute.slug, style=style)
+
+
+def _band_part_group(model: SemanticModel, builder: _PartBuilder, band: _Band, name: str) -> PartGroup:
+    if band.days is not None:
+        start, end = band.days
+        if start.table != builder.part.table:
+            raise ResolveError("unsupported", f"{band.label} is on {model.tables[start.table].business_name}, "
+                               "which nothing asked for counts")
+        return PartGroup(name, builder.part.alias, None, "band", edges=band.edges, labels=band.labels,
+                         days=(builder.date(start, kind="left"), builder.date(end, kind="left")), style=band.style)
+    assert band.attribute is not None
+    column = model.columns[band.attribute.column]
+    alias = _reach(builder, column.table, band.slug, None, None, band.attribute.business_name)
+    return PartGroup(name, alias, column.key, "band", edges=band.edges, labels=band.labels, style=band.style)
 
 
 _SPLIT_INTENTS = {"value", "breakdown", "rank", "trend", "compare", "count"}

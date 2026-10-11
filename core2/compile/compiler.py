@@ -36,7 +36,8 @@ from sqlglot.optimizer.scope import traverse_scope
 
 from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
-from core2.resolve.resolver import Combined, DateUse, DaysBetween, DaysPred, Joined, Logical, Part, PartGroup, Semi
+from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, Part, PartGroup,
+                                    Semi)
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -61,6 +62,8 @@ class OutColumn:
     flag: bool = False              # a yes/no grouping (its two members are a thing and its opposite)
     numbered: bool = False          # its members are numbers (fill number 0, GL account 4000), said with its name
     ordinal: bool = False           # its members are amounts (transit days, fill number): drawn in number order
+    bands: list[str] = field(default_factory=list)   # a range grouping: its ranges' names, in their own order
+    computed: bool = False          # worked out from the rows after the query (a running total): not in its SQL
 
 
 @dataclass
@@ -279,7 +282,23 @@ class _Compiler:
                                         true=_num(1))], default=_num(0))
         raise CompileError(f"no time attribute {name}")
 
+    def band(self, value: exp.Expression, g: PartGroup) -> exp.Expression:
+        """Each row's range: the first whose upper edge is above its value; no value, no range."""
+        ifs = [exp.If(this=exp.LT(this=value.copy(), expression=_num(edge)), true=exp.Literal.string(label))
+               for edge, label in zip(g.edges, g.labels)]
+        last = exp.Literal.string(g.labels[-1]) if g.labels else exp.Null()
+        if not ifs:
+            return exp.Case(ifs=[exp.If(this=exp.not_(exp.Is(this=value, expression=exp.Null())), true=last)])
+        return exp.Case(ifs=[exp.If(this=exp.Is(this=value.copy(), expression=exp.Null()), true=exp.Null()), *ifs],
+                        default=last)
+
     def group_expr(self, g: PartGroup) -> exp.Expression:
+        if g.kind == "band":
+            if g.days is not None:
+                return self.band(self.days(*g.days), g)
+            if g.column is None:
+                raise CompileError(f"{g.name} has no value to put in ranges")
+            return self.band(self.col(g.alias, g.column), g)
         if g.kind == "period":
             if g.date is None or g.grain is None:
                 raise CompileError("a period needs a date and a grain")
@@ -365,6 +384,17 @@ class _Compiler:
         if isinstance(expr, SqlExpr):
             return self.formula(expr, part, condition)
         raise CompileError(f"cannot compile {type(expr).__name__}")
+
+    def row_value(self, expr: MeasureExpr | DaysBetween, part: Part) -> exp.Expression:
+        """A measure's value on each row, before it is added up: the days between its two dates, or its column
+        (none where the measure's own conditions leave the row out)."""
+        if isinstance(expr, DaysBetween):
+            return self.days(expr.start, expr.end)
+        if isinstance(expr, AggExpr) and expr.column and expr.agg in ("sum", "avg", "min", "max"):
+            value: exp.Expression = self.at(part, expr.column)
+            conds = [self.predicate(self.at(part, f.column), f.op, list(f.values), f.column) for f in expr.filters]
+            return exp.Case(ifs=[exp.If(this=exp.and_(*conds), true=value)]) if conds else value
+        raise CompileError("this measure is a total: it has no value on each row")
 
     def operate(self, expr: OpExpr, a: exp.Expression, b: exp.Expression) -> exp.Expression:
         if expr.op == "ratio":
@@ -452,6 +482,13 @@ class _Compiler:
         if part.distinct_only:
             select = select.distinct()
             return select.where(exp.and_(*conds)) if conds else select
+        if part.row_level:
+            # Each row's own value (days from order to delivery of each fill), summarised a level up.
+            for m in part.measures:
+                select = select.select(self.row_value(m.expr, part).as_(self.name(m.name)))
+            if part.snapshot and part.date is not None:
+                conds.append(self.snapshot_days(part))
+            return select.where(exp.and_(*conds)) if conds else select
 
         current = prior = None
         if self.q.compare is not None:
@@ -516,18 +553,47 @@ class _Compiler:
     # ── the whole query ────────────────────────────────────────────────────
     def compile(self) -> Compiled:
         q = self.q
+        if q.shape is not None:
+            from core2.compile.shapes import shaped
+
+            outer, columns, alias = shaped(self)
+        else:
+            outer, columns, alias = self.shaped_body()
+        known = {c.name for c in columns if not c.computed}
+        order: list[exp.Ordered] = []
+        used: set[str] = set()
+        for name, desc in q.sort:
+            if name in known and name not in used:
+                order.append(exp.Ordered(this=self.out(alias, name), desc=desc, nulls_first=False))
+                used.add(name)
+        for g in q.groups:      # ties broken by the groupings, always the same way (ranges in their own order)
+            if g.name not in used:
+                order.append(exp.Ordered(this=self.band_order(self.out(alias, g.name), g.bands) if g.bands
+                                         else self.out(alias, g.name), desc=False, nulls_first=False))
+                used.add(g.name)
+        if order:
+            outer = outer.order_by(*order)
+        cap = min(q.limit, q.max_rows) if q.limit else q.max_rows + 1
+        outer = outer.limit(cap)
+        sql = D.render(outer, self.d)
+        check_references(sql, self.d)
+        return Compiled(sql=sql, dialect=self.d, columns=columns, row_cap=cap)
+
+    def band_order(self, column: exp.Expression, labels: list[str]) -> exp.Expression:
+        """A range's place among its ranges (to sort by): 1 for the first."""
+        return exp.Case(ifs=[exp.If(this=exp.EQ(this=column.copy(), expression=exp.Literal.string(label)),
+                                    true=_num(i + 1)) for i, label in enumerate(labels)], default=_num(len(labels) + 1))
+
+    def shaped_body(self) -> tuple[exp.Select, list[OutColumn], str]:
+        """The answer's rows before they are sorted and capped: the query, its columns, and the alias its columns
+        are read under (q, or r when a level above worked out a change, a share or a filter on totals)."""
+        q = self.q
         selects = [self.part_select(p) for p in q.parts]
         body = selects[0] if len(selects) == 1 else self._line_up(selects)
         if any(isinstance(m.expr, Combined) for m in q.measures):
             body = self._combine(body)
 
-        columns: list[OutColumn] = []
-        for g in q.groups:
-            columns.append(OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
-                                     grain=g.grain if g.kind == "period" else None,
-                                     flag=self._flag(getattr(g, "attribute", None)),
-                                     numbered=self._numbered(getattr(g, "attribute", None)),
-                                     ordinal=self._ordinal(getattr(g, "attribute", None))))
+        columns: list[OutColumn] = [self.group_column(g) for g in q.groups]
         for m in q.measures:
             key = m.measure.key if m.measure else None
             columns.append(OutColumn(m.name, m.label, "measure", m.format, key))
@@ -571,25 +637,12 @@ class _Compiler:
             if q.having:
                 outer = outer.where(exp.and_(*[self.predicate(self.out(alias, h.column), h.op, h.values)
                                                for h in q.having]))
+        return outer, columns, alias
 
-        known = {c.name for c in columns}
-        order: list[exp.Ordered] = []
-        used: set[str] = set()
-        for name, desc in q.sort:
-            if name in known and name not in used:
-                order.append(exp.Ordered(this=self.out(alias, name), desc=desc, nulls_first=False))
-                used.add(name)
-        for g in q.groups:      # ties broken by the groupings, always the same way
-            if g.name not in used:
-                order.append(exp.Ordered(this=self.out(alias, g.name), desc=False, nulls_first=False))
-                used.add(g.name)
-        if order:
-            outer = outer.order_by(*order)
-        cap = min(q.limit, q.max_rows) if q.limit else q.max_rows + 1
-        outer = outer.limit(cap)
-        sql = D.render(outer, self.d)
-        check_references(sql, self.d)
-        return Compiled(sql=sql, dialect=self.d, columns=columns, row_cap=cap)
+    def group_column(self, g: Group) -> OutColumn:
+        return OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
+                         grain=g.grain if g.kind == "period" else None, flag=self._flag(g.attribute),
+                         numbered=self._numbered(g.attribute), ordinal=self._ordinal(g.attribute), bands=list(g.bands))
 
     def _combine(self, body: exp.Select) -> exp.Select:
         """The groupings and every shown measure, those over several tables worked out from their parts."""

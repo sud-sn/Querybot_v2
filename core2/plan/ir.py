@@ -98,6 +98,56 @@ class Drivers(_Strict):
     dimensions: list[str] | None = None
 
 
+class PerMember(_Strict):
+    """Each member's figure first, then summarised across the members: "average orders per customer", "median
+    spend per customer", "how many customers had 3 or more orders", "90th-percentile days to deliver"."""
+
+    of: str | None = None            # an entity or attribute slug ("customer"), or a count measure's slug for the
+    #                                  thing it counts ("number_of_orders": each order); None: each row of the measure
+    summary: Literal["avg", "median", "percentile", "min", "max", "count", "share"] = "avg"
+    p: float | None = Field(default=None, gt=0, lt=100)    # summary "percentile": 90 for the 90th
+    op: Literal["eq", "ne", "gt", "gte", "lt", "lte", "between"] | None = None   # count/share: each member's figure
+    values: list[float] = Field(default_factory=list)                            # "3 or more" -> gte [3]
+    everyone: bool = False           # every listed member counts, one with no rows as 0 (default: those with rows)
+
+
+class Rolling(_Strict):
+    """A series accumulated or smoothed: "running total", "year to date", "3-month moving average", "last 12
+    months" (each point the 12 months up to it)."""
+
+    kind: Literal["running", "moving_average", "moving_sum"]
+    periods: int = Field(default=3, ge=2, le=36)               # moving: how many periods each point covers
+    reset: Literal["year", "fiscal_year"] | None = None        # running: start again each (fiscal) year
+
+
+class Within(_Strict):
+    """A rank that starts again in each member of a grouping: "rank stores within each region", "top 3 products
+    per store"."""
+
+    group: str                       # the grouping slug (one of group_by) each ranking is inside
+    top: int | None = Field(default=None, ge=1, le=100)        # keep the first n of each
+
+
+class Bands(_Strict):
+    """Rows or members put into ranges of a value, counted (and totalled) per range: "sales by order size band",
+    "patients by age band", "orders by delivery time: under 3 days, 3-7, over a week"."""
+
+    of: str                          # a number attribute slug, a duration's name, or a measure slug (with per)
+    edges: list[float] = Field(default_factory=list, max_length=12)  # the reader's own, ascending; [] = from data
+    per: str | None = None           # with a measure: whose figure is banded (an entity, or a count measure's slug)
+
+
+class Absent(_Strict):
+    """Members with no matching rows: "customers with no order in the last 90 days", "products never sold",
+    "customers who bought A but never B". The window is the plan's time.window (none: never)."""
+
+    of: str                          # an entity slug: whose list
+    measure: str                     # a measure slug whose rows are the activity (orders, fills)
+    without: list[Filter] = Field(default_factory=list)   # only rows like these count as activity ("never B")
+    had: list[Filter] = Field(default_factory=list)       # and they did have rows like these, any time ("bought A")
+    active_before: bool = False      # only members with activity before the window (lapsed, not never active)
+
+
 class Plan(_Strict):
     kind: Literal["query", "clarify", "describe_data", "unsupported", "smalltalk"] = "query"
     intent: Intent | None = None
@@ -119,7 +169,17 @@ class Plan(_Strict):
     # "unsure": it could change the answer on screen or ask afresh; the reader is asked which (core2/plan/followup.py)
     follow_up: Literal["new", "refine", "unsure"] = "new"
     include_left_out: bool = False      # "including cancelled orders": the rows tables leave out by default
+    # Analytical shapes (core2/resolve/shapes.py), each optional so every stored plan still reads.
+    per: PerMember | None = None
+    rolling: Rolling | None = None
+    within: Within | None = None
+    bands: Bands | None = None
+    absent: Absent | None = None
     notes: list[str] = Field(default_factory=list)
+
+    def shaped(self) -> bool:
+        """Does the plan ask for an analytical shape (worked out over the plain answer's rows)?"""
+        return any(x is not None for x in (self.per, self.rolling, self.within, self.bands, self.absent))
 
 
 def schema_text() -> str:

@@ -169,6 +169,10 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
         return f"by {c.label}"
     if c.kind == "snapshot":
         return "at the last snapshot"
+    if c.kind == "everyone":
+        return f"counting every {c.label} listed"
+    if c.kind == "absent":
+        return ""           # who had none: the answer's own sentence says it
     if c.kind == "date":
         return f"with {c.label} {span_words(c.dates)}" if c.dates is not None else ""
     if c.kind == "days_total":
@@ -424,6 +428,10 @@ def _units(cols: _Columns, raw: list[dict], order: list[str]) -> _Units:
 def build_answer(question: str, logical: Logical, compiled: Compiled, columns: list[str], rows: list[tuple],
                  *, duration_ms: float = 0.0, data_source: str = "", question_id: str = "",
                  model_version: int = 0, truncated: bool = False, chart_type: str | None = None) -> dict[str, Any]:
+    if logical.shape is not None:
+        from core2.answer.shaped import rows_for
+
+        columns, rows = rows_for(logical, compiled, list(columns), list(rows))
     if len(rows) > logical.max_rows:
         truncated, rows = True, rows[:logical.max_rows]
     cols = _Columns(compiled, columns, unit=logical.unit_group)
@@ -503,13 +511,18 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         log.warning("core2 could not work out findings for %r: %s", question, exc)
         insights = []
     kpi = _kpi(logical, cols, raw, formats, units)
-    return frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
+    framed = frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
                  insights=insights, badges=answer_badges(logical), title=_answer_title(logical, cols, labels, chart, kpi),
                  chart=chart, kpi=kpi,
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
                  model_version=model_version)
+    if logical.shape is not None or any(g.bands for g in logical.groups):
+        from core2.answer.shaped import explain
+
+        explain(framed, logical, list(columns), list(rows))
+    return framed
 
 
 def _answer_title(logical: Logical, cols: _Columns, labels: dict[str, str], chart: dict | None,
