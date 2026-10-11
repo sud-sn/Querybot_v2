@@ -29,6 +29,7 @@ import functools
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 import weakref
@@ -393,7 +394,195 @@ def _created(account_id: str, portal_user: dict | None, payload: dict[str, Any],
             "dashboard": {"id": saved["id"], "name": saved["name"], "url": url},
             "tiles": len(tiles),
             "tabs": [{"name": tab, "tiles": on.get(tab, 0), "url": f"{url}&tab={quote(tab)}"} for tab in tabs],
-            "not_built": list(payload.get("not_built") or [])}
+            "not_built": list(payload.get("not_built") or []), "checks": list(payload.get("checks") or [])}
+
+
+# ── Changes to a dashboard asked for in the chat (core2/dashboard_talk.py) ──
+
+_ON: collections.OrderedDict[str, int] = collections.OrderedDict()   # conversation -> the dashboard it is on
+_ON_LOCK = threading.Lock()
+_ON_MOST = 5000
+
+
+def _on_dashboard(key: str, dashboard_id: int | None) -> None:
+    """The dashboard a conversation is on (just made or changed there), or none (it has moved on)."""
+    with _ON_LOCK:
+        _ON.pop(key, None)
+        if dashboard_id:
+            _ON[key] = dashboard_id
+            while len(_ON) > _ON_MOST:
+                _ON.popitem(last=False)
+
+
+def _dashboard_on(key: str) -> int | None:
+    with _ON_LOCK:
+        return _ON.get(key)
+
+
+def _talk_board(account_id: str, user_id: int, adapter: Any, key: str) -> tuple[dict | None, list[dict]]:
+    """The dashboard a change in the chat is about: the one the chat was opened from, the one this
+    conversation just made or changed, or the one its thread made last; and its tiles."""
+    import store
+
+    board = None
+    selected = int(getattr(adapter, "selected_dashboard_id", 0) or 0)
+    if selected:
+        board = store.get_dashboard_for_view(selected, user_id, account_id)
+    on = _dashboard_on(key)
+    if board is None and on:
+        board = store.get_dashboard(on, user_id, account_id)
+    if board is None:
+        board = store.latest_dashboard_for_thread(account_id, user_id, str(getattr(adapter, "thread_id", "") or
+                                                                            "default"))
+    if board is None:
+        return None, []
+    if int(board["user_id"]) != user_id:
+        return board, store.list_dashboard_charts_for_view(int(board["id"]), user_id, account_id)
+    return board, store.list_dashboard_charts(int(board["id"]), user_id)
+
+
+def _talk_read(account_id: str, portal_user: dict, adapter: Any, question: str, key: str) -> tuple[Any, dict | None]:
+    """What the words ask of the dashboard the conversation is on (None: they ask nothing of one), and it."""
+    from core2 import dashboard_talk as talk
+
+    explicit = talk.about_a_dashboard(question)
+    on = _dashboard_on(key)
+    if not explicit and not on and not getattr(adapter, "selected_dashboard_id", 0):
+        return None, None
+    user_id = int(portal_user["id"])
+    row, charts = _talk_board(account_id, user_id, adapter, key)
+    tiles = []
+    for chart in charts:
+        try:
+            config = json.loads(chart.get("display_config") or "{}")
+        except ValueError:
+            config = {}
+        tiles.append(talk.Tile(int(chart["id"]), str(chart.get("title") or ""), str(chart.get("dashboard_tab") or ""),
+                               str(chart.get("chart_type") or ""), config.get("core2_plan") if isinstance(
+                                   config.get("core2_plan"), dict) else None))
+    board = talk.Board(int(row["id"]), str(row["name"]), json.loads(row.get("tabs_json") or '["Overview"]')
+                       or ["Overview"], tiles) if row else talk.Board(0, "", [], [])
+    reading = talk.read(question, board, on_it=bool(row) and (on == board.id or int(
+        getattr(adapter, "selected_dashboard_id", 0) or 0) == board.id))
+    return reading, row
+
+
+def _say(question: str, question_id: str, text: str, **extra: Any) -> dict[str, Any]:
+    from core2.service import _frame
+
+    return {**_frame(question, text, kind="dashboard_talk", **extra), "question_id": question_id}
+
+
+def _talk_apply(account_id: str, portal_user: dict, question: str, question_id: str, reading: Any,
+                row: dict) -> dict[str, Any]:
+    """The change made, as one version of the reader's dashboard, and the card that says so."""
+    import store
+
+    user_id = int(portal_user["id"])
+    board_id = int(row["id"])
+    if reading.kind == "undo":
+        undone = store.undo_dashboard(board_id, user_id, account_id)
+        if undone is None:
+            return _say(question, question_id, f"There is nothing to undo on {row['name']}: it is as it was made.")
+        saved, what = undone
+        said = f"Undid: {what}"
+    else:
+        saved = store.change_dashboard(board_id, user_id, account_id, summary=reading.said, name=reading.name,
+                                       tabs=reading.tabs, remove=reading.remove, tiles=reading.tiles)
+        if saved is None:
+            return _say(question, question_id, "That change could not be made: the dashboard changed meanwhile. "
+                                               "Open it and try again.")
+        said = reading.said
+    return _changed(question, question_id, saved, said)
+
+
+def _changed(question: str, question_id: str, saved: dict, said: str) -> dict[str, Any]:
+    url = f"/portal/dashboard?dashboard_id={saved['id']}"
+    return {"type": "dashboard_changed", "engine": "core2", "question": question, "question_id": question_id,
+            "dashboard": {"id": int(saved["id"]), "name": saved["name"], "url": url},
+            "change": said, "version": int(saved.get("version") or 1), "undo": True}
+
+
+def _talk_add(account_id: str, portal_user: dict, question: str, question_id: str, reading: Any, row: dict,
+              payload: dict[str, Any] | None) -> dict[str, Any]:
+    """A tile added from the answer to the question it names, on the tab it names, as one version."""
+    import store
+    from core2 import dashboards
+
+    plan = (payload or {}).get("plan") or {}
+    kind = ("trend" if (plan.get("time") or {}).get("grain") and not plan.get("group_by") else
+            "table" if plan.get("group_by") and plan.get("limit") else "breakdown" if plan.get("group_by") else "number")
+    title = reading.question[:1].upper() + reading.question[1:]
+    tile = dashboards.answered(dashboards.Tile(title=title, kind=kind, question=reading.question, tab=reading.tab),
+                               lambda asked: payload or {})
+    if tile.error:
+        return _say(question, question_id, f"I could not add {reading.question}: {tile.error}")
+    dashboards.lay_out([tile])
+    client = store.get_client(account_id) or {}
+    saved = store.save_built_dashboard(account_id, int(portal_user["id"]), name=str(row["name"]),
+                                       tiles=[dashboards.kept(tile)],
+                                       db_config_id=int(client.get("db_config_id") or 0) or None,
+                                       dashboard_id=int(row["id"]), tab_names=[reading.tab],
+                                       summary=f"Added {title}")
+    if saved is None:
+        return _say(question, question_id, "That tile could not be added: the dashboard is not yours to change.")
+    return _changed(question, question_id, saved, f"Added \u201c{title}\u201d to the {tile.tab} tab")
+
+
+async def _talked(adapter: Any, websocket: Any, account_id: str, question: str, portal_user: dict | None,
+                  question_id: str, key: str, start: float) -> bool:
+    """A change to the dashboard the conversation is on, made and said; False when the words ask none."""
+    from core2 import dashboard_talk as talk
+
+    if not portal_user or not portal_user.get("id"):
+        return False
+    try:
+        reading, row = await asyncio.to_thread(_talk_read, account_id, portal_user, adapter, question, key)
+    except Exception as exc:     # noqa: BLE001 - read as a question instead
+        log.warning("core2 could not read a dashboard change for %s: %s", account_id, exc)
+        return False
+    if reading is None:
+        return False
+    if row is None:
+        frame = _say(question, question_id, "This conversation has no dashboard to change. Open the dashboard and "
+                                            "ask from its chat, or ask for a new one (\u201ccreate an executive "
+                                            "dashboard\u201d).")
+    elif int(row["user_id"]) != int(portal_user["id"]):
+        frame = _say(question, question_id, f"{row['name']} is shared with you to read: its owner can change it.")
+    elif isinstance(reading, talk.Refused):
+        frame = _say(question, question_id, reading.text)
+    elif isinstance(reading, talk.Which):
+        frame = _say(question, question_id, reading.question, follow_up_suggestions=[
+            {"label": option, "question": option} for option in reading.options])
+    elif reading.kind == "add":
+        status, payload = await _answer(account_id, reading.question, portal_user, f"{key}:add", "core2",
+                                        question_id, limit=TIMEOUT_SECONDS)
+        frame = await asyncio.to_thread(_talk_add, account_id, portal_user, question, question_id, reading, row,
+                                        payload)
+    else:
+        try:
+            frame = await asyncio.to_thread(_talk_apply, account_id, portal_user, question, question_id, reading, row)
+        except Exception as exc:     # noqa: BLE001 - said, never raised to the socket
+            log.warning("core2 could not change dashboard %s for %s: %s", row.get("id"), account_id, exc)
+            frame = _say(question, question_id, "That change could not be made. Try again, or make it on the "
+                                                "dashboard itself.")
+    if frame.get("type") == "dashboard_changed":
+        _on_dashboard(key, int(frame["dashboard"]["id"]))
+        await _keep_card(adapter, account_id, portal_user, question, question_id, frame,
+                         f"Dashboard changed: {frame['change']}", start)
+    await _send(adapter, websocket, frame)
+    return True
+
+
+async def _keep_card(adapter: Any, account_id: str, portal_user: dict | None, question: str, question_id: str,
+                     frame: dict[str, Any], headline: str, start: float) -> None:
+    """A dashboard's card kept in the thread like an answer: a reopened thread shows it again."""
+    try:
+        await asyncio.to_thread(_keep, account_id, portal_user, str(getattr(adapter, "session_id", "") or ""),
+                                question, question_id, {**frame, "answer": {"headline": headline}}, None,
+                                int((time.perf_counter() - start) * 1000))
+    except Exception as exc:     # noqa: BLE001 - the dashboard is saved; only its card in history is lost
+        log.warning("core2 could not keep a dashboard's card in history for %s: %s", account_id, exc)
 
 
 def _record(account_id: str, portal_user: dict | None, mode: str, question: str, status: str,
@@ -464,6 +653,10 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
 
     from core2.dashboards import asked_for
 
+    key = _session_key(account_id, portal_user, getattr(adapter, "thread_id", "default"))
+    if asked_for(question) is None and await _talked(adapter, websocket, account_id, question, portal_user,
+                                                     question_id, key, start):
+        return True
     progress, limit = None, TIMEOUT_SECONDS
     if asked_for(question) is not None:
         # "Create a revenue dashboard": how far it is, said once it is designed and again as each tile lands.
@@ -480,9 +673,15 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         await _send(adapter, websocket, _could_not(question, status, question_id, beside=False, seconds=limit))
         return True
     if payload.get("type") == "dashboard_built":
-        await _send(adapter, websocket, await asyncio.to_thread(
-            _created, account_id, portal_user, payload, question_id, str(getattr(adapter, "thread_id", "") or "default")))
+        made = await asyncio.to_thread(_created, account_id, portal_user, payload, question_id,
+                                       str(getattr(adapter, "thread_id", "") or "default"))
+        if made.get("type") == "dashboard_created":
+            _on_dashboard(key, int(made["dashboard"]["id"]))
+            await _keep_card(adapter, account_id, portal_user, question, question_id, made,
+                             f"Dashboard created: {made['dashboard']['name']}", start)
+        await _send(adapter, websocket, made)
         return True
+    _on_dashboard(key, None)         # an answer: the conversation has moved on from the dashboard
     rows = payload.pop("export_rows", None)
     try:
         payload["trace_id"] = await asyncio.to_thread(

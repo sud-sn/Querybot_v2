@@ -363,13 +363,18 @@ def _described(question: str, services: Services) -> dict[str, Any]:
     from core2 import dashboards
 
     told = services.progress
+
+    def answer(asked: str, planned: dict[str, Any] | None = None) -> dict[str, Any]:
+        return _answer_question(asked, services, Session(),
+                                planned=None if planned is None else Plan.model_validate(planned))
+
     try:
-        draft = dashboards.build(services.model, question, services.complete,
-                                 lambda asked: _answer_question(asked, services, Session()),
+        draft = dashboards.build(services.model, question, services.complete, answer,
                                  scrub=services.scrub, personal_shown=services.scrub is not None,
                                  progress=None if told is None else lambda d: told(
                                      {"type": "dashboard_building", "engine": "core2", "question": question,
-                                      "building": dashboards.status(d)}))
+                                      "building": dashboards.status(d)}),
+                                 today=services.today, allowed=services.allowed_tables)
     except dashboards.DesignError as exc:
         return _frame(question, f"I could not design that dashboard: {exc}. Try naming what it should show, "
                                 "as \"a dashboard of net sales by store and month\".", kind="dashboard_refused")
@@ -379,12 +384,13 @@ def _described(question: str, services: Services) -> dict[str, Any]:
             sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
     return {"type": "dashboard_built", "engine": "core2", "question": question, "name": draft.name,
             "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
-            "not_built": dashboards.not_built(draft)}
+            "not_built": dashboards.not_built(draft), "checks": list(draft.checks)}
 
 
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
-                     forced: str | None = None) -> dict[str, Any]:
-    """``forced``: "refine" or "new" when the reader said which ("Ask as a new question", or a button)."""
+                     forced: str | None = None, planned: Plan | None = None) -> dict[str, Any]:
+    """``forced``: "refine" or "new" when the reader said which ("Ask as a new question", or a button).
+    ``planned``: the plan written for the question in code (a recipe's dashboard tile), run as it is (no AI)."""
     start = time.perf_counter()
     model = services.model
     pending, session.pending = session.pending, None
@@ -406,7 +412,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     matches: list[ValueMatch] = []
     picked = choose(question, pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
-    if offer is not None and (pending is None or picked is None) and last is not None:
+    if planned is not None:
+        outcome = Outcome(planned)
+    elif offer is not None and (pending is None or picked is None) and last is not None:
         # A chip of the answer on screen: its plan, one setting changed, run as it is (no AI).
         outcome = Outcome(offer, masked=last.masked)     # no "Following" line: the chip says what it changed
     elif pending is not None and picked is not None:

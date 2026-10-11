@@ -866,6 +866,8 @@ async def ws_chat(websocket: WebSocket, account_id: str):
         if selected:
             selected_dashboard_id = int(selected["id"])
             selected_dashboard_read_only = not bool(selected.get("can_edit"))
+    # The dashboard the chat was opened from: a change asked for in the new core's chat is about it.
+    adapter.selected_dashboard_id = selected_dashboard_id
 
     # Evaluate session liveness before restoring the selected thread.
     _is_new_portal_session = False

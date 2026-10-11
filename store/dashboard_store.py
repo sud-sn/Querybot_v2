@@ -31,10 +31,11 @@ def _snapshot_locked(conn, dashboard_id: int, user_id: int, account_id: str, sum
     ).fetchone()
     if not dashboard:
         return
+    # Each tile whole, what it asks included: a tile taken off comes back with its version (undo).
     charts = conn.execute(
         """SELECT id, data_source_id, title, chart_type, color_palette,
                   position, grid_x, grid_y, grid_w, grid_h, display_config,
-                  dashboard_tab, sort_enabled, layout_locked
+                  dashboard_tab, sort_enabled, layout_locked, question, sql_query, db_config_id, title_set
              FROM pinned_chart WHERE dashboard_id=? AND user_id=?
              ORDER BY position, id""",
         (int(dashboard_id), int(user_id)),
@@ -1476,9 +1477,10 @@ def list_dashboard_versions(dashboard_id: int, user_id: int, account_id: str) ->
 
 
 def rollback_dashboard(
-    dashboard_id: int, user_id: int, account_id: str, target_version: int
+    dashboard_id: int, user_id: int, account_id: str, target_version: int, summary: str = ""
 ) -> dict | None:
-    """Restore a presentation checkpoint while preserving a new audit version."""
+    """Restore a presentation checkpoint while preserving a new audit version. A tile taken off since comes back
+    (from a version that kept what it asks); one whose data source is gone stays off."""
     with get_db() as conn:
         version_row = conn.execute(
             """SELECT snapshot_json FROM dashboard_artifact_version
@@ -1510,22 +1512,39 @@ def rollback_dashboard(
             (int(dashboard_id), int(user_id)),
         )
         for chart in list(snapshot.get("charts") or []):
-            conn.execute(
+            values = (
+                int(dashboard_id), chart.get("data_source_id"), str(chart.get("title") or "")[:120],
+                str(chart.get("chart_type") or "bar"), str(chart.get("color_palette") or "default"),
+                int(chart.get("position") or 0), int(chart.get("grid_x") or 0),
+                int(chart.get("grid_y") or 0) * stretch,
+                int(chart.get("grid_w") or 6), int(chart.get("grid_h") or 5) * stretch,
+                str(chart.get("display_config") or "{}"), str(chart.get("dashboard_tab") or "Overview")[:60],
+                1 if chart.get("sort_enabled", 1) else 0,
+            )
+            cur = conn.execute(
                 """UPDATE pinned_chart SET dashboard_id=?, data_source_id=?, title=?,
                           chart_type=?, color_palette=?, position=?, grid_x=?, grid_y=?,
                           grid_w=?, grid_h=?, display_config=?, dashboard_tab=?, sort_enabled=?
                     WHERE id=? AND user_id=? AND account_id=?""",
-                (
-                    int(dashboard_id), chart.get("data_source_id"), str(chart.get("title") or "")[:120],
-                    str(chart.get("chart_type") or "bar"), str(chart.get("color_palette") or "default"),
-                    int(chart.get("position") or 0), int(chart.get("grid_x") or 0),
-                    int(chart.get("grid_y") or 0) * stretch,
-                    int(chart.get("grid_w") or 6), int(chart.get("grid_h") or 5) * stretch,
-                    str(chart.get("display_config") or "{}"), str(chart.get("dashboard_tab") or "Overview")[:60],
-                    1 if chart.get("sort_enabled", 1) else 0, int(chart.get("id") or 0), int(user_id), account_id,
-                ),
+                (*values, int(chart.get("id") or 0), int(user_id), account_id),
             )
-        _snapshot_locked(conn, dashboard_id, user_id, account_id, f"Rolled back to version {int(target_version)}")
+            if cur.rowcount or "question" not in chart:
+                continue
+            source = chart.get("data_source_id")
+            if source and not conn.execute("SELECT 1 FROM dashboard_data_source WHERE id=? AND user_id=?",
+                                           (int(source), int(user_id))).fetchone():
+                continue
+            conn.execute(
+                """INSERT INTO pinned_chart (dashboard_id, data_source_id, title, chart_type, color_palette, position,
+                                             grid_x, grid_y, grid_w, grid_h, display_config, dashboard_tab,
+                                             sort_enabled, user_id, account_id, question, sql_query, db_config_id,
+                                             title_set, layout_locked)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (*values, int(user_id), account_id, str(chart.get("question") or ""), str(chart.get("sql_query") or ""),
+                 chart.get("db_config_id"), int(chart.get("title_set") or 0), int(chart.get("layout_locked") or 0)),
+            )
+        _snapshot_locked(conn, dashboard_id, user_id, account_id,
+                         summary or f"Rolled back to version {int(target_version)}")
     return get_dashboard(dashboard_id, user_id, account_id)
 
 
@@ -1535,7 +1554,7 @@ def rollback_dashboard(
 
 def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: list[dict], db_config_id: int | None,
                          dashboard_id: int | None = None, thread_id: str = "default",
-                         tab_names: list[str] | None = None) -> dict | None:
+                         tab_names: list[str] | None = None, summary: str = "Built from your request") -> dict | None:
     """A described dashboard saved as one version ("Built from your request"): a new dashboard, or one of the
     reader's own with the tiles added below what it has. Each tile keeps its plan, its title, its place and its
     tab: a tab of the draft ("Overview", "Revenue") is the dashboard's tab of that name, or a new one after its
@@ -1608,6 +1627,106 @@ def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: lis
         conn.execute("""UPDATE dashboard_artifact SET tabs_json=?, version=version+?, status='draft',
                                updated_at=datetime('now') WHERE id=?""",
                      (_json(names), 1 if dashboard_id else 0, board_id))
-        _snapshot_locked(conn, board_id, int(user_id), account_id, "Built from your request")
+        _snapshot_locked(conn, board_id, int(user_id), account_id, summary)
         row = conn.execute("SELECT * FROM dashboard_artifact WHERE id=?", (board_id,)).fetchone()
     return dict(row)
+
+
+# ── Changes asked for in the chat (core2/dashboard_talk.py) ─────────────────
+
+
+def change_dashboard(dashboard_id: int, user_id: int, account_id: str, *, summary: str, name: str | None = None,
+                     tabs: list[str] | None = None, remove: list[int] | None = None,
+                     tiles: dict[int, dict] | None = None) -> dict | None:
+    """One change the reader asked for in the chat, as one version of their dashboard (``summary`` says what it
+    was): its name, its tabs, tiles taken off, and tiles changed (``tiles``: a tile's id to its new title,
+    chart type, display config or tab). None when the dashboard is not theirs, or a tile named is not on it."""
+    with get_db() as conn:
+        board = conn.execute("SELECT * FROM dashboard_artifact WHERE id=? AND user_id=? AND account_id=?",
+                             (int(dashboard_id), int(user_id), account_id)).fetchone()
+        if not board:
+            return None
+        on = {int(r["id"]): r for r in conn.execute(
+            "SELECT id, data_source_id FROM pinned_chart WHERE dashboard_id=? AND user_id=? AND account_id=?",
+            (int(dashboard_id), int(user_id), account_id))}
+        named = [int(i) for i in (remove or [])] + [int(i) for i in (tiles or {})]
+        if any(i not in on for i in named):
+            return None
+        sources = set()
+        for chart_id in remove or []:
+            conn.execute("DELETE FROM pinned_chart WHERE id=? AND user_id=?", (int(chart_id), int(user_id)))
+            if on[int(chart_id)]["data_source_id"]:
+                sources.add(int(on[int(chart_id)]["data_source_id"]))
+        for source in sources:
+            # A source the other numbers of the same answer still use (one tile per number) stays.
+            if not conn.execute("SELECT 1 FROM pinned_chart WHERE data_source_id=? AND user_id=? LIMIT 1",
+                                (source, int(user_id))).fetchone():
+                conn.execute("DELETE FROM dashboard_data_source WHERE id=? AND dashboard_id=? AND user_id=? "
+                             "AND account_id=?", (source, int(dashboard_id), int(user_id), account_id))
+        reflow = bool(remove)
+        for chart_id, change in (tiles or {}).items():
+            assignments, values = [], []
+            if change.get("title") is not None:
+                assignments += ["title=?", "title_set=1"]
+                values.append(str(change["title"]).strip()[:120])
+            if change.get("chart_type") is not None:
+                assignments += ["chart_type=?", "layout_locked=0"]
+                values.append(str(change["chart_type"]).strip().lower()[:20])
+                reflow = True
+            if change.get("display_config") is not None:
+                assignments.append("display_config=?")
+                values.append(_json(change["display_config"]))
+            if change.get("dashboard_tab") is not None and change.get("in_place"):
+                # A tab renamed: its tiles keep their places.
+                assignments.append("dashboard_tab=?")
+                values.append(str(change["dashboard_tab"])[:60])
+            elif change.get("dashboard_tab") is not None:
+                below = conn.execute("""SELECT COALESCE(MAX(grid_y + grid_h), 0) AS bottom FROM pinned_chart
+                                         WHERE dashboard_id=? AND user_id=? AND dashboard_tab=? AND id<>?""",
+                                     (int(dashboard_id), int(user_id), str(change["dashboard_tab"])[:60],
+                                      int(chart_id))).fetchone()
+                assignments += ["dashboard_tab=?", "grid_x=0", "grid_y=?"]
+                values += [str(change["dashboard_tab"])[:60], int(below["bottom"] or 0)]
+            if assignments:
+                conn.execute(f"UPDATE pinned_chart SET {', '.join(assignments)} WHERE id=? AND user_id=?",
+                             (*values, int(chart_id), int(user_id)))
+        if reflow:
+            _auto_layout_locked(conn, int(dashboard_id), int(user_id))
+        sets, params = ["version=version+1", "status='draft'", "updated_at=datetime('now')"], []
+        if name is not None:
+            sets.append("name=?")
+            params.append(_clean_name(name))
+        if tabs is not None:
+            kept: list[str] = []
+            for tab in tabs[:8]:
+                tab = _clean_name(tab)[:60]
+                if tab.casefold() not in {k.casefold() for k in kept}:
+                    kept.append(tab)
+            sets.append("tabs_json=?")
+            params.append(_json(kept or ["Overview"]))
+        conn.execute(f"UPDATE dashboard_artifact SET {', '.join(sets)} WHERE id=? AND user_id=? AND account_id=?",
+                     (*params, int(dashboard_id), int(user_id), account_id))
+        _snapshot_locked(conn, dashboard_id, user_id, account_id, summary)
+    return get_dashboard(dashboard_id, user_id, account_id)
+
+
+_UNDONE = re.compile(r"^Rolled back to version (\d+)")
+
+
+def undo_dashboard(dashboard_id: int, user_id: int, account_id: str) -> tuple[dict, str] | None:
+    """The version before the last change put back, as a version of its own; undone again, the one before that.
+    The dashboard and what was undone ("Removed the Returns tab"), or None when there is nothing before."""
+    versions = list_dashboard_versions(dashboard_id, user_id, account_id)
+    if not versions:
+        return None
+    latest = versions[0]
+    undone = _UNDONE.match(str(latest.get("change_summary") or ""))
+    target = (int(undone.group(1)) if undone else int(latest["version"])) - 1
+    by_version = {int(v["version"]): v for v in versions}
+    if target < 1 or target not in by_version:
+        return None
+    what = str((by_version.get(target + 1) or {}).get("change_summary") or "the last change")
+    what = what.split(": undid ", 1)[0] if what.startswith("Rolled back") else what
+    board = rollback_dashboard(dashboard_id, user_id, account_id, target,
+                               summary=f"Rolled back to version {target}: undid {what}")
+    return (board, what) if board else None

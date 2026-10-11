@@ -11,9 +11,14 @@ says why, and when the data has nothing that measures it, offers to define it.
 Three kinds of request: a list of what the reader needs ("revenue by month, top 10 formulas and fills by
 pharmacy": those tiles, in that order), a subject ("a revenue dashboard": its headline numbers, trend,
 breakdowns and a top 10), or the whole business ("an executive dashboard": the headline figures of each main
-area). A design too thin for a subject or the whole business (one tile for "a revenue dashboard") is asked for
-again, once. A dashboard of several areas, or of more tiles than one page holds, is on named tabs: "Overview"
-first, then a tab per area ("Revenue", "Fills").
+area). The whole business is built by the recipe of its kind (core2/recipes.py), with no AI: the same shape and
+a proper name every time ("Sales executive dashboard"), each tile's plan written in code. A design too thin for
+a subject (one tile for "a revenue dashboard") is asked for again, once. A dashboard of several areas, or of more
+tiles than one page holds, is on named tabs: "Overview" first, then a tab per area ("Revenue", "Fills").
+
+Once built, each headline number is checked against the trend of the same figure over the same period, where
+there is one: a total that adds up is the sum of its months, a level (a headcount, a balance) its last month's.
+The chat says the totals were checked, or which did not match.
 
 Layout, on each tab: the numbers in one row (at most six), trends and breakdowns two side by side (one alone
 across the width), tables across the width; at most 12 tiles on a tab, at most 16 on a dashboard.
@@ -21,6 +26,7 @@ across the width), tables across the width; at most 12 tiles on a tab, at most 1
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import re
@@ -114,6 +120,7 @@ class Tile:
     definable: bool = False         # it failed for want of a measure: the reader is offered to define it
     layout: dict = field(default_factory=dict)   # grid_x, grid_y, grid_w, grid_h, tab (its place in the tabs)
     tab: str = ""                   # the tab the design put it on ("Overview", "Revenue")
+    planned: dict | None = None     # a recipe's tile: the plan written for it, run as it is (no AI)
 
 
 @dataclass
@@ -122,6 +129,7 @@ class Draft:
     request: str
     tiles: list[Tile]
     tabs: list[str] = field(default_factory=list)        # the tabs' names, in order; a tile's layout tab is a place here
+    checks: list[dict[str, Any]] = field(default_factory=list)   # each headline number against its trend
 
 
 def design(model, request: str, complete: Callable[[str, str], str], *, scrub: Callable[[str], str] | None = None,
@@ -187,15 +195,39 @@ class DesignError(ValueError):
     pass
 
 
-def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[[str], dict], *,
-          scrub: Callable[[str], str] | None = None, personal_shown: bool = False,
-          progress: Callable[[Draft], None] | None = None) -> Draft:
-    """The dashboard: designed by one AI call, each tile answered on its own (several at once), laid out.
+def executive(model, request: str, *, today: dt.date, allowed: set[str] | None = None) -> tuple[str, list[Tile]] | None:
+    """The whole business's dashboard by the recipe of its kind, when the request asks for the whole business
+    ("an executive dashboard", "a CFO dashboard for 2025", a dashboard of nothing named)."""
+    from core2 import recipes
 
-    ``answer(question)`` answers a question as a new conversation would (its own planner call, its own query).
-    A tile that cannot be built says why; the others are built. ``progress(draft)`` is told the draft once it is
-    designed and again as each tile lands, from the thread that built it, one call at a time."""
-    name, tiles = design(model, request, complete, scrub=scrub, personal_shown=personal_shown)
+    about = asked_for(request)
+    if about is None:
+        return None
+    whole, year = recipes.whole_business(about)
+    if not whole:
+        return None
+    language = "fr" if _DEMANDE.match(_POLITE.sub("", request or "")) else "en"
+    made = recipes.executive(model, today=today, year=year, language=language, allowed=allowed)
+    if made is None:
+        return None
+    name, tiles = made
+    return name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in tiles]
+
+
+def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[..., dict], *,
+          scrub: Callable[[str], str] | None = None, personal_shown: bool = False,
+          progress: Callable[[Draft], None] | None = None, today: dt.date | None = None,
+          allowed: set[str] | None = None) -> Draft:
+    """The dashboard: the recipe of the business's kind, or designed by one AI call; each tile answered on its
+    own (several at once), laid out, and its headline numbers checked against their trends.
+
+    ``answer(question)`` answers a question as a new conversation would (its own planner call, its own query);
+    ``answer(question, plan)`` runs a recipe tile's plan as it is. A tile that cannot be built says why; the
+    others are built. ``progress(draft)`` is told the draft once it is designed and again as each tile lands,
+    from the thread that built it, one call at a time."""
+    recipe = executive(model, request, today=today or dt.date.today(), allowed=allowed)
+    name, tiles = recipe if recipe is not None else design(model, request, complete, scrub=scrub,
+                                                           personal_shown=personal_shown)
     draft = Draft(name=name, request=request, tiles=tiles)
     draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
@@ -220,14 +252,16 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
         if tile.error:
             tile.layout = {}
     draft.tabs = lay_out([t for t in tiles if not t.error])
+    draft.checks = checked(draft.tiles, model)
     return draft
 
 
-def answered(tile: Tile, answer: Callable[[str], dict]) -> Tile:
+def answered(tile: Tile, answer: Callable[..., dict]) -> Tile:
     """The tile with its answer, or why it could not be built: when the data has nothing that measures it (the
-    planner found none, or asked what was meant), the reader is offered to define it."""
+    planner found none, or asked what was meant), the reader is offered to define it. A recipe's tile is its
+    plan, run as it is: one that fails is left out, never offered to be defined."""
     try:
-        payload = answer(tile.question)
+        payload = answer(tile.question) if tile.planned is None else answer(tile.question, tile.planned)
     except Exception as exc:  # noqa: BLE001 - one tile failing never takes the dashboard with it
         log.warning("core2 could not build the tile %r: %s", tile.title, exc)
         tile.error = "This tile could not be built."
@@ -235,7 +269,7 @@ def answered(tile: Tile, answer: Callable[[str], dict]) -> Tile:
     if payload.get("data") is None or not payload.get("plan"):
         tile.error = str((payload.get("answer") or {}).get("headline") or payload.get("text")
                          or "This tile could not be built.")
-        tile.definable = bool(payload.get("unsupported") or payload.get("clarify"))
+        tile.definable = tile.planned is None and bool(payload.get("unsupported") or payload.get("clarify"))
         return tile
     tile.plan, tile.payload = payload["plan"], payload
     return tile
@@ -291,6 +325,62 @@ def _tab(tiles: list[Tile], tab: int) -> None:
     for t in (t for t in tiles if t.kind == "table"):
         place(t, 0, GRID)
         y += HEIGHT["table"]
+
+
+_SHAPES = ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active", "on_time", "forecast",
+           "drivers", "derived", "durations")
+
+
+def _figure(plan: dict[str, Any]) -> tuple | None:
+    """What a plan totals, as compared: its one measure, its filters, its date and period. None for a shaped
+    answer (a share, a running total, a band), whose total is no sum of a trend."""
+    measures = plan.get("measures") or []
+    if len(measures) != 1 or plan.get("group_by") or any(plan.get(k) for k in _SHAPES):
+        return None
+    time = plan.get("time") or {}
+    return (measures[0], json.dumps(plan.get("filters") or [], sort_keys=True), time.get("date"),
+            json.dumps(time.get("window") or {"kind": "all"}, sort_keys=True), bool(plan.get("include_left_out")))
+
+
+def checked(tiles: list[Tile], model) -> list[dict[str, Any]]:
+    """Each headline number against the trend of the same figure over the same period: a total that adds up is
+    the sum of its periods, a level (a headcount, a balance kept each month) its last period's, or their average
+    where it is kept that way. A count of distinct things (orders over a year, fewer than the sum of each month's
+    when one spans two) is not checked."""
+    by_slug = {m.slug: m for m in model.measures.values()}
+    out = []
+    for n in tiles:
+        if n.kind != "number" or n.error or not n.plan or n.payload is None:
+            continue
+        figure = _figure(n.plan)
+        m = by_slug.get(figure[0]) if figure else None
+        if m is None or m.additivity == "non_additive":
+            continue
+        trend = next((t for t in tiles if t.kind == "trend" and not t.error and t.plan and t.payload is not None
+                      and (t.plan.get("time") or {}).get("grain") and _figure(t.plan) == figure), None)
+        if trend is None:
+            continue
+        number = ((n.payload.get("data") or {}).get("rows") or [{}])[0].get(m.slug)
+        data = trend.payload.get("data") or {}
+        points = [r.get(m.slug) for r in data.get("rows") or []]
+        if not isinstance(number, (int, float)) or not points or data.get("truncated"):
+            continue
+        values = [float(v) for v in points if isinstance(v, (int, float))]
+        if m.additivity == "additive":
+            how, total = "sum", sum(values)
+        elif m.time_aggregation == "average":
+            how, total = "average", sum(values) / len(values) if values else 0.0
+        elif m.time_aggregation == "first":
+            how, total = "first", values[0] if values else 0.0
+        else:
+            how, total = "last", values[-1] if values else 0.0
+        agree = abs(float(number) - total) <= max(0.01 * len(values), abs(float(number)) * 1e-6)
+        if not agree:
+            log.warning("core2 dashboard: %r (%s) is not the %s of its trend %r (%s)", n.title, number, how,
+                        trend.title, total)
+        out.append({"number": n.title, "trend": trend.title, "tab": n.tab, "how": how, "agree": agree,
+                    "total": float(number), "of_trend": round(total, 6)})
+    return out
 
 
 def status(draft: Draft) -> dict[str, Any]:

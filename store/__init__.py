@@ -90,7 +90,7 @@ from store.user_store import (
 )
 from store.notice_store import add_notice, list_notices, unread_notice_count, mark_notices_read
 from store.dashboard_store import (
-    save_built_dashboard,
+    save_built_dashboard, change_dashboard, undo_dashboard,
     create_dashboard, get_dashboard, get_dashboard_for_view, latest_dashboard_for_thread,
     list_dashboards, list_editable_dashboards, migrate_legacy_charts,
     create_data_source, list_data_sources, list_data_sources_for_view,
@@ -268,7 +268,7 @@ __all__ = [
     "list_active_follows","claim_follow","release_follow",
     "rename_dashboard",
     "publish_dashboard","mark_dashboard_draft","update_dashboard_controls",
-    "list_dashboard_versions","rollback_dashboard",
+    "list_dashboard_versions","rollback_dashboard", "change_dashboard", "undo_dashboard",
     "save_source_cache","mark_source_cache_error","get_source_cache","forget_kept_rows",
     "claim_owner_notice","release_owner_notice",
     "list_due_dashboard_sources",

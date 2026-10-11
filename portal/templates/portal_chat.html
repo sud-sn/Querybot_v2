@@ -1805,6 +1805,7 @@ function replayCachedEntry(entry){
   else if (kind === 'assistant_analysis') appendAnalysisResponse(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'chart') appendChart(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
   else if (kind === 'clarification_prompt') renderClarificationPrompt(entry.payload || {}, { persist:false, stale:true, timestamp: entry.timestamp });
+  else if (kind === 'dashboard_created' || kind === 'dashboard_changed') appendDashboardMade(entry.payload || {}, { persist:false, timestamp: entry.timestamp });
 }
 function restoreChatCache(){
   const items = loadChatCache();
@@ -3082,6 +3083,13 @@ function dashboardMadeHtml(msg) {
   const tabList = tabs.length > 1 ? `<ul class="dash-made-tabs" aria-label="${escHtml(t('ui.chat.dashmade.tabs'))}">`
     + tabs.map(tab => `<li><a href="${escHtml(tab.url || board.url || '')}">${escHtml(tab.name)}<span class="dash-made-count">${escHtml(String(tab.tiles || 0))}</span></a></li>`).join('')
     + `</ul>` : '';
+  // Each headline number against its trend: said once when all match, each one that does not, by name.
+  const checks = Array.isArray(msg.checks) ? msg.checks : [];
+  const amiss = checks.filter(c => c && c.agree === false);
+  const num = v => Number(v || 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+  const checked = amiss.length
+    ? amiss.map(c => `<p class="answer-definition dash-made-mismatch">${qbIcon('alert-triangle', 14)}${escHtml(t('ui.chat.dashmade.mismatch', {number: c.number, trend: c.trend, total: num(c.total), of_trend: num(c.of_trend)}))}</p>`).join('')
+    : checks.length ? `<p class="answer-definition dash-made-checked">${qbIcon('check', 14)}${escHtml(checks.length === 1 ? t('ui.chat.dashmade.checked_one') : t('ui.chat.dashmade.checked', {count: String(checks.length)}))}</p>` : '';
   const notBuilt = failed.length ? `<div class="dash-made-failed"><p>${escHtml(t('ui.chat.dashmade.not_built', {count: String(failed.length)}))}</p><ul>`
     + failed.map(tile => `<li><span class="dash-made-title">${escHtml(tile.title)}</span> <span class="dash-made-error">${escHtml(tile.error)}</span>`
       + (tile.definable ? ` <button type="button" class="btn btn-ghost btn-sm" data-dash-define="${escHtml(tile.title)}">${qbIcon('plus', 14)}${escHtml(t('ui.chat.dashmade.define'))}</button>` : '')
@@ -3090,9 +3098,21 @@ function dashboardMadeHtml(msg) {
     + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashmade.kicker'))}</span>`
     + `<p class="answer-headline is-lead">${escHtml(t('ui.chat.dashmade.headline', {name: board.name || ''}))}</p>`
     + `<p class="answer-definition">${escHtml(summary)}</p>`
-    + tabList + notBuilt
+    + checked + tabList + notBuilt
     + `<div class="answer-actions"><a class="btn btn-primary btn-sm" href="${escHtml(board.url || '/portal/dashboard')}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashmade.open'))}</a></div>`
     + `</article>`;
+}
+
+// A change asked for in the chat: what it was, the version it made, and Undo (the same as asking for it).
+function dashboardChangedHtml(msg) {
+  const board = msg.dashboard || {};
+  return `<article class="answer-card dash-made dash-changed" aria-label="${escHtml(t('ui.chat.dashchanged.kicker'))}">`
+    + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashchanged.kicker'))}</span>`
+    + `<p class="answer-headline is-lead">${escHtml(msg.change || '')}</p>`
+    + `<p class="answer-definition">${escHtml(t('ui.chat.dashchanged.version', {version: String(msg.version || 1), name: board.name || ''}))}</p>`
+    + `<div class="answer-actions"><a class="btn btn-primary btn-sm" href="${escHtml(board.url || '/portal/dashboard')}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashmade.open'))}</a>`
+    + (msg.undo ? `<button type="button" class="btn btn-ghost btn-sm" data-dash-undo="1">${qbIcon('rotate', 14)}${escHtml(t('ui.chat.dashchanged.undo'))}</button>` : '')
+    + `</div></article>`;
 }
 
 function _madeHolder(key) {
@@ -3100,8 +3120,9 @@ function _madeHolder(key) {
   return Array.from(thread().querySelectorAll('[data-dash-for]')).find(el => el.getAttribute('data-dash-for') === key) || null;
 }
 
-// One card per request: the line of how far it is, replaced by the card of the dashboard once it is saved.
-function appendDashboardMade(msg) {
+// One card per request: the line of how far it is, replaced by the card of the dashboard once it is saved. The
+// card of a dashboard made stays in the thread: kept for the page's session, and by the server for a reopened one.
+function appendDashboardMade(msg, opts = {}) {
   hideWelcome();
   const key = String(msg.question_id || '');
   let holder = _madeHolder(key);
@@ -3112,11 +3133,15 @@ function appendDashboardMade(msg) {
     if (key) holder.setAttribute('data-dash-for', key);
     thread().appendChild(holder);
   }
-  holder._made = msg.type === 'dashboard_created';
-  holder.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${timeLabel()}</span></div>${dashboardMadeHtml(msg)}</div>`;
+  holder._made = msg.type === 'dashboard_created' || msg.type === 'dashboard_changed';
+  const timestamp = timeLabel(opts.timestamp);
+  const card = msg.type === 'dashboard_changed' ? dashboardChangedHtml(msg) : dashboardMadeHtml(msg);
+  holder.innerHTML = `<div class="msg-content"><div class="msg-meta"><span class="msg-name">QueryBot</span><span>•</span><span>${escHtml(timestamp)}</span></div>${card}</div>`;
+  if (holder._made && opts.persist !== false) pushChatCache({ kind: msg.type, payload: msg, timestamp });
   if (!holder._wired) {
     holder._wired = true;
     holder.addEventListener('click', e => {
+      if (e.target.closest('[data-dash-undo]')) { sendChartDrill(t('ui.chat.dashchanged.undo_words')); return; }
       // A tile nothing measures: through the chat's own metric request, "<name> = how it is counted".
       const define = e.target.closest('[data-dash-define]');
       if (!define) return;
@@ -4695,7 +4720,7 @@ function connect(){
       return; // prevent falling through to setProcessing(false) in 'typing' event
     } else if (msg.type === 'dashboard_building') {
       appendDashboardMade(msg);           // how far it is, as each tile lands; the turn is still working
-    } else if (msg.type === 'dashboard_created') {
+    } else if (msg.type === 'dashboard_created' || msg.type === 'dashboard_changed') {
       finishAnalysisAction(msg);
       _markActiveOutbound('complete');
       setAgentRunState('completed', msg);
@@ -4959,7 +4984,8 @@ async function restoreServerThread(threadId) {
     }
     turns.forEach(turn => {
       appendUser(turn.question || '', { persist:true, timestamp:turn.created_at });
-      appendAssistantResponse(turn.payload || {}, { persist:true, timestamp:turn.created_at });
+      if (turn.payload?.type === 'dashboard_created' || turn.payload?.type === 'dashboard_changed') appendDashboardMade(turn.payload, { persist:true, timestamp:turn.created_at });
+      else appendAssistantResponse(turn.payload || {}, { persist:true, timestamp:turn.created_at });
     });
     scrollBottom();
     return true;
