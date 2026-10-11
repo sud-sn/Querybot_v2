@@ -72,3 +72,16 @@ def test_asked_which_member_is_meant_the_members_on_screen_are_offered(retail):
     asked = answer_question("How did the one I care about do?", services, session)
     assert asked["clarify"]["options"] == names
     assert [c["question"] for c in asked["follow_up_suggestions"]] == names
+
+
+@pytest.mark.parametrize("field, values, kept", [
+    ("store.code", ["TOP"], ("store.name", ["Airport"])),            # the place word as a value, on the code
+    ("store.code", ["first_store_code"], ("store.name", ["Airport"])),
+    ("store.name", ["Top"], ("store.name", ["Airport"])),
+    ("region.name", ["TOP"], ("region.name", ["TOP"])),               # another thing: asked about
+])
+def test_the_place_word_written_as_a_value_on_another_field_of_the_thing_on_screen(retail, field, values, kept):
+    """ "How many items in the top group cost more than $1,000?" after item groups ranked by name: a real model
+    filtered the group's code on "TOP", and found nothing."""
+    plan = pointed_in(_plan(field, values), retail[1], [], "How much did the top store sell?", SCREEN)
+    assert (plan.filters[0].field, plan.filters[0].values) == kept

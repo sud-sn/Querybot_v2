@@ -526,6 +526,78 @@ def ratio_alone(plan: Plan, model: SemanticModel, question: str) -> Plan:
     return plan.model_copy(update=update) if update else plan
 
 
+_PLAIN_WORDS = {"of", "the", "a", "an", "and", "or", "per", "by", "on", "in", "for", "to", "number", "fact", "fct",
+                "table", "data", "n2", "n3"}
+
+
+def _word_set(text: str) -> set[str]:
+    return {w[:-1] if len(w) > 3 and w.endswith("s") else w for w in re.findall(r"[a-z0-9]+", text.casefold())}
+
+
+def named_twin(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """Of two measures with one name, the one the question's words point at, else the one that holds the name.
+
+    "Which item groups have the highest average item cost?" names a figure kept on a daily balance and again on a
+    monthly one, and the AI took the monthly one. The words that tell the two apart (each one's table, and the
+    words its slug adds to the name: "on hand", "period") pick one when the question says them; when it says none,
+    the one whose slug is its plain name is taken: the Metrics page says so, and flags the pair for the admin.
+    """
+    from core2 import ids
+    from core2.plan.catalog import same_named
+
+    if plan.kind != "query":
+        return plan
+    twins = same_named(model)
+    if not twins:
+        return plan
+    by_slug = {m.slug: m for m in model.measures.values()}
+    asked = _word_set(question)
+    data = plan.model_dump()
+
+    def slugs(value: Any) -> set[str]:
+        if isinstance(value, str):
+            return {value} if value in by_slug else set()
+        if isinstance(value, dict):
+            return set().union(*(slugs(v) for k, v in value.items() if k != "notes"))
+        if isinstance(value, list):
+            return set().union(*(slugs(v) for v in value)) if value else set()
+        return set()
+
+    swap: dict[str, str] = {}
+    for slug in slugs(data):
+        chosen = by_slug[slug]
+        if chosen.key not in twins:
+            continue
+        options = [chosen, *twins[chosen.key]]
+        name = _word_set(chosen.business_name)
+
+        def told_apart(m: Measure) -> set[str]:
+            own = _word_set(m.slug.replace("_", " ")) | _word_set(model.tables[m.table].business_name) | {
+                w for ws in m.synonyms.values() for word in ws for w in _word_set(word)}
+            return own - name - _PLAIN_WORDS
+
+        said = {m.slug: len(told_apart(m) & asked) for m in options}
+        most = max(said.values())
+        pick = [m for m in options if said[m.slug] == most]
+        if most == 0:
+            pick = [m for m in options if m.slug == ids.slug(m.business_name)] or [chosen]
+        if len(pick) == 1 and pick[0].slug != slug and pick[0].slug not in slugs(data):
+            swap[slug] = pick[0].slug
+    if not swap:
+        return plan
+
+    def put(value: Any) -> Any:
+        if isinstance(value, str):
+            return swap.get(value, value)
+        if isinstance(value, dict):
+            return {k: (v if k == "notes" else put(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [put(v) for v in value]
+        return value
+
+    return Plan.model_validate(put(data))
+
+
 def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], question: str = "",
                on_screen: list[tuple] | None = None) -> Plan:
     """A filter value written as a stand-in ("first_warehouse_id", "<top warehouse from previous answer>") for the
@@ -547,13 +619,26 @@ def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], ques
         column = entity.label_column or entity.code_column
         return next((a.slug for a in model.attributes.values() if a.column == column), None)
 
+    def thing(slug: str | None) -> str | None:
+        attribute = model.attributes.get(slug or "")
+        return attribute.entity if attribute is not None else None
+
+    def stand_in(value: object) -> bool:
+        # "TOP" for "the top group": the question's own place word, written as a value no member has.
+        return stands_for(value) or str(value).casefold() in _PLACES and not any(
+            str(m.value).casefold() == str(value).casefold() for m in matches)
+
     filters = []
     for f in plan.filters:
-        if f.op in ("eq", "in") and f.values and all(stands_for(v) for v in f.values):
+        if f.op in ("eq", "in") and f.values and all(stand_in(v) for v in f.values):
             field = attribute_of(f.field)
             found = {m.value for m in matches if field is not None and m.attribute == field}
+            shown = str(on_screen[0][0]) if on_screen else None
+            # The group's code for the group shown by its name: the same thing, pointed at by its row on screen.
+            if not found and field is not None and field != shown and thing(field) and thing(field) == thing(shown):
+                field = shown
             if not found and on_screen and field is not None and len(places) == 1 \
-                    and str(on_screen[0][0]) == field and next(iter(places)) < len(on_screen):
+                    and shown == field and next(iter(places)) < len(on_screen):
                 row = on_screen[next(iter(places))]
                 found = {row[1]} if row[1] is not None else set()
             if len(found) == 1:
@@ -578,6 +663,7 @@ def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
                 problems.append(f'"{value}" is not a value of {f.field}: it stands for a member the question points '
                                 "at. Filter only on values in VALUE MATCHES or a previous plan; when the question "
                                 "does not say which member it means, return a clarify plan asking which one.")
+    problems += _money_on_other(plan, model, question)
     time = plan.time
     other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
     if other is not None and time.window.kind != "all" and (other == time.window or _overlap(time.window, other)):
@@ -596,6 +682,55 @@ def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
         problems.append(f"{', '.join(grouped)} {'is a date' if len(grouped) == 1 else 'are dates'}: figures for "
                         "each day, snapshot, week or month are intent trend with time.date set to the date and "
                         "time.grain (day, week, month, quarter or year), never a group_by on a date.")
+    return problems
+
+
+# "$1,000", "€2.5k", "1,000 dollars": an amount of money the question sets a condition on.
+_MONEY = re.compile(r"[$€£¥]\s?(\d[\d,]*(?:\.\d+)?)\s*([km])?\b|\b(\d[\d,]*(?:\.\d+)?)\s*([km])?\s*(?:dollars|euros|"
+                    r"pounds|usd|eur|gbp|cad|aud)\b", re.IGNORECASE)
+# A number field named for something that is not money: a weight, a count, days, a share.
+_NOT_MONEY = _word_set("weight wt qty quantity count days percent pct rate length height width volume age units number "
+                       "size score hours minutes")
+_MONEY_WORDS = _word_set("cost price amount amt value revenue sales fee charge spend margin profit paid pay payment "
+                         "balance income expense discount tax budget")
+
+
+def _money_on_other(plan: Plan, model: SemanticModel, question: str) -> list[str]:
+    """ "How many items cost more than $1,000 each?" with the condition set on the items' net weight (a real model
+    wrote it so, after first setting it on a date): an amount of money set on a figure that is not money."""
+    amounts: dict[float, str] = {}
+    for m in _MONEY.finditer(question or ""):
+        digits, scale = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        amount = float(digits.replace(",", "")) * {"k": 1e3, "m": 1e6}.get((scale or "").lower(), 1)
+        amounts[amount] = m.group(0).strip()
+    if not amounts:
+        return []
+    measures = {m.slug: m for m in model.measures.values()}
+    dates = {r.slug for r in model.date_roles.values()}
+    problems = []
+    for f in plan.filters:
+        said = next((amounts[float(v)] for v in f.values if isinstance(v, (int, float)) and float(v) in amounts), None)
+        if said is None or f.op not in ("gt", "gte", "lt", "lte", "between", "eq", "ne"):
+            continue
+        if f.field in measures:
+            words, other = _word_set(f"{f.field} {measures[f.field].business_name}"), measures[f.field].format not in (
+                "currency", None)
+        elif f.field in model.attributes:
+            column = model.columns[model.attributes[f.field].column]
+            words = _word_set(f"{f.field.replace('.', ' ')} {column.business_name} {column.name.replace('_', ' ')}")
+            other = column.format not in ("currency", None) or bool(words & _NOT_MONEY)
+        else:
+            words, other = set(), f.field in dates
+        if not other or words & _MONEY_WORDS:
+            continue
+        asked = _word_set(question)
+        money = sorted((m for m in measures.values() if m.format == "currency" and not m.hidden),
+                       key=lambda m: (-len(_word_set(m.business_name) & asked), m.slug))
+        offered = ", ".join(m.slug for m in money[:4] if _word_set(m.business_name) & asked) or ", ".join(
+            m.slug for m in money[:4])
+        problems.append(f'"{said}" is money, and {f.field} is not. A condition on money is set on a money figure'
+                        f"{(' (' + offered + ')') if offered else ''}: a filter on that measure, with the members "
+                        'it is for ("each item") in group_by.')
     return problems
 
 
@@ -783,6 +918,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         plan = ratio_alone(plan, model, question)
         problems, hint = check(plan, model, today, shown)
         if not problems:
+            twin = named_twin(plan, model, question)
+            if twin is not plan and not check(twin, model, today, shown)[0]:
+                plan = twin
             if reading in ("refine", "new") and plan.kind == "query":
                 plan = plan.model_copy(update={"follow_up": reading})
             settled = settle(plan, model, question, history[-1].plan if history else None)

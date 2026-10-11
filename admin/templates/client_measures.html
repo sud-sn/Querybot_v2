@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb, empty_state %}
+{% from "macros.html" import alert, breadcrumb, empty_state %}
 {% from "icons.html" import ic %}
 {% block title %}Metrics — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
@@ -34,6 +34,7 @@ table.ms-l tbody tr[data-href]:hover td{background:var(--surface-2)}
 table.ms-l tbody tr:focus-visible{outline:2px solid var(--focus-ring-color);outline-offset:-2px}
 table.ms-l .nm{font-weight:var(--weight-bold);color:var(--text-strong)}
 table.ms-l .what{display:block;margin-top:2px;font-size:var(--font-xs);color:var(--text-muted);max-width:28ch}
+.ms-l .ms-twin{max-width:36ch}
 table.ms-l .how{max-width:40ch}
 table.ms-l .n{text-align:right;font-variant-numeric:tabular-nums}
 table.ms-l .act{width:48px;text-align:right}
@@ -46,6 +47,8 @@ table.ms-l .act{width:48px;text-align:right}
 .ms-tag.off{background:var(--surface-3);color:var(--text-muted)}
 .ms-muted{color:var(--text-muted)}
 .ms-note{margin:10px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+.ms-twin{display:flex;gap:6px;align-items:flex-start;margin-top:4px;font-size:var(--font-xs);color:var(--warning)}
+.ms-twin svg{flex:none;margin-top:1px}
 @media (max-width: 760px){
   .ms-search{min-width:0;flex:1 1 100%}
   .ms-show{min-height:44px}
@@ -81,6 +84,10 @@ table.ms-l .act{width:48px;text-align:right}
                       "hidden": "Metric hidden. Readers are no longer offered it; Show brings it back.",
                       "shown": "Metric shown to readers again."} %}
 {% if saved in saved_words %}<div class="alert alert-success" role="status">{{ saved_words[saved] }}</div>{% endif %}
+{% set twins = rows | selectattr("same_name") | rejectattr("hidden") | list %}
+{% if twins %}{{ alert(type="amber", icon_name="alert-triangle", message=(twins | length | string) ~ " metrics share a name with
+  another metric counted another way. Readers cannot tell them apart by name: rename one of each pair, or hide the one
+  nobody needs.") }}{% endif %}
 
 {% if not learned %}
 <div class="card">{{ empty_state("chart-bar", "QueryBot has not learned this database yet",
@@ -111,7 +118,8 @@ table.ms-l .act{width:48px;text-align:right}
       data-hidden="{{ 'yes' if r.hidden else 'no' }}"
       data-words="{{ (r.name ~ ' ' ~ r.slug ~ ' ' ~ r.how ~ ' ' ~ r.from | join(' ') ~ ' ' ~ r.synonyms | join(' ')) | lower }}"
       {% if r.hidden %}hidden{% endif %}>
-    <td><b class="nm">{{ r.name }}</b>{% if r.description %}<span class="what">{{ r.description }}</span>{% endif %}</td>
+    <td><b class="nm">{{ r.name }}</b>{% if r.description %}<span class="what">{{ r.description }}</span>{% endif %}
+      {% if r.same_name %}<span class="ms-twin">{{ ic("alert-triangle", 14) }} {{ r.same_name }}</span>{% endif %}</td>
     <td class="how" data-label="How it is counted">{{ r.how | capitalize }}</td>
     <td data-label="From">{{ r.from | join(" + ") }}</td>
     <td data-label="Default date">{{ r.date or "—" }}</td>

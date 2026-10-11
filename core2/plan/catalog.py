@@ -88,6 +88,31 @@ def left_out_note(model: SemanticModel, table_key: str, f) -> str:
     return f"{table.business_name or table.name}: rows where {left_out_words(model, f)} are left out (a default filter)."
 
 
+def same_named(model: SemanticModel) -> dict[str, list[Measure]]:
+    """Each shown measure that shares its name with another shown measure counted another way, and those others.
+
+    "Average item cost" on a daily balance and again on a monthly one: readers cannot tell them apart by name.
+    Two of one name counted the same way (an admin's metric over the column Learn found) are one figure.
+    """
+    by_name: dict[str, list[Measure]] = {}
+    for m in model.measures.values():
+        if not m.hidden and m.business_name:
+            by_name.setdefault(" ".join(m.business_name.casefold().split()), []).append(m)
+    out: dict[str, list[Measure]] = {}
+    for named in by_name.values():
+        for m in named:
+            others = [o for o in named if o.key != m.key and (o.table, o.expr, o.filters) != (m.table, m.expr, m.filters)]
+            if others:
+                out[m.key] = sorted(others, key=lambda o: o.slug)
+    return out
+
+
+def _twins(model: SemanticModel, m: Measure, twins: dict[str, list[Measure]]) -> str:
+    others = twins.get(m.key) or []
+    return (" | same name as " + ", ".join(f"{o.slug} on {model.tables[o.table].business_name}" for o in others)
+            if others else "")
+
+
 def _synonyms(values: dict[str, list[str]]) -> str:
     words = sorted({w for ws in values.values() for w in ws})
     return f" | also called: {', '.join(words)}" if words else ""
@@ -149,6 +174,7 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
     measure_tables = sorted({m.table for m in model.measures.values() if not m.hidden},
                             key=lambda t: (model.tables[t].business_name, t))
     lines.append("MEASURES (slug | name | format | how it adds up | definition)")
+    twins = same_named(model)
     for table_key in measure_tables:
         table = model.tables[table_key]
         dates = sorted((r for r in model.date_roles.values() if r.table == table_key and r.kind != "audit"),
@@ -165,7 +191,7 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
             status = " | unconfirmed" if m.status in ("needs_review", "proposed") else ""
             unit = f" in {m.unit}" if m.unit else ""
             lines.append(f"- {m.slug} | {m.business_name} | {m.format}{unit} | {ADDS_UP.get(m.additivity, '')} | "
-                         f"{definition(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}")
+                         f"{definition(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}{_twins(model, m, twins)}")
     lines.append("")
 
     lines.append("DATES (slug | name | what it records | data range)")

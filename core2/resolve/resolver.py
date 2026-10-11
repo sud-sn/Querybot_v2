@@ -984,6 +984,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         notes.append(f"{label} adds up {' and '.join(tables)} each on its own rows, then combines them, so no row "
                      "is counted twice.")
 
+    twins: dict[str, list[Measure]] | None = None      # measures sharing a name with another, found once
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
         if not found or found[0] != "measure":
@@ -1009,6 +1010,17 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 for f in m.filters) + ".")
         if m.kind == "proposed" or m.status == "proposed":
             notes.append(f"{m.business_name} is a proposed measure, not yet confirmed.")
+        if twins is None:
+            from core2.plan.catalog import same_named
+
+            twins = same_named(model)
+        if m.key in twins:
+            # Two figures of one name: which one this is, and how to ask for the other.
+            others = list(dict.fromkeys(model.tables[o.table].business_name for o in twins[m.key]))
+            here = model.tables[m.table].business_name
+            notes.append(f"{m.business_name} here is the one on {here}; " + (
+                f"{' and '.join(others)} {'has' if len(others) == 1 else 'have'} a figure of the same name"
+                if here not in others else "another figure has the same name") + ".")
     for d in plan.derived:
         operands = []
         for slug in d.measures:
