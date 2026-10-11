@@ -23,10 +23,10 @@ application's own data/querybot.db), and a test that names no path of its own
 would open the application's. Dozens of modules point themselves at a mkdtemp()
 of their own; the ones that do not used to leave their throwaway clients in
 data/querybot.db. So before collection, and again before every test, any path
-that is not under the temp directory is replaced with one database for the
-run -- the application's file is never opened by a test process, whatever the
-module does or fails to do. A path a module set under the temp directory is
-left alone.
+but one a module set under the temp directory is replaced with one database for
+the run -- the application's file is never opened by a test process, whatever
+the module does or fails to do, and wherever the checkout lives (one under the
+temp directory used to keep its relative default).
 """
 
 from __future__ import annotations
@@ -55,7 +55,10 @@ def _effective_db_path() -> tuple[str, bool]:
 def _point_tests_away_from_the_application_database() -> bool:
     path, explicit = _effective_db_path()
     temp_root = Path(tempfile.gettempdir()).resolve()
-    if Path(path).resolve().is_relative_to(temp_root):
+    # Only a path someone set is theirs to keep. The application's default is relative to the working directory:
+    # in a checkout under the temp directory it looked like a test's own, so the store opened whichever
+    # data/querybot.db the current directory held -- a harness that changes directory lost its tenant.
+    if explicit and Path(path).resolve().is_relative_to(temp_root):
         return False
     if _run_db["path"] is None:
         _run_db["path"] = os.path.join(tempfile.mkdtemp(prefix="qb-tests-"), "querybot.db")
