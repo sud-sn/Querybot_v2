@@ -430,7 +430,10 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
             d.measure and d.agg == "sum" for d in base.durations)
     rows_read = len(result.rows)
 
-    asked = list(dict.fromkeys(plan.drivers.dimensions)) if plan.drivers and plan.drivers.dimensions else []
+    # Only what can group rows: "driven by price or by volume?" was written with the price and the quantity as
+    # its groupings, and refused ("nothing to group by called ...").
+    asked = [d for d in dict.fromkeys(plan.drivers.dimensions) if d in model.entities or d in model.attributes] \
+        if plan.drivers and plan.drivers.dimensions else []
     skip = {f.field for f in plan.filters} | ({unit_slug} if unit_slug else set())
     # Filtered to one member ("for formula X"): none of that thing's groupings has two members to set apart.
     one = {model.attributes[f.field].entity if f.field in model.attributes else f.field

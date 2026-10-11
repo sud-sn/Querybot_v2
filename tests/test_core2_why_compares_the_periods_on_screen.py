@@ -153,3 +153,20 @@ def test_why_after_the_month_that_grew_most_explains_that_month(retail):
     last_year = f"{start.replace(year=start.year - 1):%b %Y}"
     assert last_year in payload["answer"]["headline"] or \
         f"{start.replace(year=start.year - 1):%B %Y}" in payload["answer"]["headline"]
+
+
+def test_figures_written_as_a_whys_groupings_are_left_out(retail):
+    """ "Was the change driven by price or by volume?" was written with the price and the quantity as the groupings
+    to check, and refused: nothing groups rows by a figure. The groupings that can are checked instead."""
+    why = {"kind": "query", "intent": "drivers", "measures": ["net_amount"],
+           "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-03-31"},
+                    "compare": {"kind": "window", "window": {"kind": "between", "start": "2025-01-01",
+                                                             "end": "2025-03-31"}}},
+           "drivers": {"dimensions": ["net_amount", "quantity"]}}
+    built, model = retail
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con),
+                        complete=lambda s, t: json.dumps(why), index=MemberIndex(), today=TODAY)
+    payload = answer_question("Was the change driven by price or by volume?", services, Session())
+    assert payload["answer"]["headline"].startswith("Net amount rose") or \
+        payload["answer"]["headline"].startswith("Net amount fell"), payload["answer"]["headline"]
+    assert " By " in payload["answer"]["headline"] or "spread out" in payload["answer"]["headline"]
