@@ -25,7 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
-from core2.plan.ir import Clarify, Compare, Filter, Plan, Sort, Window, schema_text
+from core2.plan.ir import Clarify, Compare, Filter, PerMember, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -591,6 +591,59 @@ def why_periods(plan: Plan, model: SemanticModel, question: str, history: list[T
 _SNAPSHOT = re.compile(r"\b(?:snapshots?|instantan[ée]s?|photos?)\b", re.IGNORECASE)
 
 
+# "Where do we have back-ordered quantity?": the members that have some.
+_WHERE_WE_HAVE = re.compile(r"\bwhere\s+(?:do|does|did)\s+(?:we|you|they|it)\s+(?:have|hold|keep|carry|stock)\b|"
+                            r"\bo[uù]\s+(?:avons|a-t-on)[\s-]+(?:nous\s+)?\b", re.IGNORECASE)
+
+
+def where_we_have(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Where do we have back-ordered quantity on the 17 August snapshot?" listed every warehouse, most with none:
+    where there is some is where it is above 0."""
+    if plan.kind != "query" or not plan.group_by or len(plan.measures) != 1 or not _WHERE_WE_HAVE.search(question or ""):
+        return plan
+    measure = plan.measures[0]
+    if any(f.field == measure for f in plan.filters):
+        return plan
+    return plan.model_copy(update={"filters": [*plan.filters, Filter(field=measure, op="gt", values=[0])]})
+
+
+def counted_each(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many items in the top group cost more than $1,000 each?" was planned as the number of items, kept
+    only if the group's own average cost was above $1,000: 0. A count of a list's members with a condition on
+    another figure is the members whose own figure meets it, counted."""
+    if plan.kind != "query" or plan.group_by or plan.per is not None or plan.shaped():
+        return plan
+    by_slug = {m.slug: m for m in model.measures.values()}
+    counts = [by_slug[s] for s in plan.measures if s in by_slug and getattr(by_slug[s].expr, "agg", None)
+              in ("count", "count_distinct")]
+    conditions = [f for f in plan.filters if f.field in by_slug and f.op in ("gt", "gte", "lt", "lte", "eq", "between")
+                  and by_slug[f.field] not in counts]
+    if len(counts) != 1 or len(conditions) != 1:
+        return plan
+    entity = next((e for e in model.entities.values() if e.table == counts[0].table), None)
+    if entity is None:
+        return plan
+    f = conditions[0]
+    try:
+        per = PerMember(of=entity.slug, summary="count", op=f.op, values=[float(v) for v in f.values])
+    except (TypeError, ValueError, ValidationError):
+        return plan
+    return plan.model_copy(update={"measures": [f.field], "filters": [x for x in plan.filters if x is not f],
+                                   "per": per, "intent": "count", "sort": [], "limit": None})
+
+
+def in_time_order(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """Two periods compared, read from the earlier to the later: "How did those items do in Q1 2026?" after Q2 was
+    planned as Q1 against Q2, and answered "rose most" for what fell from Q1 to Q2."""
+    time = plan.time
+    other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
+    if plan.kind != "query" or other is None or time.window.kind != "between" or other.kind != "between" \
+            or not (time.window.start and other.start) or other.start <= time.window.start:
+        return plan
+    return plan.model_copy(update={"time": time.model_copy(update={
+        "window": other, "compare": time.compare.model_copy(update={"window": time.window})})})
+
+
 def snapshot_date(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many warehouses and items are in each snapshot?" was counted by the item list's own date (when its
     rows last changed), and refused: a question about snapshots is about the date of a snapshot table. The one
@@ -798,6 +851,7 @@ def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
                                 "at. Filter only on values in VALUE MATCHES or a previous plan; when the question "
                                 "does not say which member it means, return a clarify plan asking which one.")
     problems += _money_on_other(plan, model, question)
+    problems += _counts_what_it_asks(plan, model, question)
     time = plan.time
     other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
     if other is not None and time.window.kind != "all" and (other == time.window or _overlap(time.window, other)):
@@ -865,6 +919,38 @@ def _money_on_other(plan: Plan, model: SemanticModel, question: str) -> list[str
         problems.append(f'"{said}" is money, and {f.field} is not. A condition on money is set on a money figure'
                         f"{(' (' + offered + ')') if offered else ''}: a filter on that measure, with the members "
                         'it is for ("each item") in group_by.')
+    return problems
+
+
+_HOW_MANY = re.compile(r"\bhow\s+many\s+(?:different\s+|distinct\s+|unique\s+|separate\s+)?([a-z]+(?:\s+[a-z]+)?)",
+                       re.IGNORECASE)
+
+
+def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> list[str]:
+    """ "How many items does the top one have on hand?" was answered with the stock on hand: "how many" of a thing
+    the data lists asks for a count of that thing, or a list of them."""
+    if plan.kind != "query" or plan.per is not None or plan.absent is not None or plan.bands is not None:
+        return []
+    problems = []
+    for m in _HOW_MANY.finditer(question or ""):
+        said = m.group(1).lower()
+        for e in model.entities.values():
+            name = (e.business_name or e.slug).lower()
+            if not (said.startswith(names.plural(name).lower()) or said == name or said.startswith(name + " ")):
+                continue
+            plural = names.plural(name).lower()
+            counts = [x for x in model.measures.values() if not x.hidden and x.table == e.table
+                      and getattr(x.expr, "agg", None) in ("count", "count_distinct")]
+            asked = [x for x in model.measures.values() if x.slug in plan.measures]
+            counted = any(x in counts or plural in (x.business_name or "").lower() for x in asked)
+            listed = e.slug in plan.group_by or any(model.attributes[g].entity == e.slug for g in plan.group_by
+                                                    if g in model.attributes)
+            if not counted and not listed:
+                offered = ", ".join(x.slug for x in counts[:2])
+                problems.append(f'"how many {plural}" asks for a count of {plural}'
+                                + (f" ({offered})" if offered else "") + f", or the {plural} listed (group_by "
+                                f"{e.slug}) with the conditions the question sets; not another figure of them.")
+            break
     return problems
 
 
@@ -1046,6 +1132,14 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         except (ValueError, ValidationError) as exc:
             problems, hint = [_short(exc)], ""
             continue
+        if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
+                and matches and len({m.text.casefold() for m in matches}) == len(matches):
+            # "How many items do we hold from the first supplier on that list?" was asked back ("which supplier
+            # do you mean?") with the row it points at in VALUE MATCHES: the question is planned for it.
+            problems, hint = ["The question names the member it means: " + "; ".join(
+                f'"{m.text}" is in VALUE MATCHES ({m.attribute})' for m in matches) + ". Plan the question for "
+                "it, filtering on that value, rather than asking which one."], ""
+            continue
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
         plan = pointed_in(plan, model, matches, question, on_screen)
@@ -1056,6 +1150,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
+        for rule in (where_we_have, counted_each, in_time_order):   # "where do we have", "$1,000 each", Q1 vs Q2
+            ruled = rule(plan, model, question)
+            if ruled is not plan and not check(ruled, model, today, shown)[0]:
+                plan = ruled
         problems, hint = check(plan, model, today, shown)
         if not problems:
             twin = named_twin(plan, model, question)

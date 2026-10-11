@@ -331,7 +331,12 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader
             continue
         key = ((lambda s: _number(s, 4)) if way in _UP else (lambda s: -_number(s, 4)) if way in _DOWN
                else (lambda s: abs(_number(s, 4))))
-        pick = max(changed, key=key)
+        # "The warehouse that grew the most" is one that grew: where every member shown fell, none is meant
+        # (the one that fell least was pointed at, and its fall explained as a rise).
+        moved = [s for s in changed if (way not in _UP or _number(s, 4) > 0) and (way not in _DOWN or _number(s, 4) < 0)]
+        if not moved:
+            continue
+        pick = max(moved, key=key)
         out.append(ValueMatch(m.group(0), m.start(), m.end(), pick[0], pick[1]))
     # Every field of the answer and its members: the first grouping's, and those of the others on its rows.
     fields: dict[str, set[str]] = {shown[0][0]: {s[1] for s in shown if s[1] is not None}}

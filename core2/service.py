@@ -472,6 +472,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         session.turns.append(Turn(question, plan, outcome.masked))
         del session.turns[:-HISTORY]
         clarify = plan.clarify
+        if clarify.about == "member" and clarify.options:
+            # An option written as a description of a row ("top supplier from the previous list") is no member.
+            clarify = clarify.model_copy(update={"options": [o for o in clarify.options if not stands_for(o)]})
         if clarify.about == "member" and not clarify.options and last is not None and last.shown:
             # "Which warehouse do you mean by 'the first one'?": the members of the answer on screen, one click each.
             listed = list(dict.fromkeys(str(s[1]) for s in last.shown if s[1] is not None))[:5]
