@@ -4641,8 +4641,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.category": {"en": "Category", "fr": "Catégorie"},
     "ui.settings.lead": {"en": "How your charts are drawn, here and on your dashboards. Only you see these choices.",
                          "fr": "La façon dont vos graphiques sont dessinés, ici et sur vos tableaux de bord. Vous seul voyez ces choix."},
-    "ui.settings.saved": {"en": "Saved. Your charts are drawn this way from now on.",
-                          "fr": "Enregistré. Vos graphiques sont désormais dessinés ainsi."},
     "ui.settings.charts": {"en": "Charts", "fr": "Graphiques"},
     "ui.settings.charts_note": {"en": "Every palette here can be told apart by readers with colour-blindness.",
                                 "fr": "Chaque palette proposée se distingue aussi pour les lecteurs daltoniens."},
@@ -4662,8 +4660,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.settings.motion.off": {"en": "No animation", "fr": "Aucune animation"},
     "ui.settings.preview": {"en": "Preview", "fr": "Aperçu"},
     "ui.settings.save": {"en": "Save", "fr": "Enregistrer"},
-    "ui.settings.password_note": {"en": "Choose a new password for signing in.",
-                                  "fr": "Choisissez un nouveau mot de passe de connexion."},
     # The reader's own page: Profile, Security, Charts, Notifications (portal_settings.html, core/profile.py).
     "ui.profile.lead": {"en": "Your profile, your password and devices, how your charts are drawn, and everything that tells you about your dashboards.",
                         "fr": "Votre profil, votre mot de passe et vos appareils, le dessin de vos graphiques, et tout ce qui vous tient au courant de vos tableaux de bord."},
