@@ -140,6 +140,48 @@ def scoped(question: str, members: int = 0) -> bool:
     return bool(_WHEN.search(question) or _GROUPED.search(question) or _CONDITION.search(question) or members)
 
 
+# "For all time", "overall": the reader sets the period to everything, which is still saying when.
+_ALL_TIME = re.compile(r"\b(?:all\s+time|ever|overall|in\s+total|whole\s+period)\b", re.IGNORECASE)
+# "That month", "the same period": the period of the answer above, pointed at rather than named.
+_THAT_PERIOD = re.compile(r"\b(?:that|the\s+same|same)\s+(?:day|week|month|quarter|half|year|fiscal\s+year|period|"
+                          r"time|date|season)\b", re.IGNORECASE)
+# A period named outright: a year, a quarter or half, a fiscal year, a month.
+_NAMED_PERIOD = re.compile(
+    r"\b(?:(?:19|20)\d{2}|q[1-4]|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b", re.IGNORECASE)
+# "Monthly", "by week", "over time": the question asks for a series.
+_SERIES = re.compile(r"\b(?:daily|weekly|monthly|quarterly|yearly|annually|over\s+time|trend|trends|trending|"
+                     r"(?:by|per|each|every|a)\s+(?:day|week|month|quarter|year)|"
+                     r"(?:day|week|month|quarter|year)\s+(?:by|on|over)\s+(?:day|week|month|quarter|year))\b",
+                     re.IGNORECASE)
+
+
+# The same in French, and a date written in figures ("le 27/05", "2026"): "Et au 27 mai ?" names a day.
+_WHEN_FR = re.compile(r"\b(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|"
+                      r"d[ée]cembre|mois|ann[ée]e|an|ans|trimestre|semestre|semaine|jour|hier|aujourd'hui|depuis|"
+                      r"exercice)\b", re.IGNORECASE)
+_DATE_FIGURES = re.compile(r"\b(?:\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|(?:19|20)\d{2})\b")
+
+
+def keeps_period(question: str) -> bool:
+    """Does a follow-up leave the period of the answer above as it was? It names none ("why did it grow?",
+    "show the returns by warehouse"), or points at that one without naming another ("due that month")."""
+    named = _NAMED_PERIOD.search(question) or _WHEN_FR.search(question) or _DATE_FIGURES.search(question)
+    if not (_WHEN.search(question) or _ALL_TIME.search(question) or named):
+        return True
+    return bool(_THAT_PERIOD.search(question)) and not named
+
+
+def points_at_period(question: str) -> bool:
+    """Does the question point at the period of the answer above ("due that month", "for the same period")?"""
+    return bool(_THAT_PERIOD.search(question))
+
+
+def asks_series(question: str) -> bool:
+    """Does the question ask for figures period by period ("monthly", "by week", "over time")?"""
+    return bool(_SERIES.search(question))
+
+
 def narrowed(plan: Plan | None) -> bool:
     """Did the answer on screen narrow anything a fresh question would not carry: a filter or a period?"""
     if plan is None:
@@ -174,6 +216,8 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         return Reading("refine", "it points at the answer on screen")
     if _POINTS_AT_MEMBERS.search(question):
         return Reading("refine", "it points at the members of the answer on screen")
+    if points_at_period(question):
+        return Reading("refine", "it points at the period of the answer on screen")
     if short and _CARRY.search(question):
         return Reading("refine", "it carries the answer on screen along")
     found = _found(model, question, ("measure", "count", "field", "date"))
@@ -213,6 +257,11 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         if short and not head_measure and not any(k == "count" for k, _, _ in head_found):
             return Reading("refine", "a fragment that only changes the answer on screen")
     if (kinds & {"measure", "field"}) and not pointing:
+        if own and grouped and not period and not own_members and not _CONDITION.search(question) \
+                and measures_named(model, head) & set(previous.measures) and previous.time.window.kind != "all":
+            # "Show the returns by warehouse" after the returns of Q1: a measure on screen split another way, for
+            # no period of its own, keeps the answer's ("Ask as a new question" is one click away).
+            return Reading("refine", "it splits a measure of the answer on screen and names no period of its own")
         if own:
             return Reading("new", "it names what it measures and its own scope")
         was_narrowed = narrowed(previous) if previous_narrowed is None else previous_narrowed

@@ -39,7 +39,7 @@ from core2.plan.chips import offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
-from core2.plan.planner import Complete, Outcome, Turn, plan_question
+from core2.plan.planner import Complete, Outcome, Turn, plan_question, stands_for
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed,
                                 quoted_spans, which_end)
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
@@ -512,7 +512,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
         # is found by the query, so it is never refused for being new.)
         thing, value = missing
-        if _REFERENCE.match(str(value)):
+        if _points(str(value)):
             # The planner filtered on the words that point at a row ("lowest", "that division"): they name no member.
             text = (f'I could not tell which {thing} "{value}" means. Name it, or point at one in the answer above: '
                     '"the first one", "the lowest one".')
@@ -525,7 +525,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     if not plan.include_left_out and _found_nothing(payload):
-        _say_left_out(payload, question, plan, services, ctx)
+        plan = _say_left_out(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     chips = offered(plan, model)
     if chips:
@@ -812,9 +812,27 @@ _REFERENCE = re.compile(r"^\s*(?:(?:the\s+)?(?:first|second|third|last|top|botto
                         r"it|them|one|its|their)\s*$", re.IGNORECASE)
 
 
-def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context) -> None:
+def _points(value: str) -> bool:
+    """Does a filter value point at a row rather than name one ("lowest", "that division", "first_one")?"""
+    return bool(_REFERENCE.match(value) or _REFERENCE.match(value.replace("_", " ")) or stands_for(value))
+
+
+def _asks_for(question: str, rules: list) -> bool:
+    """Does the question ask about the very rows a table leaves out ("revenue on cancelled lines", "which customer
+    type cancels the most")? Read from the values the rules leave out, by the start of each word."""
+    asked = {w[:6] for w in re.findall(r"[a-z]{4,}", question.casefold())}
+    for _, df in rules:
+        left = " ".join(str(v) for v in [*(getattr(df, "shown", None) or []), *df.values])
+        if asked & {w[:6] for w in re.findall(r"[a-z]{4,}", left.casefold())}:
+            return True
+    return False
+
+
+def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: Services, ctx: Context, *,
+                  question_id: str = "", shown: list[tuple] | None = None) -> Plan:
     """Nothing matched, and the tables leave rows out by default: when the rows left out would answer it, say so
-    and offer them ("No rows match" read as if there were none, when every one was a cancelled order)."""
+    and offer them ("No rows match" read as if there were none, when every one was a cancelled order). When the
+    question asks about those very rows, it is answered with them, and says so. Returns the plan answered."""
     from core2.plan.catalog import left_out_words
 
     model = services.model
@@ -823,21 +841,33 @@ def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: 
     tables = [model.tables[m.table] for m in measures if m.table in model.tables]
     rules = [(t, df) for t in {t.key: t for t in tables}.values() if t.readers_may_include for df in t.default_filters]
     if not rules:
-        return
+        return plan
+    wider_plan = plan.model_copy(update={"include_left_out": True})
+    members: list[tuple] = []
     try:
-        wider = _compute(question, plan.model_copy(update={"include_left_out": True}), services, ctx, question_id="",
-                         started=time.perf_counter())
+        wider = _compute(question, wider_plan, services, ctx, question_id=question_id, started=time.perf_counter(),
+                         shown=members)
     except Exception as exc:  # noqa: BLE001 - only a better sentence is lost; the answer stands as it is
         log.warning("core2: could not check the rows left out for %r: %s", question, exc)
-        return
+        return plan
     if _found_nothing(wider):
-        return
+        return plan
     words = "; ".join(left_out_words(model, df) for _, df in rules)
+    if _asks_for(question, rules):
+        payload.clear()
+        payload.update(wider)
+        if shown is not None:
+            shown[:] = members      # "the first one" after it points into these rows
+        trust = payload.setdefault("trust", {})
+        trust["date_context"] = [*(trust.get("date_context") or []),
+                                 f"Includes the rows left out by default ({words}): the question asks about them."]
+        return wider_plan
     answer = payload.setdefault("answer", {})
     said = (answer.get("headline") or "No rows match.").rstrip(".")
     answer["headline"] = f"{said}: every row that matches is left out by default ({words})."
     chip = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
     payload["follow_up_suggestions"] = [chip, *(payload.get("follow_up_suggestions") or [])][:4]
+    return plan
 
 
 def _found_nothing(payload: dict[str, Any]) -> bool:
@@ -929,11 +959,15 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
 
     def quoted(value: str) -> bool:
         v = normalise(value)
-        if _REFERENCE.match(value):
+        if _points(value):
             return True      # "lowest", "that division": no name at all; the reader is asked which one they mean
         return v in grounded or any(v == q or (len(q) >= 3 and (q in v or v in q)) for q in said)
 
     dropped: list[tuple[str, str]] = []
+    # The rows a table leaves out by default ("Invoice status is CANCELLED"): a filter that asks for them is the
+    # question's point ("revenue on cancelled lines"), never a stray word of it.
+    left_out = {normalise(str(v)) for t in model.tables.values() for df in t.default_filters
+                for v in [*df.values, *(getattr(df, "shown", None) or [])]}
 
     def kept_of(listed: list) -> list:
         filters = []
@@ -959,7 +993,8 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
 
         amount = attribute is not None and attribute.kind == "number"    # "exactly 3 days": a value, no name
         kept = [v for v in f.values
-                if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)]
+                if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)
+                or f.op in ("eq", "in") and normalise(v) in left_out]
         dropped.extend((thing, v) for v in f.values if v not in kept)
         return kept
 

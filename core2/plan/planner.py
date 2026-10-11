@@ -24,7 +24,8 @@ from pydantic import ValidationError
 from core2.bootstrap import names
 from core2.model.schema import DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
-from core2.plan.ir import Clarify, Plan, schema_text
+from core2.plan.followup import asks_series, keeps_period, points_at_period
+from core2.plan.ir import Clarify, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -68,8 +69,14 @@ How to plan:
    "last month" -> {"kind": "previous", "unit": "month"}; "last year" -> {"kind": "previous", "unit": "year"};
    "in March 2026" -> {"kind": "between", "start": "2026-03-01", "end": "2026-03-31"};
    "since January" -> {"kind": "since", "start": "<this year>-01-01"};
-   fiscal periods ("this fiscal year", "FY2026", "Q3 FY26") set "fiscal": true.
-   No window when the user gave none: everything is the default.
+   fiscal periods set "fiscal": true: "this fiscal year" -> {"kind": "this", "unit": "year", "fiscal": true};
+   "last fiscal year" -> {"kind": "previous", "unit": "year", "fiscal": true}; a fiscal year, half or quarter
+   named by its number ("FY2026", "fiscal year 2026", "H1 FY26", "Q3 FY26") -> kind "between" with the dates
+   FISCAL YEARS gives for it. A quarter, half or year the question does not call fiscal ("Q2 2026", "in 2025")
+   is the calendar's: "Q2 2026" -> 2026-04-01 to 2026-06-30.
+   No window when the user gave none: everything is the default. "Latest", "current", "now", "on the latest
+   snapshot" for a stock, balance or other snapshot figure is no window either: the latest snapshot is the
+   default.
 6. time.date: a date slug only when the question names which date ("by ship date", "invoiced in May",
    "expiring in 2028"); otherwise null and the measure's default date is used. A second date in the
    question ("ordered in March and delivered in April") is a filter on that date slug with ISO dates.
@@ -111,7 +118,8 @@ How to plan:
    week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
    follow_up "refine"; a question about something else is follow_up "new". "Those", "them", "the same
    customers" are the members of the answer on screen, whose names you are not given: never filter on a
-   name that is not in VALUE MATCHES or a previous plan. "The first one", "the lowest one", "that
+   name that is not in VALUE MATCHES or a previous plan, and never a filter with no values: to answer for
+   them, keep the previous plan's group_by, sort and limit. "The first one", "the lowest one", "that
    division" are in VALUE MATCHES when the member they point at is known: filter on its value. Never put
    such words themselves ("lowest", "that division") in a filter; when they are not matched, ask (clarify). To follow them into another period ("how did those
    same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
@@ -125,7 +133,8 @@ How to plan:
    "plotted against each other" -> "scatter", "on a map" -> "map", "just the table" -> "table");
    on a follow-up ("show that as a pie") return the previous plan with chart set and follow_up "refine".
 14. include_left_out: true only when the question asks for rows a table LEAVES OUT by default (listed in the
-   catalog), as "including cancelled orders" or "with test orders too"; otherwise leave it out.
+   catalog), as "including cancelled orders" or "with test orders too", or asks about those rows themselves
+   ("revenue on cancelled lines", "which customer type cancels the most"); otherwise leave it out.
 """
 
 
@@ -316,6 +325,33 @@ def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal
         _analyses(model)) if part)
 
 
+def fiscal_years_text(model: SemanticModel, today: dt.date) -> str:
+    """The workspace's fiscal years as dates, for a question that names one by its number.
+
+    "Fiscal year 2026" was planned as this fiscal year: told only that fiscal periods are
+    fiscal, the AI could not know that FY2026 ended months ago (a year starting in April,
+    named by the year it ends). Nothing is said where the fiscal year is the calendar year.
+    """
+    start = model.settings.fiscal_year_start_month or next(
+        (c.fiscal_year_start_month for c in model.calendars.values() if c.fiscal_year_start_month), None)
+    if not start or start == 1:
+        return ""
+    named_by = next((c.fiscal_year_named_by for c in model.calendars.values()
+                     if c.fiscal_year_start_month == start and c.fiscal_year_named_by), None) or "end"
+    begins = today.year if today.month >= start else today.year - 1      # the year this fiscal year starts in
+
+    def span(year: int) -> str:
+        first = dt.date(year, start, 1)
+        return f"FY{year + 1 if named_by == 'end' else year} = {first.isoformat()} to " \
+               f"{(dt.date(year + 1, start, 1) - dt.timedelta(days=1)).isoformat()}"
+
+    return (f"FISCAL YEARS (only for a period the question calls fiscal: \"FY2026\", \"fiscal year 2026\", "
+            f"\"Q3 FY26\"; one it does not, as \"Q2 2026\", is the calendar's): a fiscal year starts on 1 "
+            f"{dt.date(2000, start, 1):%B} and is named by the year it {'ends' if named_by == 'end' else 'starts'} "
+            f"in. This fiscal year: {span(begins)}; last fiscal year: {span(begins - 1)}; the one before: "
+            f"{span(begins - 2)}.")
+
+
 def question_tail(question: str, *, today: dt.date, history: list[Turn], matches: list[ValueMatch],
                   masked: Masked | None = None, scrub: Callable[[str], str] | None = None,
                   model: SemanticModel | None = None, reading: str | None = None) -> str:
@@ -327,6 +363,9 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
     """
     clean = scrub or (lambda text: text)
     lines = [f"TODAY: {today.isoformat()} ({today:%A})"]
+    fiscal = fiscal_years_text(model, today) if model is not None else ""
+    if fiscal:
+        lines.append(fiscal)
     if history:
         last = history[-1]
         if masked is None or last.masked is not None:
@@ -336,7 +375,8 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
             lines.append("PREVIOUS PLAN: " + _plan_shown(last.plan, model, masked))
         if reading == "refine" and last.plan is not None:
             lines.append('READING: this question changes the answer above: return the previous plan with what '
-                         'the question changes, and follow_up "refine".')
+                         'the question changes, and follow_up "refine". Keep its time, durations, derived measures '
+                         'and filters unless the question changes them.')
     if matches:
         lines.append("VALUE MATCHES (member names found in the question; use these exact values):")
         for m in matches:
@@ -366,7 +406,145 @@ def parse(text: str) -> Plan:
     data = json.loads(body[start:end + 1])
     if not isinstance(data, dict):
         raise ValueError("the answer is not a JSON object")
+    _forgive(data)
+    if data.get("kind") == "clarify" and "clarify" not in data and isinstance(data.get("question"), str):
+        # The question back written beside "kind" rather than in "clarify": asked twice so, it was refused twice,
+        # and the reader got "could not work out how to answer" instead of the question.
+        about = data.get("about") if data.get("about") in ("measure", "date", "member", "path", "follow_up") else "other"
+        options = [str(o) for o in data.get("options") or [] if isinstance(o, (str, int, float))]
+        data = {"kind": "clarify", "clarify": {"about": about, "question": data["question"], "options": options}}
     return Plan.model_validate(data)
+
+
+def _forgive(data: dict[str, Any]) -> None:
+    """Slips of form that leave the meaning plain, put right where they would refuse the plan (a real model wrote
+    them, and wrote them again when told): a duration counted ("agg": "count", where its rows are counted by the
+    plan's measure), "measure": false written on the filter on a duration rather than on the duration, and "what
+    share of the total is that" written as a share of members with no condition for them to meet (it is the
+    share each member has of the total: intent share)."""
+    durations = [d for d in data.get("durations") or [] if isinstance(d, dict)]
+    for d in durations:
+        if d.get("agg") not in (None, "avg", "min", "max", "sum"):
+            d.pop("agg")
+    per = data.get("per")
+    if isinstance(per, dict) and per.get("summary") == "share" and per.get("op") is None and not per.get("values"):
+        data.pop("per")
+        if data.get("intent") in (None, "rank", "breakdown", "value"):
+            data["intent"] = "share"
+    by_name = {str(d.get("name", "")).casefold(): d for d in durations}
+    for f in data.get("filters") or []:
+        if isinstance(f, dict) and "measure" in f:
+            said = f.pop("measure")
+            named = by_name.get(str(f.get("field", "")).casefold())
+            if named is not None and isinstance(said, bool) and "measure" not in named:
+                named["measure"] = said
+
+
+# A value the AI wrote for a member it was not told the name of: "first_one", "warehouse_with_max_increase",
+# "first_supplier". Words joined by underscores, one of them pointing; never a name the reader wrote.
+_STANDS_FOR = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$")
+_POINTING = {"first", "second", "third", "last", "top", "bottom", "max", "min", "maximum", "minimum", "highest",
+             "lowest", "biggest", "largest", "smallest", "most", "least", "increase", "decrease", "previous",
+             "selected", "one", "that", "this", "those", "these", "same", "specific", "given", "chosen", "above"}
+
+
+# "<top_warehouse_from_previous_answer>", "{first_one}": a stand-in in brackets, whatever is inside.
+_BRACKETED = re.compile(r"^\s*(?:<[^<>]+>|\{[^{}]+\})\s*$")
+
+
+def stands_for(value: Any) -> bool:
+    """Is this filter value a stand-in for a member the question points at, rather than a name?"""
+    if not isinstance(value, str):
+        return False
+    return bool(_BRACKETED.match(value)) or bool(_STANDS_FOR.match(value)) and bool(set(value.split("_")) & _POINTING)
+
+
+def _shape(plan: Plan, model: SemanticModel, question: str) -> list[str]:
+    """What a plan asks that cannot be meant, whatever the model holds: each a sentence the repair round acts on."""
+    problems: list[str] = []
+    said = question.casefold()
+    absent = [*plan.absent.without, *plan.absent.had] if plan.absent is not None else []
+    for f in [*plan.filters, *absent]:
+        if f.op not in ("is_null", "not_null") and not f.values:
+            problems.append(f"The filter on {f.field} has no value. To answer for the members of the answer above, "
+                            "keep the previous plan's group_by, sort and limit instead of filtering; filter only on "
+                            "values in VALUE MATCHES or a previous plan, or leave the filter out.")
+            continue
+        for value in f.values:
+            if stands_for(value) and str(value).casefold() not in said:
+                problems.append(f'"{value}" is not a value of {f.field}: it stands for a member the question points '
+                                "at. Filter only on values in VALUE MATCHES or a previous plan; when the question "
+                                "does not say which member it means, return a clarify plan asking which one.")
+    time = plan.time
+    other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
+    if other is not None and time.window.kind != "all" and (other == time.window or _overlap(time.window, other)):
+        how = "is the same period as" if other == time.window else "overlaps"
+        dates = ""
+        if time.window.kind == "between" and time.window.start and time.window.end:
+            first, last = time.window.start.isoformat(), time.window.end.isoformat()
+            dates = (f' For two dates: time.window {{"kind": "between", "start": "{last}", "end": "{last}"}} and '
+                     f'time.compare.window {{"kind": "between", "start": "{first}", "end": "{first}"}}.')
+        problems.append(f"time.compare.window {how} time.window, so the change cannot be read. A change between two "
+                        'dates or periods ("between 27 May and 17 August", "from Q1 to Q2") is time.window = the later '
+                        f"one alone and time.compare.window = the earlier one alone.{dates}")
+    dates = {r.slug for r in model.date_roles.values()}
+    grouped = [g for g in plan.group_by if g in dates]
+    if grouped:
+        problems.append(f"{', '.join(grouped)} {'is a date' if len(grouped) == 1 else 'are dates'}: figures for "
+                        "each day, snapshot, week or month are intent trend with time.date set to the date and "
+                        "time.grain (day, week, month, quarter or year), never a group_by on a date.")
+    return problems
+
+
+def _overlap(a: Window, b: Window) -> bool:
+    """Do two written-out periods share a day?"""
+    if a.kind != "between" or b.kind != "between" or not (a.start and a.end and b.start and b.end):
+        return False
+    return a.start <= b.end and b.start <= a.end
+
+
+def _snapshot(plan: Plan, model: SemanticModel) -> bool:
+    """Is every measure of the plan a stock read at a snapshot (on hand, headcount)?"""
+    found = [m for m in model.measures.values() if m.slug in plan.measures]
+    return bool(found) and len(found) == len(set(plan.measures)) and all(m.additivity == "semi_additive" for m in found)
+
+
+def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow_up: bool) -> Plan:
+    """The plan with what it plainly means filled in, before it is checked:
+
+    * a ranking sorted by a measure the plan does not show shows it ("rank the items by back-orders" sorted by
+      a measure it left out, and was refused);
+    * a stock compared between two dates written as one span ("on hand between 27 May and 17 August", as
+      27 May-17 August against itself, or against 27 May) is the later date against the earlier one;
+    * a plan that says nothing of the answer above, for the same measure right after it, follows it
+      ("show the returns by warehouse" after the returns of Q1).
+    """
+    if plan.kind != "query":
+        return plan
+    update: dict[str, Any] = {}
+    named = {*plan.measures, *(d.name for d in plan.derived), *(d.name for d in plan.durations)}
+    slugs = {m.slug for m in model.measures.values()}
+    extra = [s.by for s in plan.sort if s.by in slugs and s.by not in named and s.by not in plan.group_by]
+    if extra:
+        update["measures"] = [*plan.measures, *dict.fromkeys(extra)]
+    time, other = plan.time, plan.time.compare.window if plan.time.compare is not None else None
+    if other is not None and time.window.kind == "between" and other.kind == "between" and _snapshot(plan, model) \
+            and time.window.start and time.window.end and other.start and other.end and other.end < time.window.end \
+            and (other == time.window or _overlap(time.window, other)):
+        last, first = time.window.end, (other.start if other != time.window else time.window.start)
+        update["time"] = time.model_copy(update={
+            "window": Window(kind="between", start=last, end=last, fiscal=time.window.fiscal),
+            "compare": time.compare.model_copy(update={"window": Window(kind="between", start=first, end=first)})})
+    elif other is not None and other == time.window and time.window.kind == "between" and _snapshot(plan, model) \
+            and time.window.start and time.window.end and time.window.start < time.window.end:
+        last, first = time.window.end, time.window.start
+        update["time"] = time.model_copy(update={
+            "window": Window(kind="between", start=last, end=last, fiscal=time.window.fiscal),
+            "compare": time.compare.model_copy(update={"window": Window(kind="between", start=first, end=first)})})
+    if not said_follow_up and previous is not None and previous.kind == "query" \
+            and set(plan.measures) & set(previous.measures):
+        update["follow_up"] = "refine"
+    return plan.model_copy(update=update) if update else plan
 
 
 def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") -> tuple[list[str], str]:
@@ -379,6 +557,9 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
         return ([] if plan.clarify and plan.clarify.question else ["a clarify plan needs clarify.question"]), ""
     if plan.kind != "query":
         return [], ""
+    shape = _shape(plan, model, question)
+    if shape:
+        return shape, ""
     try:
         resolve(plan, model, Context(today=today))
     except ResolveError as exc:
@@ -492,16 +673,80 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         except (ValueError, ValidationError) as exc:
             problems, hint = [_short(exc)], ""
             continue
+        plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
+                        '"follow_up"' in text)
         problems, hint = check(plan, model, today, shown)
         if not problems:
             if reading in ("refine", "new") and plan.kind == "query":
                 plan = plan.model_copy(update={"follow_up": reading})
+            settled = settle(plan, model, question, history[-1].plan if history else None)
+            if settled is not plan and not check(settled, model, today, shown)[0]:
+                plan = settled
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
     return Outcome(Plan(kind="clarify", clarify=Clarify(
         about="other", question="I could not work out how to answer that from this data. Could you say it "
         "another way, naming what to measure and for when?")), repaired=True, problems=problems, raw=raw,
         masked=masked, tried=tried)
+
+
+# "The most", "the top 10": highest first. "The least", "the bottom 5": lowest first ("at least 5" is neither).
+_MOST = re.compile(r"\b(?:most|highest|top|biggest|largest|greatest|maximum)\b", re.IGNORECASE)
+_LEAST = re.compile(r"\b(?:(?<!at\s)least|lowest|bottom|fewest|smallest|minimum)\b", re.IGNORECASE)
+
+
+def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | None) -> Plan:
+    """The plan with what the question's own words settle, whatever the AI wrote. Found by asking the
+    workbooks' questions of a real model:
+
+    * a follow-up that names no period keeps the one of the answer above where the AI left it out ("show
+      the returns by warehouse" after a Q1 question was answered for all time) or the question points at it
+      ("due that month" was this month); a "why" keeps the period it is compared with; and the route a
+      reader already picked for a field (which ABC class) is not asked again;
+    * the latest snapshot of a stock is no window ("on the latest snapshot" was read as the last day,
+      a partial load);
+    * a comparison or a ranking of members the question asks no series of drops a grain kept from a trend
+      before it ("which customer type cancels the most" after a monthly trend was ranked month by month)
+      ("which channel grew the most" came back month by month: "Auto-Refill rose most; Auto-Refill fell
+      most");
+    * "the most" sorts highest first and "the least" lowest first ("lost the most" was sorted lowest first).
+    """
+    if plan.kind != "query":
+        return plan
+    update: dict[str, Any] = {}
+    time = plan.time
+    if previous is not None and previous.kind == "query" and plan.follow_up == "refine":
+        if keeps_period(question):
+            kept: dict[str, Any] = {}
+            # A period the AI chose stands ("why did it grow?" after "which month grew the most" is that month),
+            # unless the question points at the one above ("due that month").
+            if time.window != previous.time.window and (time.window.kind == "all" or points_at_period(question)):
+                kept["window"] = previous.time.window
+            if time.date is None and previous.time.date:
+                kept["date"] = previous.time.date
+            if plan.intent in ("compare", "drivers") and previous.time.compare is not None \
+                    and time.compare != previous.time.compare:
+                kept["compare"] = previous.time.compare
+            if kept:
+                time = time.model_copy(update=kept)
+        if previous.via and any(k not in plan.via for k in previous.via):
+            update["via"] = {**previous.via, **plan.via}
+    window = time.window
+    if window.kind == "last" and window.unit == "day" and (window.n or 1) == 1 and plan.measures and all(
+            m.slug not in plan.measures or m.additivity == "semi_additive" for m in model.measures.values()) \
+            and any(m.slug in plan.measures for m in model.measures.values()):
+        time = time.model_copy(update={"window": Window()})
+    ranks_members = plan.intent == "rank" and bool(plan.group_by)      # a ranking of periods is its grain
+    if (plan.intent == "compare" or ranks_members) and time.grain is not None and not asks_series(question) \
+            and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", question, re.IGNORECASE):
+        time = time.model_copy(update={"grain": None})
+    if time != plan.time:
+        update["time"] = time
+    if plan.sort and plan.sort[0].by not in ("change", "pct_change", "share", "period"):
+        most, least = bool(_MOST.search(question)), bool(_LEAST.search(question))
+        if most != least and plan.sort[0].desc != most:
+            update["sort"] = [Sort(by=plan.sort[0].by, desc=most), *plan.sort[1:]]
+    return plan.model_copy(update=update) if update else plan
 
 
 def _short(exc: Exception) -> str:

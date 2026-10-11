@@ -133,6 +133,23 @@ def test_a_new_core_failure_never_costs_the_reader_todays_answer_and_is_said(ten
                                           "has the details. Ask again in a moment, or ask it another way.")
 
 
+def test_an_ai_at_its_rate_limit_is_said_as_such(tenant):
+    """A workspace's Azure deployment over its tokens a minute (seen asking a real one ~20 questions a minute):
+    the reader is told the AI is at its limit and to ask again, not that the new core stopped with an error."""
+    def limited(*a, **k):
+        raise RuntimeError("Azure OpenAI error: Error code: 429 - {'error': {'message': 'Your requests to gpt-4o "
+                           "have exceeded token rate limit.', 'code': 'rate_limit_exceeded'}}")
+
+    (card,) = _answers(_ask(tenant, "core2", limited))
+    assert card["kind"] == "could_not" and card["answer"]["headline"] == (
+        "The AI this workspace uses is at its limit of requests a minute right now. Ask again in a moment, or ask "
+        "it another way.")
+    assert "429" not in json.dumps(card)
+    import store
+
+    assert store.list_core2_answers(harness.ACCOUNT, 1)[0]["status"] == "ai_busy"
+
+
 def test_side_by_side_a_new_core_that_takes_too_long_says_so(learned, monkeypatch):
     import time
 

@@ -221,11 +221,37 @@ def test_the_route_note_names_where_the_other_route_branches_off(shop):
     assert "could also come through the employee" in note and "through the sale)" not in note, note
 
 
+def test_an_answer_about_the_rows_left_out_by_default_includes_them_and_says_so(shop):
+    """'Net amount for order status "Cancelled"' asks about the very rows the table leaves out: answered with them,
+    never "every row that matches is left out" and a button to ask again (a real model left the flag off)."""
+    cancelled = {"intent": "value", "measures": ["amount"], "time": Y2025,
+                 "filters": [{"field": "order_status.name", "op": "eq", "values": ["Cancelled"]}]}
+    (answer,) = _ask(shop, Recorded(cancelled), 'net amount for order status "Cancelled" in 2025')
+    want = _sql(shop, "SELECT ROUND(SUM(amount), 2) FROM sales WHERE status_id = 9 AND "
+                      "order_date BETWEEN '2025-01-01' AND '2025-12-31'")[0][0]
+    assert round(answer["kpi"]["value"], 2) == want
+    assert any("Includes the rows left out by default" in n and "the question asks about them" in n
+               for n in answer["trust"]["date_context"]), answer["trust"]
+    assert answer["plan"]["include_left_out"] is True       # pinned, it is drawn with them again
+    assert "Include the rows left out" not in json.dumps(answer.get("follow_up_suggestions") or [])
+
+
+def test_the_rows_left_out_asked_for_unquoted_still_narrow_the_answer(shop):
+    """"How much was sold on cancelled orders?" filtered on the status the table leaves out: that filter is the
+    question's point, kept though "cancelled" is not in quotes (a real model's plan was answered for all sales)."""
+    cancelled = {"intent": "value", "measures": ["amount"], "time": Y2025,
+                 "filters": [{"field": "order_status.name", "op": "eq", "values": ["Cancelled"]}]}
+    (answer,) = _ask(shop, Recorded(cancelled), "how much was sold on cancelled orders in 2025?")
+    want = _sql(shop, "SELECT ROUND(SUM(amount), 2) FROM sales WHERE status_id = 9 AND "
+                      "order_date BETWEEN '2025-01-01' AND '2025-12-31'")[0][0]
+    assert round(answer["kpi"]["value"], 2) == want
+
+
 def test_an_answer_whose_rows_are_all_left_out_by_default_says_so_and_offers_them(shop):
     cancelled = {"intent": "value", "measures": ["amount"], "time": Y2025,
                  "filters": [{"field": "order_status.name", "op": "eq", "values": ["Cancelled"]}]}
     first, then = _ask(shop, Recorded(cancelled, {**cancelled, "include_left_out": True, "follow_up": "refine"}),
-                       'net amount for order status "Cancelled" in 2025', "Include the rows left out by default")
+                       "net amount of the orders that never went out in 2025", "Include the rows left out by default")
     assert "every row that matches is left out by default" in first["answer"]["headline"], first["answer"]
     chip = first["follow_up_suggestions"][0]
     assert chip == {"label": "Include the rows left out", "question": "Include the rows left out by default"}

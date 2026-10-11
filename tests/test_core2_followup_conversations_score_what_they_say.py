@@ -175,7 +175,10 @@ def test_a_conversation_runs_through_the_question_path_and_is_scored(tmp_path, m
                                                             (4, "right")], results
 
 
-def test_a_follow_up_that_loses_the_period_is_scored_wrong(tmp_path, monkeypatch, retail_words):
+def test_a_follow_up_keeps_the_period_when_the_ai_drops_it(tmp_path, monkeypatch, retail_words):
+    """"Only North" names no period: the answer keeps last month even when the AI's plan left it out (a real
+    model did, and a Q1 question's follow-up was answered for all time). The scorer's own verdict on a dropped
+    period is checked on a plan above (test_a_turn_is_scored_by_its_label)."""
     _conversation(tmp_path, monkeypatch)
     results = followup_eval.evaluate("retail", Recorder(None, _replies(*retail_words, refine_window=False)))
-    assert results[0]["status"] == "wrong" and "window" in results[0]["detail"], results[0]
+    assert results[0]["status"] == "right", results[0]

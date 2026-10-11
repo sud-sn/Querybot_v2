@@ -193,7 +193,14 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
             log.warning("core2 was too busy to start a question for %s within %.0fs", account_id,
                         WAIT_LIMIT_SECONDS)
     except Exception as exc:     # noqa: BLE001 - logged loudly; today's answer stands
-        log.warning("core2 failed on a question for %s: %s", account_id, exc, exc_info=True)
+        from core.llm import is_rate_limited
+
+        if is_rate_limited(exc):
+            # The workspace's AI deployment is over its requests or tokens a minute: it passes on its own.
+            status = "ai_busy"
+            log.warning("core2: the AI of %s is at its rate limit: %s", account_id, exc)
+        else:
+            log.warning("core2 failed on a question for %s: %s", account_id, exc, exc_info=True)
     try:
         await asyncio.to_thread(_record, account_id, portal_user, mode, question, status, payload,
                                 int((time.perf_counter() - start) * 1000), question_id)
@@ -548,6 +555,7 @@ def _not_todays_result(adapter: Any) -> None:
 _COULD_NOT = {
     "timeout": "The new core did not answer this within {seconds:.0f} seconds.",
     "busy": "Too many questions are being answered right now for this one to start.",
+    "ai_busy": "The AI this workspace uses is at its limit of requests a minute right now.",
     "failed": "The new core stopped with an error on this question; the service log has the details.",
 }
 
