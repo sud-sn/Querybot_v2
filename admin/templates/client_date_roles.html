@@ -113,6 +113,8 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
 {{ alert("Default date role saved. Generic date questions for this fact will use this role.", "success") }}
 {% elif saved == "default-removed" %}
 {{ alert("Default date role removed. Generic date questions will require another governed date choice.", "success") }}
+{% elif saved == "unapproved" %}
+{{ alert("Date role unapproved. It is back in review: questions no longer treat it as approved, and it is not a default.", "success") }}
 {% else %}
 {{ alert("Date role approved and saved to the semantic model.", "success") }}
 {% endif %}
@@ -350,6 +352,15 @@ details[open].dr-edit summary{background:var(--primary-soft);color:var(--primary
                       title="Use this date for generic 'for 2026'-style questions on this fact table that don't name a specific date">Set as default</button>
             </form>
             {% endif %}
+            <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/unapprove" style="display:inline">
+              <input type="hidden" name="fact_table"  value="{{ dr.fact_table }}">
+              <input type="hidden" name="fact_column" value="{{ dr.fact_column }}">
+              <button type="submit" class="btn btn-ghost btn-xs"
+                      data-confirm-title="Unapprove this date role?"
+                      data-confirm="{{ dr.name }} on {{ dr.fact_table }}.{{ dr.fact_column }} goes back to review. Questions stop treating it as approved{% if dr.is_default %}, and it stops being the default{% endif %}."
+                      data-confirm-label="Unapprove"
+                      title="Take the approval off this date role; it goes back to review">Unapprove</button>
+            </form>
             <details class="dr-edit">
               <summary>Edit</summary>
               <form method="post" action="/admin/clients/{{ client.account_id }}/date-roles/approve"
