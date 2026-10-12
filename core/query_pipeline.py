@@ -115,6 +115,13 @@ from core.contextual_dates import (
 )
 from core.metric_scope import metric_source_tables, resolve_metric_scope
 from core.answer_rca import extract_sql_tables
+from core.postgres_names import (
+    activate as activate_postgres_spellings,
+    activate_for_workspace as activate_postgres_names,
+    deactivate as deactivate_postgres_spellings,
+    is_postgres,
+    table as postgres_table,
+)
 from core.pipeline_context import (
     get_state, get_client_db, _merge_semantic_plans,
     _scope_semantic_plan_to_analytical_request,
@@ -1896,6 +1903,10 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
     # The names as the warehouse spells them, read by the field planner for
     # their words.
     all_spellings  = load_schema_spellings(state.get("schema_dir", ""))
+    # On PostgreSQL the SQL written for this question needs them too: a name
+    # carried upper-cased is written as the database spells it
+    # (core/postgres_names.py). handle_query puts the previous ones back.
+    activate_postgres_names(db_cfg, state)
 
     if allowed_tables is None:
         effective = all_known  # admin — unrestricted
@@ -3501,6 +3512,9 @@ async def _handle_query_impl(account_id, event, adapter, question, portal_user, 
         elif db_type_hint == "oracle":
             # Oracle uses OWNER.TABLE
             sql_name = f"{parts[-2]}.{parts[-1]}" if len(parts) >= 2 else parts[-1]
+        elif is_postgres(db_type_hint):
+            # PostgreSQL: SCHEMA.TABLE as the database spells them, never a database part.
+            sql_name = postgres_table(table_hint_str)
         else:
             # Snowflake supports DATABASE.SCHEMA.TABLE
             sql_name = ".".join(parts)
@@ -9294,6 +9308,9 @@ async def handle_query(
             "is rendered in English",
             account_id, _lang_exc, exc_info=True,
         )
+    # _handle_query_impl activates the workspace's PostgreSQL spellings once it
+    # has read the connection; whatever was active before is put back below.
+    _postgres_names_token = activate_postgres_spellings(None)
     _vocab_token = None
     try:
         from core.vocab_packs import activate_vocab, vocab_for_account
@@ -9322,6 +9339,7 @@ async def handle_query(
         )
         raise
     finally:
+        deactivate_postgres_spellings(_postgres_names_token)
         if _vocab_token is not None:
             from core.vocab_packs import deactivate_vocab
             deactivate_vocab(_vocab_token)

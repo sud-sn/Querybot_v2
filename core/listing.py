@@ -128,14 +128,25 @@ def listing_sql(field: dict, db_type: str, limit: int = LIMIT, *, leave_out: dic
     member policy (core.unknown_members): its placeholder rows are no
     members. One more than ``limit`` is read, so a list cut short can say so."""
     parts = [part for part in re.split(r"\.", re.sub(r"[\[\]\"`]", "", str(field["table"]))) if part][-2:]
-    table = ".".join(f"[{part}]" for part in parts)
     column = re.sub(r"[\[\]\"`]", "", str(field["column"]))
     alias = re.sub(r"[^A-Za-z0-9]+", "_", str(field.get("term") or column)).strip("_").upper() or column.upper()
+    from core import postgres_names
+
+    postgres = postgres_names.is_postgres(db_type)
+    if postgres:
+        # The brackets become double quotes, which keep a name's case there:
+        # each name is first spelled as the database spells it
+        # (core/postgres_names.py), and the alias stays as it is shown.
+        parts = [postgres_names.spelling(part) for part in parts]
+        column = postgres_names.spelling(column)
+    table = ".".join(f"[{part}]" for part in parts)
     where = f"listed.[{column}] IS NOT NULL"
     if leave_out and leave_out.get("keys") and leave_out.get("key_column"):
         from core.unknown_members import exclusion_predicate
 
         key = re.sub(r"[\[\]\"`]", "", str(leave_out["key_column"]))
+        if postgres:
+            key = postgres_names.spelling(key)
         where += " AND " + exclusion_predicate(f"listed.[{key}]", leave_out)
     sql = (f"SELECT DISTINCT TOP {int(limit) + 1} listed.[{column}] AS [{alias}] FROM {table} AS listed "
            f"WHERE {where} ORDER BY listed.[{column}]")

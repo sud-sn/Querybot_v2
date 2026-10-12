@@ -32,6 +32,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 from core.date_roles import normalize_date_key_type
+from core.postgres_names import ident as postgres_ident, is_postgres, table as postgres_table
 
 log = logging.getLogger("querybot.date_anchor")
 
@@ -137,6 +138,8 @@ def _quote_table(table: str, db_type: str) -> str:
         return ".".join(f"[{part}]" for part in parts)
     if db_type in {"snowflake", "oracle"}:
         return ".".join(f'"{part}"' for part in parts)
+    if is_postgres(db_type):
+        return postgres_table(table)
     return ".".join(parts)
 
 
@@ -146,6 +149,8 @@ def _quote_column(name: str, db_type: str) -> str:
         return f"[{clean}]"
     if db_type in {"snowflake", "oracle"}:
         return f'"{clean}"'
+    if is_postgres(db_type):
+        return postgres_ident(clean)
     return clean
 
 

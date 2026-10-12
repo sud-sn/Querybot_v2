@@ -109,6 +109,13 @@ def _apply_latest_date_filter(sql: str, fact_table: str, fact_column: str, db_ty
         return None
 
     dialect = _SQLGLOT_DIALECT.get(db_type, "snowflake")
+    if dialect == "postgres":
+        # schema.table and the column as the database spells them: a query there
+        # cannot name another database, and a name with capitals is found only
+        # quoted (core/postgres_names.py).
+        from core.postgres_names import ident, table
+
+        fact_table, fact_column = table(fact_table), ident(fact_column)
     try:
         tree = sqlglot.parse_one(sql, read=dialect)
         if not isinstance(tree, sg_exp.Select):

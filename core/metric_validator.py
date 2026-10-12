@@ -44,6 +44,10 @@ _AGGREGATE_FUNCTIONS: set[str] = {
     "MEDIAN", "APPROX_COUNT_DISTINCT", "COUNT_IF", "LISTAGG", # Snowflake
     "VARIANCE",                                               # Oracle
 }
+# PostgreSQL's own aggregates, counted as aggregates for a PostgreSQL metric only.
+_POSTGRES_AGGREGATE_FUNCTIONS: set[str] = {
+    "STDDEV_SAMP", "BOOL_AND", "BOOL_OR", "PERCENTILE_CONT", "PERCENTILE_DISC",
+}
 
 _SAFE_FUNCTIONS: dict[str, set[str]] = {
     "azure_sql": {
@@ -122,7 +126,32 @@ _SAFE_FUNCTIONS: dict[str, set[str]] = {
         "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
         "RATIO_TO_REPORT", "PERCENT_RANK", "CUME_DIST",
     },
+    "postgres": {
+        # Aggregates
+        "SUM", "COUNT", "AVG", "MIN", "MAX",
+        "STDDEV", "STDDEV_POP", "STDDEV_SAMP", "VARIANCE", "VAR_POP", "VAR_SAMP",
+        "STRING_AGG", "ARRAY_AGG", "BOOL_AND", "BOOL_OR",
+        "PERCENTILE_CONT", "PERCENTILE_DISC", "MODE",
+        # Math
+        "ABS", "CEIL", "CEILING", "FLOOR", "ROUND", "POWER", "SQRT",
+        "LOG", "LN", "EXP", "SIGN", "MOD", "TRUNC", "DIV", "GREATEST", "LEAST",
+        # String
+        "LENGTH", "CHAR_LENGTH", "UPPER", "LOWER", "LTRIM", "RTRIM", "TRIM", "BTRIM",
+        "SUBSTR", "SUBSTRING", "LEFT", "RIGHT", "POSITION", "STRPOS", "REPLACE",
+        "CONCAT", "CONCAT_WS", "LPAD", "RPAD", "SPLIT_PART", "INITCAP",
+        "REGEXP_REPLACE", "NULLIF", "COALESCE",
+        # Date
+        "CURRENT_DATE", "CURRENT_TIMESTAMP", "NOW", "DATE_TRUNC", "DATE_PART",
+        "EXTRACT", "AGE", "MAKE_DATE", "MAKE_INTERVAL", "TO_DATE", "TO_TIMESTAMP",
+        # Conditional / type
+        "CASE", "CAST", "TO_CHAR", "TO_NUMBER",
+        # Window
+        "ROW_NUMBER", "RANK", "DENSE_RANK", "NTILE",
+        "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
+        "PERCENT_RANK", "CUME_DIST",
+    },
 }
+_SAFE_FUNCTIONS["postgresql"] = _SAFE_FUNCTIONS["postgres"]
 # Generic fallback used when db_type is unknown
 _SAFE_FUNCTIONS["generic"] = (
     _SAFE_FUNCTIONS["azure_sql"]
@@ -287,7 +316,9 @@ def validate_metric(
 
     functions_used    = _extract_functions(formula_stripped)
     columns_referenced = _extract_columns(formula_stripped)
-    aggregate_fns     = functions_used & _AGGREGATE_FUNCTIONS
+    aggregate_fns     = functions_used & (
+        _AGGREGATE_FUNCTIONS | (_POSTGRES_AGGREGATE_FUNCTIONS if db_type in {"postgres", "postgresql"} else set())
+    )
     has_subquery      = bool(_SUBQUERY_PATTERN.search(formula_stripped))
 
     result.formula_ast = {

@@ -170,18 +170,22 @@ def policies_in_scope(policies: list[dict] | None, *texts: str) -> list[dict]:
 
 def format_period_row_rules(policies: list[dict] | None, db_type: str = "azure_sql") -> str:
     """The prompt block that states the rule for each fact in scope."""
+    from core.postgres_names import ident, is_postgres
+
     lines: list[str] = []
     for policy in policies or []:
         table = str(policy.get("fact_table") or "")
         column = str(policy.get("fact_column") or "")
         if not table or not column:
             continue
+        # On PostgreSQL the predicate names the column as the database spells it.
+        written = ident(column) if is_postgres(db_type) else column
         lines.append(
             f"- {table}: {column} is a yyyymm period. A value ending in 00 is the "
             "warehouse's total for the whole year, stored beside that year's twelve "
             "month rows, so reading both counts every year twice. Every SELECT that "
             f"reads {table} -- including each CTE and subquery -- MUST keep month "
-            f"rows only: WHERE {month_rows_predicate(f'<alias>.{column}', db_type)} "
+            f"rows only: WHERE {month_rows_predicate(f'<alias>.{written}', db_type)} "
             "(with the alias you gave the table). A year is the sum of its twelve "
             "months; a stock balance is the last month of the period."
         )

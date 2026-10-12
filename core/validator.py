@@ -1597,8 +1597,14 @@ def _surrogate_date_misuse_columns(tree) -> set[str]:
     appearing near an unrelated YEAR(d.CALENDAR_DATE) call).
     """
     found: set[str] = set()
-    for node in tree.find_all(*_DATE_MISUSE_FUNC_TYPES):
-        if not _is_date_targeting_type_node(node):
+    for node in tree.find_all(*_DATE_MISUSE_FUNC_TYPES, sg_exp.Anonymous):
+        if isinstance(node, sg_exp.Anonymous):
+            # PostgreSQL's MAKE_DATE builds a date out of numbers, which is how
+            # a yyyymmdd key is decoded there: a surrogate key fed to it is
+            # read as a calendar date, as TRY_CONVERT reads one on SQL Server.
+            if str(node.name or "").upper() != "MAKE_DATE":
+                continue
+        elif not _is_date_targeting_type_node(node):
             continue
         for col_node in node.find_all(sg_exp.Column):
             # DATEADD(..., (SELECT MAX(d.FULL_DATE) FROM fact f JOIN dim d
@@ -2507,6 +2513,11 @@ _PERIOD_DECODE_FUNCTIONS = frozenset({
     "TO_DATE", "TRY_TO_DATE", "STR_TO_DATE", "TRY_CONVERT", "DATEFROMPARTS",
     "TO_TIMESTAMP",
 })
+# PostgreSQL's TO_DATE and TO_TIMESTAMP read a year row's month 00 as January
+# -- TO_DATE('202400', 'YYYYMM') is 2024-01-01 -- so on PostgreSQL they do not
+# leave year rows out. MAKE_DATE refuses month 0, and is how
+# core.contextual_dates decodes a key there.
+_POSTGRES_PERIOD_DECODE_FUNCTIONS = (_PERIOD_DECODE_FUNCTIONS - {"TO_DATE", "TO_TIMESTAMP"}) | {"MAKE_DATE"}
 # A NULL decoded date put back to a value (COALESCE/ISNULL/NVL, CASE, IIF)
 # brings the year row back in.
 _NULL_MASKING_NODES = (
@@ -2550,15 +2561,19 @@ def _is_period_mod(node, column: str, qualifiers: set[str]) -> bool:
     )
 
 
-def _decodes_period_key(operand, column: str, qualifiers: set[str]) -> bool:
+def _decodes_period_key(operand, column: str, qualifiers: set[str], db_type: str = "") -> bool:
     """Whether ``operand`` is the period key decoded to a date, unmasked."""
     operand = _unparen(operand)
     if operand is None:
         return False
+    postgres = str(db_type or "").lower() in {"postgres", "postgresql"}
+    functions = _POSTGRES_PERIOD_DECODE_FUNCTIONS if postgres else _PERIOD_DECODE_FUNCTIONS
     for conversion in operand.find_all(*_PERIOD_DECODE_NODES, sg_exp.Anonymous):
         if isinstance(conversion, sg_exp.Anonymous):
-            if str(conversion.name or "").upper() not in _PERIOD_DECODE_FUNCTIONS:
+            if str(conversion.name or "").upper() not in functions:
                 continue
+        elif postgres and isinstance(conversion, (sg_exp.StrToDate, sg_exp.StrToTime)):
+            continue
         elif isinstance(conversion, (sg_exp.Convert, sg_exp.Cast, sg_exp.TryCast)):
             target = conversion.this if isinstance(conversion, sg_exp.Convert) else conversion.args.get("to")
             if not (
@@ -2584,7 +2599,7 @@ def _decodes_period_key(operand, column: str, qualifiers: set[str]) -> bool:
     return False
 
 
-def _keeps_month_rows(node, column: str, qualifiers: set[str]) -> bool:
+def _keeps_month_rows(node, column: str, qualifiers: set[str], db_type: str = "") -> bool:
     """Whether one WHERE/ON conjunct leaves every year row (month 00) out."""
     from core.period_rows import is_month_period_value
 
@@ -2601,7 +2616,7 @@ def _keeps_month_rows(node, column: str, qualifiers: set[str]) -> bool:
             else:
                 branches.append(current)
         return all(
-            any(_keeps_month_rows(part, column, qualifiers) for part in _conjuncts(branch))
+            any(_keeps_month_rows(part, column, qualifiers, db_type) for part in _conjuncts(branch))
             for branch in branches
         )
     if isinstance(node, sg_exp.Between):
@@ -2616,16 +2631,16 @@ def _keeps_month_rows(node, column: str, qualifiers: set[str]) -> bool:
                 and low // 100 == high // 100
                 and is_month_period_value(low) and is_month_period_value(high)
             )
-        return _decodes_period_key(target, column, qualifiers)
+        return _decodes_period_key(target, column, qualifiers, db_type)
     if isinstance(node, sg_exp.In):
         if _is_period_key(node.this, column, qualifiers):
             values = [_literal_int(_unparen(value)) for value in node.expressions]
             return bool(values) and all(is_month_period_value(value) for value in values)
-        return _decodes_period_key(node.this, column, qualifiers)
+        return _decodes_period_key(node.this, column, qualifiers, db_type)
     if isinstance(node, sg_exp.Not):
         inner = _unparen(node.this)
         if isinstance(inner, sg_exp.Is) and isinstance(inner.expression, sg_exp.Null):
-            return _decodes_period_key(inner.this, column, qualifiers)
+            return _decodes_period_key(inner.this, column, qualifiers, db_type)
         if isinstance(inner, sg_exp.EQ):
             for mod, value in ((inner.this, inner.expression), (inner.expression, inner.this)):
                 if _is_period_mod(mod, column, qualifiers) and _literal_int(_unparen(value)) == 0:
@@ -2654,12 +2669,12 @@ def _keeps_month_rows(node, column: str, qualifiers: set[str]) -> bool:
             if is_month_period_value(_literal_int(_unparen(other))):
                 return True
             continue
-        if _decodes_period_key(operand, column, qualifiers):
+        if _decodes_period_key(operand, column, qualifiers, db_type):
             return True
     return False
 
 
-def _reads_only_period_extremes(select, column: str, qualifiers: set[str]) -> bool:
+def _reads_only_period_extremes(select, column: str, qualifiers: set[str], db_type: str = "") -> bool:
     """An anchor probe: every output is MAX/MIN of the decoded period key.
 
     The decoded year row is NULL, and MAX/MIN skip NULLs, so this read cannot
@@ -2673,7 +2688,7 @@ def _reads_only_period_extremes(select, column: str, qualifiers: set[str]) -> bo
         target = expression.this if isinstance(expression, sg_exp.Alias) else expression
         if not isinstance(target, (sg_exp.Max, sg_exp.Min)):
             return False
-        if not _decodes_period_key(target.this, column, qualifiers):
+        if not _decodes_period_key(target.this, column, qualifiers, db_type):
             return False
         if any(
             not _is_period_key(found, column, qualifiers)
@@ -2824,10 +2839,10 @@ def _period_row_errors(tree, policies: list[dict], db_type: str = "azure_sql") -
                 qualifiers = {
                     str(table.alias_or_name or "").upper(), str(table.name or "").upper(),
                 } - {""}
-                if _reads_only_period_extremes(select, column, qualifiers):
+                if _reads_only_period_extremes(select, column, qualifiers, db_type):
                     continue
                 candidates = where_conjuncts + (_conjuncts(on) if on is not None else [])
-                if any(_keeps_month_rows(node, column, qualifiers) for node in candidates):
+                if any(_keeps_month_rows(node, column, qualifiers, db_type) for node in candidates):
                     continue
                 alias = str(table.alias_or_name or table.name or "")
                 key = (fact_table.upper(), column, alias.upper())

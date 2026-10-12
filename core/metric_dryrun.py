@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 import store
+from core import postgres_names
 
 log = logging.getLogger("querybot.metric_dryrun")
 
@@ -104,6 +105,9 @@ def _fqn_to_sql(fqn: str, db_type: str) -> str:
         return f'"{parts[0]}"."{parts[1]}"."{parts[2]}"'
     if db_type == "oracle" and len(parts) >= 2:
         return f'"{parts[-2]}"."{parts[-1]}"'
+    if postgres_names.is_postgres(db_type) and len(parts) >= 2:
+        # Two parts, each as the database spells it: a query cannot name another database.
+        return postgres_names.table(fqn)
     return ""
 
 
@@ -115,6 +119,24 @@ def _table_sql(fqn: str, db_type: str) -> str:
     difference -- the anchor lookup needs "" to mean "keep looking".
     """
     return _fqn_to_sql(fqn, db_type) or str(fqn or "")
+
+
+def _connect(db_type: str, creds: dict, timeout: int):
+    """A connection for one probe. Each database is named: a type with no
+    branch here is refused, never opened as some other database (PostgreSQL
+    used to be opened as Oracle)."""
+    from core.schema import _az_connect, _ora_connect, _pg_connect, _sf_connect
+
+    if db_type == "azure_sql":
+        return _az_connect(creds)
+    if db_type == "snowflake":
+        return _sf_connect(creds)
+    if db_type == "oracle":
+        return _ora_connect(creds)
+    if postgres_names.is_postgres(db_type):
+        # The server stops the statement as well: wait_for only stops waiting for it.
+        return _pg_connect(creds, max_retries=1, statement_timeout=timeout)
+    raise ValueError(f"No connection for database type {db_type!r}")
 
 
 def _load_schema_master(account_id: str) -> dict[str, Any]:
@@ -201,6 +223,21 @@ async def check_filter_matches(
     metric_builder_config: str,
     timeout: int = _COLUMN_PROBE_TIMEOUT_SECONDS,
 ) -> tuple[str, ...]:
+    """Return the filter columns whose value matches no rows at all (see
+    _check_filter_matches). On PostgreSQL the workspace's names are written as
+    its database spells them (core.postgres_names)."""
+    with postgres_names.using(postgres_names.account_spellings(account_id)):
+        return await _check_filter_matches(
+            account_id, metric_builder_config=metric_builder_config, timeout=timeout,
+        )
+
+
+async def _check_filter_matches(
+    account_id: str,
+    *,
+    metric_builder_config: str,
+    timeout: int = _COLUMN_PROBE_TIMEOUT_SECONDS,
+) -> tuple[str, ...]:
     """Return the filter columns whose value matches no rows at all.
 
     The dry run proves a formula BINDS: the columns exist, the types work, the
@@ -247,16 +284,11 @@ async def check_filter_matches(
 
     try:
         from core.metric_builder import _compile_condition
-        from core.schema import _az_connect, _sf_connect, _ora_connect
     except Exception:
         return ()
 
     def _get_conn():
-        if db_type == "azure_sql":
-            return _az_connect(creds)
-        if db_type == "snowflake":
-            return _sf_connect(creds)
-        return _ora_connect(creds)
+        return _connect(db_type, creds, timeout)
 
     def _count(sql: str) -> int:
         conn = _get_conn()
@@ -278,7 +310,7 @@ async def check_filter_matches(
             continue
         try:
             predicate = _compile_condition(
-                field, str(filt.get("operator") or "equals"), str(filt.get("value") or ""),
+                field, str(filt.get("operator") or "equals"), str(filt.get("value") or ""), db_type,
             )
         except Exception:
             continue
@@ -312,6 +344,24 @@ async def check_filter_matches(
 
 
 async def dry_run_metric_formula(
+    account_id: str,
+    *,
+    formula: str,
+    base_table: str = "",
+    metric_builder_config: str = "",
+    timeout: int = _PROBE_TIMEOUT_SECONDS,
+) -> DryRunOutcome:
+    """Execute ``formula`` against the account's database and report the outcome
+    (see _dry_run_metric_formula). On PostgreSQL the workspace's names are
+    written as its database spells them (core.postgres_names)."""
+    with postgres_names.using(postgres_names.account_spellings(account_id)):
+        return await _dry_run_metric_formula(
+            account_id, formula=formula, base_table=base_table,
+            metric_builder_config=metric_builder_config, timeout=timeout,
+        )
+
+
+async def _dry_run_metric_formula(
     account_id: str,
     *,
     formula: str,
@@ -360,14 +410,8 @@ async def dry_run_metric_formula(
     single_table_fqn = next(iter(table_to_columns)) if len(table_to_columns) == 1 else None
 
     try:
-        from core.schema import _az_connect, _sf_connect, _ora_connect
-
         def _get_conn():
-            if db_type == "azure_sql":
-                return _az_connect(creds)
-            if db_type == "snowflake":
-                return _sf_connect(creds)
-            return _ora_connect(creds)
+            return _connect(db_type, creds, timeout)
 
         def _run_probe(sql: str):
             conn = _get_conn()
@@ -404,7 +448,7 @@ async def dry_run_metric_formula(
                     f"SELECT TOP 1 ({formula}) AS _result "
                     f"FROM {first_table_sql} AS base WITH (NOLOCK)\n{join_sql}"
                 )
-            elif db_type == "snowflake":
+            elif db_type == "snowflake" or postgres_names.is_postgres(db_type):
                 probe = f"SELECT ({formula}) AS _result FROM {first_table_sql} base\n{join_sql}\nLIMIT 1"
             else:
                 probe = (
@@ -437,6 +481,10 @@ async def dry_run_metric_formula(
                     probe = f"SELECT TOP 1 {column_list} FROM {tbl_sql} WITH (NOLOCK)"
                 elif db_type == "snowflake":
                     probe = f"SELECT {column_list} FROM {tbl_sql} LIMIT 1"
+                elif postgres_names.is_postgres(db_type):
+                    # The columns were read upper-cased from the formula: each as the database spells it.
+                    listed = ", ".join(postgres_names.ident(column) for column in columns)
+                    probe = f"SELECT {listed} FROM {tbl_sql} LIMIT 1"
                 else:
                     probe = f"SELECT {column_list} FROM {tbl_sql} WHERE ROWNUM <= 1"
                 try:
@@ -465,7 +513,7 @@ async def dry_run_metric_formula(
             return _skipped("No tables found in schema — run discovery first")
         if db_type == "azure_sql":
             probe = f"SELECT TOP 1 ({formula}) AS _result FROM {tbl_sql} WITH (NOLOCK)"
-        elif db_type == "snowflake":
+        elif db_type == "snowflake" or postgres_names.is_postgres(db_type):
             probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} LIMIT 1"
         else:
             probe = f"SELECT ({formula}) AS _result FROM {tbl_sql} WHERE ROWNUM <= 1"

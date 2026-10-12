@@ -257,7 +257,7 @@ GRANT pg_read_all_stats TO querybot_reader;</pre>
         </details>
       </div>
 
-      <div class="alert alert-info" style="margin-top:1rem;margin-bottom:0">
+      <div class="alert alert-info" id="log-export-panel" style="margin-top:1rem;margin-bottom:0">
         <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:var(--weight-bold);color:var(--text-soft)">
           <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
           Store Solviz logs in this database
@@ -502,6 +502,11 @@ function showDb(t){
   ['snowflake','oracle','azure_sql','postgres'].forEach(x=>{
     document.getElementById('db-'+x).style.display=x===t?'block':'none';
   });
+  // Solviz opens every PostgreSQL session read only, so its logs cannot be
+  // stored there: the option is not offered (the server does not keep it either).
+  const logPanel = document.getElementById('log-export-panel');
+  logPanel.style.display = t === 'postgres' ? 'none' : '';
+  if (t === 'postgres') logPanel.querySelector('[name="log_export_enabled"]').checked = false;
   document.getElementById('save-btn').disabled=!t;
   document.getElementById('test-btn').disabled=!t;
   document.getElementById('browse-scope-btn').disabled=!t;

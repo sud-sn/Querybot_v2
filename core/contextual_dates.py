@@ -8,6 +8,7 @@ import unicodedata
 from typing import Any
 
 from core.i18n import t as _t
+from core.postgres_names import ident as _pg_ident, is_postgres as _is_postgres, table as _pg_table
 from core.date_roles import (
     date_key_temporal_grain,
     normalize_date_key_type,
@@ -2819,7 +2820,7 @@ def format_date_value_expression(
         if dialect == "snowflake":
             return f"TRY_TO_DATE(TO_VARCHAR({ref}), 'YYYYMMDD')"
         if dialect in {"postgres", "postgresql"}:
-            return f"TO_DATE(CAST({ref} AS text), 'YYYYMMDD')"
+            return _postgres_date_from_key(ref, "yyyymmdd")
         if dialect in {"mysql", "mariadb"}:
             return f"STR_TO_DATE(CAST({ref} AS CHAR), '%Y%m%d')"
     if key_type == "yyyymm_integer":
@@ -2828,10 +2829,42 @@ def format_date_value_expression(
         if dialect == "snowflake":
             return f"TRY_TO_DATE(TO_VARCHAR({ref}), 'YYYYMM')"
         if dialect in {"postgres", "postgresql"}:
-            return f"TO_DATE(CAST({ref} AS text), 'YYYYMM')"
+            return _postgres_date_from_key(ref, "yyyymm")
         if dialect in {"mysql", "mariadb"}:
             return f"STR_TO_DATE(CAST({ref} AS CHAR), '%Y%m')"
     return ref
+
+
+def _postgres_date_from_key(ref: str, shape: str) -> str:
+    """A yyyymmdd or yyyymm key as a PostgreSQL date, NULL where it is no date.
+
+    PostgreSQL has no conversion that returns NULL. TO_DATE stops the query on
+    a placeholder key (0, -1) and, worse, reads a year row's month 00 as
+    January -- TO_DATE('202400', 'YYYYMM') is 2024-01-01 -- so a window on the
+    decoded date would count every year twice. MAKE_DATE refuses a month or a
+    day that does not exist, and returns NULL when a part is NULL: one part --
+    the month of a yyyymm key, the day of a yyyymmdd one -- is checked, NULL
+    unless the whole key is a real date, so a year row and a placeholder decode
+    to NULL as TRY_CONVERT's do. The day is checked against its month's length
+    in a CASE of its own, which PostgreSQL evaluates only once the month is
+    known to be one.
+    """
+    key = f"CAST({ref} AS BIGINT)"
+    if shape == "yyyymm":
+        return (
+            f"MAKE_DATE(CAST({key} / 100 AS INT), "
+            f"CASE WHEN {key} BETWEEN 100001 AND 999912 AND {key} % 100 BETWEEN 1 AND 12 "
+            f"THEN CAST({key} % 100 AS INT) END, 1)"
+        )
+    year = f"CAST({key} / 10000 AS INT)"
+    month = f"CAST({key} / 100 % 100 AS INT)"
+    return (
+        f"MAKE_DATE({year}, {month}, "
+        f"CASE WHEN {key} BETWEEN 10000101 AND 99991231 AND {key} / 100 % 100 BETWEEN 1 AND 12 "
+        f"THEN CASE WHEN {key} % 100 BETWEEN 1 AND "
+        f"EXTRACT(DAY FROM MAKE_DATE({year}, {month}, 1) + INTERVAL '1 month' - INTERVAL '1 day') "
+        f"THEN CAST({key} % 100 AS INT) END END)"
+    )
 
 
 def format_calendar_attribute_ref(
@@ -2859,6 +2892,10 @@ def format_calendar_attribute_ref(
         column = f"[{column}]"
     elif column and dialect in {"snowflake", "oracle"}:
         column = f'"{column}"'
+    elif column and _is_postgres(dialect):
+        # Bare where PostgreSQL folds the name to itself, quoted otherwise
+        # ("year" is a reserved word there): core/postgres_names.py.
+        column = _pg_ident(column)
     return f"{role_alias}.{column}" if column and role_alias else column
 
 
@@ -2896,11 +2933,16 @@ def format_period_bucket_expression(
                 f"TO_DATE(TO_CHAR({attr('year')}) || LPAD(TO_CHAR({attr('month_number')}), 2, '0') || '01', "
                 "'YYYYMMDD')"
             )
+        if _is_postgres(dialect):
+            # MAKE_DATE takes integers only; a calendar may keep its numbers as numeric.
+            return f"MAKE_DATE(CAST({attr('year')} AS INT), CAST({attr('month_number')} AS INT), 1)"
     if grain == "quarter" and attr("year") and attr("quarter"):
         if dialect in {"azure_sql", "sqlserver", "mssql"}:
             return f"DATEFROMPARTS({attr('year')}, (({attr('quarter')} - 1) * 3) + 1, 1)"
         if dialect == "snowflake":
             return f"DATE_FROM_PARTS({attr('year')}, (({attr('quarter')} - 1) * 3) + 1, 1)"
+        if _is_postgres(dialect):
+            return f"MAKE_DATE(CAST({attr('year')} AS INT), (CAST({attr('quarter')} AS INT) - 1) * 3 + 1, 1)"
 
     if dialect in {"azure_sql", "sqlserver", "mssql"}:
         if grain == "year":
@@ -2917,7 +2959,12 @@ def format_period_bucket_expression(
     if dialect == "oracle":
         oracle_fmt = {"year": "YYYY", "quarter": "Q", "month": "MM", "week": "IW"}.get(grain, "DD")
         return f"TRUNC({date_ref}, '{oracle_fmt}')" if oracle_fmt != "DD" else f"TRUNC({date_ref})"
-    if dialect in {"postgres", "postgresql", "duckdb"}:
+    if _is_postgres(dialect):
+        # DATE_TRUNC returns a timestamp there: the bucket is the period's first day, a date.
+        if grain not in {"year", "quarter", "month", "week"}:
+            return f"CAST({date_ref} AS date)"
+        return f"CAST(DATE_TRUNC('{grain}', {date_ref}) AS date)"
+    if dialect == "duckdb":
         return f"DATE_TRUNC('{grain}', {date_ref})"
     return date_ref
 
@@ -2937,8 +2984,18 @@ def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
     date with zero rows. JOINing to the fact table before taking MAX keeps
     the result a real calendar value while excluding rows with no match.
     """
-    fact_table = str(policy.get("anchor_table") or policy.get("fact_table") or "")
-    fact_column = str(policy.get("anchor_column") or policy.get("fact_column") or "")
+    # On PostgreSQL every name is written as the database spells it, schema.table
+    # with no database part (core/postgres_names.py); elsewhere as the policy has it.
+    postgres = _is_postgres(db_type)
+
+    def _tbl(name: str) -> str:
+        return _pg_table(name) if postgres and name else name
+
+    def _col(name: str) -> str:
+        return _pg_ident(name) if postgres and name else name
+
+    fact_table = _tbl(str(policy.get("anchor_table") or policy.get("fact_table") or ""))
+    fact_column = _col(str(policy.get("anchor_column") or policy.get("fact_column") or ""))
     # The fact keeps a whole-year row beside its months (core/period_rows.py),
     # and every SELECT that reads it must leave that row out -- this one too.
     # Without it the prompt carried two REQUIRED rules no SQL could satisfy
@@ -2946,23 +3003,23 @@ def format_required_anchor(policy: dict, db_type: str = "azure_sql") -> str:
     # rows. The model copied it, the validator refused it, and each repair
     # asked again for the same copy.
     month_rows = ""
-    month_rows_column = str(policy.get("month_rows_column") or "")
+    month_rows_column = _col(str(policy.get("month_rows_column") or ""))
     if month_rows_column and fact_table:
         from core.period_rows import month_rows_predicate
 
         month_rows = " WHERE " + month_rows_predicate(f"{fact_table}.{month_rows_column}", db_type)
     if str(policy.get("date_key_type") or "") != "surrogate_fk":
-        date_table = str(policy.get("date_table") or fact_table)
-        date_column = str(policy.get("date_column") or fact_column)
+        date_table = _tbl(str(policy.get("date_table") or "")) or fact_table
+        date_column = _col(str(policy.get("date_column") or "")) or fact_column
         date_expression = format_date_value_expression(
             "", date_column, str(policy.get("date_key_type") or ""), db_type
         )
         where = month_rows if date_table == fact_table else ""
         return f"(SELECT MAX({date_expression}) FROM {date_table}{where})"
 
-    dimension_table = str(policy.get("dimension_table") or policy.get("date_table") or "")
-    dimension_key = str(policy.get("dimension_key") or "")
-    date_value_column = str(policy.get("date_column") or "")
+    dimension_table = _tbl(str(policy.get("dimension_table") or policy.get("date_table") or ""))
+    dimension_key = _col(str(policy.get("dimension_key") or ""))
+    date_value_column = _col(str(policy.get("date_column") or ""))
     if not (fact_table and fact_column and dimension_table and dimension_key and date_value_column):
         # Incomplete policy -- fall back to the plain (still fact-scoped
         # where possible) form rather than raising; callers already treat a

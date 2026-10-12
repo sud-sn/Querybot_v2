@@ -42,6 +42,17 @@ def _bare_column(value: str) -> str:
     return (value or "").strip().split(".")[-1]
 
 
+def _written(name: str, db_type: str) -> str:
+    """A column as the formula names it. On PostgreSQL an unquoted name is
+    folded to small letters, so a name with capitals is quoted there, in the
+    database's own spelling (core/postgres_names.py); elsewhere as given."""
+    if db_type not in {"postgres", "postgresql"}:
+        return name
+    from core.postgres_names import ident
+
+    return ".".join(ident(part) for part in name.split("."))
+
+
 def _is_number(value: str) -> bool:
     return bool(re.fullmatch(r"-?\d+(?:\.\d+)?", (value or "").strip()))
 
@@ -154,13 +165,21 @@ def _date_gap_diff_expr(a: str, b: str, unit: str, db_type: str) -> str:
         return f"({b} - {a})"
     if db_type == "snowflake":
         return f"DATEDIFF('{unit}', {a}, {b})"
+    if db_type in {"postgres", "postgresql"}:
+        if unit == "month":
+            # Month boundaries crossed, as DATEDIFF(month, a, b) counts them;
+            # EXTRACT returns a numeric there, the count is a whole number.
+            return (f"CAST((EXTRACT(YEAR FROM {b}) - EXTRACT(YEAR FROM {a})) * 12 "
+                    f"+ EXTRACT(MONTH FROM {b}) - EXTRACT(MONTH FROM {a}) AS INT)")
+        # One date less another is their days apart, a whole number.
+        return f"(CAST({b} AS date) - CAST({a} AS date))"
     return f"DATEDIFF({unit}, {a}, {b})"
 
 
 def _date_gap_today_expr(db_type: str) -> str:
     if db_type == "oracle":
         return "TRUNC(SYSDATE)"
-    if db_type == "snowflake":
+    if db_type in {"snowflake", "postgres", "postgresql"}:
         return "CURRENT_DATE"
     return "CAST(GETDATE() AS date)"
 
@@ -216,8 +235,15 @@ def _compile_date_gap_metric(
     if from_join["alias"] == to_join["alias"]:
         raise ValueError("From and To date roles must use different aliases.")
 
-    from_date = f"{from_join['alias']}.{date_column}"
-    to_date = f"{to_join['alias']}.{date_column}"
+    date_ref = date_column
+    if db_type in {"postgres", "postgresql"}:
+        # A column created with capitals is found only quoted there; the
+        # joins carrying the aliases are quoted the same way.
+        from core.postgres_names import ident
+
+        date_ref = ident(date_column)
+    from_date = f"{from_join['alias']}.{date_ref}"
+    to_date = f"{to_join['alias']}.{date_ref}"
     today = _date_gap_today_expr(db_type)
     gap = _date_gap_diff_expr(from_date, to_date, unit, db_type)
     gap_to_today = _date_gap_diff_expr(from_date, today, unit, db_type)
@@ -303,8 +329,8 @@ def _compile_row_calculated_metric(config: dict[str, Any], aggregation: str) -> 
     )
 
 
-def _compile_condition(field: str, operator: str, value: str) -> str:
-    field = _clean_identifier(field, "Filter field")
+def _compile_condition(field: str, operator: str, value: str, db_type: str = "") -> str:
+    field = _written(_clean_identifier(field, "Filter field"), db_type)
     op = (operator or "equals").strip().lower()
     raw_value = (value or "").strip()
 
@@ -381,7 +407,7 @@ def compile_metric_builder_config(
     if mode == "ratio":
         # Each side carries its own aggregation, so the config-level one is
         # unused here — hence no `aggregation` argument.
-        return _compile_ratio_metric(config)
+        return _compile_ratio_metric(config, db_type)
     if mode not in {"aggregate", "filtered_aggregate", "measure"}:
         raise ValueError(f"Unsupported metric builder mode: {mode}")
 
@@ -401,20 +427,21 @@ def compile_metric_builder_config(
         value = (filt.get("value") or "").strip()
         if not field:
             continue
-        condition = _compile_condition(field, operator, value)
+        condition = _compile_condition(field, operator, value, db_type)
         conditions.append(condition)
         required_columns.append(_bare_column(field))
         normalised_filters.append({"field": field, "operator": operator, "value": value})
 
     predicate = " AND ".join(conditions)
+    written = _written(measure, db_type)
     if not predicate:
-        formula = f"{aggregation}({measure})"
+        formula = f"{aggregation}({written})"
     elif aggregation == "SUM":
-        formula = f"SUM(CASE WHEN {predicate} THEN {measure} ELSE 0 END)"
+        formula = f"SUM(CASE WHEN {predicate} THEN {written} ELSE 0 END)"
     elif aggregation == "COUNT":
         formula = f"COUNT(CASE WHEN {predicate} THEN 1 END)"
     else:
-        formula = f"{aggregation}(CASE WHEN {predicate} THEN {measure} END)"
+        formula = f"{aggregation}(CASE WHEN {predicate} THEN {written} END)"
 
     clean_config = {
         "enabled": True,
@@ -432,7 +459,7 @@ def compile_metric_builder_config(
 
 
 def _compile_ratio_side(
-    side: Any, label: str, default_aggregation: str,
+    side: Any, label: str, default_aggregation: str, db_type: str = "",
 ) -> tuple[str, list[str], dict[str, Any]]:
     """Compile one half of a ratio into an aggregate expression.
 
@@ -461,22 +488,23 @@ def _compile_ratio_side(
             continue
         operator = (filt.get("operator") or "equals").strip().lower()
         value = (filt.get("value") or "").strip()
-        conditions.append(_compile_condition(field, operator, value))
+        conditions.append(_compile_condition(field, operator, value, db_type))
         required.append(_bare_column(field))
         normalised_filters.append({"field": field, "operator": operator, "value": value})
 
-    inner = f"DISTINCT {measure}" if distinct else measure
+    written = _written(measure, db_type)
+    inner = f"DISTINCT {written}" if distinct else written
     predicate = " AND ".join(conditions)
     if not predicate:
         expression = f"{aggregation}({inner})"
     elif distinct:
-        expression = f"COUNT(DISTINCT CASE WHEN {predicate} THEN {measure} END)"
+        expression = f"COUNT(DISTINCT CASE WHEN {predicate} THEN {written} END)"
     elif aggregation == "SUM":
-        expression = f"SUM(CASE WHEN {predicate} THEN {measure} ELSE 0 END)"
+        expression = f"SUM(CASE WHEN {predicate} THEN {written} ELSE 0 END)"
     elif aggregation == "COUNT":
         expression = f"COUNT(CASE WHEN {predicate} THEN 1 END)"
     else:
-        expression = f"{aggregation}(CASE WHEN {predicate} THEN {measure} END)"
+        expression = f"{aggregation}(CASE WHEN {predicate} THEN {written} END)"
 
     clean = {
         "aggregation": "COUNT_DISTINCT" if distinct else aggregation,
@@ -486,7 +514,7 @@ def _compile_ratio_side(
     return expression, required, clean
 
 
-def _compile_ratio_metric(config: dict[str, Any]) -> CompiledMetricFormula:
+def _compile_ratio_metric(config: dict[str, Any], db_type: str = "") -> CompiledMetricFormula:
     """No-code 'X per Y' wizard — revenue per customer, cost per order.
 
     A ratio is the shape a person reaches for most often after a plain total,
@@ -502,10 +530,10 @@ def _compile_ratio_metric(config: dict[str, Any]) -> CompiledMetricFormula:
     rather than an empty period.
     """
     numerator, num_required, num_clean = _compile_ratio_side(
-        config.get("numerator"), "Numerator", "SUM",
+        config.get("numerator"), "Numerator", "SUM", db_type,
     )
     denominator, den_required, den_clean = _compile_ratio_side(
-        config.get("denominator"), "Denominator", "COUNT",
+        config.get("denominator"), "Denominator", "COUNT", db_type,
     )
     formula = f"{numerator} * 1.0 / NULLIF({denominator}, 0)"
     required_columns = list(dict.fromkeys(col for col in num_required + den_required if col))

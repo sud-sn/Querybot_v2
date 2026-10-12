@@ -242,14 +242,20 @@ def check_date_coverage(
         coverage_from = ""
         coverage_where = ""
         coverage_date_ref = ""
+        from core.postgres_names import ident as _pg_ident, is_postgres
+
+        def _col(name: str) -> str:
+            # A column created with capitals is found only quoted on PostgreSQL.
+            return _pg_ident(name) if is_postgres(db_type) else name
+
         if surrogate:
             quoted_dim = _quote_table_for_count(dimension_table, db_type)
             quoted_fact = _quote_table_for_count(fact_table, db_type)
             coverage_from = (
                 f"{quoted_dim} d JOIN {quoted_fact} f "
-                f"ON f.{fact_column} = d.{dimension_key}"
+                f"ON f.{_col(fact_column)} = d.{_col(dimension_key)}"
             )
-            coverage_date_ref = f"d.{date_column}"
+            coverage_date_ref = f"d.{_col(date_column)}"
             coverage_where = (
                 f"{coverage_date_ref} >= '{start_iso}' "
                 f"AND {coverage_date_ref} <= '{end_iso}'"
@@ -261,7 +267,7 @@ def check_date_coverage(
         else:
             quoted_table = _quote_table_for_count(date_table, db_type)
             coverage_from = quoted_table
-            coverage_date_ref = date_column
+            coverage_date_ref = _col(date_column)
             coverage_where = (
                 f"{coverage_date_ref} >= '{start_iso}' "
                 f"AND {coverage_date_ref} <= '{end_iso}'"

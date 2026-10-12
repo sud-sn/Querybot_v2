@@ -377,7 +377,8 @@ class TestTheRule:
 
         assert _null_safe_sums(expression) == safe
 
-    @pytest.mark.parametrize("db_type,literal", [("azure_sql", "N'Men''s Jacket'"), ("snowflake", "'Men''s Jacket'")])
+    @pytest.mark.parametrize("db_type,literal", [("azure_sql", "N'Men''s Jacket'"), ("snowflake", "'Men''s Jacket'"),
+                                                 ("postgres", "'Men''s Jacket'")])
     def test_a_members_literal(self, db_type, literal):
         from core.pipeline_helpers import _member_literal
 

@@ -386,6 +386,16 @@ def _distinct_sql(db_type: str, database: str, schema: str, table: str, column: 
             f'SELECT * FROM (SELECT DISTINCT "{column.upper()}" FROM {tbl} '
             f'WHERE "{column.upper()}" IS NOT NULL) WHERE ROWNUM <= {cap + 1}'
         )
+    if db_type in {"postgres", "postgresql"}:
+        # The names come from _schema.json exactly as created, so each is quoted
+        # as it is; the database is the connection's own and is never named.
+        from core.schema import _pg_ident, _pg_table
+
+        tbl = _pg_table(schema, table) if schema else _pg_ident(table)
+        return (
+            f"SELECT DISTINCT {_pg_ident(column)} FROM {tbl} "
+            f"WHERE {_pg_ident(column)} IS NOT NULL LIMIT {cap + 1}"
+        )
     # snowflake / default
     parts = [p for p in (database, schema, table) if p]
     tbl = ".".join(f'"{p}"' for p in parts)
