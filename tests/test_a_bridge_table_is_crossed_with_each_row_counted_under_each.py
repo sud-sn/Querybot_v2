@@ -282,7 +282,7 @@ def test_why_sales_changed_never_picks_an_overlapping_grouping_by_itself(shop):
 # ── every warehouse ───────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "oracle", "tsql"])
+@pytest.mark.parametrize("dialect", ["snowflake", "oracle", "tsql", "postgres"])
 def test_the_filter_across_a_bridge_compiles_for_each_warehouse(shop, dialect):
     from core2.compile.compiler import compile_query
     from core2.plan.ir import Plan

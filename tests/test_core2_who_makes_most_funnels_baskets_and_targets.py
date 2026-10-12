@@ -312,7 +312,7 @@ PLANS = {
 
 
 @pytest.mark.parametrize("name", sorted(PLANS))
-@pytest.mark.parametrize("dialect", ["tsql", "oracle", "snowflake", "duckdb"])
+@pytest.mark.parametrize("dialect", ["tsql", "oracle", "snowflake", "postgres", "duckdb"])
 def test_each_compiles_on_every_warehouse(retail, name, dialect):
     _, model = retail
     logical = resolve(Plan.model_validate({"kind": "query", **PLANS[name]}), model, Context(today=TODAY))

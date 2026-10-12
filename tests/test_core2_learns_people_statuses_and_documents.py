@@ -208,7 +208,7 @@ def test_a_list_of_people_keeps_two_of_one_name_apart():
         assert f"{first} (" in got["answer"]["headline"]               # told apart in the sentence too
 
 
-@pytest.mark.parametrize("dialect", ["tsql", "snowflake", "oracle"])
+@pytest.mark.parametrize("dialect", ["tsql", "snowflake", "oracle", "postgres"])
 def test_a_name_in_two_parts_is_joined_in_every_dialect(dialect):
     from core2.compile.compiler import column_sql
 

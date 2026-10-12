@@ -90,7 +90,7 @@ def test_a_grouping_is_asked_as_a_filter(retail):
         resolve(plan, model, Context(today=TODAY))
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 def test_the_sql_reads_on_every_warehouse(retail, dialect):
     built, model = retail
     plan = Plan.model_validate({"kind": "query", "cohort": {"of": "customer", "measure": "number_of_orders"},
@@ -99,7 +99,7 @@ def test_the_sql_reads_on_every_warehouse(retail, dialect):
     sqlglot.parse_one(compiled.sql, read=dialect)
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "duckdb"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres", "duckdb"])
 def test_the_sql_passes_the_governed_executors_shape_rules(retail, dialect):
     """The profitability stress test: on a governed workspace the grid's CROSS JOIN was refused as a cartesian
     product the question did not ask for. The cohorts and the periods after their first are joined on the one

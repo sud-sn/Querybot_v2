@@ -25,7 +25,7 @@ from evals.core2.compile_eval import Untranslatable, _Words, golden, learn, same
 from evals.core2.framework import materialize
 
 # The share of golden questions each warehouse's SQL must carry back and run.
-MUST_RUN = {"snowflake": 1.0, "tsql": 0.8, "oracle": 0.55}
+MUST_RUN = {"snowflake": 1.0, "tsql": 0.8, "oracle": 0.55, "postgres": 1.0}
 
 
 def _back(sql: str, dialect: str) -> str | None:
@@ -70,7 +70,7 @@ def test_every_golden_question_gives_the_reference_rows_in_each_dialect(name, di
     assert total and ran >= MUST_RUN[dialect] * total, f"only {ran} of {total} ran"
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 def test_a_formula_and_a_whole_year_row_mean_the_same_on_each_warehouse(dialect):
     from core2.model.imports import Legacy, decisions
     from core2.model.overrides import apply_overrides

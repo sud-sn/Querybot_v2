@@ -103,24 +103,30 @@ class _PgCursor:
     # ── SQL adaptation ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _adapt(sql: str) -> tuple[str, bool]:
+    def _adapt(sql: str, with_params: bool = True) -> tuple[str, bool]:
         """
         Return (adapted_sql, had_insert_or_ignore).
         Order matters: strip INSERT OR IGNORE before the generic ? → %s pass.
+
+        With parameters psycopg2 reads every % as a placeholder: a literal one
+        (LIKE '%@platform.internal') is doubled first, or the statement fails
+        with "tuple index out of range". Without parameters it is left as written.
         """
         had_ioi = bool(_RE_INSERT_OR_IGNORE.search(sql))
         sql = _RE_INSERT_OR_IGNORE.sub("INSERT", sql)
         sql = _RE_DATETIME_NOW.sub("NOW()::text", sql)
-        sql = sql.replace("?", "%s")
+        if with_params:
+            sql = sql.replace("%", "%%").replace("?", "%s")
         return sql, had_ioi
 
     # ── Execution ───────────────────────────────────────────────────────────
 
     def execute(self, sql: str, params=None) -> "_PgCursor":
-        adapted, had_ioi = self._adapt(sql)
+        with_params = bool(params)
+        adapted, had_ioi = self._adapt(sql, with_params)
         if had_ioi:
             adapted = adapted.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
-        self._cur.execute(adapted, params or ())
+        self._cur.execute(adapted, params if with_params else None)
         return self
 
     def executemany(self, sql: str, seq) -> "_PgCursor":
@@ -144,6 +150,18 @@ class _PgCursor:
     @property
     def rowcount(self) -> int:
         return self._cur.rowcount
+
+    @property
+    def lastrowid(self) -> int | None:
+        """The id the last INSERT gave its row, as sqlite3's cursor tells it: read when asked, from the
+        session's latest sequence value (an id column is SERIAL here). Store code reads it right after
+        its INSERT; asking after an insert into a table with no id would give an older table's id."""
+        try:
+            self._cur.execute("SELECT lastval() AS id")
+            row = self._cur.fetchone()
+        except Exception:  # noqa: BLE001 - no sequence used yet in this session
+            return None
+        return int(row["id"]) if row else None
 
     def __iter__(self):
         for row in self._cur:
@@ -344,7 +362,9 @@ def _get_pg_connection() -> _PgConnection:
             "psycopg2 is required for PostgreSQL. "
             "Install it with:  pip install psycopg2-binary"
         ) from exc
-    conn = psycopg2.connect(DATABASE_URL)
+    # UTF-8 whatever the database's own encoding: the schema and the stored text are UTF-8, and a database
+    # created as SQL_ASCII made psycopg2 encode every statement as ASCII and refuse them all.
+    conn = psycopg2.connect(DATABASE_URL, client_encoding="UTF8")
     conn.autocommit = False
     return _PgConnection(conn)
 

@@ -110,9 +110,9 @@ class SchemaThreadingTests(unittest.TestCase):
         src = _src("core/schema.py")
         self.assertIn('detect_sensitive_columns(col_defs, industry=industry)', src)
 
-    def test_all_three_dialects_thread_industry(self):
+    def test_every_dialect_threads_industry(self):
         src = _src("core/schema.py")
-        fn_names = ["_discover_snowflake", "_discover_oracle", "_discover_azure_sql"]
+        fn_names = ["_discover_snowflake", "_discover_oracle", "_discover_azure_sql", "_discover_postgres"]
         starts = [src.index(f"def {fn}(") for fn in fn_names]
         for name, start in zip(fn_names, starts):
             sig_line = src[start:src.index("\n", start)]
@@ -126,10 +126,10 @@ class SchemaThreadingTests(unittest.TestCase):
                 body.count("industry=industry"), 2,
                 f"{name} should pass industry= to both _resolve_masking_fields and _apply_masking",
             )
-        # discover_and_write's dispatcher passes industry= to all 3.
+        # discover_and_write's dispatcher passes industry= to every one.
         dispatch_start = src.index("def discover_and_write(")
         dispatch_body = src[dispatch_start:min(starts)]
-        self.assertEqual(dispatch_body.count("industry=industry"), 3)
+        self.assertEqual(dispatch_body.count("industry=industry"), len(fn_names))
 
 
 class MaskingReviewGateTests(unittest.TestCase):

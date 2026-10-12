@@ -19,6 +19,7 @@ Tables:
 """
 
 import os
+import re
 import sqlite3
 import logging
 from pathlib import Path
@@ -62,11 +63,11 @@ CREATE TABLE IF NOT EXISTS platform_config (
 );
 
 -- ── Database connection credentials ──────────────────────────────────────────
--- db_type: snowflake | oracle | azure_sql
+-- db_type: snowflake | oracle | azure_sql | postgres
 CREATE TABLE IF NOT EXISTS db_config (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     name                  TEXT    NOT NULL,
-    db_type               TEXT    NOT NULL CHECK(db_type IN ('snowflake','oracle','azure_sql')),
+    db_type               TEXT    NOT NULL CHECK(db_type IN ('snowflake','oracle','azure_sql','postgres')),
     credentials_encrypted TEXT    NOT NULL,
     created_at            TEXT    DEFAULT (datetime('now')),
     updated_at            TEXT    DEFAULT (datetime('now'))
@@ -1111,12 +1112,74 @@ def init_db() -> None:
             "ON llm_call_log(account_id, created_at DESC)"
         )
     _run_migrations()
+    _allow_every_database_type()
     _migrate_legacy_examples_to_candidates()
     _backfill_compliance_profiles()
     if is_postgres():
         log.info("Database initialised (PostgreSQL: %s)", DATABASE_URL.split("@")[-1])
     else:
         log.info("Database initialised (SQLite: %s)", DB_PATH)
+
+
+# The database types a connection may be: db_config's CHECK names each one.
+DB_TYPES = ("snowflake", "oracle", "azure_sql", "postgres")
+_DB_TYPE_CHECK = re.compile(r"CHECK\s*\(\s*db_type\s+IN\s*\([^)]*\)\s*\)", re.IGNORECASE)
+
+
+def _allow_every_database_type() -> None:
+    """Widen db_config's CHECK on an existing store to every type in DB_TYPES (PostgreSQL was added).
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table as it was, so a store made before kept refusing a
+    PostgreSQL connection. PostgreSQL changes a CHECK in place. SQLite cannot: the table is rebuilt with
+    its foreign keys off, as SQLite's own instructions say, because dropping the old table with them on
+    would delete or empty every row that points at a connection.
+    """
+    allowed = ", ".join(f"'{t}'" for t in DB_TYPES)
+    if is_postgres():
+        with get_db() as conn:
+            rows = conn.execute("SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                                "WHERE conrelid = 'db_config'::regclass AND contype = 'c'").fetchall()
+            for name, definition in [(r[0], r[1]) for r in rows]:
+                if "db_type" in definition and all(f"'{t}'" in definition for t in DB_TYPES):
+                    return
+                if "db_type" in definition:
+                    conn.execute(f'ALTER TABLE db_config DROP CONSTRAINT "{name}"')
+            conn.execute(f"ALTER TABLE db_config ADD CONSTRAINT db_config_db_type_check "
+                         f"CHECK (db_type IN ({allowed}))")
+        log.info("Migration: db_config accepts %s", ", ".join(DB_TYPES))
+        return
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'db_config'").fetchone()
+        if not row or all(f"'{t}'" in row[0] for t in DB_TYPES) or not _DB_TYPE_CHECK.search(row[0]):
+            return
+        create = _DB_TYPE_CHECK.sub(f"CHECK(db_type IN ({allowed}))", row[0], count=1)
+        create = re.sub(r"CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?\"?db_config\"?", "CREATE TABLE db_config__new",
+                        create, count=1, flags=re.IGNORECASE)
+        columns = ", ".join(f'"{c}"' for c in get_table_columns(conn, "db_config"))
+        conn.isolation_level = None
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN")
+        try:
+            conn.execute(create)
+            conn.execute(f"INSERT INTO db_config__new ({columns}) SELECT {columns} FROM db_config")
+            conn.execute("DROP TABLE db_config")
+            conn.execute("ALTER TABLE db_config__new RENAME TO db_config")
+            broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if broken:
+                raise RuntimeError(f"{len(broken)} row(s) would point at no connection")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        log.info("Migration: db_config rebuilt to accept %s", ", ".join(DB_TYPES))
+    except Exception as exc:
+        log.warning("db_config not widened to every database type: %s", exc)
+    finally:
+        try:
+            conn.execute("PRAGMA foreign_keys=ON")
+        finally:
+            conn.close()
 
 
 def _backfill_compliance_profiles() -> None:

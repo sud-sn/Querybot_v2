@@ -412,7 +412,7 @@ def _rounded(rows):
     return sorted((tuple(_cell(v) for v in row) for row in rows), key=repr)
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 @pytest.mark.parametrize("name", sorted(SHAPES))
 def test_each_shape_means_the_same_on_every_warehouse(retail, name, dialect):
     con = retail[0].con

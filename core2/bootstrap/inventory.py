@@ -163,6 +163,9 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
         name = parts[-1]
         if db_type == "oracle":
             database, owner = "", entry.get("owner") or (parts[-2] if len(parts) > 1 else "")
+        elif db_type in ("postgres", "postgresql"):
+            # One database per connection, which a query cannot name otherwise: schema.table, as created.
+            database, owner = "", entry.get("schema") or (parts[-2] if len(parts) > 1 else "")
         else:
             database = entry.get("database") or (parts[-3] if len(parts) > 2 else "")
             owner = entry.get("schema") or (parts[-2] if len(parts) > 1 else "")

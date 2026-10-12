@@ -16,7 +16,7 @@ Returned structure:
   }
 
 Key design decisions:
-  • Reuses the existing _sf_connect / _ora_connect / _az_connect helpers from
+  • Reuses the existing _sf_connect / _ora_connect / _az_connect / _pg_connect helpers from
     core/schema.py so we don't duplicate retry / error-handling logic.
   • Read-only — only queries INFORMATION_SCHEMA (or equivalents).  No DDL, no DML.
   • Short timeout: this runs interactively from the admin panel, so we bound it
@@ -55,6 +55,8 @@ async def discover_schema_tree(
         fn = _discover_oracle
     elif db_type == "azure_sql":
         fn = _discover_azure_sql
+    elif db_type == "postgres":
+        fn = _discover_postgres
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -69,6 +71,48 @@ async def discover_schema_tree(
             f"check that the DB is reachable and credentials are correct."
         )
     return result
+
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+def _discover_postgres(cfg: dict) -> dict:
+    """The connection's own database (a query cannot reach another), every schema the user may read,
+    or only those the connection names. Tables, views and materialized views; partitions are left
+    under their parent table.
+
+    Returns:  { DATABASE_NAME: { SCHEMA_NAME: { "tables": [...], "views": [...] } } }
+    """
+    from core.schema import _pg_connect
+
+    interactive_cfg = dict(cfg)
+    interactive_cfg["login_timeout"] = min(int(interactive_cfg.get("login_timeout", 15)), 15)
+    only = {part.strip() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
+    conn = _pg_connect(interactive_cfg, max_retries=1, statement_timeout=25)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT current_database()")
+        db_name = str(cur.fetchone()[0])
+        cur.execute("""
+            SELECT n.nspname, c.relname, c.relkind
+            FROM   pg_class c
+            JOIN   pg_namespace n ON n.oid = c.relnamespace
+            WHERE  c.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND  NOT c.relispartition
+              AND  n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND  n.nspname !~ '^pg_(toast|temp)'
+              AND  has_table_privilege(c.oid, 'SELECT')
+            ORDER  BY n.nspname, c.relname
+        """)
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    db_entry: dict[str, Any] = {}
+    for schema, name, kind in rows:
+        if only and schema not in only:
+            continue
+        entry = db_entry.setdefault(schema, {"tables": [], "views": []})
+        entry["views" if kind in ("v", "m") else "tables"].append(name)
+    return {db_name.upper(): db_entry} if db_entry else {}
 
 
 # ── Snowflake ─────────────────────────────────────────────────────────────────

@@ -331,18 +331,23 @@ DB_REQUIRED_FIELDS: dict[str, list[str]] = {
     "snowflake": ["account", "user", "warehouse"],
     "oracle":    ["user", "password", "dsn"],
     "azure_sql": ["server", "user", "password"],   # database is optional — omit to browse all DBs on the server
+    # A PostgreSQL connection reads one database (a query cannot name another); port defaults to 5432,
+    # sslmode to "prefer", and "schemas" (comma-separated) limits discovery to those schemas.
+    "postgres":  ["host", "database", "user", "password"],
 }
 
 DB_DIALECT: dict[str, str] = {
     "snowflake": "snowflake",
     "oracle":    "oracle",
     "azure_sql": "tsql",
+    "postgres":  "postgres",
 }
 
 DB_LABEL: dict[str, str] = {
     "snowflake": "Snowflake",
     "oracle":    "Oracle",
     "azure_sql": "Azure SQL",
+    "postgres":  "PostgreSQL",
 }
 
 

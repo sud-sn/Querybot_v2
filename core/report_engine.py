@@ -23,11 +23,12 @@ from datetime import datetime
 log = logging.getLogger("querybot.report_engine")
 
 # Mirrors core/validator.py's _DIALECT map (kept local rather than importing
-# a private cross-module name for a 3-entry constant).
+# a private cross-module name for a small constant).
 _SQLGLOT_DIALECT = {
     "snowflake": "snowflake",
     "oracle": "oracle",
     "azure_sql": "tsql",
+    "postgres": "postgres",
 }
 
 # Defense-in-depth before interpolating a resolved fact_table/fact_column

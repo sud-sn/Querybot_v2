@@ -154,7 +154,7 @@ def test_a_question_over_the_fill_of_a_claim_has_the_right_numbers(learned):
     assert got == expected
 
 
-@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "tsql", "oracle", "postgres"])
 def test_a_code_kept_as_text_is_compared_without_its_leading_zeros_on_every_warehouse(dialect):
     sql = D.same_number(exp.column("code", table="f"), exp.column("id", table="t"), dialect).sql(dialect=dialect)
     sqlglot.parse_one(sql, read=dialect)

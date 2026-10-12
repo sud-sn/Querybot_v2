@@ -73,7 +73,7 @@ def _add(model, text: str, *, slug: str = "draft_metric", filters=()) -> Measure
 
 def _rows(model, warehouse, plan: dict) -> list[dict]:
     logical = resolve(Plan.model_validate({"kind": "query", **plan}), model, Context(today=TODAY))
-    for dialect in ("snowflake", "tsql", "oracle"):
+    for dialect in ("snowflake", "tsql", "oracle", "postgres"):
         compile_query(logical, model, dialect)          # every warehouse can write it (and read it back)
     result = warehouse.query(compile_query(logical, model, "duckdb").sql)
     return [dict(zip(result.columns, row)) for row in result.rows]

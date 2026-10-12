@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_DIALECT = {"azure_sql": "tsql", "snowflake": "snowflake", "oracle": "oracle"}
+_DIALECT = {"azure_sql": "tsql", "snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres"}
 _OPERATORS = {"equals", "contains", "gte", "lte"}
 
 
