@@ -136,6 +136,20 @@ def _twins(model: SemanticModel, m: Measure, twins: dict[str, list[Measure]]) ->
             if others else "")
 
 
+def _difference(model: SemanticModel, m: Measure) -> str:
+    """" | is debit_amount less credit_amount": what Learn found the rows to hold, one amount less another."""
+    columns = {(o.table, (getattr(o.expr, "column", None) or "").rsplit(".", 1)[-1].casefold()): o
+               for o in model.measures.values() if not o.hidden and getattr(o.expr, "agg", "") == "sum"}
+    for e in m.evidence:
+        if e.kind != "difference":
+            continue
+        of = columns.get((m.table, str(e.data.get("of") or "").casefold()))
+        less = columns.get((m.table, str(e.data.get("less") or "").casefold()))
+        if of is not None and less is not None:
+            return f" | is {of.slug} less {less.slug}"
+    return ""
+
+
 def _synonyms(values: dict[str, list[str]]) -> str:
     words = sorted({w for ws in values.values() for w in ws})
     return f" | also called: {', '.join(words)}" if words else ""
@@ -214,7 +228,8 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
             status = " | unconfirmed" if m.status in ("needs_review", "proposed") else ""
             unit = f" in {m.unit}" if m.unit else ""
             lines.append(f"- {m.slug} | {m.business_name} | {m.format}{unit} | {ADDS_UP.get(m.additivity, '')} | "
-                         f"{definition(model, m.expr, values_allowed)}{_synonyms(m.synonyms)}{status}{_twins(model, m, twins)}")
+                         f"{definition(model, m.expr, values_allowed)}{_difference(model, m)}{_synonyms(m.synonyms)}"
+                         f"{status}{_twins(model, m, twins)}")
     lines.append("")
 
     lines.append("DATES (slug | name | what it records | data range)")

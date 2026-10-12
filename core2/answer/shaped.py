@@ -196,11 +196,15 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
         when = span or "ever"
         count = int(total) if total is not None else 0
         activity = _noun(shape.activity_label)
+        # "Bought in Q1 but not in Q2": who had some then is who the list is of.
+        had = f" with {activity} {span_words(shape.had_in)}" if shape.had_in is not None else ""
         if rows:
-            answer["headline"] = (f"{count:,} {things if count != 1 else shape.member} had no {activity} {when}" +
+            answer["headline"] = (f"{count:,} {things if count != 1 else shape.member}{had} had "
+                                  f"{'none' if had else f'no {activity}'} {when}" +
                                   (f"; the first {len(rows):,} are listed." if count > len(rows) else "."))
         else:
-            answer["headline"] = f"Every {shape.member} listed had {activity} {when}."
+            answer["headline"] = (f"Every {shape.member}{had} had {activity} {when} too." if had else
+                                  f"Every {shape.member} listed had {activity} {when}.")
         definition = next((n for n in logical.notes if n.startswith("Listed:")), "")
     if isinstance(logical.target, TargetInfo):
         said = target_headline(payload, logical, logical.target, span)

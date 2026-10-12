@@ -458,13 +458,16 @@ def _cohort(c: _Compiler, shape: CohortShape) -> tuple[exp.Select, list[OutColum
         c.part_select(e.part).subquery(c.name("ev2")))
     # Every cohort against every n seen in any of them, up to the last period with activity: a cohort with no one
     # active in a period that has happened shows 0, not nothing.
+    # Joined on that condition, never as a cross join: the governed executor refuses an unconditioned cartesian
+    # product in generated SQL.
     co, ag = c.out("co", "cohort"), c.out("ag", "age")
     grid = (exp.select(co.copy().as_(c.name("cohort")), ag.copy().as_(c.name("age")))
             .from_(exp.select(c.out("c1", "cohort")).distinct().from_(cells.subquery(c.name("c1")))
                    .subquery(c.name("co")))
             .join(exp.select(c.out("c2", "age")).distinct().from_(cells.subquery(c.name("c2")))
-                  .subquery(c.name("ag")), join_type="cross")
-            .where(exp.LTE(this=D.add_months(co.copy(), D.mul(ag.copy(), step), c.d), expression=last.subquery())))
+                  .subquery(c.name("ag")),
+                  on=exp.LTE(this=D.add_months(co.copy(), D.mul(ag.copy(), step), c.d), expression=last.subquery()),
+                  join_type="inner"))
     g, cl, sz = c.out("g", "cohort"), c.out("cl", "active"), c.out("sz", "active")
     active = exp.Coalesce(this=cl.copy(), expressions=[_num(0)])
     size = exp.select(c.out("c3", "cohort"), c.out("c3", "active")).from_(cells.subquery(c.name("c3"))).where(
@@ -556,7 +559,8 @@ def _on_time(c: _Compiler, shape: OnTimeShape) -> tuple[exp.Select, list[OutColu
     late = c.days(shape.due, shape.done)          # NULL without both dates
     on_time = exp.Case(ifs=[exp.If(this=exp.Is(this=late.copy(), expression=exp.Null()), true=exp.Null()),
                             exp.If(this=exp.LTE(this=late.copy(), expression=_num(shape.grace)),
-                                   true=exp.Literal.number("100.0"))], default=exp.Literal.number("0.0"))
+                                   true=exp.Literal.number("0.0" if shape.late else "100.0"))],
+                       default=exp.Literal.number("100.0" if shape.late else "0.0"))
     m = c.q.measures[0]
     body = rows.select(*[e.copy().as_(c.name(g.name)) for e, g in zip(group_exprs, part.groups)],
                        exp.Avg(this=on_time).as_(c.name(m.name)), exp.Count(this=late.copy()).as_(c.name(MEMBERS)),

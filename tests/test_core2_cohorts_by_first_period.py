@@ -97,3 +97,19 @@ def test_the_sql_reads_on_every_warehouse(retail, dialect):
                                 "time": {"window": Q1_2023, "grain": "quarter"}})
     compiled = compile_query(resolve(plan, model, Context(today=TODAY)), model, dialect)
     sqlglot.parse_one(compiled.sql, read=dialect)
+
+
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "duckdb"])
+def test_the_sql_passes_the_governed_executors_shape_rules(retail, dialect):
+    """The profitability stress test: on a governed workspace the grid's CROSS JOIN was refused as a cartesian
+    product the question did not ask for. The cohorts and the periods after their first are joined on the one
+    condition that keeps them: periods that have happened."""
+    from core.validator import _production_shape_errors
+
+    built, model = retail
+    plan = Plan.model_validate({"kind": "query", "cohort": {"of": "customer", "measure": "number_of_orders"},
+                                "time": {"window": Q1_2023, "grain": "quarter"}})
+    compiled = compile_query(resolve(plan, model, Context(today=TODAY)), model, dialect)
+    tree = sqlglot.parse_one(compiled.sql, read=dialect)
+    assert _production_shape_errors(tree, {"production_sql": True}) == []
+    assert " CROSS JOIN " not in compiled.sql.upper()

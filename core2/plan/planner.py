@@ -138,6 +138,9 @@ How to plan:
 14. include_left_out: true only when the question asks for rows a table LEAVES OUT by default (listed in the
    catalog), as "including cancelled orders" or "with test orders too", or asks about those rows themselves
    ("revenue on cancelled lines", "which customer type cancels the most"); otherwise leave it out.
+15. A measure the catalog says "is X less Y" (net = debit less credit, revenue = gross less discount) is the
+   total of an account, a category or any member asked about ("operating expense by profit centre", "sales of
+   valves"): use it, never X or Y alone, unless the question names X or Y ("debits", "gross amount").
 """
 
 
@@ -347,7 +350,8 @@ def _analyses(model: SemanticModel) -> str:
         rows = names.plural(model.tables[done.table].business_name.lower())
         lines.append(
             "- on_time: rows against the date they were due by; no measures. done: when it happened; due: when it "
-            "was expected; grace_days: days late still counted on time. ageing true for the rows not done yet, by "
+            "was expected; grace_days: days late still counted on time; late true for the share late (\"later than "
+            "requested\", \"delayed\"). ageing true for the rows not done yet, by "
             "days past due today (\"AR aging\", \"overdue\", \"open past due\"), with a measure to total (amount "
             "open) when asked; time.window then only says the day to age on (its end).")
         plan = {"kind": "query", "intent": "value", "on_time": {"done": done.slug, "due": due.slug},
@@ -789,6 +793,29 @@ _PER_SOMETHING = re.compile(r"\b(?:per|each|every)\b", re.IGNORECASE)
 _CODE_PART = re.compile(r"(.*?)(_?)(?:code|cd)", re.IGNORECASE)
 
 
+# "Combined", "in total": the members named are added up, not set side by side.
+_TOGETHER = re.compile(r"\b(?:combined|together|total|totals|altogether|in\s+all|overall|sum\s+of)\b", re.IGNORECASE)
+
+
+def each_named(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Revenue in Northfield Industrial and Eastgate Industrial in 2025" was one figure for the two added up: two to
+    six members of one field named for a single figure are shown each, side by side (the answer still says their
+    total), unless the question adds them up ("combined", "in total")."""
+    if plan.kind != "query" or plan.intent != "value" or plan.group_by or plan.time.grain or plan.time.compare \
+            or len(plan.filters) != 1 or _TOGETHER.search(question or ""):
+        return plan
+    f = plan.filters[0]
+    if f.op not in ("eq", "in") or not 2 <= len(f.values) <= 6 \
+            or not (f.field in model.attributes or f.field in model.entities):
+        return plan
+    # Each name written in the question, joined by "and" ("Organic or Vegan" is one figure for either).
+    said = (question or "").casefold()
+    at = [said.find(str(v).casefold()) for v in f.values]
+    if min(at) < 0 or re.search(r"\bor\b", said[min(at):max(at)]) or not re.search(r"\band\b|,", said[min(at):max(at)]):
+        return plan
+    return plan.model_copy(update={"intent": "breakdown", "group_by": [f.field]})
+
+
 def named_not_coded(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "Top 5 medications by total cost" was grouped by the medication code and answered "medication 2563431
     leads": the rows keep each medication's description beside its code. A grouping by a code whose row keeps a
@@ -883,6 +910,22 @@ def date_in_a_name(plan: Plan, model: SemanticModel, question: str) -> Plan:
             if len(words) >= 2:
                 left = re.sub(r"\b" + r"\s+".join(re.escape(w) + "s?" for w in words) + r"\b", " ", left)
     if left == question.casefold() or any(re.search(rf"\b{re.escape(w)}", left) for w in own):
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={"date": None})})
+
+
+def list_date_unasked(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many customers bought from us in Q2 2026?" was dated by the customer's first invoice date, a date on
+    the customer list, and counted 0 (the profitability stress test). Members of a period are those its rows name;
+    a date on the member list itself counts them only when the question names it ("customers created in 2025",
+    "by first invoice date")."""
+    role = next((r for r in model.date_roles.values() if r.slug == plan.time.date), None) \
+        if plan.kind == "query" and plan.time.date and plan.time.window.kind != "all" else None
+    if role is None or role.table not in model.tables or model.tables[role.table].kind != "dimension" or not question:
+        return plan
+    own = [w for w in re.findall(r"[a-z]+", role.name.casefold()) if w not in _DATE_WORDS and len(w) > 2]
+    said = re.findall(r"[a-z]+", question.casefold())
+    if not own or any(names.same_word(w, s) for w in own for s in said):
         return plan
     return plan.model_copy(update={"time": plan.time.model_copy(update={"date": None})})
 
@@ -1061,6 +1104,24 @@ def named_twin(plan: Plan, model: SemanticModel, question: str, previous: Plan |
         return value
 
     return Plan.model_validate(put(data))
+
+
+# "Later than the requested date", "delayed": the share late. "On time" said alone: the share on time.
+_LATE = re.compile(r"\b(?:late|later\s+than|delayed|delays?|missed|behind\s+schedule)\b", re.IGNORECASE)
+_ON_TIME = re.compile(r"\bon[\s-]time\b", re.IGNORECASE)
+
+
+def late_asked(plan: Plan, question: str) -> Plan:
+    """The on-time share or the late share, as the question words it: "What share of order lines had a confirmed
+    delivery date later than the requested one?" was answered with the share on time (the profitability stress test)."""
+    ot = plan.on_time if plan.kind == "query" else None
+    if ot is None or ot.ageing:
+        return plan
+    late = bool(_LATE.search(question)) and not _ON_TIME.search(question)
+    on_time = bool(_ON_TIME.search(question)) and not _LATE.search(question)
+    if late and not ot.late or on_time and ot.late:
+        return plan.model_copy(update={"on_time": ot.model_copy(update={"late": late})})
+    return plan
 
 
 def pointed_in(plan: Plan, model: SemanticModel, matches: list[ValueMatch], question: str = "",
@@ -1315,6 +1376,27 @@ def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow
     return plan.model_copy(update=update) if update else plan
 
 
+def _measures_named(model: SemanticModel, question: str) -> set[str]:
+    from core2.plan.followup import measures_named
+
+    return measures_named(model, question)
+
+
+def carried(plan: Plan, previous: Plan | None, reading: str | None) -> Plan:
+    """A turn that measures nothing (the AI left the figure out of "break it down by profit centre", or read "which
+    division grew the most?" as new and found no figure) measures what the answer on screen did: its measures and
+    the figures it worked out. A list or a count of things measures nothing on purpose."""
+    # Planned with the conversation in view (a turn its words did not settle): a question that measures nothing
+    # measures the answer on screen, whatever the AI called it; one planned afresh never has a previous.
+    following = reading != "new"
+    if plan.kind != "query" or not following or previous is None or previous.kind != "query" \
+            or plan.measures or plan.derived or plan.durations or plan.intent in ("list", "count") \
+            or not (previous.measures or previous.derived):
+        return plan
+    return plan.model_copy(update={"measures": list(previous.measures), "derived": list(previous.derived),
+                                   "follow_up": "refine"})
+
+
 def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") -> tuple[list[str], str]:
     """What stops the plan from being answered, in words the planner can act on; and what it could use instead.
 
@@ -1521,6 +1603,15 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                               'keeps the plan to them. Plan the question with follow_up "refine" and no filter on '
                               "them, rather than asking which one."], ""
             continue
+        if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "measure" \
+                and reading != "new" and previous is not None and previous.kind == "query" and previous.measures \
+                and not _measures_named(model, question):
+            # "Which division grew the most compared with H1 2025?" right after revenue was asked back "which
+            # measure?": a question that names no figure is about the one on screen.
+            problems, hint = [f"The question names no figure: it is about the figure of the answer above "
+                              f"({', '.join(previous.measures)}). Plan it with those measures and follow_up "
+                              '"refine", rather than asking which measure.'], ""
+            continue
         refused = plan.kind in ("unsupported", "clarify") and (plan.clarify is None or plan.clarify.about != "member")
         reuse = _derived_named(question, defined or []) if attempt == 0 and refused else []
         if reuse:
@@ -1541,6 +1632,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             continue
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
+        plan = carried(plan, history[-1].plan if history else None, reading)
+        plan = late_asked(plan, question)
         plan = pointed_in(plan, model, matches, question, on_screen)
         plan = ratio_alone(plan, model, question)
         halved = why_periods(plan, model, question, [])       # "the first to the second half of FY2026"
@@ -1550,9 +1643,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
         for rule in (dates_as_window, where_we_have, counted_each, in_time_order, average_asked,
-                     date_in_a_name, named_not_coded, one_time_axis):   # 2024 as a date filter, "where do we have",
-            # "$1,000 each", Q1 vs Q2, "average subtotal", "by ship method" (no ship date), a code's description,
-            # "by month" planned twice over
+                     date_in_a_name, list_date_unasked, each_named, named_not_coded, one_time_axis):
+            # 2024 as a date filter, "where do we have", "$1,000 each", Q1 vs Q2, "average subtotal", "by ship
+            # method" (no ship date), "bought in Q2" (not by the customer's own first invoice date), "in A and B"
+            # (each), a code's description, "by month" planned twice over
             ruled = rule(plan, model, question)
             if ruled is not plan and not check(ruled, model, today, shown)[0]:
                 plan = ruled

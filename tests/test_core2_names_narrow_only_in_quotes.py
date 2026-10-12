@@ -230,3 +230,24 @@ def test_a_name_in_the_singular_or_the_plural_is_the_same_name(retail):
     assert any('"Beverages"' in n for n in unquoted["trust"]["date_context"]), unquoted["trust"]["date_context"]
     quoted = _ask(retail, Recorded(plan), 'net sales of "beverage" products in 2025')[0]
     assert 0 < _total(quoted) < _total(whole), quoted["answer"]["headline"]
+
+
+def test_a_word_of_a_longer_name_is_offered_as_the_whole_names_written():
+    """"Revenue in Northfield Industrial and Eastgate Industrial in 2025" was planned as region "Northfield" and a division:
+    the button quoted "Northfield" alone and asked for the region again (the profitability stress test). It quotes
+    the whole profit centre names the question wrote, both at once."""
+    from core2.plan.values import ValueMatch
+    from core2.service import _say_unquoted
+
+    question = "Revenue in Northfield Industrial and Eastgate Industrial in 2025"
+    written = [ValueMatch(name, question.index(name), question.index(name) + len(name), "profit_centre.name", name)
+               for name in ("Northfield Industrial", "Eastgate Industrial")]
+    payload: dict = {}
+    _say_unquoted(payload, question, [("region", "Northfield")], written)
+    chip = payload["follow_up_suggestions"][0]
+    assert chip == {"label": 'Only "Northfield Industrial", "Eastgate Industrial"',
+                    "question": 'Revenue in "Northfield Industrial" and "Eastgate Industrial" in 2025'}
+    # A whole name dropped is offered as it was.
+    payload = {}
+    _say_unquoted(payload, question, [("profit centre", "Northfield Industrial")], written)
+    assert payload["follow_up_suggestions"][0]["label"] == 'Only "Northfield Industrial"'

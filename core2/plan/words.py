@@ -60,7 +60,7 @@ def _same(asked: str, named: str, loose: bool) -> bool:
     ``loose`` (a run of two words or more, "cust seg") also takes a shortening the abbreviation list does not
     hold; one word alone does not ("sale" is no shortening of "salesperson").
     """
-    a, b = names.singular(asked), names.singular(named)
+    a, b = names.singular(names.spelling(asked)), names.singular(names.spelling(named))
     if a == b:
         return True
     plain_a, plain_b = names.EXPANSIONS.get(a, a), names.EXPANSIONS.get(b, b)

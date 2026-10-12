@@ -355,6 +355,21 @@ def placed(question: str, shown: list[Shown], taken: list[ValueMatch], *, leader
                  [(a, v) for a, v in fields.items() if noun in _field_words(a) and len(v) == 1])
         if len(named) == 1 and free(m):
             out.append(ValueMatch(m.group(0), m.start(), m.end(), named[0][0], next(iter(named[0][1]))))
+    # "Only Northfield Industrial" after the profit centres on screen: a member of the answer written out in full
+    # points at its row, as "the first one" does (the AI read it as the division code DIV-07). A name of several
+    # words anywhere in the question; a one-word name ("Valves") only in a short one, where it is the point.
+    short = len(re.findall(r"[\w'-]+", question)) <= 5
+    for attribute, values in fields.items():
+        if attribute.startswith("time:"):
+            continue            # a period on screen ("March") is named by the period words, never as a row
+        for value in sorted(values, key=lambda v: -len(str(v))):
+            text = str(value).strip()
+            words = re.findall(r"[\w'-]+", text)
+            if not (len(words) >= 2 or len(words) == 1 and len(text) >= 4 and short) or text.isdigit():
+                continue
+            m = re.search(rf"(?<![\w-]){re.escape(text)}(?![\w-])", question, re.IGNORECASE)
+            if m is not None and free(m):
+                out.append(ValueMatch(m.group(0), m.start(), m.end(), attribute, value))
     first = fields[shown[0][0]]
     for m in _ITS.finditer(question):
         if not free(m):

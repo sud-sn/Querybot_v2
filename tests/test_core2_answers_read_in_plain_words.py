@@ -247,6 +247,18 @@ def test_the_rows_left_out_asked_for_unquoted_still_narrow_the_answer(shop):
     assert round(answer["kpi"]["value"], 2) == want
 
 
+def test_a_count_of_the_rows_left_out_by_default_counts_them(shop):
+    """"How many sales were cancelled in 2025?" said 0: a count of nothing is 0, not an empty row, and the
+    rows the table leaves out were never looked at (the profitability stress test)."""
+    cancelled = {"intent": "value", "measures": ["number_of_sales"], "time": Y2025,
+                 "filters": [{"field": "order_status.name", "op": "eq", "values": ["Cancelled"]}]}
+    (answer,) = _ask(shop, Recorded(cancelled), "how many sales were cancelled in 2025?")
+    want = _sql(shop, "SELECT COUNT(*) FROM sales WHERE status_id = 9 AND "
+                      "order_date BETWEEN '2025-01-01' AND '2025-12-31'")[0][0]
+    assert want > 0 and answer["kpi"]["value"] == want, answer["answer"]
+    assert answer["plan"]["include_left_out"] is True
+
+
 def test_an_answer_whose_rows_are_all_left_out_by_default_says_so_and_offers_them(shop):
     cancelled = {"intent": "value", "measures": ["amount"], "time": Y2025,
                  "filters": [{"field": "order_status.name", "op": "eq", "values": ["Cancelled"]}]}

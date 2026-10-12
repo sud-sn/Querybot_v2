@@ -77,6 +77,15 @@ _CONDITION = re.compile(r"\b(?:(?:less|more|fewer|greater|lower|higher)\s+than|a
 _NAMES_ONE = re.compile(r"\b(?:for|at|from|in)\s+[\"\u201c\u00ab']?\s*"
                         r"(?!(?:the|a|an|each|every|all|total|this|our|my|it|them)\b)[a-z]\w*", re.IGNORECASE)
 _WHICH = re.compile(r"^\s*(?:which|what)\s+(\w+(?:\s+\w+)?)", re.IGNORECASE)
+# A ranking by a figure ("grew the most", "the lowest"), never a place in time ("last week", "first quarter").
+_RANKING = re.compile(r"\b(?:most|least|highest|lowest|best|worst|biggest|smallest|largest|fastest|slowest)\b",
+                      re.IGNORECASE)
+# A figure of the question's own that no measure is named for: "the average visit duration by team".
+_FIGURE = re.compile(r"\b(?:average|avg|mean|median|duration|percent(?:age)?|share\s+of|rate|ratio)\b", re.IGNORECASE)
+_COUNTING = re.compile(r"\b(?:how\s+many|number\s+of|count|counts|counted)\b", re.IGNORECASE)
+# "List our item groups", "what are the profit centres", "which divisions do we have": a list, which measures nothing.
+_LISTS = re.compile(r"^\s*(?:list|name|enumerate|what\s+are\s+(?:the|our|all)|show\s+(?:me\s+)?(?:all|the\s+list)|"
+                    r"(?:which|what)\s+\w+(?:\s+\w+)?\s+(?:are\s+there|do\s+we\s+have|exist))\b", re.IGNORECASE)
 _GENERIC_TAIL = {"amount", "amt", "quantity", "qty", "value", "val", "count", "cnt", "number", "total",
                  # units a learned name keeps and people leave out: "utilization pct", "data usage gb"
                  "pct", "percent", "gb", "mb", "tb", "kb", "kg", "hrs", "mbps", "usd"}
@@ -112,7 +121,7 @@ def _found(model: SemanticModel | None, question: str, kinds: tuple[str, ...]) -
     if model is None:
         return []
     tokens = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9]*", question)]
-    found = []
+    spans = []
     for kind, slug, phrase in _phrases_said(model):
         if kind not in kinds:
             continue
@@ -122,9 +131,11 @@ def _found(model: SemanticModel | None, question: str, kinds: tuple[str, ...]) -
             # A word of a question's shape ("on", "by") is no part of a name, unless the name has it too ("on hand").
             if not any(w in _SHAPE and w not in phrase for w in run) \
                     and all(_same(a, b, size > 1) for a, b in zip(run, phrase)):
-                found.append((kind, slug, run))
+                spans.append((i, i + size, kind, slug, run))
                 break
-    return found
+    # The longer name wins: "profit centre" is the field, not the measure "profit" inside it.
+    return [(kind, slug, run) for start, end, kind, slug, run in spans
+            if not any(s <= start and end <= e and (e - s) > (end - start) for s, e, *_ in spans)]
 
 
 def named(model: SemanticModel | None, question: str) -> set[str]:
@@ -271,7 +282,11 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         return Reading("refine", f"it narrows the answer on screen to {head_members[0]}")
     if which and model is not None and _found(model, which.group(1), ("field",)):
         own = True      # "which warehouse type ..." ranks by warehouse type: its own grouping
-    if not leading and len(words) >= 4 and period and (head_found or asks and grouped):
+    # "Which division grew the most compared with H1 2025?" names a field and a period but no figure: the ranking
+    # is of the figure on screen (below), never a new question that has none.
+    ranks_the_figure = bool(previous.measures and _RANKING.search(question)) and not (
+        any(k == "measure" for k, _, _ in found) or _FIGURE.search(question))
+    if not leading and len(words) >= 4 and period and (head_found or asks and grouped) and not ranks_the_figure:
         return Reading("new", "it names what it measures, how to split it and for when")
     if _CONTINUE.match(question):
         return Reading("refine", "it starts by carrying on from the answer on screen")
@@ -281,6 +296,16 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         if short and not head_measure and not any(k == "count" for k, _, _ in head_found):
             return Reading("refine", "a fragment that only changes the answer on screen")
     if (kinds & {"measure", "field"}) and not pointing:
+        # A thing counted names a figure only when it is counted ("how many profit centres"), never when it is
+        # how the answer is split ("by profit centre").
+        measured = any(k == "measure" for k, _, _ in found) or any(k == "count" for k, _, _ in found) \
+            and _COUNTING.search(question) or bool(_FIGURE.search(question))
+        # "Which devices are firewalls?" lists: only a split or a ranking word is of the figure on screen.
+        if not measured and previous.measures and not _LISTS.match(question) \
+                and (grouped or _RANKING.search(question)):
+            # "Break the first half of 2026 down by profit centre", "which division grew the most?": a split or a
+            # ranking that names no figure of its own is of the figure on screen (planned afresh, it had none).
+            return Reading("refine", "it splits or ranks the answer on screen and names no figure of its own")
         if own and (grouped or which) and not period and not own_members and not _CONDITION.search(question) \
                 and (measures_named(model, head if grouped else question) & set(previous.measures)
                      or which and _says_measure_on_screen(model, question[which.end():], previous)) \

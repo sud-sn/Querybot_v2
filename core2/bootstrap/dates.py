@@ -284,7 +284,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
         attempt(warehouse, f"the row-stamp check on {table.name}",
                 partial(_made_with, warehouse, inventory, key, candidates), None)
         for c in candidates:
-            if c.kind == "event" and set(names.tokens(c.column)) & _POSTING and not names.opaque(c.column):
+            # ACG_DT as well as POSTING_DATE: the name's words, abbreviations read out ("acg" is accounting).
+            said = set(names.tokens(c.column)) | set(names.read_tokens(names.tokens(c.column)).lower().split())
+            if c.kind == "event" and said & _POSTING and not names.opaque(c.column):
                 c.add("posting_name", 0.3, f"the name ({names.readable(c.column)}) is the date the books count by")
         attempt(warehouse, f"the date-order check on {table.name}",
                 partial(_first_of, warehouse, inventory, key, candidates), None)

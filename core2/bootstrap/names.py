@@ -89,6 +89,33 @@ _IRREGULAR = {"statuses": "status", "buses": "bus", "bonuses": "bonus", "campuse
               "children": "child", "analyses": "analysis", "data": "data", "series": "series"}
 
 
+# British and Canadian spellings, read as the American ones a name may have: "profit centre" is the Profit Center.
+_SPELLINGS = {"colour": "color", "labour": "labor", "favour": "favor", "behaviour": "behavior", "neighbour": "neighbor",
+              "harbour": "harbor", "honour": "honor", "flavour": "flavor", "catalogue": "catalog", "programme": "program",
+              "licence": "license", "defence": "defense", "offence": "offense", "cancelled": "canceled",
+              "cancelling": "canceling", "cancellation": "cancelation", "labelled": "labeled", "modelling": "modeling",
+              "travelled": "traveled", "jewellery": "jewelry", "cheque": "check", "grey": "gray", "tyre": "tire",
+              "aluminium": "aluminum", "enrolment": "enrollment", "fulfilment": "fulfillment",
+              "instalment": "installment", "analyse": "analyze", "organise": "organize", "recognise": "recognize",
+              "authorise": "authorize", "prioritise": "prioritize", "summarise": "summarize", "categorise": "categorize",
+              "optimise": "optimize", "finalise": "finalize", "utilise": "utilize", "standardise": "standardize"}
+
+
+def spelling(word: str) -> str:
+    """The American spelling of a British or Canadian one: "centre" -> "center", "colours" -> "colors",
+    "organisation" -> "organization"; any other word as it is."""
+    w = word.lower()
+    tail = "s" if len(w) > 4 and w.endswith("s") and w[:-1] in _SPELLINGS else ""
+    if (w[:-1] if tail else w) in _SPELLINGS:
+        return _SPELLINGS[w[:-1] if tail else w] + tail
+    if len(w) > 5 and w.endswith("isation"):
+        return w[:-7] + "ization"
+    for tre in ("centre", "metre", "litre", "fibre", "theatre", "calibre"):     # "kilometres", "distribution centre"
+        if w.endswith((tre, tre + "s")):
+            return w[:len(w) - len(tre) - (1 if w.endswith("s") else 0)] + tre[:-3] + "ter" + ("s" if w.endswith("s") else "")
+    return word
+
+
 def singular(word: str) -> str:
     """"categories" -> "category", "addresses" -> "address", "warehouses" -> "warehouse", "status" stays."""
     if word in _IRREGULAR:

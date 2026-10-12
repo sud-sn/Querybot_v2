@@ -439,6 +439,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     one = {model.attributes[f.field].entity if f.field in model.attributes else f.field
            for f in plan.filters if f.op in ("eq", "in") and len(f.values) == 1}
     skip |= {t for t in one if t in model.entities} | {a.slug for a in model.attributes.values() if a.entity in one}
+    kept: list[str] = []
     if asked:
         slugs = asked[:MAX_GROUPINGS]
     else:
@@ -484,6 +485,12 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
 
     ranked = rank(groupings)
     reported = [g for g in ranked if telling(g)][:2]
+    # "Which profit centres drove that change?": the grouping the reader named (or the answer the "why" follows was
+    # split by) is said first, telling or not; then the most telling other one.
+    named = [g for g in ranked if g.slug in kept]
+    if named:
+        ranked = [*named, *(g for g in ranked if g not in named)]
+        reported = [*named, *(g for g in reported if g not in named)][:2]
     fmt_ = m.format
     now, before = span_words(total_logical.window), span_words(total_logical.compare or Range(None, None))
     pct = change / prior if prior else None

@@ -437,3 +437,29 @@ def test_each_shape_means_the_same_on_every_warehouse(retail, name, dialect):
         pytest.skip(f"{dialect} SQL does not carry back to DuckDB")
     want = con.execute(_compiled(retail, plan, "duckdb").sql).fetchall()
     assert _rounded(got) == _rounded(want)
+
+
+@pytest.mark.parametrize("shape", ["window", "both dated"])
+def test_customers_who_bought_in_one_quarter_but_not_the_next(retail, shape):
+    """"How many customers bought in Q1 2026 but not in Q2 2026?" was planned with each quarter as a filter on the
+    order date (had Q1, without Q2): a date is no field to narrow rows by, and the question was refused (the
+    profitability stress test). A filter on one of the activity's dates is the period of that part."""
+    _, model = retail
+    date = next(r.slug for r in model.date_roles.values() if r.name.lower() == "order date")
+    q1 = {"field": date, "op": "between", "values": ["2026-01-01", "2026-03-31"]}
+    q2 = {"field": date, "op": "between", "values": ["2026-04-01", "2026-06-30"]}
+    absent = {"of": "customer", "measure": "number_of_orders", "had": [q1]}
+    plan = ({"intent": "list", "absent": absent,
+             "time": {"window": {"kind": "between", "start": "2026-04-01", "end": "2026-06-30"}}}
+            if shape == "window" else {"intent": "list", "absent": {**absent, "without": [q2]}})
+    expected = sorted(n for n, in _sql(retail, """SELECT c.customer_name FROM customers c WHERE EXISTS (
+        SELECT 1 FROM order_lines o JOIN calendar d ON o.order_date_key = d.date_key WHERE o.customer_id =
+        c.customer_id AND d.full_date BETWEEN DATE '2026-01-01' AND DATE '2026-03-31') AND NOT EXISTS (
+        SELECT 1 FROM order_lines o JOIN calendar d ON o.order_date_key = d.date_key WHERE o.customer_id =
+        c.customer_id AND d.full_date BETWEEN DATE '2026-04-01' AND DATE '2026-06-30')"""))
+    got = _ask(retail, plan)
+    assert sorted(r["customer_name"] for r in got["export_rows"]) == expected and expected
+    assert got["answer"]["headline"] == f"{len(expected)} customers with orders in Q1 2026 had none in Q2 2026.", \
+        got["answer"]["headline"]
+    assert got["definition"].startswith("Listed: the customers with orders in Q1 2026, minus those with orders in "
+                                        "Q2 2026."), got["definition"]

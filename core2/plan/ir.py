@@ -207,6 +207,7 @@ class OnTime(_Strict):
     due: str                         # date slug: when it was expected (promised, due)
     grace_days: int = Field(default=0, ge=0, le=365)
     ageing: bool = False             # the rows not done yet, by days past due today (current, 1-30, 31-60, ...)
+    late: bool = False               # the share late instead ("later than requested", "delayed", "missed")
 
 
 class Pareto(_Strict):

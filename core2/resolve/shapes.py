@@ -42,6 +42,7 @@ from core2.resolve.resolver import (
     _Aliases,
     _attribute_label,
     _date_role_for,
+    _documents,
     _duration_dates,
     _entity_label,
     _first_last,
@@ -106,6 +107,7 @@ class AbsentShape:
     activity_key: str              # the activity part's output name for that key
     had: Part | None = None
     had_key: str = ""
+    had_in: Range | None = None    # when they did have rows ("bought in Q1 but not in Q2"); None: any time
     before: Part | None = None
     before_key: str = ""
     member: str = ""               # "customer"
@@ -186,6 +188,7 @@ class OnTimeShape:
     things: str = ""               # "receipts", "purchase order lines"
     due_name: str = ""
     done_name: str = ""
+    late: bool = False             # the figure is the share late, not on time
 
 
 AGEING = ["Not yet due", "1-30 days", "31-60 days", "61-90 days", "Over 90 days"]
@@ -652,6 +655,7 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if not measure.table:
         raise ResolveError("unsupported", f"{measure.business_name} is worked out over several tables: name the "
                            "activity of one (orders, fills)")
+    measure = activity_of(model, measure, entity)
     aliases = _Aliases()
 
     # The listed members, with the plan's conditions on them; its other conditions are on the activity.
@@ -676,8 +680,29 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.time.window.kind == "all":
         window = Range(None, None)
 
-    def activity(filters: list, rng: Range | None) -> tuple[Part, str]:
-        """The keys of the members with rows like these (in ``rng``): each once."""
+    def period(filters: list) -> tuple[list, Range | None, DateRole | None]:
+        """"Bought in Q1 but not in Q2": a filter on one of the activity's dates is its period, not a field. The
+        filters left, the period (None: none named) and the date it is read by."""
+        kept, rng, on = [], None, None
+        for f in filters:
+            found_d = find_slug(model, f.field)
+            dated = found_d[1] if found_d and found_d[0] == "date" else None
+            if not isinstance(dated, DateRole) or f.op not in ("between", "eq", "gte", "gt", "lte", "lt") \
+                    or not f.values or (dated.table != measure.table and dated.table not in _documents(model, measure.table)):
+                kept.append(f)
+                continue
+            try:
+                days = [dt.date.fromisoformat(str(v)[:10]) for v in f.values]
+            except ValueError:
+                raise ResolveError("unsupported", f"{dated.name} is a date: give it as a date (2026-01-31)") from None
+            one = dt.timedelta(days=1)
+            start = days[0] + one if f.op == "gt" else days[0] if f.op in ("between", "eq", "gte") else None
+            end = (days[-1] + one if f.op in ("between", "eq", "lte") else days[0] if f.op == "lt" else None)
+            rng, on = Range(start, end), dated
+        return kept, rng, on
+
+    def activity(filters: list, rng: Range | None, on: DateRole | None = None) -> tuple[Part, str]:
+        """The keys of the members with rows like these (in ``rng``, by the date ``on``): each once."""
         builder = _PartBuilder(model, measure.table, aliases, ctx)
         builder._allowed(measure.table)
         part = builder.part
@@ -702,16 +727,21 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
                 if column.table != measure.table else part.alias
             part.preds.append(Pred(alias, column.key, f.op, list(stored)))
-        if rng is not None and role is not None:
+        if rng is not None and (on or role) is not None:
             # A date only this part reads: never the answer's own window (part.date), which is the absence's.
-            part.date_ranges.append((builder.date(role), rng))
+            part.date_ranges.append((builder.date(on or role), rng))
         return part, out
 
-    act, act_key = activity([*rest, *a.without], window)
+    without, absent_in, absent_on = period(a.without)
+    if absent_in is not None and plan.time.window.kind == "all":
+        window, role = absent_in, absent_on        # "not in Q2", the period written as a date filter
+    act, act_key = activity([*rest, *without], window)
     shape = AbsentShape(entity=listed, key=key, activity=act, activity_key=act_key, member=entity.business_name.lower(),
                         activity_label=measure.business_name, member_key=key_name)
     if a.had:
-        shape.had, shape.had_key = activity([*rest, *a.had], None)
+        had, had_in, had_on = period(a.had)
+        shape.had, shape.had_key = activity([*rest, *had], had_in, had_on)
+        shape.had_in = had_in
     if a.active_before:
         if window.start is None:
             raise ResolveError("unsupported", "active before needs a window to be absent in")
@@ -723,6 +753,30 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                    conditions=[Condition("absent", measure.business_name.lower(), dates=window)], shape=shape)
 
 
+def activity_of(model: SemanticModel, measure: Measure, entity: Entity) -> Measure:
+    """A member's activity is what its rows record, never the member list itself: "new customers each month"
+    counted with the number of customers was dated by a date on the customer (its credit limit's last change) and
+    found none. The rows of the one fact table pointing at the member (or, of several, the one the business is
+    measured by) are its activity, counted."""
+    if measure.table != entity.table and model.tables[measure.table].kind != "dimension":
+        return measure
+    facts = list(dict.fromkeys(
+        j.from_table for j in model.joins.values()
+        if j.to_table == entity.table and j.trust != "rejected" and not j.to_calendar
+        and model.tables[j.from_table].kind == "fact" and model.tables[j.from_table].default_date))
+    if len(facts) > 1:
+        from core2.plan.analyses import leading
+
+        lead = leading(model)
+        facts = [lead.table] if lead is not None and lead.table in facts else facts
+    if len(facts) != 1:
+        return measure
+    counts = [m for m in model.measures.values()
+              if m.table == facts[0] and not m.hidden and getattr(m.expr, "agg", "") == "count" and not m.filters
+              and not getattr(m.expr, "filters", None)]
+    return counts[0] if counts else measure
+
+
 def absent_note(shape: AbsentShape, window: Range, active_before: bool) -> str:
     from core2.answer.builder import span_words
 
@@ -731,7 +785,9 @@ def absent_note(shape: AbsentShape, window: Range, active_before: bool) -> str:
     for lead in ("number of ", "count of ", "no. of "):
         activity = activity[len(lead):] if activity.startswith(lead) else activity
     when = span_words(window) if (window.start or window.end) else "ever"
-    who = f"the {things} with {activity} before then" if active_before else f"every {shape.member} listed"
+    who = (f"the {things} with {activity} before then" if active_before else
+           f"the {things} with {activity} {span_words(shape.had_in)}" if shape.had_in is not None else
+           f"every {shape.member} listed")
     return (f"Listed: {who}, minus those with {activity} {when}. The list follows what you may see and the rows "
             "each table leaves out by default.")
 
@@ -778,6 +834,7 @@ def _events(plan: Plan, model: SemanticModel, ctx: Context, of: str, measure_slu
     if not measure.table:
         raise ResolveError("unsupported", f"{measure.business_name} is worked out over several tables: name the "
                            "activity of one (orders, fills)")
+    measure = activity_of(model, measure, entity)
     if grain is not None and grain not in _CALENDAR_GRAINS:
         raise ResolveError("unsupported", f"this figure is worked out by calendar periods: ask by month, quarter or "
                            f"year rather than by {grain.replace('_', ' ')}")
@@ -1193,14 +1250,16 @@ def _on_time(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         part.groups.insert(0, PartGroup(name, done.alias, None, "period", grain=plan.time.grain, date=done))
         out_groups.insert(0, Group(name, plan.time.grain.capitalize(), "period", grain=plan.time.grain))
         names.insert(0, name)
-    on_time = _output_name("on_time", taken)
+    on_time = _output_name("late" if ot.late else "on_time", taken)
     shape = OnTimeShape(part=part, due=due, done=done, grace=ot.grace_days, ageing=False, as_of=ctx.today,
                         groups=names, columns={"on_time": on_time},
                         things=plural(model.tables[table].business_name.lower()), due_name=due_role.name.lower(),
-                        done_name=done_role.name.lower())
-    out = [OutMeasure(name=on_time, label="On time", expr=AggExpr(agg="avg"), format="percent", measure=None)]
+                        done_name=done_role.name.lower(), late=ot.late)
+    out = [OutMeasure(name=on_time, label="Late" if ot.late else "On time", expr=AggExpr(agg="avg"),
+                      format="percent", measure=None)]
     period = next((g.name for g in out_groups if g.kind == "period"), None)
-    sort = [(period, False)] if period else [(on_time, False)] if out_groups else []
+    # The worst first: the least on time, or the most late.
+    sort = [(period, False)] if period else [(on_time, ot.late)] if out_groups else []
     return Logical(intent="trend" if period else "breakdown" if out_groups else "value", parts=[part],
                    groups=out_groups, measures=out, window=window, sort=sort, limit=plan.limit,
                    max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
@@ -1268,6 +1327,10 @@ def on_time_definition(shape: OnTimeShape, span: str, counted: float | None, lat
     grace = f", or within {shape.grace} days after it" if shape.grace else ""
     when = f" {span}" if span else ""
     n = f" Of {int(counted):,}, {int(late or 0):,} were late." if counted is not None else ""
+    if shape.late:
+        grace = f" by more than {shape.grace} days" if shape.grace else ""
+        return (f"Each of the {shape.things}{when} late when its {shape.done_name} is after its {shape.due_name}"
+                f"{grace}; those without both dates are left out.{n}")
     return (f"Each of the {shape.things}{when} on time when its {shape.done_name} is on or before its "
             f"{shape.due_name}{grace}; those without both dates are left out.{n}")
 

@@ -94,6 +94,9 @@ def test_a_measure_is_its_definition_how_it_adds_up_and_when(retail):
     said = describe(model, ["net_amount"], today=TODAY)
     assert said.headline == "Net amount is the total net amount across order lines."
     assert _bullets(said) == [
+        # Learn read it from the rows: the gross less the discount (tests/test_core2_names_an_amount_by_what_is_
+        # taken_from_it.py).
+        "It is gross amount less discount amount: what was sold, after discounts.",
         "It adds up across any breakdown and period.",
         "Amounts are in USD.",
         "It is counted by order date, from January 2023 to June 2026.",

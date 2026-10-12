@@ -178,6 +178,39 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
             if x in judged:
                 break
 
+    # A difference: A = B - C on nearly every row, C mostly not nought (an amount after discounts is the gross less
+    # the discount; a margin is the amount less the cost). Kept as evidence: what A is called follows from what is
+    # taken away, once the names are given (name_by_difference).
+    money = [c for c in varying if of[c].agg == "sum" and of[c].additivity == "additive"]
+    differences: dict[tuple[str, str, str], float] = {}
+    for a in money:
+        for b, c in permutations([x for x in money if x != a], 2):
+            filled = _filled(rows[a], rows[b], rows[c])
+            # Each of the three mostly not nought: a rejected quantity, nought on most rows, is no "line amount
+            # less the same amount in another currency" because the two are equal where nothing is converted.
+            if not filled or any(sum(1 for row in filled if row[i]) < 0.2 * len(filled) for i in range(3)):
+                continue
+            share = _share([(va, vb - vc) for va, vb, vc in filled])
+            if share >= AGREE:
+                differences[(a, b, c)] = share
+
+    def result(a: str, c: str) -> bool:
+        """Of A = B - C and C = B - A (the same rows, read both ways), A is the result: its name says so (net,
+        margin, profit) and C's does not; else C's says it is taken away (a discount, a cost, a credit) and A's
+        does not; else A is listed after C, as derived columns are."""
+        for words, a_is_result in ((_RESULT, True), (_TAKEN, False)):
+            said_a, said_c = bool(set(names.tokens(a)) & words), bool(set(names.tokens(c)) & words)
+            if said_a != said_c:
+                return said_a if a_is_result else said_c
+        return money.index(a) > money.index(c)
+
+    for (a, b, c), share in differences.items():
+        if (c, b, a) in differences and not result(a, c):
+            continue
+        of[a].evidence.append(Evidence(kind="difference", weight=0, detail=(
+            f"{names.readable(a)} is {names.readable(b).lower()} less {names.readable(c).lower()} on "
+            f"{share:.0%} of rows"), data={"of": b, "less": c}))
+
     # A rate: between 0 and 1 on every row, and not a count.
     for column, m in of.items():
         values = [v for v in rows[column] if v is not None]
@@ -353,3 +386,75 @@ def find_parent_figures(warehouse: Warehouse, inventory: Inventory, profiles: di
             m.review = (f"{label} repeats on every line of the same {owner}. Is it a figure of the {owner} "
                         f"(averaged), or does each line hold its own (added up)?")
     return found
+
+
+# What is taken away says what is left: an amount less its discounts is what was sold (revenue, net sales); an
+# amount less its cost is the margin (gross profit). The words people use for each, given to the one measure that
+# holds them, unless another measure is already called so.
+# What is left once something is taken away: a net amount, a margin, a profit, a balance.
+_RESULT = {"net", "nt", "margin", "mgn", "mrg", "mrgn", "profit", "prft", "gp", "balance", "bal", "remaining"}
+_TAKEN_FOR_SALES = {"discount", "disc", "dsc", "rebate", "rbt", "allowance", "promo", "promotion", "markdown"}
+_TAKEN_FOR_MARGIN = {"cost", "cst", "cogs"}
+_TAKEN = _TAKEN_FOR_SALES | _TAKEN_FOR_MARGIN | {"credit", "cr", "crd", "cdt", "tax", "fee", "refund", "return"}
+_SALES_WORDS = {"en": ["Revenue", "Net sales", "Sales"], "fr": ["Chiffre d'affaires", "Ventes nettes", "Ventes"]}
+_MARGIN_WORDS = {"en": ["Gross profit", "Profit"], "fr": ["Marge brute", "Bénéfice brut"]}
+
+
+def name_by_difference(model) -> list[str]:
+    """Gives the measures Learn found to be one amount less another the words people use for them (revenue, gross
+    profit), each word to one measure only; returns a note for each word given."""
+    def column_of(measure):
+        return getattr(measure.expr, "column", None) or ""
+
+    by_column = {(m.table, column_of(m).rsplit(".", 1)[-1].casefold()): m for m in model.measures.values()
+                 if column_of(m) and getattr(m.expr, "agg", "") == "sum"}
+
+    def said(word: str) -> set[str]:
+        plain = word.casefold()
+        return {m.key for m in model.measures.values()
+                if not m.hidden and (m.business_name.casefold() == plain or any(
+                    w.casefold() == plain for ws in m.synonyms.values() for w in ws))}
+
+    def give(measure, words: dict[str, list[str]], why: str) -> list[str]:
+        given = []
+        for lang, add in words.items():
+            have = list(measure.synonyms.get(lang) or [])
+            for word in add:
+                if said(word) - {measure.key} or any(w.casefold() == word.casefold() for w in have):
+                    continue
+                have.append(word)
+                if lang == "en":
+                    given.append(word)
+            if have:
+                measure.synonyms[lang] = have
+        if given and why and why not in (measure.description or ""):
+            measure.description = f"{measure.description} {why}".strip()
+        return [f"{measure.business_name} is also called {', '.join(given)}: {why}"] if given else []
+
+    notes: list[str] = []
+    found: list[tuple[int, str, object, object, object]] = []      # (rank, role, measure, of, less)
+    for m in model.measures.values():
+        if m.hidden or m.provenance == "admin":
+            continue
+        for e in m.evidence:
+            if e.kind != "difference":
+                continue
+            of = by_column.get((m.table, str(e.data.get("of") or "").casefold()))
+            less = by_column.get((m.table, str(e.data.get("less") or "").casefold()))
+            if of is None or less is None:
+                continue
+            taken = set(names.tokens(str(e.data.get("less") or "")))
+            if taken & _TAKEN_FOR_SALES:
+                found.append((len(names.tokens(column_of(m).rsplit(".", 1)[-1])), "sales", m, of, less))
+            elif taken & _TAKEN_FOR_MARGIN:
+                found.append((len(names.tokens(column_of(m).rsplit(".", 1)[-1])), "margin", m, of, less))
+    # The plainer column first (a line amount before the same amount in another currency).
+    for _, role, m, of, less in sorted(found, key=lambda x: (x[1] != "sales", x[0], x[2].key)):
+        if role == "sales":
+            notes += give(m, _SALES_WORDS, f"It is {of.business_name.lower()} less {less.business_name.lower()}: "
+                                           "what was sold, after discounts.")
+        else:
+            notes += give(m, _MARGIN_WORDS, f"It is {of.business_name.lower()} less {less.business_name.lower()}.")
+            # What the cost is taken from is what was sold, when nothing else is called so.
+            notes += give(of, _SALES_WORDS, "")
+    return notes

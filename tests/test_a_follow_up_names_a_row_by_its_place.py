@@ -305,3 +305,44 @@ def test_the_one_that_grew_the_most_is_read_from_the_comparison_on_screen(retail
     assert rows[0] is not grew, "the answer lists the biggest drop first: the place says nothing"
     assert f'"the store that grew the most" -> store.name = "{store}"' in tails[1], tails[1]
     assert then["plan"]["filters"][0]["values"] == [store]
+
+
+# ── a member of the answer written out in full ─────────────────────────────
+
+CENTRES = [("profit_centre.name", "Eastgate Commercial", 9.0, {"division.name": "Commercial"}),
+           ("profit_centre.name", "Northfield Industrial", 8.0, {"division.name": "Industrial"}),
+           ("profit_centre.name", "Eastgate Industrial", 7.0, {"division.name": "Industrial"})]
+
+
+@pytest.mark.parametrize("question, member", [
+    ("Only Northfield Industrial", ("profit_centre.name", "Northfield Industrial")),
+    ("show eastgate industrial by item group for the first half", ("profit_centre.name", "Eastgate Industrial")),
+    ("Just Industrial", ("division.name", "Industrial")),
+])
+def test_a_member_on_screen_written_out_in_full_points_at_its_row(question, member):
+    """"Only Northfield Industrial" after the profit centres on screen was planned as the division DIV-07 (the
+    profitability stress test): the name of a row on screen is that row."""
+    found = placed(question, CENTRES, [])
+    assert [(m.attribute, m.value) for m in found] == [member], found
+
+
+@pytest.mark.parametrize("question", [
+    "Only Northfield",                                                       # part of a name is no name
+    "how did industrial customers do against commercial ones over the last three years by month",  # a word, long
+    "Eastgate Industrials only",                                            # another word, not the name
+])
+def test_a_word_of_a_name_or_a_one_word_name_in_a_long_question_is_no_row(question):
+    assert placed(question, CENTRES, []) == []
+
+
+def test_a_store_on_screen_named_in_full_narrows_the_next_answer(retail):
+    first = _converse(retail, "how did it go")[0]
+    second = _stores(first)[1]
+    _, then, tails = _converse(retail, f"Only {second}")
+    assert f'= "{second}"' in tails[1] and "PREVIOUS PLAN" in tails[1], tails[1]
+    assert then["plan"]["filters"][0]["values"] == [second]
+
+
+def test_a_period_on_screen_is_never_a_row_named_in_full():
+    by_month = [("time:month_of_year", "March", 10.0), ("time:month_of_year", "April", 12.0)]
+    assert placed("Only March", by_month, []) == []

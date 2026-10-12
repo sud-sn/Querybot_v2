@@ -241,3 +241,24 @@ def test_a_complete_last_snapshot_is_read_as_it_is(stock):
     logical = complete_snapshots(logical, model, warehouse)
     assert (logical.window.start, logical.window.end) == before
     assert not any("incomplete" in n for n in logical.notes)
+
+
+def test_a_ledger_written_in_abbreviations_is_dated_by_its_accounting_date():
+    """A ledger had ENT_DT (entry) first and ACG_DT (accounting) second: the books count by the accounting date,
+    but the posting rule read only the name's raw tokens ("acg"), so the entry date was the default and every
+    ledger answer of the profitability stress test was a few days off at each month's end (the entry, written
+    first, won as the first of the row's dates)."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE gl_acc_dms (gl_acc_key INTEGER PRIMARY KEY, gl_acc_nm VARCHAR)")
+    con.execute("INSERT INTO gl_acc_dms SELECT i, 'Account ' || i FROM range(1, 9) t(i)")
+    con.execute("CREATE TABLE fnn_fct (fnn_fct_key INTEGER PRIMARY KEY, gl_acc_key INTEGER, ent_dt DATE, "
+                "acg_dt DATE, dbt_amt DECIMAL(12,2), crd_amt DECIMAL(12,2))")
+    # Keyed in a day to three days before the period's books take it, as on the copy.
+    con.execute("INSERT INTO fnn_fct SELECT r, r % 8 + 1, DATE '2025-01-01' + (r % 360)::INTEGER, "
+                "DATE '2025-01-01' + (r % 360 + 1 + r % 3)::INTEGER, CASE WHEN r % 2 = 0 THEN 10 + r % 70 ELSE 0 END, "
+                "CASE WHEN r % 2 = 1 THEN 10 + r % 70 ELSE 0 END FROM range(1, 2001) t(r)")
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="ledger", options=BuildOptions(workers=1))
+    table = next(t for t in model.tables.values() if t.name == "fnn_fct")
+    role = model.date_roles[table.default_date]
+    assert model.columns[role.column].name == "acg_dt", [(r.name, r.evidence) for r in model.date_roles.values()]

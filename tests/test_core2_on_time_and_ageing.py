@@ -46,12 +46,12 @@ def purchasing():
     return learn(domains.build("purchasing"), "descriptive")
 
 
-def _ask(learned, plan: dict) -> dict:
+def _ask(learned, plan: dict, question: str = "q") -> dict:
     built, model = learned
     answers = [json.dumps({"kind": "query", **plan})]
     services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=lambda s, t: answers.pop(0),
                         index=MemberIndex(), today=TODAY)
-    payload = answer_question("q", services, Session())
+    payload = answer_question(question, services, Session())
     assert payload.get("type") == "assistant_response" and "export_rows" in payload, payload.get("answer")
     return payload
 
@@ -67,6 +67,34 @@ def test_the_share_of_receipts_on_time_in_2025(purchasing):
     assert float(got["export_rows"][0]["on_time"]) == pytest.approx(float(share))
     assert f"Of {counted:,}, {late:,} were late." in got["definition"]
     assert "on time when its received date is on or before its promised date" in got["definition"]
+
+
+def test_the_share_late_when_the_question_asks_how_many_were_late(purchasing):
+    """"What share of order lines had a confirmed delivery date later than the requested one?" was answered with the
+    share on time (the profitability stress test): the figure asked for is the share late, whatever the AI wrote."""
+    (share, counted, late), = _sql(purchasing, f"SELECT AVG(CASE WHEN late > 0 THEN 100.0 ELSE 0 END), COUNT(*), "
+                                                f"COUNT(*) FILTER (WHERE late > 0) FROM ({LATE})")
+    on_time = {"on_time": {"done": "received_date", "due": "promised_date"}, "time": {"window": Y2025}}
+    got = _ask(purchasing, on_time, "What share of 2025 receipts came in later than the promised date?")
+    assert float(got["export_rows"][0]["late"]) == pytest.approx(float(share))
+    assert got["answer"]["headline"].startswith("Late in 2025:"), got["answer"]["headline"]
+    assert f"Of {counted:,}, {late:,} were late." in got["definition"]
+    assert "late when its received date is after its promised date" in got["definition"]
+    # Said the other way round, the AI's late share is put back to the share on time.
+    back = _ask(purchasing, {**on_time, "on_time": {**on_time["on_time"], "late": True}},
+                "What share of 2025 receipts were on time?")
+    assert float(back["export_rows"][0]["on_time"]) == pytest.approx(100.0 - float(share))
+
+
+def test_the_most_late_supplier_comes_first(purchasing):
+    expected = dict(_sql(purchasing, f"SELECT supplier_name, AVG(CASE WHEN late > 0 THEN 100.0 ELSE 0 END) "
+                                     f"FROM ({LATE}) GROUP BY 1"))
+    got = _ask(purchasing, {"on_time": {"done": "received_date", "due": "promised_date"},
+                            "group_by": ["supplier.name"], "time": {"window": Y2025}},
+               "Which suppliers delivered late most often in 2025?")
+    shown = [(r["supplier_name"], float(r["late"])) for r in got["export_rows"]]
+    assert dict(shown) == pytest.approx({k: float(v) for k, v in expected.items()})
+    assert [v for _, v in shown] == sorted((v for _, v in shown), reverse=True)
 
 
 def test_on_time_by_supplier_and_by_month_with_three_days_grace(purchasing):

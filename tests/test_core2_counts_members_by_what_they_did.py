@@ -147,3 +147,51 @@ def test_a_flat_trend_says_so_instead_of_naming_a_peak(retail):
     selling = con.execute("SELECT COUNT(DISTINCT store_id) FROM order_lines").fetchone()[0]
     assert answer["answer"]["headline"].endswith(f"by month: {selling} in every month."), answer["answer"]
     assert "highest" not in answer["answer"]["headline"]
+
+
+@pytest.mark.parametrize("question, kept", [
+    ("How many customers bought from us in the first half of 2026?", False),
+    ("How many customers did we have in H1 2026?", False),
+    ("How many customers were created in the first half of 2026?", True),
+    ("Customers by the date they were created, first half of 2026", True),
+])
+def test_a_date_of_the_list_itself_counts_it_only_when_the_question_names_it(retail, question, kept):
+    """"How many customers bought from us in Q2 2026?" was planned by the customer's first invoice date (a date
+    on the customer list) and counted 0 (the profitability stress test): that date is dropped unless named."""
+    from core2.plan.planner import list_date_unasked
+
+    _, model = retail
+    plan = Plan.model_validate({"kind": "query", "intent": "count", "measures": ["number_of_customers"],
+                                "time": {"date": "created_at", "window": H1}})
+    assert (list_date_unasked(plan, model, question).time.date == "created_at") is kept
+
+
+@pytest.mark.parametrize("question, each", [
+    ("Revenue in Harbourfront Store and Airport Store in 2026", True),
+    ("Net sales of Harbourfront Store and Airport Store combined", False),
+    ("Total net sales for Harbourfront Store and Airport Store", False),
+])
+def test_two_members_named_for_one_figure_are_shown_each(retail, question, each):
+    """"Revenue in Northfield Industrial and Eastgate Industrial in 2025" was one figure, the two added up (the
+    profitability stress test): two to six members named are set side by side, unless added up on purpose."""
+    from core2.plan.planner import each_named
+
+    _, model = retail
+    field = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "store_name")
+    plan = Plan.model_validate({"kind": "query", "intent": "value", "measures": ["net_amount"],
+                                "time": {"window": H1}, "filters": [{"field": field, "op": "in",
+                                                                     "values": ["Harbourfront Store", "Airport Store"]}]})
+    got = each_named(plan, model, question)
+    assert (got.group_by == [field] and got.intent == "breakdown") is each, got
+
+
+def test_members_named_with_or_or_not_written_are_one_figure(retail):
+    from core2.plan.planner import each_named
+
+    _, model = retail
+    field = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "store_name")
+    plan = Plan.model_validate({"kind": "query", "intent": "value", "measures": ["net_amount"],
+                                "time": {"window": H1}, "filters": [{"field": field, "op": "in",
+                                                                     "values": ["Harbourfront Store", "Airport Store"]}]})
+    assert each_named(plan, model, "Net sales at Harbourfront Store or Airport Store").group_by == []
+    assert each_named(plan, model, "net sales of the two waterfront stores").group_by == []

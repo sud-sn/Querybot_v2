@@ -556,7 +556,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     if plan.time.date and _found_nothing(payload, zero=True):
         plan = _by_main_date(payload, question, plan, services, ctx, question_id=question_id, shown=shown,
                              periods=periods)
-    if not plan.include_left_out and _found_nothing(payload):
+    if not plan.include_left_out and _found_nothing(payload, zero=True):
+        # A count of nothing too: "How many invoice lines were cancelled in 2025?" said 0, every cancelled line
+        # being left out by default, under a filter that asked for exactly those.
         plan = _say_left_out(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     chips = offered(plan, model)
@@ -565,7 +567,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         payload["follow_up_suggestions"] = [*({"label": words, "question": words, "kind": "setting"}
                                               for words, _ in chips), *payload.get("follow_up_suggestions", [])]
     if unquoted:
-        _say_unquoted(payload, question, unquoted)
+        _say_unquoted(payload, question, unquoted,
+                      _visible(services.index.match(question), model, services.allowed_tables))
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
     if following and plan.follow_up == "refine" and last is not None:
@@ -1146,16 +1149,33 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     return plan.model_copy(update={"filters": filters, "absent": absent}), dropped
 
 
-def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]]) -> None:
-    """Said on the answer: which names did not narrow it, and the question again with them in quotes."""
+def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]],
+                  written: list[ValueMatch] | None = None) -> None:
+    """Said on the answer: which names did not narrow it, and the question again with them in quotes.
+
+    A name dropped from inside a longer member name the question wrote ("Northfield" of "Northfield Industrial and
+    Eastgate Industrial", read by the AI as a region and a division) is offered as the whole names written, all of
+    that field's at once: quoting "Northfield" alone asked for the region again."""
     notes = payload.setdefault("trust", {}).setdefault("date_context", [])
     chips = []
+    whole: list[ValueMatch] = []
     for thing, value in dropped:
         notes.append(f'Not narrowed to {thing} "{value}": a name narrows the answer only when it is in quotes.')
         at = question.lower().find(str(value).lower())
-        if at >= 0:
+        inside = next((m for m in written or [] if m.start <= at and at + len(str(value)) <= m.end
+                       and m.end - m.start > len(str(value))), None) if at >= 0 else None
+        if inside is not None:
+            whole += [m for m in written or [] if m.attribute == inside.attribute and m not in whole]
+        elif at >= 0:
             again = f'{question[:at]}"{question[at:at + len(value)]}"{question[at + len(value):]}'
             chips.append({"label": f'Only "{value}"', "question": again})
+    if whole:
+        spans = sorted({(m.start, m.end) for m in whole})
+        again = question
+        for start, end in reversed(spans):
+            again = f'{again[:start]}"{again[start:end]}"{again[end:]}'
+        names_ = ", ".join(f'"{question[s:e]}"' for s, e in spans[:3])
+        chips.insert(0, {"label": f"Only {names_}", "question": again})
     if chips:
         payload["follow_up_suggestions"] = (chips + list(payload.get("follow_up_suggestions") or []))[:4]
 

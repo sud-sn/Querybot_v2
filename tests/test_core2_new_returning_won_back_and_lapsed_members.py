@@ -85,6 +85,20 @@ def test_customers_new_returning_won_back_and_lapsed_by_month(retail):
     assert "lapsed: orders the month before, none in this one" in got["definition"]
 
 
+def test_members_counted_by_their_own_list_are_followed_by_what_they_did(retail):
+    """"How many new customers did we gain each month?" was planned with the number of customers: dated by a date
+    on the customer list, it found none (the profitability stress test). A member's activity is the rows of what
+    it did: the same answer as by its orders."""
+    _, model = retail
+    own = next(m.slug for m in model.measures.values()
+               if m.table == model.entities["customer"].table and getattr(m.expr, "agg", "") in ("count", "count_distinct"))
+    by_orders = _ask(retail, {"lifecycle": {"of": "customer", "measure": "number_of_orders", "status": "new"},
+                              "time": {"window": Y2025, "grain": "month"}})
+    by_list = _ask(retail, {"lifecycle": {"of": "customer", "measure": own, "status": "new"},
+                            "time": {"window": Y2025, "grain": "month"}})
+    assert by_list["export_rows"] == by_orders["export_rows"] and by_orders["export_rows"]
+
+
 def test_the_churn_rate_by_quarter(retail):
     expected = _expected(retail, "quarter", "3 MONTH")
     got = _ask(retail, {"lifecycle": {"of": "customer", "measure": "number_of_orders", "status": "churn_rate"},

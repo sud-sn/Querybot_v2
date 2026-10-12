@@ -31,7 +31,13 @@ ORDER_TABLES = {"main.order_lines", "main.customers", "main.products", "main.sto
 
 @pytest.fixture(scope="module")
 def retail():
-    return learn(domains.build("retail"), "descriptive")
+    built, model = learn(domains.build("retail"), "descriptive")
+    # About readers' suggestions: the net amount starts with no other names. Learn calls it Revenue, Net sales and
+    # Sales (the gross less the discount), the very words these readers suggest.
+    for m in model.measures.values():
+        if m.business_name == "Net amount":
+            m.synonyms = {}
+    return built, model
 
 
 class Site:

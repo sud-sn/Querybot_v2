@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from core2 import ids
 from core2.bootstrap import names, personal
-from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures
+from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures, name_by_difference
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.history import MIN_QUERIES, links_in, read_query_log
@@ -220,6 +220,8 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
     if options.labeler is not None:
         journal.step("Naming tables, columns and measures with the AI")
         model.notes += label(model, options.labeler)
+    # After the names: an amount less its discounts is revenue, an amount less its cost the gross profit.
+    model.notes += name_by_difference(model)
     assign_slugs(model)
     return model
 
