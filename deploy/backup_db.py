@@ -7,7 +7,7 @@ the environment, as QueryBot itself reads it.
 
 The database runs in WAL mode: recent writes sit in querybot.db-wal until they are folded in, so copying the
 .db file alone can miss them (or catch it half written). SQLite's backup reads both. A server on PostgreSQL
-(DATABASE_URL set) has no SQLite database to copy; back it up with pg_dump.
+(DATABASE_URL set, or data/pg_url) has no SQLite database to copy; back it up with pg_dump.
 """
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ def database_path() -> Path | None:
     else:
         load_dotenv(".env", override=False)
     if (os.getenv("DATABASE_URL") or "").strip():
+        return None
+    # PostgreSQL set on the admin's System page is kept in pg_url beside the database (store/database.py).
+    pg_url = Path(os.getenv("QUERYBOT_DB_PATH") or "data/querybot.db").parent / "pg_url"
+    if pg_url.is_file() and pg_url.read_text(encoding="utf-8").strip():
         return None
     path = Path(os.getenv("QUERYBOT_DB_PATH") or os.getenv("DB_PATH") or "data/querybot.db")
     return path if path.is_file() else None

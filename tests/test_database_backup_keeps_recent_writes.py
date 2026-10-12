@@ -53,3 +53,14 @@ def test_it_follows_the_database_setting_and_skips_postgres(tmp_path, monkeypatc
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://qb@localhost/qb")
     assert backup_db.database_path() is None            # PostgreSQL is backed up with pg_dump
+
+
+def test_it_skips_postgres_set_on_the_admin_page(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for name in ("DATABASE_URL", "DB_PATH", "QUERYBOT_DB_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "data").mkdir()
+    sqlite3.connect(tmp_path / "data" / "querybot.db").close()   # the SQLite file left from before
+    assert backup_db.database_path() == Path("data/querybot.db")
+    (tmp_path / "data" / "pg_url").write_text("postgresql://qb@localhost/qb\n", encoding="utf-8")
+    assert backup_db.database_path() is None

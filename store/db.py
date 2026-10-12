@@ -1653,7 +1653,11 @@ def _ensure_llm_usage_tables(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
-    """The new core's semantic model versions, admin overrides and build runs (store/core2_store.py)."""
+    """The new core's semantic model versions, admin overrides and build runs (store/core2_store.py).
+
+    core2_learn_table keeps each table a Learn has read as it goes, so a Learn a restart stopped starts
+    where it was; the copies go when the Learn finishes.
+    """
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS core2_model (
@@ -1691,6 +1695,17 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             log            TEXT NOT NULL DEFAULT '',
             runner         TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (account_id, db_config_id, started_at)
+        );
+
+        CREATE TABLE IF NOT EXISTS core2_learn_table (
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            table_key      TEXT NOT NULL,
+            started_at     TEXT NOT NULL,
+            fingerprint    TEXT NOT NULL DEFAULT '',
+            profile_json   TEXT NOT NULL,
+            read_at        TEXT NOT NULL,
+            PRIMARY KEY (account_id, db_config_id, table_key)
         );
 
         CREATE TABLE IF NOT EXISTS core2_answer (

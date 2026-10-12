@@ -11,22 +11,26 @@ checked read-only before it is sent:
    ``values_allowed`` says common values may be read.
 
 Tables over ``sample_threshold`` rows are profiled on a sample; their distinct
-counts are then estimates and are marked so.
+counts are then estimates and are marked so. A smaller table the warehouse cannot
+read whole within its time limit is read on a sample too, at once, rather than
+column by column at a time limit each.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import decimal
+import hashlib
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from sqlglot import exp
 
 from core2.bootstrap.inventory import InvColumn, InvTable
-from core2.bootstrap.journal import answers, journal_of, reason
+from core2.bootstrap.journal import answers, journal_of, reason, timed_out
 from core2.model.schema import ColumnProfile, TopValue
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
@@ -51,6 +55,36 @@ class TableProfile:
     columns: dict[str, ColumnProfile]
     # Columns the warehouse would not compute, with its reason: left out, never guessed.
     unread: dict[str, str] = field(default_factory=dict)
+
+
+class KeptProfiles(Protocol):
+    """Where a Learn keeps each table as it reads it, to start where it was after a restart."""
+
+    def get(self, table_key: str, fingerprint: str) -> TableProfile | None: ...
+
+    def put(self, table_key: str, fingerprint: str, profile: TableProfile) -> None: ...
+
+
+def fingerprint(table: InvTable, options: ProfileOptions) -> str:
+    """What a table's profile was read from and how: its columns and types, its row count, how it is sampled,
+    and whose common values may be read. A profile kept from a stopped Learn is used only when this matches,
+    so a column added, a type changed or a column masked since is read again."""
+    shape = [table.database, table.schema, table.name, table.row_count,
+             [(c.name, c.raw_type, c.data_type, bool(options.values_allowed(table.key, c.name)))
+              for c in table.columns],
+             options.sample_threshold, options.sample_rows, options.exact_distinct_up_to, options.low_cardinality]
+    return hashlib.sha256(json.dumps(shape, default=str).encode()).hexdigest()[:32]
+
+
+def profile_json(profile: TableProfile) -> str:
+    return json.dumps({"rows": profile.rows, "sampled": profile.sampled, "unread": profile.unread,
+                       "columns": {name: p.model_dump(mode="json") for name, p in profile.columns.items()}})
+
+
+def profile_from_json(text: str) -> TableProfile:
+    data = json.loads(text)
+    return TableProfile(rows=int(data["rows"]), sampled=bool(data["sampled"]), unread=dict(data.get("unread") or {}),
+                        columns={name: ColumnProfile.model_validate(p) for name, p in data["columns"].items()})
 
 
 def _num(value: object) -> float | None:
@@ -90,9 +124,10 @@ def _count_if(condition: exp.Expr) -> exp.Expression:
                                  default=exp.Literal.number(0)))
 
 
-def _source(table: InvTable, dialect: str, rows: int, options: ProfileOptions) -> tuple[str, bool]:
+def _source(table: InvTable, dialect: str, rows: int, options: ProfileOptions, *,
+            sample: bool = False) -> tuple[str, bool]:
     name = D.table_sql(table.database, table.schema, table.name, dialect)
-    if rows > options.sample_threshold:
+    if rows > options.sample_threshold or sample:
         return f"{name} {D.sample_clause(dialect, rows=options.sample_rows, total_rows=rows)}", True
     return name, False
 
@@ -116,8 +151,16 @@ def _readable(column: InvColumn, dialect: str) -> exp.Expression:
 _UNREAD: Any = object()   # a value the warehouse would not compute
 
 
+class _TooSlow(Exception):
+    """The whole table could not be read within the warehouse's time limit: read a sample of it instead."""
+
+    def __init__(self, cause: BaseException):
+        super().__init__(reason(cause))
+        self.cause = cause
+
+
 def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], source: str, dialect: str,
-            unread: dict[str, str], table: str) -> list[Any]:
+            unread: dict[str, str], table: str, *, sample_when_slow: bool = False) -> list[Any]:
     """Run [(column, stat, expression)] as one SELECT on the table; the values in the same order.
 
     A warehouse can refuse one column's expression: a type it cannot compare,
@@ -126,6 +169,10 @@ def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], 
     asked alone. One it still refuses is left out: its values come back as
     _UNREAD and it is named in ``unread`` with the warehouse's reason. When nothing
     can be read, the first error is raised: that is the table or the connection.
+
+    A query stopped for its time is not about one column: asked alone, each one
+    waited out the time limit again, and a wide table took the limit times its
+    columns. With ``sample_when_slow`` the table is read on a sample instead.
     """
     def run(part: list[tuple[str, str, exp.Expression]]) -> list[Any]:
         query = exp.select(*[e.as_(f"s{i}") for i, (_, _, e) in enumerate(part)]).from_(exp.to_table("__SRC__"))
@@ -134,6 +181,8 @@ def _select(warehouse: Warehouse, items: list[tuple[str, str, exp.Expression]], 
     try:
         return run(items)
     except Exception as first:  # noqa: BLE001 - which column it was is found below, and said
+        if sample_when_slow and timed_out(first):
+            raise _TooSlow(first) from first
         if not answers(warehouse):
             raise
         log.warning("core2: %s refused a profile query; reading its columns one at a time: %s", table, reason(first))
@@ -311,11 +360,25 @@ def _yyyymm(c: exp.Expression) -> exp.Expr:
 
 def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions | None = None) -> TableProfile:
     options = options or ProfileOptions()
-    dialect = warehouse.dialect
     rows = table.row_count
     if rows is None:
-        rows = int(warehouse.query(f"SELECT COUNT(1) FROM {D.table_sql(table.database, table.schema, table.name, dialect)}").rows[0][0])
-    source, sampled = _source(table, dialect, rows, options)
+        name = D.table_sql(table.database, table.schema, table.name, warehouse.dialect)
+        rows = int(warehouse.query(f"SELECT COUNT(1) FROM {name}").rows[0][0])
+    try:
+        return _profile(warehouse, table, options, rows)
+    except _TooSlow as slow:
+        journal_of(warehouse).step(
+            f"{table.name}: reading all {rows:,} rows took longer than the database allows ({slow}); "
+            f"reading a sample of about {options.sample_rows:,} rows instead")
+        return _profile(warehouse, table, options, rows, sample=True)
+
+
+def _profile(warehouse: Warehouse, table: InvTable, options: ProfileOptions, rows: int, *,
+             sample: bool = False) -> TableProfile:
+    dialect = warehouse.dialect
+    source, sampled = _source(table, dialect, rows, options, sample=sample)
+    # Only a table a sample makes smaller is worth starting again on one.
+    sample_when_slow = not sampled and rows > options.sample_rows
     if sampled:
         try:
             warehouse.query(f"SELECT COUNT(1) FROM {source}")
@@ -342,7 +405,7 @@ def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions
                 plan.append((column.name, stat))
                 selects.append(expression)
         values = _select(warehouse, [(name, stat, e) for (name, stat), e in zip(plan, selects)], source, dialect,
-                         unread, table.name)
+                         unread, table.name, sample_when_slow=sample_when_slow)
         for (name, stat), value in zip(plan, values):
             if value is _UNREAD:
                 continue

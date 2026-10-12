@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from core2 import ids
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import Inventory, from_schema_json
-from core2.bootstrap.profiler import ProfileOptions
+from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_from_json, profile_json
 from core2.model.overrides import apply_overrides
 from core2.model.schema import SemanticModel
 
@@ -245,6 +245,64 @@ def propose_classifications(account_id: str, model: SemanticModel) -> int:
     return written
 
 
+def learn_workers() -> int:
+    """Tables Learn reads at once: QUERYBOT_LEARN_WORKERS (1 to 16, 4 when unset). Fewer is gentler on a small
+    database that others use while Learn runs; each one is a connection and a query running in it."""
+    try:
+        return max(1, min(16, int(os.getenv("QUERYBOT_LEARN_WORKERS") or 4)))
+    except ValueError:
+        return 4
+
+
+class StoredProfiles:
+    """Each table a Learn reads, kept in the store as it goes (core2.bootstrap.profiler.KeptProfiles).
+
+    A restart stops a running Learn, and a large database took most of an hour to read: the next Learn then
+    starts where the stopped one was, with every table it had read whose columns, row count and masking are
+    as they were. Never fails the Learn: a table not kept is read again next time, no more.
+    """
+
+    def __init__(self, account_id: str, db_id: int, started: str):
+        import store
+
+        self.account_id, self.db_id, self.started = account_id, db_id, started
+        try:
+            self._kept = store.resume_core2_learn(account_id, db_id, started)
+        except Exception as exc:  # noqa: BLE001 - every table is read again
+            log.warning("core2: tables kept from a stopped Learn of %s not read: %s", account_id, exc)
+            self._kept = {}
+
+    def __len__(self) -> int:
+        return len(self._kept)
+
+    def get(self, table_key: str, fingerprint: str) -> TableProfile | None:
+        found = self._kept.get(table_key)
+        if found is None or found[0] != fingerprint:
+            return None
+        try:
+            return profile_from_json(found[1])
+        except Exception as exc:  # noqa: BLE001 - read again
+            log.warning("core2: the kept profile of %s could not be read: %s", table_key, exc)
+            return None
+
+    def put(self, table_key: str, fingerprint: str, profile: TableProfile) -> None:
+        import store
+
+        try:
+            store.keep_core2_learn_table(self.account_id, self.db_id, self.started, table_key, fingerprint,
+                                         profile_json(profile))
+        except Exception as exc:  # noqa: BLE001 - read again after a restart, no more
+            log.warning("core2: table %s not kept for a restart: %s", table_key, exc)
+
+    def forget(self) -> None:
+        import store
+
+        try:
+            store.forget_core2_learn(self.account_id, self.db_id)
+        except Exception as exc:  # noqa: BLE001 - removed when the next Learn starts
+            log.warning("core2: tables kept while %s learned not removed: %s", self.account_id, exc)
+
+
 def build_workspace(account_id: str, started: str | None = None) -> int:
     """Learn the workspace's database and store a new model version; returns the version.
 
@@ -277,8 +335,13 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
         inventory = from_schema_json(json.loads(path.read_text(encoding="utf-8")), config["db_type"])
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")
+        kept = StoredProfiles(account_id, db_id, started)
         options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory, _state(client))),
-                               labeler=_labeler(account_id, client, inventory), progress=say)
+                               labeler=_labeler(account_id, client, inventory), progress=say, workers=learn_workers(),
+                               kept=kept)
+        if len(kept):
+            say(f"Starting where the Learn that stopped was: {len(kept)} table(s) it read are kept, unless "
+                "their columns or masking changed since")
         say(f"Connecting to the {config['db_type'].replace('_', ' ')} database")
         with QueryBotWarehouse(config["db_type"], config.get("credentials") or {}) as warehouse:
             model = build_model(warehouse, inventory, client_id=account_id, db_id=db_id, options=options)
@@ -287,6 +350,7 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
         say("Saving what was learned")
         version = store.save_core2_model(account_id, db_id, model.model_dump_json(),
                                          source_hash=source_hash(inventory), stats=stats(model))
+        kept.forget()
         say("Bringing over the decisions already made in today's setup")
         bring_over(account_id, db_id, model, client)
         proposed = propose_classifications(account_id, model)

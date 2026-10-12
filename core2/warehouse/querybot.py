@@ -9,6 +9,7 @@ statement is checked read-only before it is sent.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,11 +19,20 @@ from core2.warehouse.dialect import for_db_type
 from core2.warehouse.runner import QueryResult, assert_read_only
 
 
+def learn_timeout_seconds() -> int:
+    """How long one of these statements may run: QUERYBOT_LEARN_QUERY_TIMEOUT_SECONDS (10 to 3600, 120 when
+    unset). A large table the limit stops is read on a sample (core2.bootstrap.profiler)."""
+    try:
+        return max(10, min(3600, int(os.getenv("QUERYBOT_LEARN_QUERY_TIMEOUT_SECONDS") or 120)))
+    except ValueError:
+        return 120
+
+
 @dataclass
 class QueryBotWarehouse:
     db_type: str                     # snowflake | azure_sql | oracle
     credentials: dict[str, Any]
-    timeout_seconds: int = 120
+    timeout_seconds: int = field(default_factory=learn_timeout_seconds)
     # Azure SQL answers 40613 while a paused database resumes (a minute or so) and during a failover:
     # four tries over about a minute, as today's pipeline makes. One try failed every question asked
     # while the database was waking up.

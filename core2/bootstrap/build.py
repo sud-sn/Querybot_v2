@@ -27,7 +27,7 @@ from core2.bootstrap.link_score import link_score
 from core2.bootstrap.keys import TableKeys, infer_keys, series_key
 from core2.bootstrap.second_opinion import second_opinion
 from core2.bootstrap.measures import MeasureFinding, classify_tables, find_measures
-from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_table
+from core2.bootstrap.profiler import KeptProfiles, ProfileOptions, TableProfile, fingerprint, profile_table
 from core2.bootstrap.quality import find_quality
 from core2.bootstrap.versions import VersionsFinding, find_versions
 from core2.model.schema import (
@@ -60,6 +60,8 @@ class BuildOptions:
     today: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.timezone.utc))
     labeler: Callable[[str, str], str] | None = None   # the AI that names things; None keeps names' readings
     progress: Callable[[str], None] | None = None      # each step as it happens, for the learned page
+    # Each table kept as it is read, and the tables a Learn a restart stopped had read (core2/bootstrap/service.py).
+    kept: KeptProfiles | None = None
     # The SELECT statements the warehouse keeps (core2/bootstrap/history.py); only the columns they join are read.
     query_history: Callable[[Warehouse], list[str]] | None = read_query_log
 
@@ -100,10 +102,20 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     done = iter(range(1, len(tables) + 1))
 
     def read(item: tuple[str, InvTable]) -> TableProfile | None:
-        _key, table = item
+        key, table = item
+        mark = fingerprint(table, options.profile) if options.kept is not None else ""
+        profile = options.kept.get(key, mark) if options.kept is not None else None
+        if profile is not None:
+            for column, why in profile.unread.items():
+                journal.leave_out(f"{table.name}.{column}", RuntimeError(why))
+            journal.step(f"Read {table.name} ({next(done)} of {len(tables)}): {profile.rows:,} rows"
+                         + (", from a sample" if profile.sampled else "") + ", as the Learn that stopped read it")
+            return profile
         profile = attempt(warehouse, f"the table {table.name}",
                           lambda: profile_table(warehouse, table, options.profile), None)
         if profile is not None:
+            if options.kept is not None:
+                options.kept.put(key, mark, profile)
             journal.step(f"Read {table.name} ({next(done)} of {len(tables)}): {profile.rows:,} rows"
                          + (", from a sample" if profile.sampled else ""))
         return profile

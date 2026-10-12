@@ -12,6 +12,7 @@ at all stops it: then nothing more could be learned, and saying so is the result
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -73,6 +74,18 @@ class Watched:
 def journal_of(warehouse: Any) -> Journal:
     journal = getattr(warehouse, "journal", None)
     return journal if isinstance(journal, Journal) else Journal()
+
+
+# How each warehouse says a query ran past its time limit: Azure SQL (pyodbc HYT00), Snowflake (000630),
+# Oracle (a call timeout), PostgreSQL (57014).
+_TIMED_OUT = re.compile(r"timeout expired|\bHYT00\b|statement or warehouse timeout|\b000630\b|call timeout|"
+                        r"ORA-03156|DPY-4024|DPI-1067|canceling statement due to statement timeout|\b57014\b|"
+                        r"timed out", re.IGNORECASE)
+
+
+def timed_out(error: BaseException) -> bool:
+    """Did the warehouse stop the query for taking too long (not refuse it)?"""
+    return isinstance(error, TimeoutError) or bool(_TIMED_OUT.search(str(error)))
 
 
 def answers(warehouse: Warehouse) -> bool:

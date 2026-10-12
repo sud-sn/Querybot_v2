@@ -165,6 +165,56 @@ def add_core2_build_line(account_id: str, db_config_id: int | None, started_at: 
                                                 started_at))
 
 
+# A Learn a restart stopped is picked up within this many hours; after that, its tables are read again.
+RESUME_HOURS = 24
+
+
+def keep_core2_learn_table(account_id: str, db_config_id: int | None, started_at: str, table_key: str,
+                           fingerprint: str, profile_json: str) -> None:
+    """One table the Learn started at ``started_at`` has read: kept until that Learn finishes."""
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_learn_table(account_id, db_config_id, table_key, started_at, fingerprint,
+                                            profile_json, read_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(account_id, db_config_id, table_key)
+               DO UPDATE SET started_at = excluded.started_at, fingerprint = excluded.fingerprint,
+                             profile_json = excluded.profile_json, read_at = excluded.read_at""",
+            (account_id, int(db_config_id or 0), table_key, started_at, fingerprint, profile_json, _now()))
+
+
+def resume_core2_learn(account_id: str, db_config_id: int | None, started_at: str) -> dict[str, tuple[str, str]]:
+    """The tables the Learn before this one read, when it did not finish: ``{table_key: (fingerprint, profile)}``.
+
+    Handed to the Learn started at ``started_at`` only when the one before it was stopped (by a restart, or a
+    failure) and read them in the last RESUME_HOURS: a Learn after a finished one reads everything again, as
+    an admin who learns again expects. Whatever else was kept is removed.
+    """
+    db_id = int(db_config_id or 0)
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=RESUME_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        before = conn.execute("""SELECT started_at, status FROM core2_build
+                                 WHERE account_id = ? AND db_config_id = ? AND started_at < ?
+                                 ORDER BY started_at DESC LIMIT 1""", (account_id, db_id, started_at)).fetchone()
+        if before is not None and before["status"] != "done":
+            conn.execute("""UPDATE core2_learn_table SET started_at = ?
+                            WHERE account_id = ? AND db_config_id = ? AND started_at = ? AND read_at >= ?""",
+                         (started_at, account_id, db_id, before["started_at"], cutoff))
+        conn.execute("DELETE FROM core2_learn_table WHERE account_id = ? AND db_config_id = ? AND started_at <> ?",
+                     (account_id, db_id, started_at))
+        rows = conn.execute("""SELECT table_key, fingerprint, profile_json FROM core2_learn_table
+                               WHERE account_id = ? AND db_config_id = ? AND started_at = ?""",
+                            (account_id, db_id, started_at)).fetchall()
+    return {r["table_key"]: (r["fingerprint"], r["profile_json"]) for r in rows}
+
+
+def forget_core2_learn(account_id: str, db_config_id: int | None) -> None:
+    """A finished Learn's tables are in its model: the copies kept while it ran go."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM core2_learn_table WHERE account_id = ? AND db_config_id = ?",
+                     (account_id, int(db_config_id or 0)))
+
+
 def set_core2_import_report(account_id: str, db_config_id: int | None, report: dict[str, Any]) -> None:
     """What the latest import brought over from today's setup, and what it could not (shown on the page)."""
     with get_db() as conn:
