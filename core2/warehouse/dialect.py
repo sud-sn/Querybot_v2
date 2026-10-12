@@ -163,6 +163,7 @@ def _floor_div_postgres(self, node: FloorDiv) -> str:
 
 
 def _register_floor_div() -> None:
+    from sqlglot import generator as generator_module
     from sqlglot.dialects.dialect import Dialect
     from sqlglot.generator import Generator
 
@@ -170,6 +171,11 @@ def _register_floor_div() -> None:
     for name in DIALECTS:
         Dialect.get_or_raise(name).generator_class.TRANSFORMS[FloorDiv] = (
             _floor_div_postgres if name == "postgres" else _floor_div_sql)
+    # sqlglot (30.x) keeps each dialect's table of how to write each expression from the first SQL it writes
+    # in that dialect. A server that wrote any SQL before this module was imported (the question pipeline
+    # checking a first question) kept a table without FloorDiv, and every later key read wrote FLOOR_DIV(),
+    # a function no database has: Learn then left out every table with a date key. The tables are rebuilt.
+    getattr(generator_module, "_DISPATCH_CACHE", {}).clear()
 
 
 _register_floor_div()
