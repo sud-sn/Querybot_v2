@@ -384,51 +384,46 @@ powershell -ExecutionPolicy Bypass `
 
 Every required check should show `PASS`.
 
-## Step 13: Start QueryBot automatically after reboot
+## Step 13: Run QueryBot in the background, start with the server
 
-Open Task Scheduler and create a task:
-
-- Name: `QueryBot`
-- Run whether user is logged on or not
-- Run with highest privileges
-- Trigger: At startup, delay 30 seconds
-- Program: `powershell.exe`
-- Arguments:
-
-```text
--NoProfile -ExecutionPolicy Bypass -File C:\QueryBot\app\deploy\windows\start-querybot.ps1
-```
-
-- Start in:
-
-```text
-C:\QueryBot\app
-```
-
-Configure the task to restart every minute after failure, up to three times.
-
-## Step 14: Future updates
-
-Stop QueryBot, then:
+Stop the QueryBot you started in Step 10 (Ctrl+C in its window). Then, in an
+Administrator PowerShell, signed in as the Windows user QueryBot runs as:
 
 ```powershell
 Set-Location C:\QueryBot\app
 
-git status
-git pull --ff-only
+powershell -ExecutionPolicy Bypass `
+  -File .\deploy\windows\querybot-service.ps1 -Action Install -Port 8000
+```
 
-.\venv\Scripts\python.exe -m pip install `
-  -r requirements-windows.txt
+It adds the missing secrets to `.env` (never changing a value already there),
+registers the `QueryBot` scheduled task (no window, runs at every start of the
+server, starts QueryBot again if it stops) and waits until QueryBot answers.
+Logs are in `C:\QueryBot\app\logs`.
 
-.\venv\Scripts\python.exe -c "from dotenv import load_dotenv; load_dotenv(); from store.db import init_db; init_db(); print('Migration OK')"
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\querybot-service.ps1 -Action Status
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\querybot-service.ps1 -Action Logs
+```
+
+## Step 14: Future updates
+
+In an Administrator PowerShell:
+
+```powershell
+Set-Location C:\QueryBot\app
 
 powershell -ExecutionPolicy Bypass `
-  -File .\deploy\windows\start-querybot.ps1
+  -File .\deploy\windows\update-querybot.ps1 -Branch core-v2
 ```
+
+It stops QueryBot, copies the SQLite database, moves to the latest commit of
+the branch, installs the packages, starts QueryBot again and prints the line
+to go back.
 
 Back up before updating:
 
 - PostgreSQL database
 - Qdrant volume or Qdrant Cloud collection
-- `C:\QueryBot\secrets\.querybot_key`
+- `C:\QueryBot\secrets\.querybot_key` (or the file `QUERYBOT_KEY_FILE` names)
 - `.env`

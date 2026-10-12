@@ -29,3 +29,7 @@ clients/*/naming_profile.json
 
 # What tools/ui_check/check.py writes: screenshots, its report and the local server state.
 ui-check/
+
+# What the server scripts in deploy/ write: QueryBot's logs and the database copies taken before an update.
+logs/
+data/*.bak-*

@@ -158,32 +158,62 @@ Open `http://<vm-private-or-public-ip>:8000/admin` only for initial testing.
 For production, place IIS, Azure Application Gateway, or another reverse proxy
 in front of QueryBot and expose HTTPS 443 rather than Uvicorn port 8000.
 
-## 7. Run automatically after reboot
+## 7. Run in the background, start with the server
 
-Use Windows Task Scheduler to run at system startup:
-
-- Program: `powershell.exe`
-- Arguments:
-  `-NoProfile -ExecutionPolicy Bypass -File C:\QueryBot\app\deploy\windows\start-querybot.ps1`
-- Start in: `C:\QueryBot\app`
-- Run whether the user is logged on or not.
-- Restart the task on failure.
-
-Use a dedicated Windows service account with Log on as a batch job, read access
-to the repository, and write access only to QueryBot data, client, log, and
-secret locations.
-
-## 8. Updating
-
-Stop the scheduled task or process, then:
+Once QueryBot answers on its port, stop the console run (Ctrl+C) and install the
+background task, in an Administrator PowerShell, signed in as the Windows user
+QueryBot runs as:
 
 ```powershell
 Set-Location C:\QueryBot\app
-git pull --ff-only
-.\venv\Scripts\python.exe -m pip install -r requirements-windows.txt
-.\venv\Scripts\python.exe -c "from dotenv import load_dotenv; load_dotenv(); from store.db import init_db; init_db(); print('Migration OK')"
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\start-querybot.ps1
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\querybot-service.ps1 -Action Install -Port 8000
 ```
 
-Back up PostgreSQL, the Qdrant volume or cloud collection, and
-`C:\QueryBot\secrets\.querybot_key` before upgrading.
+This:
+
+- adds to `.env`, only where there is no value yet, the four session and
+  pseudonym secrets (random), `QUERYBOT_KEY_FILE` (this user's
+  `.querybot_key`), and where this user's PDF browser and AI model files are.
+  A value already in `.env` is never changed. Never change
+  `PII_PSEUDONYM_SECRET` once it is set: every alias shown before would change;
+- stops a QueryBot already running on that port from a console;
+- registers the scheduled task `QueryBot`. It runs
+  `deploy\windows\run-querybot.ps1` with no window, as this user, at every
+  start of the server whether or not anyone is signed in, and starts QueryBot
+  again ten seconds after it stops for any reason. A click or Ctrl+C in a
+  window can no longer pause or end it.
+
+Logs go to `C:\QueryBot\app\logs\querybot-<start time>.log`, kept 14 days.
+
+```powershell
+.\deploy\windows\querybot-service.ps1 -Action Status    # task, process, /health, newest log
+.\deploy\windows\querybot-service.ps1 -Action Logs      # newest log, followed live
+.\deploy\windows\querybot-service.ps1 -Action Restart   # after changing .env
+.\deploy\windows\querybot-service.ps1 -Action Stop      # also Start, Uninstall
+```
+
+(Prefix each with `powershell -ExecutionPolicy Bypass -File` if scripts are
+blocked on the server.) The user needs Log on as a batch job, read access to
+the repository, and write access to QueryBot's data, client, log and secret
+locations.
+
+## 8. Updating
+
+In an Administrator PowerShell:
+
+```powershell
+Set-Location C:\QueryBot\app
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\update-querybot.ps1 -Branch core-v2
+```
+
+It stops QueryBot, copies the SQLite database (`data\querybot.db.bak-<time>`,
+with the writes not yet folded into the file), sets the local branch to the
+branch on GitHub, installs `requirements-windows.txt` and the PDF browser,
+starts QueryBot again and checks it. Files changed on the server are kept
+unless the update changes them too: git then stops and nothing changes. The
+line to go back to where the server was is printed at the end.
+
+Back up PostgreSQL (when `DATABASE_URL` is set), the Qdrant volume or cloud
+collection, `.env` and the `.querybot_key` file before upgrading. Keep `.env`
+and the key file together: without the key, stored database passwords cannot
+be read.
