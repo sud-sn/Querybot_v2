@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "macros.html" import breadcrumb, status_badge, empty_state %}
 {% from "icons.html" import ic %}
-{% block title %}Workspaces — QueryBot Admin{% endblock %}
+{% block title %}Workspaces — Solviz Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
@@ -13,7 +13,7 @@
 <div class="page-header">
   <div class="page-header-body">
     <h1>Workspaces</h1>
-    <p>Every workspace registered with QueryBot.</p>
+    <p>Every workspace registered with Solviz.</p>
   </div>
   {% set _server = admin_can is not defined or admin_can(request, '/admin/clients/new') %}
   {% if _server %}<div class="page-header-actions">

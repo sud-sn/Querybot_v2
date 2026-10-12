@@ -137,7 +137,7 @@
 {% block content %}
 
 
-{% call page_header("Knowledge Base", "Review and improve the field metadata QueryBot uses to understand business questions.") %}
+{% call page_header("Knowledge Base", "Review and improve the field metadata Solviz uses to understand business questions.") %}
   <div class="kb-hero-actions">
     <a href="/admin/clients/{{ client.account_id }}/setup" class="btn btn-secondary btn-sm">Build settings</a>
     {% if kb_files %}<a href="/admin/clients/{{ client.account_id }}/setup#kb-build" class="btn btn-primary btn-sm">Rebuild KB</a>{% endif %}
@@ -268,7 +268,7 @@
                 <div class="kb-field-text">{{ field.meaning or "No business meaning has been defined." }}</div>
               </div>
               <div class="kb-field-block">
-                <div class="kb-field-label">How QueryBot should use it</div>
+                <div class="kb-field-label">How Solviz should use it</div>
                 <div class="kb-field-text">{{ field.use_case or "No query use case has been defined." }}</div>
               </div>
             </div>
@@ -440,7 +440,7 @@
         <div class="field-editor-help">Be specific enough that an analyst could distinguish this field from similarly named columns.</div>
       </div>
       <div class="field-editor-group">
-        <label for="fieldUseCase">How QueryBot should use this field</label>
+        <label for="fieldUseCase">How Solviz should use this field</label>
         <textarea class="form-input" name="use_case" id="fieldUseCase" placeholder="Describe when to filter, group, join, or calculate with this field."></textarea>
         <div class="field-editor-help">Include important restrictions, code meanings, or examples of questions that should use it.</div>
       </div>

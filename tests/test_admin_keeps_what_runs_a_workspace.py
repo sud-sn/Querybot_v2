@@ -2,7 +2,7 @@
 
 The approved clean-up (October 2026): six areas instead of seven tabs and about
 thirty pages. Data keeps the semantic layer an admin corrects -- Setup, what
-QueryBot learned, the knowledge base, relationships, dates and metrics.
+Solviz learned, the knowledge base, relationships, dates and metrics.
 Questions is the log, the answers readers flagged and usage. The AI egress log
 moves to Compliance, where its policy lives. Settings is one page with the
 danger zone at its foot. Today's pipeline's own editors and the developer
@@ -10,7 +10,7 @@ tooling for its compiler leave the navigation for Diagnostics, a support page
 at the foot of Settings, until every workspace answers with the new core.
 
 Also: the counters belong to the Overview alone, the System page no longer
-offers to switch the database QueryBot keeps its records in (a deployment
+offers to switch the database Solviz keeps its records in (a deployment
 setting), a Standard workspace's Compliance shows only its profile and what
 leaves for the AI, and "Needs you" no longer lists warnings that need no one.
 """
@@ -70,7 +70,7 @@ def test_six_areas():
 
 def test_data_keeps_the_semantic_layer_an_admin_corrects():
     assert _labels(_nav("setup"), "secondary") == [
-        "Setup", "What QueryBot learned", "Knowledge base", "Relationships", "Dates", "Metrics",
+        "Setup", "What Solviz learned", "Knowledge base", "Relationships", "Dates", "Metrics",
         "Requests"]
 
 

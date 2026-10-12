@@ -77,9 +77,9 @@
 </div>
 
 {% if not data %}
-<div class="card">{{ empty_state("calendar", "QueryBot has not learned this database yet",
+<div class="card">{{ empty_state("calendar", "Solviz has not learned this database yet",
     "Learn it first: each table's dates are found from the data, then you can choose and name them here.",
-    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What Solviz learned") }}</div>
 {% else %}
 {% if saved == "date" %}<div class="alert alert-success" role="status">Date added. Questions can use it from the next answer.</div>{% endif %}
 <div class="dt-grid">

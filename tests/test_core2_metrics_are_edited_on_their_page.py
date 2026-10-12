@@ -107,7 +107,7 @@ def test_the_tab_lists_the_new_cores_metrics_and_how_often_each_was_asked(page):
 def test_a_workspace_not_learned_yet_is_sent_to_learn(page):
     client, _, store, _ = page
     store.upsert_client("acct-new", "New")
-    assert "QueryBot has not learned this database yet" in client.get("/admin/clients/acct-new/measures").text
+    assert "Solviz has not learned this database yet" in client.get("/admin/clients/acct-new/measures").text
     assert client.get("/admin/clients/acct-new/measures/edit", follow_redirects=False).status_code == 303
 
 

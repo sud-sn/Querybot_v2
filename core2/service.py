@@ -304,7 +304,7 @@ def _refused(question: str, text: str, plan: Plan | None, services: Services, st
 
 _REFUSALS = {
     "denied": "That needs data you do not have access to: {message}.",
-    "unconfirmed": "{message}. An admin can confirm it on the What QueryBot learned page.",
+    "unconfirmed": "{message}. An admin can confirm it on the What Solviz learned page.",
     "unsupported": "I cannot answer that from this data: {message}.",
     "unknown": "I could not find that in this data: {message}.",
     "empty": "{message}.",
@@ -1365,7 +1365,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     model = answering_model(account_id, client)
     if model is None:
         return None, _frame(question, "The new core has not learned this workspace yet: an admin can build it on "
-                                      "the What QueryBot learned page.")
+                                      "the What Solviz learned page.")
     state = store.get_client_state(account_id) or {}
     allowed = store.get_allowed_tables(portal_user) if portal_user else None
     scrub = question_scrubber(account_id)

@@ -34,7 +34,7 @@ TEMPLATES = ROOT / "admin" / "templates"
 _NAV_EXPECTATIONS = [
     ("",                "Overview",   None),
     ("setup",           "Data",       "Setup"),
-    ("learned",         "Data",       "What QueryBot learned"),
+    ("learned",         "Data",       "What Solviz learned"),
     ("knowledge",       "Data",       "Knowledge base"),
     ("relationships",   "Data",       "Relationships"),
     ("dates",           "Data",       "Dates"),

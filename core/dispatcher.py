@@ -49,7 +49,7 @@ from core.llm import is_ddl_attempt, _DDL_USER_MESSAGE, llm_complete, resolve_pr
 log = logging.getLogger("querybot")
 
 _HELP = (
-    "*QueryBot* 🤖\n\nAsk any data question:\n"
+    "*Solviz* 🤖\n\nAsk any data question:\n"
     "  • _What is my total revenue this month?_\n"
     "  • _Show top 10 customers by value_\n"
     "  • _How many records were created last week?_\n\n"
@@ -66,7 +66,7 @@ _WORKSPACE_GUIDE_KINDS = (
 )
 
 _ABOUT = (
-    "*QueryBot* — Your AI-powered data assistant\n\n"
+    "*Solviz* — Your AI-powered data assistant\n\n"
     "I connect directly to your business database and answer plain-English "
     "questions using governed business definitions and access controls.\n\n"
     "*What I can do:*\n"
@@ -88,7 +88,7 @@ _ABOUT = (
 )
 
 _OFF_TOPIC_REPLY = (
-    "I'm QueryBot — I only answer questions about your business data.\n\n"
+    "I'm Solviz — I only answer questions about your business data.\n\n"
     "That question is outside my scope. Try asking me something like:\n"
     "  • _What is our revenue this month?_\n"
     "  • _Show top customers by sales_\n"
@@ -633,8 +633,8 @@ async def _generate_analyst_reply(
         from core.i18n import prompt_language_rule
 
         system = (
-            "You are QueryBot's conversational analyst. You answer questions about "
-            "QueryBot's capabilities and what data this workspace can provide — using "
+            "You are Solviz's conversational analyst. You answer questions about "
+            "Solviz's capabilities and what data this workspace can provide — using "
             "ONLY the workspace context supplied below. Never invent tables, metrics, or "
             "data values. Never claim to show real numbers.\n"
             + prompt_language_rule(shape="prose") +
@@ -1768,7 +1768,7 @@ async def dispatch(
                     _first_name = (portal_user.get("name") or "").split()[0] or (portal_user.get("name") or "")
                     _was_never_active = not portal_user.get("last_active_at")
                     if _was_never_active:
-                        _greet_msg = f"👋 Welcome, {_first_name}! I'm QueryBot — ask me anything about your business data."
+                        _greet_msg = f"👋 Welcome, {_first_name}! I'm Solviz — ask me anything about your business data."
                     else:
                         _greet_msg = f"👋 Welcome back, {_first_name}!"
                     await adapter.send_message(event, _greet_msg)

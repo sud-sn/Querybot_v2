@@ -27,7 +27,7 @@ def test_clarification_submission_never_silently_returns_while_waiting():
     assert "processingActive && agentRunState !== 'waiting_for_user'" in source
     # The notice is a catalogue id here now; asserted on what the page ships.
     from tests.chat_render import render as _render_chat, catalogue
-    assert "QueryBot is still finishing the current step" in \
+    assert "Solviz is still finishing the current step" in \
         catalogue(_render_chat(lang="en"))["ui.chat.clar.busy"]
     assert "setAgentRunState('running');" in source
 

@@ -90,9 +90,9 @@ table.ms-l .act{width:48px;text-align:right}
   nobody needs.") }}{% endif %}
 
 {% if not learned %}
-<div class="card">{{ empty_state("chart-bar", "QueryBot has not learned this database yet",
+<div class="card">{{ empty_state("chart-bar", "Solviz has not learned this database yet",
     "Learn it first: the metrics are found from the data, then you can change them and add your own here.",
-    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What Solviz learned") }}</div>
 {% else %}
 {% set count = {} %}
 {% for r in rows %}{% set _ = count.update({r.source: count.get(r.source, 0) + 1}) %}{% endfor %}
@@ -131,7 +131,7 @@ table.ms-l .act{width:48px;text-align:right}
   <tr id="ms-none" hidden><td colspan="7" class="ms-muted">No metric matches.</td></tr>
   </tbody>
 </table></div>
-<p class="ms-note">A change answers from the next question, and is kept when QueryBot learns again.</p>
+<p class="ms-note">A change answers from the next question, and is kept when Solviz learns again.</p>
 
 <script>
 (function () {

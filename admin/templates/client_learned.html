@@ -1,12 +1,12 @@
 {% extends "client_base.html" %}
 {% from "macros.html" import breadcrumb, alert %}
-{% block title %}What QueryBot learned — {{ client.client_name }}{% endblock %}
+{% block title %}What Solviz learned — {{ client.client_name }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard",  "href": "/admin"},
     {"label": "Workspaces", "href": "/admin/clients"},
     {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
-    {"label": "What QueryBot learned", "href": ""},
+    {"label": "What Solviz learned", "href": ""},
 ]) }}
 {% endblock %}
 {% block head %}
@@ -66,16 +66,16 @@
 <div class="lq">
   <div class="lq-hero">
     <div>
-      <h1>What QueryBot learned</h1>
-      <p>QueryBot studies the connected database by itself: which tables record events and which list
+      <h1>What Solviz learned</h1>
+      <p>Solviz studies the connected database by itself: which tables record events and which list
          things you group by, how tables join, which date each table uses by default, which numbers are
          measures and how they add up. Every finding shows the evidence from the data. Nothing here needs
-         your approval; a decision you make below always wins and is kept when QueryBot learns again.</p>
+         your approval; a decision you make below always wins and is kept when Solviz learns again.</p>
       <div class="lq-meta">
         {% if view %}Version {{ view.version }}{% if view.built_at %}, learned {{ view.built_at.strftime('%d %b %Y %H:%M') if view.built_at.strftime is defined else view.built_at }} UTC{% endif %}.{% endif %}
         {% if build %}
           {% if building %}Learning now (started {{ build.started_at }} UTC): each step appears below as it happens.
-          {% elif interrupted %}The last attempt was interrupted: the service restarted while QueryBot was learning. Learn again.
+          {% elif interrupted %}The last attempt was interrupted: the service restarted while Solviz was learning. Learn again.
           {% elif build.status == 'failed' %}The last attempt failed: {{ build.message }}
           {% endif %}
           {% if learn_cost and learn_cost.calls %}
@@ -96,18 +96,18 @@
     {% endif %}
   </div>
 
-  {% if saved == 'building' and building %}{{ alert("QueryBot is studying the database. Each step appears below as it happens; the page shows the result when it is done.", "info") }}{% endif %}
-  {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time QueryBot learns again.", "success") }}{% endif %}
-  {% if saved == 'undone' %}{{ alert("Decision removed. QueryBot's own finding applies again.", "success") }}{% endif %}
+  {% if saved == 'building' and building %}{{ alert("Solviz is studying the database. Each step appears below as it happens; the page shows the result when it is done.", "info") }}{% endif %}
+  {% if saved == 'decision' %}{{ alert("Decision saved. It applies now and every time Solviz learns again.", "success") }}{% endif %}
+  {% if saved == 'undone' %}{{ alert("Decision removed. Solviz's own finding applies again.", "success") }}{% endif %}
   {% if saved == 'engine' %}{{ alert("Saved. The next question in the portal is answered this way.", "success") }}{% endif %}
   {% if saved == 'imported' %}{{ alert("Today's decisions were brought over again.", "success") }}{% endif %}
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
-  {% if behind and not building %}{{ alert("Discovery has run since QueryBot last learned, and found other tables, columns or masking. Learn again so the new core uses them; until then it answers from what it learned.", "warning") }}{% endif %}
+  {% if behind and not building %}{{ alert("Discovery has run since Solviz last learned, and found other tables, columns or masking. Learn again so the new core uses them; until then it answers from what it learned.", "warning") }}{% endif %}
 
   {% if build and (building or build_lines) %}
   <section class="lq-section lq-run" aria-labelledby="lq-run">
-    <h2 id="lq-run">{% if building %}What QueryBot is doing now{% elif build.status == 'failed' or interrupted %}The last learning run, where it stopped{% else %}The last learning run{% endif %}</h2>
+    <h2 id="lq-run">{% if building %}What Solviz is doing now{% elif build.status == 'failed' or interrupted %}The last learning run, where it stopped{% else %}The last learning run{% endif %}</h2>
     <div class="lq-body">
       {% if building or build.status == 'failed' or interrupted %}
       <ol class="lq-log" id="lq-log" aria-live="polite">
@@ -199,7 +199,7 @@
   {% if not building %}
   <div class="lq-section"><div class="lq-body">
     {% if has_database %}
-      <p>QueryBot has not studied this database yet. Discovery must have run first; then choose
+      <p>Solviz has not studied this database yet. Discovery must have run first; then choose
          <strong>Learn this database</strong>. It reads only counts, ranges and short code values inside your
          warehouse; no rows leave it.</p>
     {% else %}
@@ -238,7 +238,7 @@
   <section class="lq-section" aria-labelledby="lq-review">
     <h2 id="lq-review">Worth a look</h2>
     <div class="lq-body">
-      <p class="lq-intro">Calls QueryBot made on thin evidence. Answers already use the choice shown; change it only if it is wrong.</p>
+      <p class="lq-intro">Calls Solviz made on thin evidence. Answers already use the choice shown; change it only if it is wrong.</p>
       <ul class="lq-review">
         {% for r in view.review %}
         <li><strong>{{ r.question }}</strong><br>
@@ -436,7 +436,7 @@
         {% elif view.fiscal.month == 1 %}
           The fiscal year is the calendar year.
         {% else %}
-          QueryBot found no fiscal calendar in the data, so "fiscal year" means the calendar year. If the business's year starts in another month, say so here.
+          Solviz found no fiscal calendar in the data, so "fiscal year" means the calendar year. If the business's year starts in another month, say so here.
         {% endif %}
         {% if fiscal_decided %}(Your decision.){% elif view.fiscal.found %}(Found in the calendar table.){% endif %}
       </p>
@@ -474,7 +474,7 @@
     <h2 id="lq-imported">Brought over from today's setup</h2>
     <div class="lq-body">
       <p class="lq-intro">Links, default dates, metrics, names and synonyms your admins already decided are used
-         here too, refreshed every time QueryBot learns. Change them in today's setup, or decide differently on
+         here too, refreshed every time Solviz learns. Change them in today's setup, or decide differently on
          this page: your decision here wins.</p>
       {% if imported.error %}{{ alert("They could not be brought over: " ~ imported.error, "warning") }}{% endif %}
       {% if imported.counts %}

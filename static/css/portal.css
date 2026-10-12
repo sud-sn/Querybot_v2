@@ -46,11 +46,12 @@ body:has(.portal-app-shell) {
   text-decoration: none;
 }
 .portal-brand:hover { text-decoration: none; color: var(--on-primary); }
-.portal-brand span span { color: var(--sidebar-accent); }
 /* The lockup: a 24px mark a third of its height from the wordmark, still.
-   On the navy sidebar the mark and "Bot" take the sidebar accent. */
+   On the navy sidebar the mark takes the sidebar accent and both dots the
+   brighter turmeric. */
 .portal-brand-mark { flex: 0 0 auto; }
-.portal-sidebar .portal-brand-mark { --qb-mark-glyph: var(--sidebar-accent); }
+.portal-sidebar .portal-brand-mark { --qb-mark-glyph: var(--sidebar-accent); --qb-mark-dot: var(--brand-dot-bright); }
+.portal-sidebar .portal-brand-word { --qb-mark-dot: var(--brand-dot-bright); }
 .portal-nav { display: flex; flex-direction: column; gap: 4px; }
 .portal-nav a {
   min-height: 38px;
@@ -173,7 +174,6 @@ body:has(.portal-app-shell) .main { height: 100%; }
   .portal-sidebar { display: none; }
   .portal-mobile-bar { display: flex; flex-shrink: 0; }
   .portal-mobile-bar .portal-brand { color: var(--text); }
-  .portal-mobile-bar .portal-brand span span { color: var(--primary); }
   .main { padding: 1rem; padding-bottom: calc(1rem + 56px + env(safe-area-inset-bottom, 0)); }
 }
 
@@ -422,7 +422,6 @@ body { background: var(--bg); }
 .portal-mobile-bar { min-height: 52px; padding: 0 12px; z-index: 300; }
 .portal-mobile-menu { margin-right: 6px; color: var(--text-soft); background: var(--surface-2); border-color: var(--border); }
 .portal-mobile-bar .portal-brand { flex: 1; color: var(--text); padding-block: 4px; }
-.portal-mobile-bar .portal-brand span span { color: var(--primary); }
 .portal-mobile-actions { display: flex; align-items: center; gap: 5px; }
 
 .portal-app-shell.portal-sidebar-collapsed { grid-template-columns: 68px minmax(0, 1fr); }
@@ -545,7 +544,6 @@ body { background: var(--bg); }
   border-right-color: var(--sidebar-border);
 }
 .portal-brand-mark { background: transparent; box-shadow: none; }
-.portal-brand span span { color: var(--sidebar-accent); }
 .portal-nav a { min-height: 40px; border-radius: var(--radius-sm); }
 .portal-nav a:hover {
   background: var(--sidebar-hover);

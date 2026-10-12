@@ -219,9 +219,9 @@ async def _mail_invite(admin: dict, link: str, who) -> str:
 
     if not configured():
         return ""
-    title = "You are invited to the QueryBot admin panel"
+    title = "You are invited to the Solviz admin panel"
     inviter = who.label if who is not None and not who.emergency else "A Super admin"
-    paragraphs = [f"{inviter} gave you the {admin.get('role_label') or 'admin'} role in QueryBot.",
+    paragraphs = [f"{inviter} gave you the {admin.get('role_label') or 'admin'} role in Solviz.",
                   f"Choose your password with the button below. The link works once, for {store.admin_store.INVITE_HOURS} "
                   "hours; then you sign in with this email address."]
     button = ("Choose my password", link)

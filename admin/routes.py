@@ -1581,7 +1581,7 @@ def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
         if "can't open lib" in low or "odbc driver 18" in low and "file not found" in low:
             return (
                 "Azure SQL ODBC Driver 18 is not available to the app process. "
-                "Install msodbcsql18 on the VM, then restart QueryBot. Raw error: "
+                "Install msodbcsql18 on the VM, then restart Solviz. Raw error: "
                 f"{raw}"
             )
         if "hyt00" in low or "login timeout" in low or "timed out" in low:
@@ -1864,7 +1864,7 @@ async def database_test(request: Request):
         write = details.pop("write_permissions", None) if isinstance(details, dict) else None
         if write:
             body["warning"] = (
-                "This login can change the database (" + ", ".join(write) + "). QueryBot only reads it: "
+                "This login can change the database (" + ", ".join(write) + "). Solviz only reads it: "
                 "connect with a read-only login, so that a leaked password cannot change the warehouse."
             )
         return JSONResponse(body)
@@ -3286,7 +3286,7 @@ async def billing_export(request: Request, account_id: str):
     writer = csv.writer(buf)
 
     # Header block
-    writer.writerow(["QueryBot — Usage Report"])
+    writer.writerow(["Solviz — Usage Report"])
     writer.writerow(["Client", client.get("client_name", account_id)])
     writer.writerow(["Account ID", account_id])
     writer.writerow(["Report generated", __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")])
@@ -3786,7 +3786,7 @@ async def compliance_proof_pack(request: Request, account_id: str):
     except (TypeError, ValueError):
         days = 30
     pack = build_proof_pack(account_id, days=days)
-    filename = f"querybot-proof-pack-{account_id}-{pack['generated_at'][:10]}.json"
+    filename = f"solviz-proof-pack-{account_id}-{pack['generated_at'][:10]}.json"
     return JSONResponse(
         pack,
         headers={"Content-Disposition": _download_header(filename)},
@@ -7096,7 +7096,7 @@ async def metric_date_role_joins(request: Request, account_id: str, table: str =
     return JSONResponse({"joins": _metric_date_role_join_candidates(account_id, table)})
 
 
-_METRIC_AI_IMPORT_SYSTEM = """You convert business metric definitions (DAX measures, Excel logic, or plain English) into QueryBot metric-builder JSON configs. Output ONLY a JSON object, no markdown fences, no commentary.
+_METRIC_AI_IMPORT_SYSTEM = """You convert business metric definitions (DAX measures, Excel logic, or plain English) into Solviz metric-builder JSON configs. Output ONLY a JSON object, no markdown fences, no commentary.
 
 Output structure:
 {
@@ -12403,7 +12403,7 @@ async def admin_pending_users_approve(
                 await adapter.send_message(
                     synthetic_event,
                     f"✅ *Your access has been approved!*\n\n"
-                    f"You now have access to QueryBot{group_name}.\n"
+                    f"You now have access to Solviz{group_name}.\n"
                     f"Go ahead and ask your first question — I'm ready.",
                 )
                 log.info("Proactive approval message sent to %s", pending["platform_user_id"])

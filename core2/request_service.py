@@ -29,7 +29,7 @@ def _model(account_id: str, client: dict[str, Any]):
 
     model = load_model(account_id, client.get("db_config_id"))
     if model is None:
-        raise RequestRefused("QueryBot has not learned this workspace's data yet.")
+        raise RequestRefused("Solviz has not learned this workspace's data yet.")
     return model
 
 

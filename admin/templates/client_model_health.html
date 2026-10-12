@@ -242,7 +242,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
       <p>
         Approval coverage across all semantic model entries — fields, measures,
         dimensions, date roles, and relationships.  Higher coverage means
-        QueryBot has more confirmed domain knowledge to ground SQL generation
+        Solviz has more confirmed domain knowledge to ground SQL generation
         and enforce correct query shapes.
       </p>
       {% if health.drift.recorded_at %}
@@ -400,7 +400,7 @@ table.mh-tbl tr:hover td{background:color-mix(in srgb,var(--primary) 4%,var(--su
     </div>
     <div class="mh-card-body">
       <p style="margin:0 0 .7rem;font-size:var(--font-base);color:var(--text-soft)">
-        QueryBot inspected {{ naming.field_count }} physical fields and confidently expanded
+        Solviz inspected {{ naming.field_count }} physical fields and confidently expanded
         {{ naming.vocabulary_coverage_pct }}%. High-confidence vendor detection is applied only
         when no terminology pack was selected manually; ambiguous matches remain review-only.
       </p>

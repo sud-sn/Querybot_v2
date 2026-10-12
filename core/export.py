@@ -110,7 +110,7 @@ def _format_cell(val: Any, fmt: str) -> str:
 # Filename helper
 # ══════════════════════════════════════════════════════════════════════════════
 
-def ascii_filename(name: str, *, fallback: str = "querybot_result") -> str:
+def ascii_filename(name: str, *, fallback: str = "solviz_result") -> str:
     """The same filename with every non-ASCII character folded away.
 
     An HTTP header is latin-1, so a filename carrying a letter outside it —
@@ -149,7 +149,7 @@ def ascii_filename(name: str, *, fallback: str = "querybot_result") -> str:
     return f"{ascii_stem}.{ascii_ext}" if ascii_ext else ascii_stem
 
 
-def content_disposition(filename: str, *, fallback: str = "querybot_result") -> str:
+def content_disposition(filename: str, *, fallback: str = "solviz_result") -> str:
     """A Content-Disposition value that survives a non-ASCII filename.
 
     RFC 6266: an ASCII ``filename=`` for anything old, and a percent-encoded
@@ -180,9 +180,9 @@ def build_csv_filename(question: str) -> str:
     ────────
     "What is total revenue by region?" → "what_is_total_revenue_by_region.csv"
     "Top 10 products"                  → "top_10_products.csv"
-    ""                                 → "querybot_result.csv"
+    ""                                 → "solviz_result.csv"
     """
     safe = re.sub(r"[^\w\s-]", "", (question or "").lower())
     safe = re.sub(r"[\s_-]+", "_", safe).strip("_")
     safe = safe[:60].rstrip("_")
-    return (safe or "querybot_result") + ".csv"
+    return (safe or "solviz_result") + ".csv"

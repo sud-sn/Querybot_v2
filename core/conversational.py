@@ -523,7 +523,7 @@ def _format_examples_block(examples: list[str]) -> str:
 
 
 def _greeting_intro(portal_user: dict | None) -> str:
-    """"Hello, Ada! I'm QueryBot — ...", in the reader's language.
+    """"Hello, Ada! I'm Solviz — ...", in the reader's language.
 
     Built as two whole messages rather than one sentence with an optional
     ", {name}" spliced in: French puts no comma before a name in a greeting

@@ -65,7 +65,7 @@ _NOT_ABOUT = {"on", "in", "of", "to", "the", "my", "your", "our", "his", "her", 
 _POLITE = re.compile(r"[\s.?!]*(?:\b(?:please|thanks|thank you|merci|s'il (?:te|vous) pla[iî]t))?[\s.?!]*$",
                      re.IGNORECASE)
 
-RULES = """You design a dashboard for QueryBot from a reader's request. You never write SQL.
+RULES = """You design a dashboard for Solviz from a reader's request. You never write SQL.
 Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"title": "...", "kind": "number|trend|breakdown|table", "question": "...", "tab": "..."}]}.
 - The request is one of three kinds:
   1. A list of what the reader needs ("revenue by month, top 10 formulas and fills by pharmacy", "I need revenue,

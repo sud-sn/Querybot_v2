@@ -106,15 +106,15 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
 <div class="kb-head">
   <div>
     <h1>Knowledge base</h1>
-    <p>What each table and field means, in your words. QueryBot reads this to understand questions, and answers use your
+    <p>What each table and field means, in your words. Solviz reads this to understand questions, and answers use your
       names for fields and their values.</p>
   </div>
 </div>
 
 {% if not data %}
-<div class="card">{{ empty_state("book", "QueryBot has not learned this database yet",
+<div class="card">{{ empty_state("book", "Solviz has not learned this database yet",
     "Learn it first: its tables and fields are read from the data, then you can say what they mean here.",
-    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What Solviz learned") }}</div>
 {% else %}
 {% set t = data.table %}
 <div class="kb">
@@ -156,7 +156,7 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
       personal detail (an email, a phone, a birth date) is never shown; in a workspace under compliance both are shown
       masked to readers who have not signed the confidentiality attestation. A birth date that is usable through age
       is read only as each person's age, in bands or ranges of 5 years; a group of fewer than 11 people is never shown.
-      Changes apply from the next answer, and are kept when QueryBot learns again.</p>
+      Changes apply from the next answer, and are kept when Solviz learns again.</p>
   </div>
 </div>
 

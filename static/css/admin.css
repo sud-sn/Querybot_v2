@@ -39,15 +39,17 @@ body {
   flex-shrink: 0;
 }
 /* The same lockup the portal carries, so both consoles read as one product:
-   the mark and "Bot" in the sidebar accent, and a quiet tag, not a second logo. */
-.sidebar-brand-mark { flex: 0 0 auto; --qb-mark-glyph: var(--sidebar-accent); }
+   the mark in the sidebar accent, the dots in the brighter turmeric, and a
+   quiet tag, not a second logo. */
+/* Two classes: .qb-brand-motion sets the light-ground colours and loads after this file. */
+.sidebar-brand .sidebar-brand-mark { flex: 0 0 auto; --qb-mark-glyph: var(--sidebar-accent); --qb-mark-dot: var(--brand-dot-bright); }
 .sidebar-brand-text {
+  --qb-mark-dot: var(--brand-dot-bright);
   font-size: var(--font-md);
   font-weight: var(--weight-bold);
   color: var(--on-primary);
   letter-spacing: -.02em;
 }
-.sidebar-brand-text span { color: var(--sidebar-accent); }
 .sidebar-brand-tag {
   margin-left: 2px;
   padding: 1px 6px;
@@ -156,7 +158,6 @@ body {
   letter-spacing: -.02em;
   margin-right: auto;
 }
-.admin-topbar-brand span { color: var(--primary); }
 
 /* ── Mobile hamburger ── */
 .mobile-menu-btn {

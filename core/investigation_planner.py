@@ -88,7 +88,7 @@ def build_planner_prompt(
     from core.investigation_tools import describe_tools
 
     system = (
-        "You are QueryBot's investigation planner. An objective needs more than "
+        "You are Solviz's investigation planner. An objective needs more than "
         "one governed question or analysis to answer well; you decide, one step "
         "at a time, what the next step should be, using only the figures, labels "
         "and columns each earlier step actually found -- never invent a figure, a "

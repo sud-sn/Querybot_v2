@@ -110,6 +110,11 @@
   --primary:       #2151CA;
   --primary-hover: #1E43A9;
   --primary-soft:  #EEF2FE;
+  /* The dot of the Solviz mark and wordmark: turmeric on a light ground,
+     the brighter turmeric on the navy shell. A logo, so no text contrast
+     applies; both still clear 2:1 on their ground. */
+  --brand-dot:        #E59D12;
+  --brand-dot-bright: #F7B63C;
   /* Text on a primary fill: 6.8:1 on --primary. */
   --on-primary:    #FFFFFF;
   --on-status:     #FFFFFF;   /* text on a filled danger, success or warning */

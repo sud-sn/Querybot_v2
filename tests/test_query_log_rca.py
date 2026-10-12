@@ -73,7 +73,7 @@ class FailureMessagesNewCodesTests(unittest.TestCase):
         "graph_plan_mismatch", "multi_statement", "not_select",
         "reused_plan_empty", "surrogate_date_conversion",
     ]
-    GENERIC_FALLBACK = "The generated query did not pass QueryBot's safety and accuracy checks."
+    GENERIC_FALLBACK = "The generated query did not pass Solviz's safety and accuracy checks."
 
     def test_each_new_code_has_a_specific_headline(self):
         from core.failure_messages import translate_failure

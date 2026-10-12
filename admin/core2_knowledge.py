@@ -59,7 +59,7 @@ async def knowledge_save_field(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.bootstrap.service import load_model
     from core2.model import knowledge
     from core2.model.overrides import target
@@ -86,7 +86,7 @@ async def knowledge_save_table(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import knowledge
     from core2.model.overrides import target
 
@@ -125,7 +125,7 @@ async def dates_default(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model.overrides import target
 
     data = await _body(request)
@@ -150,7 +150,7 @@ async def dates_save(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import knowledge
     from core2.model.overrides import target
 
@@ -172,7 +172,7 @@ async def dates_check(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import knowledge
 
     warehouse = _warehouse(account_id, client)
@@ -192,7 +192,7 @@ async def dates_add(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import knowledge
     from core2.model.overrides import target
 
@@ -226,7 +226,7 @@ async def dates_fiscal(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model.overrides import target
 
     try:

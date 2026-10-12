@@ -1,26 +1,26 @@
-/* QueryBot brand motion -----------------------------------------------------
+/* Solviz brand motion -------------------------------------------------------
    The mark, and the one place it moves.
 
-   THE MARK is a speech bubble (the question) with three rising bars cut out
-   of it (the answer). One drawing at every size, on the 24-unit grid the
-   product's icons use, the same as static/img/logo-mark.svg; pages draw it
-   inline with the brand_motion macro so a state can move its bars. The bars
-   are holes, cut with a mask: they show whatever the mark sits on.
+   THE MARK is two corner brackets (the frame a question is asked in) and a
+   dot at the centre (the answer found in it). One drawing at every size, on
+   a 32-unit grid, the same as static/img/logo-mark.svg; pages draw it inline
+   with the brand_motion macro so a state can move its dot.
 
-   THE MOTION is the working wave. While an answer is being worked out the
-   bars rise and fall from their baseline, a beat apart; the mark goes with
-   the working line when the answer arrives. Nothing else moves: no hover
-   tilt, no pop on load, no shake, no red on error -- a failure is said in
-   words beside an alert icon, never by the brand -- and under reduced motion
-   nothing moves at all (WCAG 2.3.3).
+   THE MOTION is the working beat. While an answer is being worked out the
+   dot pulses; the mark goes with the working line when the answer arrives.
+   Nothing else moves: no hover tilt, no pop on load, no shake, no red on
+   error -- a failure is said in words beside an alert icon, never by the
+   brand -- and under reduced motion nothing moves at all (WCAG 2.3.3).
 
-   The colour is one custom property, --qb-mark-glyph: Primary on a light
-   ground, the shell's accent on the navy sidebar.
+   The colours are two custom properties: --qb-mark-glyph for the brackets
+   (Primary on a light ground, the shell's accent on the navy sidebar) and
+   --qb-mark-dot for the dot (turmeric, brighter on the navy sidebar).
    --------------------------------------------------------------------------- */
 
 .qb-brand-motion {
   --qb-mark-size: 32px;
   --qb-mark-glyph: var(--primary);
+  --qb-mark-dot: var(--brand-dot);
   display: inline-flex;
   align-items: center;
   gap: .65rem;
@@ -38,13 +38,12 @@
   display: block;
   flex: 0 0 var(--qb-mark-size);
 }
-/* The bubble: body and tail, one closed fill, the bars cut through it. */
-.qb-brand-motion__bowl { fill: var(--qb-mark-glyph); }
-/* The bars (in the mask). Anchored on their baseline, so a wave grows them
-   up from where they stand. */
+.qb-brand-motion__brackets { stroke: var(--qb-mark-glyph); }
+/* The dot pulses about its own centre. */
 .qb-brand-motion__dot {
+  fill: var(--qb-mark-dot);
   transform-box: fill-box;
-  transform-origin: bottom center;
+  transform-origin: center;
 }
 
 .qb-brand-motion__label {
@@ -55,29 +54,35 @@
   color: var(--text-muted);
 }
 
-/* ── Working: the wave ──────────────────────────────────────────────────── */
+/* The wordmark, "solvız": one colour (the text's), and the dot of its i is
+   the mark's dot. A dotless i carries a drawn dot so its colour is ours. */
+.qb-wordmark { white-space: nowrap; }
+.qb-wordmark__i { position: relative; color: inherit; }
+.qb-wordmark__i::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: .18em;
+  width: .19em;
+  height: .19em;
+  margin-left: -.095em;
+  border-radius: 50%;
+  background: var(--qb-mark-dot, var(--brand-dot));
+}
+
+/* ── Working: the beat ──────────────────────────────────────────────────── */
 .qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot,
 .qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot,
 .qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot,
 .qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot,
 .qb-brand-motion[data-state="answering"] .qb-brand-motion__dot {
-  animation: qb-wave 1.2s ease-in-out infinite;
+  animation: qb-beat 1s ease-in-out infinite;
 }
-.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(2),
-.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(2),
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(2),
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(2),
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(2) { animation-delay: .15s; }
-.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot:nth-child(3),
-.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot:nth-child(3),
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot:nth-child(3),
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot:nth-child(3),
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot:nth-child(3) { animation-delay: .3s; }
 
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
-@keyframes qb-wave {
-  0%, 100% { transform: scaleY(.45); }
-  50%      { transform: scaleY(1); }
+@keyframes qb-beat {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(.55); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -86,6 +91,6 @@
     animation: none !important;
     transition: none !important;
   }
-  /* With motion off the bars stand at full height: the still mark. */
-  .qb-brand-motion__dot { transform: scaleY(1); }
+  /* With motion off the dot rests at full size: the still mark. */
+  .qb-brand-motion__dot { transform: none; }
 }

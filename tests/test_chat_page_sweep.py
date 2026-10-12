@@ -290,7 +290,7 @@ class TestNothingObviousWasLeftBehind:
             # with their ${idx} stripped.
             "$1 $2 $3", "@@CODEBLOCK @@", "@@INLINECODE @@",
             # The product's own name beside the timestamp separator.
-            "QueryBot •",
+            "Solviz •",
             # Internal keys, DOM id prefixes and class names, with their
             # ${...} stripped. None is copy; each would break a lookup or a
             # selector if it were translated.
@@ -301,7 +301,7 @@ class TestNothingObviousWasLeftBehind:
             "querybot.chatRailCollapsed:",
             # The product's name beside a separator, and two message shells
             # whose copy is now a catalogue id.
-            "QueryBot • Ask", "QueryBot • ⛶",
+            "Solviz • Ask", "Solviz • ⛶",
             # localStorage key templates, with their ${account}/${thread}
             # interpolations stripped. Not copy: renaming one would orphan
             # every reader's cached thread.

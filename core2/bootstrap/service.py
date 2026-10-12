@@ -331,7 +331,7 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
             raise ValueError("The workspace's database connection is missing.")
         path = schema_path(account_id, client)
         if not path.exists():
-            raise ValueError("Run discovery first: QueryBot learns from the tables discovery found.")
+            raise ValueError("Run discovery first: Solviz learns from the tables discovery found.")
         inventory = from_schema_json(json.loads(path.read_text(encoding="utf-8")), config["db_type"])
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")

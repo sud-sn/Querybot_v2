@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "macros.html" import alert %}
 {% from "icons.html" import ic %}
-{% block title %}System — QueryBot Admin{% endblock %}
+{% block title %}System — Solviz Admin{% endblock %}
 {% block head %}
 <style>
 .provider-panel{display:none}
@@ -532,7 +532,7 @@
         {% endif %}
       </div>
 
-      {# Which database QueryBot keeps its own records in is a deployment
+      {# Which database Solviz keeps its own records in is a deployment
          setting, not a click: DATABASE_URL in the service's environment
          (unset is SQLite). The page says what is running. #}
       <p class="form-note">Set by the deployment: <code>DATABASE_URL</code> in the service's environment

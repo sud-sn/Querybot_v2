@@ -139,7 +139,7 @@ async def learned_build(request: Request, account_id: str, bg: BackgroundTasks):
     if not client.get("db_config_id"):
         return _back(account_id, error="Connect a database first.")
     if _running(store.latest_core2_build(account_id, client["db_config_id"])):
-        return _back(account_id, error="QueryBot is already learning this database.")
+        return _back(account_id, error="Solviz is already learning this database.")
     # Recorded as running before the page reloads: the build itself starts after this
     # response, and a page that got there first showed nothing happening.
     started = store.start_core2_build(account_id, client["db_config_id"])
@@ -248,7 +248,7 @@ async def learned_import(request: Request, account_id: str):
 
     model = learned_model(account_id, client.get("db_config_id"))
     if model is None:
-        return _back(account_id, error="QueryBot has to learn this database first.")
+        return _back(account_id, error="Solviz has to learn this database first.")
     report = bring_over(account_id, client.get("db_config_id"), model, client)
     if report.get("error"):
         return _back(account_id, error="Today's decisions could not be brought over: " + str(report["error"])[:200])
@@ -269,7 +269,7 @@ async def learned_engine(request: Request, account_id: str, engine: str = Form(.
         from core2.bootstrap.service import load_model
 
         if load_model(account_id, client.get("db_config_id")) is None:
-            return _back(account_id, error="QueryBot has to learn this database before the new core can answer.")
+            return _back(account_id, error="Solviz has to learn this database before the new core can answer.")
     store.set_query_engine(account_id, engine)
     log.info("core2: %s now answers with %s", account_id, engine)
     return _back(account_id, saved="engine")

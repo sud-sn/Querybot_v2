@@ -1,11 +1,11 @@
 {% from "icons.html" import ic %}
-{% from "macros.html" import brand_motion %}
+{% from "macros.html" import brand_motion, wordmark %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{% block title %}QueryBot Admin{% endblock %}</title>
+<title>{% block title %}Solviz Admin{% endblock %}</title>
 <!-- The reduced mark: at 16px the full mark's three bars are 1.36px wide
      separated by 0.60px, which is sub-pixel. These two are 2.0 by 1.0. -->
 <link rel="icon" type="image/svg+xml" href="{{ asset('img/logo-mark.svg') }}">
@@ -52,7 +52,7 @@
 
     <div class="sidebar-brand">
       {{ brand_motion('admin-brand', 'idle', 'sm', extra_class='sidebar-brand-mark') }}
-      <span class="sidebar-brand-text">Query<span>Bot</span></span>
+      {{ wordmark('sidebar-brand-text') }}
       <span class="sidebar-brand-tag">Admin</span>
     </div>
 
@@ -104,7 +104,7 @@
     {# Mobile topbar (hamburger + brand) — hidden on desktop #}
     <header class="admin-topbar">
       <button type="button" class="mobile-menu-btn" aria-label="Open navigation" onclick="openSidebar()">{{ ic("menu", 20) }}</button>
-      <span class="admin-topbar-brand">Query<span>Bot</span> Admin</span>
+      <span class="admin-topbar-brand">{{ wordmark() }} Admin</span>
     </header>
 
     {% set _signed_in = admin_me(request) if admin_me is defined else none %}

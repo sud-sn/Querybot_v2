@@ -464,9 +464,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Aucun visuel dans ce tableau de bord",
     },
     "ui.dash.empty_body": {
-        "en": "Ask QueryBot for an analysis, then use “Add to dashboard” and "
+        "en": "Ask Solviz for an analysis, then use “Add to dashboard” and "
               "select this dashboard.",
-        "fr": "Demandez une analyse à QueryBot, puis utilisez « Ajouter au "
+        "fr": "Demandez une analyse à Solviz, puis utilisez « Ajouter au "
               "tableau de bord » et choisissez ce tableau de bord.",
     },
     "ui.dash.browse_semantic": {"en": "Browse Semantic Layer", "fr": "Parcourir la couche sémantique"},
@@ -550,8 +550,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "notice.follow.cadence.daily": {"en": "daily", "fr": "quotidien"},
     "notice.follow.cadence.weekly": {"en": "weekly", "fr": "hebdomadaire"},
     "notice.follow.cadence.monthly": {"en": "monthly", "fr": "mensuel"},
-    "email.follow.why": {"en": "You follow the dashboard “{name}” in QueryBot.",
-                         "fr": "Vous suivez le tableau de bord « {name} » dans QueryBot."},
+    "email.follow.why": {"en": "You follow the dashboard “{name}” in Solviz.",
+                         "fr": "Vous suivez le tableau de bord « {name} » dans Solviz."},
     "email.open_dashboard": {"en": "Open the dashboard", "fr": "Ouvrir le tableau de bord"},
     # ── Scheduled dashboards (core/dashboard_schedule.py, core/dashboard_snapshot.py) ──
     "snapshot.drawn_for": {"en": "Drawn {at} for {name}", "fr": "Établi le {at} pour {name}"},
@@ -777,12 +777,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "portal.unsubscribe.confirm": {"en": "Stop these emails", "fr": "Ne plus les recevoir"},
     "portal.unsubscribe.done": {"en": "Done: {address} will not get these emails any more.",
                                 "fr": "C'est fait : {address} ne recevra plus ces courriels."},
-    "portal.unsubscribe.bad": {"en": "This link does not work. Open QueryBot to change what you are sent.",
-                               "fr": "Ce lien ne fonctionne pas. Ouvrez QueryBot pour changer ce que vous recevez."},
+    "portal.unsubscribe.bad": {"en": "This link does not work. Open Solviz to change what you are sent.",
+                               "fr": "Ce lien ne fonctionne pas. Ouvrez Solviz pour changer ce que vous recevez."},
     "notice.follow.no_numbers": {"en": "Open it to see where things stand.",
                                  "fr": "Ouvrez-le pour voir où en sont les chiffres."},
     "ui.dash.shared_by": {"en": "Shared by {owner}", "fr": "Partagé par {owner}"},
-    "ui.dash.welcome": {"en": "Welcome to QueryBot, {name}", "fr": "Bienvenue sur QueryBot, {name}"},
+    "ui.dash.welcome": {"en": "Welcome to Solviz, {name}", "fr": "Bienvenue sur Solviz, {name}"},
     "ui.dash.welcome_body": {
         "en": "Your account is ready. Add governed results to named dashboards "
               "and refresh them with live data.",
@@ -899,7 +899,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.nav_label": {"en": "Portal navigation", "fr": "Navigation du portail"},
     "ui.shell.skip_to_content": {"en": "Skip to content", "fr": "Aller au contenu"},
     "ui.shell.nav_primary": {"en": "Primary", "fr": "Principale"},
-    "ui.shell.home": {"en": "QueryBot dashboard", "fr": "Tableau de bord QueryBot"},
+    "ui.shell.home": {"en": "Solviz dashboard", "fr": "Tableau de bord Solviz"},
     "ui.shell.collapse": {"en": "Collapse sidebar", "fr": "Réduire le menu latéral"},
     "ui.shell.expand": {"en": "Expand sidebar", "fr": "Développer le menu latéral"},
     "ui.shell.open_nav": {"en": "Open navigation", "fr": "Ouvrir la navigation"},
@@ -1755,8 +1755,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Répondez **Continuer** pour lancer l'analyse, ou posez une nouvelle question.",
     },
     "dispatch.access_requested": {
-        "en": "👋 *Welcome to QueryBot!*\n\nYour access request has been sent to your administrator.\nYou'll receive a message here once your access is approved.\n\n_You don't need to do anything — your admin will be in touch._",
-        "fr": "👋 *Bienvenue sur QueryBot !*\n\nVotre demande d'accès a été transmise à votre administrateur.\nVous recevrez un message ici dès que votre accès sera approuvé.\n\n_Vous n'avez rien à faire — votre administrateur vous recontactera._",
+        "en": "👋 *Welcome to Solviz!*\n\nYour access request has been sent to your administrator.\nYou'll receive a message here once your access is approved.\n\n_You don't need to do anything — your admin will be in touch._",
+        "fr": "👋 *Bienvenue sur Solviz !*\n\nVotre demande d'accès a été transmise à votre administrateur.\nVous recevrez un message ici dès que votre accès sera approuvé.\n\n_Vous n'avez rien à faire — votre administrateur vous recontactera._",
     },
     "dispatch.access_rejected": {
         "en": "Your access request was not approved. Please contact your administrator for assistance.",
@@ -1788,16 +1788,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "dispatch.no_thanks": {"en": "No thanks", "fr": "Non merci"},
     "dispatch.not_registered_workspace": {
-        "en": "⚠️ This workspace is not registered with QueryBot.\nAsk your administrator to register it in the admin panel before sending queries.",
-        "fr": "⚠️ Cet espace de travail n'est pas enregistré auprès de QueryBot.\nDemandez à votre administrateur de l'enregistrer dans la console d'administration avant d'envoyer des questions.",
+        "en": "⚠️ This workspace is not registered with Solviz.\nAsk your administrator to register it in the admin panel before sending queries.",
+        "fr": "⚠️ Cet espace de travail n'est pas enregistré auprès de Solviz.\nDemandez à votre administrateur de l'enregistrer dans la console d'administration avant d'envoyer des questions.",
     },
     "dispatch.not_registered_user": {
         "en": "You don't have access yet. Send any question and your administrator will be asked to approve you.",
         "fr": "Vous n'avez pas encore accès. Envoyez une question et votre administrateur recevra une demande d'approbation.",
     },
     "dispatch.workspace_not_ready": {
-        "en": "⚠️ This workspace isn't set up yet.\n\nAsk your administrator to finish the *Schema & Knowledge Base Setup* in the QueryBot admin panel before sending queries.",
-        "fr": "⚠️ Cet espace de travail n'est pas encore configuré.\n\nDemandez à votre administrateur de terminer la *configuration du schéma et de la base de connaissances* dans la console d'administration de QueryBot avant d'envoyer des questions.",
+        "en": "⚠️ This workspace isn't set up yet.\n\nAsk your administrator to finish the *Schema & Knowledge Base Setup* in the Solviz admin panel before sending queries.",
+        "fr": "⚠️ Cet espace de travail n'est pas encore configuré.\n\nDemandez à votre administrateur de terminer la *configuration du schéma et de la base de connaissances* dans la console d'administration de Solviz avant d'envoyer des questions.",
     },
     "dispatch.kb_building": {
         "en": "⏳ Knowledge Base is still being built by the admin — try again in a few minutes.",
@@ -1850,8 +1850,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Réessayez dans une minute ; si le problème persiste, demandez à votre administrateur de vérifier que la base de données fonctionne et qu'elle est accessible.",
     },
     "fail.db.login_failed.reason": {
-        "en": "QueryBot could not sign in to the database.",
-        "fr": "QueryBot n'a pas pu se connecter à la base de données.",
+        "en": "Solviz could not sign in to the database.",
+        "fr": "Solviz n'a pas pu se connecter à la base de données.",
     },
     "fail.db.login_failed.next_step": {
         "en": "Ask your administrator to verify the database credentials in the connection settings.",
@@ -1862,8 +1862,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Une table nécessaire à cette requête n'existe pas dans la base de données.",
     },
     "fail.db.missing_table.next_step": {
-        "en": "Ask your administrator to re-run schema discovery so QueryBot's table list matches the database.",
-        "fr": "Demandez à votre administrateur de relancer la découverte du schéma afin que la liste des tables de QueryBot corresponde à la base de données.",
+        "en": "Ask your administrator to re-run schema discovery so Solviz's table list matches the database.",
+        "fr": "Demandez à votre administrateur de relancer la découverte du schéma afin que la liste des tables de Solviz corresponde à la base de données.",
     },
     "fail.db.missing_column.reason": {
         "en": "A column this query used does not exist in the database.",
@@ -2513,8 +2513,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
 
     "fail.v.default.reason": {
-        "en": "The generated query did not pass QueryBot's safety and accuracy checks.",
-        "fr": "La requête générée n'a pas passé les contrôles de sûreté et d'exactitude de QueryBot.",
+        "en": "The generated query did not pass Solviz's safety and accuracy checks.",
+        "fr": "La requête générée n'a pas passé les contrôles de sûreté et d'exactitude de Solviz.",
     },
     "fail.v.suggestions": {
         "en": "Closest known terms in your data: {terms}.",
@@ -4985,8 +4985,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "ex. quelle est la moyenne ? qui est au-dessus ? afficher les 5 premiers…",
     },
     "ui.chat.followup.hint": {
-        "en": "Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, QueryBot can fall back to the database using the original answer context.",
-        "fr": "Posez votre question sur le résultat ci-dessus. Si votre question porte sur un indicateur ou une dimension absents de ces lignes, QueryBot peut revenir à la base en s'appuyant sur le contexte de la réponse d'origine.",
+        "en": "Ask about the result above. If your follow-up needs a metric or dimension missing from these rows, Solviz can fall back to the database using the original answer context.",
+        "fr": "Posez votre question sur le résultat ci-dessus. Si votre question porte sur un indicateur ou une dimension absents de ces lignes, Solviz peut revenir à la base en s'appuyant sur le contexte de la réponse d'origine.",
     },
 
     # The feedback reasons. The VALUE is the wire enum and is never
@@ -5075,8 +5075,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Veuillez ajouter la précision dont j'ai besoin pour continuer.",
     },
     "ui.chat.clar.add_detail_label": {
-        "en": "Add the detail QueryBot needs to continue",
-        "fr": "Ajoutez la précision dont QueryBot a besoin pour continuer",
+        "en": "Add the detail Solviz needs to continue",
+        "fr": "Ajoutez la précision dont Solviz a besoin pour continuer",
     },
     "ui.chat.clar.suggested_dates": {"en": "Suggested business dates", "fr": "Dates métier suggérées"},
     "ui.chat.clar.your_answer": {"en": "Your answer", "fr": "Votre réponse"},
@@ -5084,16 +5084,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.clar.search_dates": {"en": "Search by business date name", "fr": "Rechercher par nom de date métier"},
     "ui.chat.clar.date_example": {"en": "For example: invoice date", "fr": "Par exemple : date de facture"},
     "ui.chat.clar.needs_answer": {
-        "en": "Add an answer so QueryBot can continue",
-        "fr": "Ajoutez une réponse pour que QueryBot puisse continuer",
+        "en": "Add an answer so Solviz can continue",
+        "fr": "Ajoutez une réponse pour que Solviz puisse continuer",
     },
     "ui.chat.clar.offline": {
         "en": "Connection lost. Your clarification is still here; send it after reconnection.",
         "fr": "Connexion perdue. Votre précision est conservée ; envoyez-la après la reconnexion.",
     },
     "ui.chat.clar.busy": {
-        "en": "QueryBot is still finishing the current step; applying your clarification now.",
-        "fr": "QueryBot termine l'étape en cours ; votre précision est appliquée maintenant.",
+        "en": "Solviz is still finishing the current step; applying your clarification now.",
+        "fr": "Solviz termine l'étape en cours ; votre précision est appliquée maintenant.",
     },
     "ui.chat.clar.resolving": {"en": "Resolving clarification", "fr": "Prise en compte de la précision"},
     "ui.chat.clar.resolving_detail": {
@@ -5205,8 +5205,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     # ── The schema lock, mirrored from the markup by updateSchemaModeCopy ────
     "ui.chat.schema_locked_title": {"en": "{schema} schema locked.", "fr": "Schéma {schema} verrouillé."},
     "ui.chat.schema_locked_body": {
-        "en": "QueryBot will retrieve context and generate SQL only from this selected schema.",
-        "fr": "QueryBot n'utilisera le contexte et ne générera du SQL qu'à partir de ce schéma.",
+        "en": "Solviz will retrieve context and generate SQL only from this selected schema.",
+        "fr": "Solviz n'utilisera le contexte et ne générera du SQL qu'à partir de ce schéma.",
     },
     "ui.chat.schema_locked_hint": {
         "en": "Using {schema} schema. Press Enter to send, Shift + Enter for a new line.",
@@ -5540,8 +5540,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Si une définition est fausse, proposez une correction que votre administrateur validera.",
     },
     "ui.kb.intro": {
-        "en": "Review the field meanings QueryBot uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.",
-        "fr": "Vérifiez la signification des champs que QueryBot utilise pour les tables qui vous sont attribuées. Si quelque chose est incorrect, soumettez une correction à la validation de l'administrateur plutôt que de modifier directement la couche sémantique en production.",
+        "en": "Review the field meanings Solviz uses for your assigned tables. If something is wrong, submit a correction for admin approval instead of changing the live Semantic Layer directly.",
+        "fr": "Vérifiez la signification des champs que Solviz utilise pour les tables qui vous sont attribuées. Si quelque chose est incorrect, soumettez une correction à la validation de l'administrateur plutôt que de modifier directement la couche sémantique en production.",
     },
     "ui.kb.pending.one": {"en": "{count} pending review", "fr": "{count} correction en attente"},
     "ui.kb.pending.other": {"en": "{count} pending reviews", "fr": "{count} corrections en attente"},
@@ -5734,16 +5734,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "ui.kb.suggested_use": {"en": "Suggested use case", "fr": "Usage proposé"},
     "ui.kb.suggested_use_placeholder": {
-        "en": "How should QueryBot use this field?",
-        "fr": "Comment QueryBot devrait-il utiliser ce champ ?",
+        "en": "How should Solviz use this field?",
+        "fr": "Comment Solviz devrait-il utiliser ce champ ?",
     },
     "ui.kb.terms_placeholder": {
         "en": "Comma-separated, e.g. purchase quantity, number of items purchased",
         "fr": "Séparés par des virgules, ex. quantité achetée, nombre d'articles achetés",
     },
     "ui.kb.terms_hint": {
-        "en": "Other words a question might use for this field — helps QueryBot match phrasing it wouldn't otherwise recognize.",
-        "fr": "D'autres mots qu'une question pourrait employer pour ce champ — cela aide QueryBot à reconnaître des formulations qu'il ignorerait autrement.",
+        "en": "Other words a question might use for this field — helps Solviz match phrasing it wouldn't otherwise recognize.",
+        "fr": "D'autres mots qu'une question pourrait employer pour ce champ — cela aide Solviz à reconnaître des formulations qu'il ignorerait autrement.",
     },
     "ui.kb.comment": {"en": "Comment for admin", "fr": "Commentaire pour l'administrateur"},
     "ui.kb.comment_placeholder": {"en": "Why should this be changed?", "fr": "Pourquoi faut-il modifier cela ?"},
@@ -5756,7 +5756,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     # ── Browser tab titles ───────────────────────────────────────────────────
     # Chrome the reader sees on every page, and the one string that is still in
     # front of them when the tab is in the background.
-    "ui.title.suffix": {"en": "QueryBot Portal", "fr": "Portail QueryBot"},
+    "ui.title.suffix": {"en": "Solviz Portal", "fr": "Portail Solviz"},
     "ui.title.sign_in": {"en": "Sign In", "fr": "Connexion"},
     "ui.title.change_password": {"en": "Change Password", "fr": "Changer le mot de passe"},
     "ui.title.notifications": {"en": "My Notifications", "fr": "Mes notifications"},
@@ -5828,7 +5828,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.info": {"en": "Info", "fr": "Infos"},
 
     # The conversation shell.
-    "ui.chat.shell_title": {"en": "QueryBot live analyst", "fr": "Analyste QueryBot en direct"},
+    "ui.chat.shell_title": {"en": "Solviz live analyst", "fr": "Analyste Solviz en direct"},
     "ui.chat.shell_subtitle": {
         "en": "Interactive answers, chart previews, and governed dashboard workflows.",
         "fr": "Réponses interactives, aperçus de graphiques et flux de tableau de bord gouvernés.",
@@ -5846,19 +5846,19 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.table_count.other": {"en": "{count} tables", "fr": "{count} tables"},
     "ui.chat.multi_schema_title": {"en": "Multi-schema mode.", "fr": "Mode multi-schéma."},
     "ui.chat.multi_schema_body": {
-        "en": "QueryBot will search all schemas you can access and may ask for clarification if more than one schema matches.",
-        "fr": "QueryBot cherchera dans tous les schémas auxquels vous avez accès et pourra demander une précision si plusieurs correspondent.",
+        "en": "Solviz will search all schemas you can access and may ask for clarification if more than one schema matches.",
+        "fr": "Solviz cherchera dans tous les schémas auxquels vous avez accès et pourra demander une précision si plusieurs correspondent.",
     },
 
     # The thread itself.
     "ui.chat.system_line": {
-        "en": "QueryBot Internal Chat · {workspace}",
-        "fr": "Chat interne QueryBot · {workspace}",
+        "en": "Solviz Internal Chat · {workspace}",
+        "fr": "Chat interne Solviz · {workspace}",
     },
     "ui.chat.welcome_title": {"en": "How can I help you today?", "fr": "Comment puis-je vous aider aujourd'hui ?"},
     "ui.chat.welcome_body": {
-        "en": "Ask a business question in plain English and QueryBot will turn your governed data into a clear, traceable answer.",
-        "fr": "Posez une question métier en langage courant et QueryBot transformera vos données gouvernées en une réponse claire et traçable.",
+        "en": "Ask a business question in plain English and Solviz will turn your governed data into a clear, traceable answer.",
+        "fr": "Posez une question métier en langage courant et Solviz transformera vos données gouvernées en une réponse claire et traçable.",
     },
     "ui.chat.thinking": {"en": "Thinking…", "fr": "Réflexion…"},
 
@@ -6284,8 +6284,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "*Comment fonctionne la couche sémantique*",
     },
     "guide.semantic.body": {
-        "en": "The Semantic Layer translates business language into governed database logic. It supplies approved metric definitions, business terms and synonyms, table relationships, date meanings, and access rules. When you ask for something such as _monthly revenue_, QueryBot uses it to determine what revenue means, which business date applies, which tables can be joined, and which governance rules must be enforced before SQL is generated.",
-        "fr": "La couche sémantique traduit le langage métier en logique de base de données gouvernée. Elle fournit les définitions d'indicateurs approuvées, les termes métier et leurs synonymes, les relations entre tables, la signification des dates et les règles d'accès. Lorsque vous demandez par exemple le _chiffre d'affaires mensuel_, QueryBot s'en sert pour déterminer ce que signifie le chiffre d'affaires, quelle date métier s'applique, quelles tables peuvent être jointes et quelles règles de gouvernance doivent être appliquées avant de générer le SQL.",
+        "en": "The Semantic Layer translates business language into governed database logic. It supplies approved metric definitions, business terms and synonyms, table relationships, date meanings, and access rules. When you ask for something such as _monthly revenue_, Solviz uses it to determine what revenue means, which business date applies, which tables can be joined, and which governance rules must be enforced before SQL is generated.",
+        "fr": "La couche sémantique traduit le langage métier en logique de base de données gouvernée. Elle fournit les définitions d'indicateurs approuvées, les termes métier et leurs synonymes, les relations entre tables, la signification des dates et les règles d'accès. Lorsque vous demandez par exemple le _chiffre d'affaires mensuel_, Solviz s'en sert pour déterminer ce que signifie le chiffre d'affaires, quelle date métier s'applique, quelles tables peuvent être jointes et quelles règles de gouvernance doivent être appliquées avant de générer le SQL.",
     },
     "guide.semantic.within_access": {
         "en": "Within your current access, I can use {metrics}, {terms}, {relationships}, and {date_roles}.",
@@ -6357,8 +6357,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "reply.greeting.hello": {"en": "Hello! 👋", "fr": "Bonjour ! 👋"},
     "reply.greeting.hello_named": {"en": "Hello, {name}! 👋", "fr": "Bonjour {name} ! 👋"},
     "reply.greeting.intro": {
-        "en": "{hello} I'm QueryBot — ask me anything about your business data.",
-        "fr": "{hello} Je suis QueryBot — posez-moi toutes vos questions sur vos données métier.",
+        "en": "{hello} I'm Solviz — ask me anything about your business data.",
+        "fr": "{hello} Je suis Solviz — posez-moi toutes vos questions sur vos données métier.",
     },
     "reply.greeting.for_example": {"en": "For example:", "fr": "Par exemple :"},
     "reply.greeting.help_hint": {

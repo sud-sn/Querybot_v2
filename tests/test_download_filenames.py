@@ -41,7 +41,7 @@ HOSTILE = [
     "querybot_line\r\nbreak.csv",
     "",
     "....",
-    "querybot_result.csv",
+    "solviz_result.csv",
 ]
 
 

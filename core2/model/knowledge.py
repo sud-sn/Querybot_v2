@@ -363,7 +363,7 @@ def check_date(model: SemanticModel, column_key: str, warehouse: Any) -> dict[st
             rows = int(rows or 0)
             if first is None or last is None or not filled:
                 out["problem"] = ("Its values neither join the calendar nor read as year-month-day numbers: "
-                                  "it is not a date QueryBot can count by.")
+                                  "it is not a date Solviz can count by.")
                 return out
             out.update(ok=True, mode="yyyymmdd" if grain == "day" else "yyyymm", granularity=grain, rows=rows,
                        coverage=round(int(filled) / rows, 4) if rows else 0.0, first=first, last=last)
@@ -371,7 +371,7 @@ def check_date(model: SemanticModel, column_key: str, warehouse: Any) -> dict[st
         out["problem"] = f"The data refused the check: {str(exc)[:300]}"
         return out
     if not out["ok"]:
-        out["problem"] = "It is not a date QueryBot can count by."
+        out["problem"] = "It is not a date Solviz can count by."
         return out
     said = {"calendar": "Joins the calendar", "date": "A date", "timestamp": "A date and time",
             "yyyymmdd": "Reads as year-month-day numbers", "yyyymm": "Reads as year-month numbers"}[out["mode"]]

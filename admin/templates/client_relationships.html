@@ -204,9 +204,9 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
 </div>
 
 {% if not data %}
-<div class="card">{{ empty_state("link", "QueryBot has not learned this database yet",
+<div class="card">{{ empty_state("link", "Solviz has not learned this database yet",
     "Learn it first: the joins between its tables are found from the data, then you can change them here.",
-    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What QueryBot learned") }}</div>
+    "/admin/clients/" ~ client.account_id ~ "/learned", "Go to What Solviz learned") }}</div>
 {% else %}
 <div id="rx-saved" role="status"></div>
 <div class="rx-toolbar">

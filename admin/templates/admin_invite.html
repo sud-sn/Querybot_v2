@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% from "icons.html" import ic %}
-{% from "macros.html" import brand_motion %}
+{% from "macros.html" import brand_motion, wordmark %}
 {% from "_auth_styles.html" import auth_styles %}
-{% block title %}Choose your password — QueryBot Admin{% endblock %}
+{% block title %}Choose your password — Solviz Admin{% endblock %}
 {% block auth_content %}
 <div class="auth-card-wrap auth-wide">
   <div class="auth-brand-identity">
     {{ brand_motion('admin-auth', 'idle', 'lg', root_id='adminAuthMark') }}
-    <div class="auth-brand-name">Query<span>Bot</span> <span class="auth-brand-tag">Admin</span></div>
+    <div class="auth-brand-name">{{ wordmark() }} <span class="auth-brand-tag">Admin</span></div>
   </div>
   <div class="card auth-card">
     {% if not admin %}
@@ -19,7 +19,7 @@
     {% else %}
     <div class="card-header"><h1>{{ ic("key", 14) }} Welcome{% if admin.name %}, {{ admin.name }}{% endif %}</h1></div>
     <div class="card-body">
-      <p class="auth-lead">You are a <b>{{ admin.role_label }}</b> for QueryBot. Choose your password; you then sign in as
+      <p class="auth-lead">You are a <b>{{ admin.role_label }}</b> for Solviz. Choose your password; you then sign in as
         <b>{{ admin.email }}</b>.</p>
       {% if error %}
       <div class="alert alert-error" role="alert" style="margin-bottom:1rem">

@@ -1,7 +1,7 @@
 {% extends "client_base.html" %}
 {% from "macros.html" import breadcrumb %}
 {% from "icons.html" import ic %}
-{% block title %}{{ client.client_name or client.account_id[:16] }} — QueryBot Admin{% endblock %}
+{% block title %}{{ client.client_name or client.account_id[:16] }} — Solviz Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard", "href": "/admin"},
@@ -339,7 +339,7 @@
         {% if erp_packs_available %}
         <div class="form-group" style="margin-top:.25rem">
           <label style="font-weight:var(--weight-semibold)">ERP terminology packs</label>
-          <p class="form-note">Vocabulary packs merge over QueryBot's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
+          <p class="form-note">Vocabulary packs merge over Solviz's built-in defaults for KB build and question matching. Leave all unchecked for the standard (Infor M3 / DMS) vocabulary. Re-run the KB build after changing packs.</p>
           <div class="choice-grid" style="margin-top:.7rem">
           {% for pack in erp_packs_available %}{% if pack.pack_kind != 'industry' %}
           <label class="choice-card">
@@ -422,7 +422,7 @@
             <span class="form-switch-track" aria-hidden="true"></span>
             <span class="form-switch-copy">
               <span class="form-switch-title">Web portal only</span>
-              <span class="form-switch-description">Users access QueryBot through the internal portal without a Zoom, Teams, or Slack integration.</span>
+              <span class="form-switch-description">Users access Solviz through the internal portal without a Zoom, Teams, or Slack integration.</span>
             </span>
           </label>
         </div>
@@ -445,7 +445,7 @@
               {% else %}
                 Picks which already-registered Teams integration (Admin → Platforms) this client
                 receives messages from — the same way "Assigned database" picks a registered
-                database above. Without one assigned, QueryBot only guesses correctly when exactly
+                database above. Without one assigned, Solviz only guesses correctly when exactly
                 one client is configured.
                 {% if not teams_platforms %}No Teams integrations are registered yet —
                 <a href="/admin/platforms">add one on the Platforms page</a> first.{% endif %}

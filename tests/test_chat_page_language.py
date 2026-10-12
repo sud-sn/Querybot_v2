@@ -73,7 +73,7 @@ class TestTheChromeIsTranslated:
 
     def test_the_english_chrome_is_gone(self):
         markup = visible(render(lang="fr"))
-        for absent in ("Recent Threads", "Your conversations", "QueryBot live analyst",
+        for absent in ("Recent Threads", "Your conversations", "Solviz live analyst",
                        "Waiting for live session", ">History<", "All schemas",
                        "Result preview", "Start with a workspace question"):
             assert absent not in markup, absent
@@ -96,8 +96,8 @@ class TestTheChromeIsTranslated:
         assert 'aria-label="Close history"' in close[:200]
 
     def test_the_browser_tab_title_follows_the_reader(self):
-        assert "<title>Chat — QueryBot</title>" in render(lang="en")
-        assert "<title>Chat — QueryBot</title>" in render(lang="fr")
+        assert "<title>Chat — Solviz</title>" in render(lang="en")
+        assert "<title>Chat — Solviz</title>" in render(lang="fr")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -202,18 +202,18 @@ class TestTheOtherTabTitles:
         return markup[markup.index("<title>") + 7:markup.index("</title>")]
 
     def test_the_login_page(self):
-        assert self._title("portal_login.html", "fr") == "Connexion — Portail QueryBot"
-        assert self._title("portal_login.html", "en") == "Sign In — QueryBot Portal"
+        assert self._title("portal_login.html", "fr") == "Connexion — Portail Solviz"
+        assert self._title("portal_login.html", "en") == "Sign In — Solviz Portal"
 
     def test_the_notifications_page(self):
         title = self._title("portal_notifications.html", "fr",
                             user={"id": 1, "name": "A", "role": "analyst"},
                             alerts=[], reports=[], subscriptions={})
-        assert title == "Mes notifications — Portail QueryBot"
+        assert title == "Mes notifications — Portail Solviz"
 
     def test_the_semantic_layer_page_reuses_the_nav_label(self):
         """One id for the nav item and the tab, so they cannot drift apart."""
         assert self._title("portal_kb.html", "fr").startswith("Guide des données — ")
 
     def test_a_page_with_no_title_block_falls_back_to_the_suffix(self):
-        assert self._title("portal_base.html", "fr") == "Portail QueryBot"
+        assert self._title("portal_base.html", "fr") == "Portail Solviz"

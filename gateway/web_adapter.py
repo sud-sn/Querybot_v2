@@ -610,7 +610,7 @@ class WebAdapter(PlatformAdapter):
                 user_id,
                 self._thread_id,
                 name,
-                description="Created conversationally from governed QueryBot results.",
+                description="Created conversationally from governed Solviz results.",
             )
 
         chart = response.get("chart") if isinstance(response.get("chart"), dict) else {}

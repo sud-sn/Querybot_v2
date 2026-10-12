@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "macros.html" import breadcrumb %}
 {% from "icons.html" import ic %}
-{% block title %}{{ email.subject }} — Email — QueryBot Admin{% endblock %}
+{% block title %}{{ email.subject }} — Email — Solviz Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([{"label": "System", "href": "/admin/system"}, {"label": "Email", "href": "/admin/system/email"}, {"label": email.subject, "href": ""}]) }}
 {% endblock %}

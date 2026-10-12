@@ -1,5 +1,5 @@
 /* ============================================================
-   QueryBot UI -- one dialog and one toast, for both consoles.
+   Solviz UI -- one dialog and one toast, for both consoles.
 
    The admin console and the portal each carried their own
    confirm dialog and between them three toast systems; the

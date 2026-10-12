@@ -166,10 +166,10 @@ class BuildCsvFilenameTests(unittest.TestCase):
         self.assertTrue(build_csv_filename("show revenue").endswith(".csv"))
 
     def test_empty_string_returns_default(self):
-        self.assertEqual(build_csv_filename(""), "querybot_result.csv")
+        self.assertEqual(build_csv_filename(""), "solviz_result.csv")
 
     def test_none_returns_default(self):
-        self.assertEqual(build_csv_filename(None or ""), "querybot_result.csv")
+        self.assertEqual(build_csv_filename(None or ""), "solviz_result.csv")
 
     def test_spaces_become_underscores(self):
         name = build_csv_filename("total revenue by region")

@@ -1,5 +1,7 @@
 # QueryBot v2
 
+> The product is called **Solviz** in everything its readers and admins see. The code, the service, the `QUERYBOT_*` settings, the `querybot.db` store and the scripts in `deploy/` keep the name `querybot`, so a server already running needs nothing renamed.
+
 QueryBot is a multi-tenant, governed natural-language analytics platform for enterprise databases. Business users ask questions in plain English or French; QueryBot resolves approved business semantics and join paths, generates database-aware read-only SQL, validates it, executes it, and returns a business-readable result with a computed summary, an analyst's explanation, diagnostics, and visualizations.
 
 The product includes an administrator workspace for onboarding, Knowledge Base generation, semantic modeling, metrics, entity relationships, date roles, access control, compliance, evaluation, observability, and governed learning.

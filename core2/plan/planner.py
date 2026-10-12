@@ -33,7 +33,7 @@ from core2.resolve.resolver import Context, ResolveError, resolve
 
 Complete = Callable[[str, str], str]       # (stable system prompt, question tail) -> the model's text
 
-RULES = """You turn a business question into a query plan for QueryBot. You never write SQL.
+RULES = """You turn a business question into a query plan for Solviz. You never write SQL.
 Answer with exactly one JSON object that matches the PLAN SCHEMA. No prose, no markdown.
 
 How to plan:
@@ -1599,7 +1599,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 and _THOSE.search(question) and str(on_screen[0][0]) in model.attributes:
             # "What was their sales quota for 2013?" after the one sales rep who sold most was asked back ("which
             # employee?"): the members on screen are the ones meant, and the plan is kept to them in code.
-            problems, hint = [f"The question means the members of the answer above (by {on_screen[0][0]}): QueryBot "
+            problems, hint = [f"The question means the members of the answer above (by {on_screen[0][0]}): Solviz "
                               'keeps the plan to them. Plan the question with follow_up "refine" and no filter on '
                               "them, rather than asking which one."], ""
             continue
@@ -1617,7 +1617,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if reuse:
             # "Show gross profit by month for 2013" after the answer that worked gross profit out: refused as not in
             # the catalog. The figure the answer above made is made again.
-            problems, hint = ["Earlier in this conversation, QueryBot worked out " + "; ".join(
+            problems, hint = ["Earlier in this conversation, Solviz worked out " + "; ".join(
                 f'"{d.name}" as {json.dumps(d.model_dump(exclude_defaults=True))}' for d in reuse) +
                 ". Use it again as a derived measure (derived) for this question."], ""
             continue

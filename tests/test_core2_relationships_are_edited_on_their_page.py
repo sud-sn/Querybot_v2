@@ -102,7 +102,7 @@ def test_a_workspace_not_learned_yet_is_sent_to_learn(page):
     client, _, store, _ = page
     store.upsert_client("acct-new", "New")
     html = client.get("/admin/clients/acct-new/relationships").text
-    assert "QueryBot has not learned this database yet" in html and "rel-data" not in html
+    assert "Solviz has not learned this database yet" in html and "rel-data" not in html
 
 
 def test_a_condition_saved_on_a_link_is_used_by_the_next_answer(page):

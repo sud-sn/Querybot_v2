@@ -24,7 +24,7 @@ def workspace_labeler(account_id: str, client: dict[str, Any], *, tables: list[s
 
     def complete(system: str, user: str) -> str:
         async def call() -> str:
-            with llm_audit_scope(account_id=account_id, question="core2: name the tables QueryBot learned",
+            with llm_audit_scope(account_id=account_id, question="core2: name the tables Solviz learned",
                                  enabled=bool(client.get("enable_llm_audit")), request_id=build_id,
                                  question_id=build_id, component="core2_labels",
                                  egress={"tables": tables, "columns": columns}):

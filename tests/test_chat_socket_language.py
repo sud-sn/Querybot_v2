@@ -223,14 +223,14 @@ class TestTheGreetingArrivesTranslated:
         frame = self._greeting("en")
         assert frame["role"] == "assistant"
         assert frame["content"].startswith("Hello, Ada! 👋")
-        assert "I'm QueryBot" in frame["content"]
+        assert "I'm Solviz" in frame["content"]
 
     def test_a_french_reader_is_greeted_in_french(self):
         """Fails on a socket that never activates the language, and on a
         core/conversational.py still holding the sentence as a literal."""
         frame = self._greeting("fr")
         assert frame["content"].startswith("Bonjour Ada ! 👋")
-        assert "Je suis QueryBot" in frame["content"]
+        assert "Je suis Solviz" in frame["content"]
         assert "ask me anything" not in frame["content"]
 
     def test_the_help_command_survives_the_crossing(self):

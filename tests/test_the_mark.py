@@ -6,23 +6,27 @@ the mark was two drawings: a gradient tile for pages and a two-bar variant for
 the browser tab. It tilted on hover, popped in on the sign-in pages, and turned
 red and shook on an error.
 
-Now (the approved logo step, L1):
+Now (the logo step, L1, redrawn for the Solviz name):
 
-- One drawing, a speech bubble with three rising bars cut out of it, on the
-  24-unit icon grid. static/img/logo-mark.svg is the favicon and any <img>; the
-  brand_motion macro draws the same geometry inline. The bars are holes, cut
-  with a mask, so they show whatever the mark sits on.
+- One drawing: two corner brackets (the frame a question is asked in) and a dot
+  at the centre (the answer found in it), on a 32-unit grid.
+  static/img/logo-mark.svg is the favicon and any <img>; the brand_motion macro
+  draws the same geometry inline. Flat: the brackets in one colour, the dot in
+  turmeric, no tile and no gradient.
 - One per screen: the sidebar lockup. No mark beside answers, none in the
-  question box. The working wave beside a pending answer is the one place it
+  question box. The working beat beside a pending answer is the one place it
   moves, and it goes when the answer arrives.
 - Nothing else moves: no hover tilt, no intro, no colour or shake on error --
   a failure is said in words. Under reduced motion nothing moves at all.
+- The wordmark, "solvız", is one macro in both consoles; its i carries the
+  mark's dot, and a screen reader hears "Solviz".
 
 These read the files and render the real templates.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -37,18 +41,22 @@ MACROS = (ROOT / "portal" / "templates" / "macros.html", ROOT / "admin" / "templ
 WORKING = ("loading", "thinking", "resolving", "querying", "answering")
 
 
-def _macro(path: Path) -> str:
+def _macro(path: Path, name: str = "brand_motion") -> str:
     source = path.read_text(encoding="utf-8")
-    return source.split("{% macro brand_motion", 1)[1].split("{%- endmacro %}", 1)[0]
+    return source.split("{% macro " + name, 1)[1].split("{%- endmacro %}", 1)[0]
 
 
-def _bubble(svg: str) -> str:
-    return re.search(r'<path[^>]*\bd="([^"]+)"', svg).group(1)
+def _brackets(svg: str) -> list[str]:
+    return re.findall(r'<path[^>]*\bd="([^"]+)"', svg)
 
 
-def _bars(svg: str) -> list[tuple[float, float, float, float]]:
-    found = re.findall(r'<rect[^>]*?x="([\d.]+)"\s+y="([\d.]+)"\s+width="([\d.]+)"\s+height="([\d.]+)"', svg)
-    return [tuple(float(v) for v in bar) for bar in found]
+def _dot(svg: str) -> tuple[float, float, float]:
+    found = re.search(r'<circle[^>]*\bcx="([\d.]+)"\s+cy="([\d.]+)"\s+r="([\d.]+)"', svg)
+    return tuple(float(v) for v in found.groups())
+
+
+def _stroke(svg: str) -> float:
+    return float(re.search(r'stroke-width="([\d.]+)"', svg).group(1))
 
 
 def _css() -> str:
@@ -71,31 +79,39 @@ class TestOneDrawing:
         svg = MARK.read_text(encoding="utf-8")
         for macro in MACROS:
             drawn = _macro(macro)
-            assert _bubble(drawn) == _bubble(svg), macro
-            assert _bars(drawn) == _bars(svg), macro
+            assert _brackets(drawn) == _brackets(svg), macro
+            assert _dot(drawn) == _dot(svg), macro
+            assert _stroke(drawn) == _stroke(svg), macro
+            assert 'viewBox="0 0 32 32"' in drawn and 'viewBox="0 0 32 32"' in svg
 
     def test_both_consoles_carry_the_same_component(self):
-        portal, admin = (re.sub(r"\s+", " ", _macro(m)) for m in MACROS)
-        assert portal == admin
+        for name in ("brand_motion", "wordmark"):
+            portal, admin = (re.sub(r"\s+", " ", _macro(m, name)) for m in MACROS)
+            assert portal == admin, name
 
-    def test_three_bars_rise_on_one_baseline(self):
-        bars = _bars(MARK.read_text(encoding="utf-8"))
-        assert len(bars) == 3
-        assert [h for *_, h in bars] == sorted(h for *_, h in bars)
-        assert len({round(y + h, 3) for _, y, _, h in bars}) == 1, "one baseline"
+    def test_two_brackets_frame_one_dot_at_the_centre(self):
+        svg = MARK.read_text(encoding="utf-8")
+        first, second = _brackets(svg)
+        assert _dot(svg)[:2] == (16.0, 16.0)
+        # Each bracket is the other turned half way round the centre.
+        (x1, y1), (x2, y2) = (tuple(float(v) for v in re.match(r"M([\d.]+) ([\d.]+)", d).groups())
+                              for d in (first, second))
+        assert (x1 + x2, y1 + y2) == (32.0, 32.0)
 
-    def test_the_bars_stay_apart_at_favicon_size(self):
-        bars = _bars(MARK.read_text(encoding="utf-8"))
-        px = 16 / 24
-        for (x1, _, w1, _), (x2, *_rest) in zip(bars, bars[1:]):
-            assert w1 * px >= 1.5, "a bar under 1.5px blurs away"
-            assert (x2 - x1 - w1) * px >= 0.9, "and so does the gap between two"
+    def test_the_mark_holds_at_favicon_size(self):
+        svg = MARK.read_text(encoding="utf-8")
+        px = 16 / 32
+        assert _stroke(svg) * px >= 1.5, "a bracket under 1.5px blurs away"
+        cx, cy, r = _dot(svg)
+        assert 2 * r * px >= 3, "and so does a dot under 3px"
+        # The nearest bracket end stays clear of the dot.
+        ends = [(14, 6.5), (6.5, 14), (18, 25.5), (25.5, 18)]
+        clear = min(math.dist((cx, cy), end) for end in ends) - r - _stroke(svg) / 2
+        assert clear * px >= 1, "the dot runs into a bracket"
 
-    def test_the_bars_are_cut_through_not_painted(self):
-        # A painted bar has to match whatever the mark sits on; a hole cannot be wrong.
+    def test_the_mark_is_flat(self):
         for svg in [MARK.read_text(encoding="utf-8")] + [_macro(m) for m in MACROS]:
-            assert "<mask" in svg and 'mask="url(#' in svg
-            assert "linearGradient" not in svg, "the mark is one flat colour"
+            assert "linearGradient" not in svg and "<rect" not in svg, "no tile, no gradient"
 
     def test_there_is_no_second_small_drawing(self):
         assert not (ROOT / "static" / "img" / "logo-mark-sm.svg").exists()
@@ -105,14 +121,17 @@ class TestTheBrowserTab:
 
     def test_the_favicon_turns_light_in_a_dark_browser(self):
         svg = MARK.read_text(encoding="utf-8")
-        light = re.search(r"\.qb-glyph\s*\{\s*fill:\s*(#[0-9A-Fa-f]{6})", svg).group(1)
-        dark = re.search(r"prefers-color-scheme:\s*dark\)\s*\{\s*\.qb-glyph\s*\{\s*fill:\s*(#[0-9A-Fa-f]{6})",
-                         svg).group(1)
-        assert light.upper() != dark.upper()
+        light, dark = svg.split("prefers-color-scheme: dark", 1)
+        for part, prop in (("qb-glyph", "stroke"), ("qb-dot", "fill")):
+            pattern = r"\." + part + r"\s*\{\s*" + prop + r":\s*(#[0-9A-Fa-f]{6})"
+            assert re.search(pattern, light).group(1).upper() != re.search(pattern, dark).group(1).upper(), part
 
     def test_it_never_moves(self):
         svg = MARK.read_text(encoding="utf-8")
         assert "animation" not in svg and "<animate" not in svg
+
+    def test_it_is_named(self):
+        assert 'aria-label="Solviz"' in MARK.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("page", ["portal/templates/portal_base.html", "admin/templates/base.html"])
     def test_both_consoles_use_it(self, page):
@@ -178,15 +197,15 @@ class TestOnePerScreen:
         assert len(shown) == 3, shown
         assert 'id="processingBrand"' in chat_page
 
-    def test_every_mark_on_a_page_cuts_with_its_own_mask(self, chat_page):
-        ids = re.findall(r'<mask id="([^"]+)"', chat_page)
-        assert ids and len(ids) == len(set(ids)), ids
+    def test_the_marks_on_a_page_carry_no_ids_to_clash(self, chat_page):
+        for svg in re.findall(r'<svg class="qb-brand-motion__mark"[\s\S]*?</svg>', chat_page):
+            assert " id=" not in svg
 
     def test_the_sidebar_mark_takes_the_sidebar_accent(self, chat_page):
         assert re.search(r'<div\s+class="qb-brand-motion qb-brand-motion--sm portal-brand-mark"', chat_page)
         css = (ROOT / "static" / "css" / "portal.css").read_text(encoding="utf-8")
-        assert re.search(r"\.portal-sidebar[^{]*\.portal-brand-mark[^{]*\{[^}]*--qb-mark-glyph:\s*var\(--sidebar-accent\)",
-                         css)
+        assert re.search(r"\.portal-sidebar[^{]*\.portal-brand-mark[^{]*\{[^}]*--qb-mark-glyph:\s*var\(--sidebar-accent\)"
+                         r"[^}]*--qb-mark-dot:\s*var\(--brand-dot-bright\)", css)
 
 
 def test_the_admin_sidebar_carries_the_same_lockup_with_a_tag():
@@ -197,9 +216,34 @@ def test_the_admin_sidebar_carries_the_same_lockup_with_a_tag():
     html = routes.templates.env.get_template("base.html").render(request=request)
     brand = html.split('class="sidebar-brand"', 1)[1].split("</nav>", 1)[0].split('<nav', 1)[0]
     assert "qb-brand-motion__mark" in brand
-    assert "Query<span>Bot</span>" in brand
+    assert 'class="qb-wordmark sidebar-brand-text" role="img" aria-label="Solviz"' in brand
     assert re.search(r">\s*Admin\s*<", brand)
     assert "<img" not in brand
+    # On the navy sidebar the mark takes the sidebar's colours. Two classes: the mark's own
+    # stylesheet sets the light-ground colours and loads after the admin one.
+    css = (ROOT / "static" / "css" / "admin.css").read_text(encoding="utf-8")
+    assert re.search(r"\.sidebar-brand \.sidebar-brand-mark\s*\{[^}]*--qb-mark-glyph:\s*var\(--sidebar-accent\)", css)
+
+
+# ── the wordmark ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("page", [
+    "portal/templates/portal_base.html", "portal/templates/portal_login.html",
+    "portal/templates/portal_unsubscribe.html", "admin/templates/base.html", "admin/templates/login.html",
+    "admin/templates/admin_invite.html", "admin/templates/admin_account_setup.html"])
+def test_every_lockup_spells_the_name_with_the_wordmark(page):
+    source = (ROOT / page).read_text(encoding="utf-8")
+    assert "wordmark(" in source and "Query<span>Bot</span>" not in source, page
+
+
+def test_the_wordmark_is_heard_as_one_word_and_its_dot_is_the_marks():
+    drawn = _macro(MACROS[0], "wordmark")
+    assert 'role="img" aria-label="Solviz"' in drawn
+    assert 'solv<span class="qb-wordmark__i">\u0131</span>z' in drawn    # a dotless i, given the mark's dot
+    css = _css()
+    dot = re.search(r"\.qb-wordmark__i::after\s*\{([^}]*)\}", css).group(1)
+    assert "var(--qb-mark-dot" in dot and "border-radius: 50%" in dot
 
 
 @pytest.mark.parametrize("page", ["admin/templates/client_setup.html", "admin/templates/databases.html"])

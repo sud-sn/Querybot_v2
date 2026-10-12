@@ -177,7 +177,7 @@ class TheConversationalRepliesAreTranslated(unittest.TestCase):
 
     def test_the_greeting_introduces_itself_in_french(self):
         french = self._reply("fr", "greeting")
-        self.assertIn("Je suis QueryBot", french)
+        self.assertIn("Je suis Solviz", french)
         self.assertNotIn("ask me anything", french)
 
     def test_the_greeting_uses_the_readers_first_name(self):

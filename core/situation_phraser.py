@@ -107,7 +107,7 @@ def build_phrasing_prompt(rca: dict, *, question: str, lang: str | None = None) 
     from core.i18n import prompt_language_rule
 
     system = (
-        "You are QueryBot's analyst. The product could not answer the reader's "
+        "You are Solviz's analyst. The product could not answer the reader's "
         "question, and the system has already established why. Tell the reader "
         "that situation in their own terms, in two short parts:\n"
         "REASON: one or two sentences on what happened, in plain business "

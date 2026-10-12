@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "macros.html" import breadcrumb %}
 {% from "icons.html" import ic %}
-{% block title %}Databases — QueryBot Admin{% endblock %}
+{% block title %}Databases — Solviz Admin{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([
     {"label": "Dashboard",  "href": "/admin"},
@@ -103,7 +103,7 @@
               <input type="password" name="sf_private_key_passphrase" id="sf_private_key_passphrase" autocomplete="new-password"></div>
             <div class="form-group"><label>No key yet?</label>
               <button type="button" class="btn btn-secondary btn-sm" id="sf-generate-btn" onclick="sfGenerateKey()">Generate a key pair</button>
-              <p class="form-note">QueryBot makes a key pair and puts the private key in this form. Set its public key on the
+              <p class="form-note">Solviz makes a key pair and puts the private key in this form. Set its public key on the
                 Snowflake user, test the connection, then save.</p></div>
           </div>
           <div id="sf-generated" class="alert alert-info" style="display:none;font-size:var(--font-sm)">
@@ -147,10 +147,10 @@ CREATE USER IF NOT EXISTS QUERYBOT_SVC
   TYPE = SERVICE
   DEFAULT_ROLE = QUERYBOT_READER
   DEFAULT_WAREHOUSE = &lt;WAREHOUSE&gt;
-  RSA_PUBLIC_KEY = '&lt;public key from QueryBot&gt;';
+  RSA_PUBLIC_KEY = '&lt;public key from Solviz&gt;';
 GRANT ROLE QUERYBOT_READER TO USER QUERYBOT_SVC;
 
--- Only if QueryBot keeps its logs in Snowflake (Log export below): it creates
+-- Only if Solviz keeps its logs in Snowflake (Log export below): it creates
 -- the log schema and its tables itself, and owns them. Nothing else is written.
 GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
         </details>
@@ -209,7 +209,7 @@ GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
       <div class="alert alert-info" style="margin-top:1rem;margin-bottom:0">
         <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:var(--weight-bold);color:var(--text-soft)">
           <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
-          Store QueryBot logs in this database
+          Store Solviz logs in this database
         </label>
         <p class="form-note" style="margin:.35rem 0 .75rem 1.45rem">
           Admin-only setup creates a log schema with query and LLM log tables. Chat users cannot run this DDL.
@@ -365,7 +365,7 @@ function showSfAuth(method){
     if (el) el.style.display = m === method ? '' : 'none';
   });
 }
-// A key pair made by QueryBot for this form: Test connection signs in with it,
+// A key pair made by Solviz for this form: Test connection signs in with it,
 // and Save stores it. Nothing is stored until then.
 let sfGeneratedKey = '';
 let sfGeneratedKeyTested = false;

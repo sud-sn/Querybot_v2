@@ -143,7 +143,7 @@ async def measure_read(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import authoring
     from core2.plan.catalog import definition
 
@@ -168,7 +168,7 @@ async def measure_check(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import authoring
     from core2.model.links import LinkError
 
@@ -189,7 +189,7 @@ async def measure_describe(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.bootstrap.ai import metric_writer
     from core2.model import authoring
 
@@ -210,7 +210,7 @@ async def measure_save(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2 import ids
     from core2.model import authoring
     from core2.model.links import LinkError
@@ -264,7 +264,7 @@ async def measure_hide(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model.overrides import target
 
     data = await _body(request)

@@ -274,7 +274,7 @@ def friendly_error(raw: str) -> str | None:
     low = _HOST_RE.sub(" ", str(raw or "")).lower()
     if "jwt token is invalid" in low or re.search(r"\bjwt\b", low) and "invalid" in low:
         return (
-            "Snowflake rejected the key. Check that the public key QueryBot shows is set on this user "
+            "Snowflake rejected the key. Check that the public key Solviz shows is set on this user "
             "(ALTER USER ... SET RSA_PUBLIC_KEY), and that the account and user name are right."
         )
     if "programmatic access token" in low and ("invalid" in low or "expired" in low):

@@ -1,7 +1,7 @@
 """
 core/mail/render.py
 
-The look of every email the product sends: the QueryBot name, a title, the body, a button, and a footer that
+The look of every email the product sends: the product's name, a title, the body, a button, and a footer that
 says why it came and how to stop it. Inline styles and a table layout, as mail clients need; a plain-text part
 goes with it for clients that show no HTML.
 """
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import html
 from typing import Optional
+
+from core.brand import PRODUCT_NAME
 
 INK, MUTED, PRIMARY, LINE, PAPER = "#1b2433", "#5b6676", "#1f4fd1", "#e1e6ee", "#f3f5f9"
 
@@ -47,8 +49,8 @@ def page(title: str, paragraphs: list[str], *, button: Optional[tuple[str, str]]
         f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:{PAPER}">'
         f'<tr><td align="center" style="padding:28px 12px">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px">'
-        f'<tr><td style="padding:0 4px 14px;font-size:17px;font-weight:700;color:{INK}">Query'
-        f'<span style="color:{PRIMARY}">Bot</span></td></tr>'
+        f'<tr><td style="padding:0 4px 14px;font-size:17px;font-weight:700;color:{INK}">{esc(PRODUCT_NAME)}'
+        f'</td></tr>'
         f'<tr><td style="background:#ffffff;border:1px solid {LINE};border-radius:12px;padding:26px 28px">'
         f'<h1 style="margin:0 0 14px;font-size:20px;line-height:1.3;color:{INK}">{esc(title)}</h1>{body}</td></tr>'
         f'<tr><td style="padding:14px 6px;font-size:12px;line-height:1.5;color:{MUTED}">{foot}</td></tr>'
@@ -253,8 +255,8 @@ def dashboard(snapshot, *, link: str, title: str, note: str = "", note_from: str
         f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:{PAPER}">'
         f'<tr><td align="center" style="padding:28px 12px">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:{WIDTH + 56}px">'
-        f'<tr><td style="padding:0 4px 14px;font-size:17px;font-weight:700;color:{INK}">Query'
-        f'<span style="color:{PRIMARY}">Bot</span></td></tr>'
+        f'<tr><td style="padding:0 4px 14px;font-size:17px;font-weight:700;color:{INK}">{esc(PRODUCT_NAME)}'
+        f'</td></tr>'
         f'<tr><td style="background:#ffffff;border:1px solid {LINE};border-radius:12px;padding:26px 28px">'
         f'<h1 style="margin:0 0 10px;font-size:22px;line-height:1.3;color:{INK}">{esc(snapshot.name)}</h1>'
         f'{"".join(parts)}</td></tr>'

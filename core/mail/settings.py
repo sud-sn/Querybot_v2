@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import store
+from core.brand import PRODUCT_NAME
 
 GRAPH, SMTP = "graph", "smtp"
 PROVIDERS = (GRAPH, SMTP)
@@ -48,7 +49,7 @@ SECRETS = ("graph_client_secret", "smtp_password")
 class MailSettings:
     provider: str = ""
     from_address: str = ""
-    from_name: str = "QueryBot"
+    from_name: str = PRODUCT_NAME
     reply_to: str = ""
     allowed_domains: tuple[str, ...] = field(default_factory=tuple)
     graph_tenant_id: str = ""
@@ -110,7 +111,7 @@ def load() -> MailSettings:
         port = 587
     return MailSettings(
         provider=raw["provider"] if raw["provider"] in PROVIDERS else "",
-        from_address=raw["from_address"].strip(), from_name=raw["from_name"].strip() or "QueryBot",
+        from_address=raw["from_address"].strip(), from_name=raw["from_name"].strip() or PRODUCT_NAME,
         reply_to=raw["reply_to"].strip(), allowed_domains=_domains(raw["allowed_domains"]),
         graph_tenant_id=raw["graph_tenant_id"].strip(), graph_client_id=raw["graph_client_id"].strip(),
         graph_client_secret=raw["graph_client_secret"], smtp_host=raw["smtp_host"].strip(), smtp_port=port,

@@ -33,6 +33,7 @@ from store.db import init_db
 from admin import router as admin_router
 from portal import router as portal_router
 from gateway.webhooks import router as webhooks_router
+from core.brand import PRODUCT_NAME
 from core.release import KB_FORMAT, code_release, kb_rebuild_needed, product_version
 from core.web_security import RefuseCrossSiteRequests
 from admin.access import AdminAccess
@@ -44,7 +45,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("querybot")
 
-app = FastAPI(title="QueryBot", version=product_version())
+app = FastAPI(title=PRODUCT_NAME, version=product_version())
 # The last one added runs first: a cross-site request is refused before anything else looks at it, then an
 # admin's role decides which /admin pages they reach (admin/access.py), and a reader's which portal pages
 # (portal/access.py).
@@ -62,7 +63,7 @@ def _upgrade_checks() -> None:
     server's key cannot read, and knowledge bases a different release built.
     Each otherwise shows up only when a reader's question fails, or is
     answered from what the old release wrote."""
-    log.info("QueryBot %s (release %s, knowledge-base format %d)",
+    log.info("%s %s (release %s, knowledge-base format %d)", PRODUCT_NAME,
              product_version(), code_release(), KB_FORMAT)
     unreadable = store.unreadable_credentials()
     if unreadable:
@@ -226,7 +227,7 @@ async def startup() -> None:
     except Exception as exc:
         log.warning("Failed to send startup notifications: %s", exc)
 
-    log.info("QueryBot v2 started — database ready")
+    log.info("%s started — database ready", PRODUCT_NAME)
 
 
 @app.on_event("shutdown")
@@ -248,7 +249,7 @@ async def shutdown() -> None:
         if targets:
             payload = {
                 "type": "system_message", 
-                "message": "👋 QueryBot is signing off for now! Service has been temporarily stopped."
+                "message": "👋 Solviz is signing off for now! Service has been temporarily stopped."
             }
             await portal_notification_hub._broadcast(targets, payload)
             

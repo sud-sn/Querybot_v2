@@ -2478,7 +2478,7 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         return
                     dashboard = store.create_dashboard(
                         account_id, user_id, adapter.thread_id, plan.name,
-                        description="Created by QueryBot's governed dashboard work planner.",
+                        description="Created by Solviz's governed dashboard work planner.",
                     )
                     dashboard = store.update_dashboard_controls(
                         dashboard["id"], user_id, account_id,

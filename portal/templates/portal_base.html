@@ -1,5 +1,5 @@
 {% from "icons.html" import ic %}
-{% from "macros.html" import brand_motion %}
+{% from "macros.html" import brand_motion, wordmark %}
 <!DOCTYPE html>
 <html lang="{{ lang or 'en' }}">
 <head>
@@ -233,7 +233,7 @@ window.qbEnumLabel = function (group, value) {
     <div class="portal-sidebar-head">
       <a href="/portal/home" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
         {{ brand_motion('portal-brand-side', 'idle', 'sm', extra_class='portal-brand-mark') }}
-        <span class="portal-brand-word">Query<span>Bot</span></span>
+        {{ wordmark('portal-brand-word') }}
       </a>
       <button type="button" class="portal-sidebar-toggle" onclick="window.__qbToggleSidebar()" aria-label="{{ t('ui.shell.collapse') }}" title="{{ t('ui.shell.collapse') }}">
         {{ ic("chevron-left", 16) }}
@@ -321,7 +321,7 @@ window.qbEnumLabel = function (group, value) {
       </button>
       <a href="/portal/home" class="portal-brand" aria-label="{{ t('ui.shell.home') }}">
         {{ brand_motion('portal-brand-bar', 'idle', 'sm', extra_class='portal-brand-mark') }}
-        <span class="portal-brand-word">Query<span>Bot</span></span>
+        {{ wordmark('portal-brand-word') }}
       </a>
       <div class="portal-mobile-actions">
         <a href="/portal/settings" class="icon-btn" aria-label="{{ t('ui.shell.settings') }}" title="{{ t('ui.shell.settings') }}">{{ ic("settings", 16) }}</a>

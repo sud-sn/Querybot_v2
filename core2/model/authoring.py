@@ -570,7 +570,7 @@ def describe_prompt(model: SemanticModel) -> str:
     shown to the AI (the admin's setting, as everywhere else) and that holds nothing sensitive.
     """
     lines = [
-        "You write one business metric for QueryBot's semantic layer, as JSON, from an admin's description.",
+        "You write one business metric for Solviz's semantic layer, as JSON, from an admin's description.",
         "Use only the fields and metrics listed below, written exactly as listed, in square brackets.",
         "The formula: SUM, AVG, MIN, MAX, COUNT or COUNT(DISTINCT ...) of one field, as SUM([Table · Field]);",
         "COUNT([Table]) counts a table's rows; a metric by its name, as [Net amount]; combine them with + - * /;",

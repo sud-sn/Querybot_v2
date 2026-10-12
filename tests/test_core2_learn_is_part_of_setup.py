@@ -3,11 +3,11 @@
 * The setup page ends with "Learn the database for the new core": not learned
   yet, learned (which version, who answers the portal), or out of date.
 * Discovery run again with other tables, columns or masking marks Learn out of
-  date, on the setup page and on the learned page, until QueryBot learns again.
+  date, on the setup page and on the learned page, until Solviz learns again.
   A model learned before masking was part of the fingerprint is not called out
   of date when nothing changed.
 * A column masked after Learn keeps its values out at once: they are not put
-  before the AI, and its members are not matched, before QueryBot learns again.
+  before the AI, and its members are not matched, before Solviz learns again.
 * The fiscal year is set on the learned page when the data has no fiscal
   calendar: questions use it, and "use what the data says" undoes it.
 """
@@ -31,7 +31,7 @@ from tests.test_core2_learned_page_shows_what_was_learned import (
     workspace,  # noqa: F401 - the fixture
 )
 
-BEHIND = "Discovery has run since QueryBot last learned"
+BEHIND = "Discovery has run since Solviz last learned"
 
 
 @pytest.fixture
@@ -139,7 +139,7 @@ def test_a_column_masked_after_learn_keeps_its_values_out_at_once(learned, monke
     code = str(built.con.execute('SELECT MIN(customer_code) FROM "customers"').fetchone()[0])
     assert "VALUE MATCHES (" in _ask(store, built, monkeypatch, f'net sales for "{code}"')
 
-    # The admin masks the customer codes and discovery runs again; QueryBot has not learned again.
+    # The admin masks the customer codes and discovery runs again; Solviz has not learned again.
     _rediscover(schema_dir, lambda s: _customers(s).update(masked_fields=["customer_code"], mask_mode="selective"))
     assert BEHIND in _page()
     prompt = _ask(store, built, monkeypatch, f'net sales for "{code}" again')

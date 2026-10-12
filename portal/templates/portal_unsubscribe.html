@@ -1,12 +1,12 @@
 {% extends "portal_base.html" %}
-{% from "macros.html" import brand_motion %}
+{% from "macros.html" import brand_motion, wordmark %}
 {% block title %}{{ t('portal.unsubscribe.title') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block content %}
 {# Reached from a link in an email, signed in or not (core/mail/links.py). #}
 <div class="login-shell">
   <div class="login-brand-identity">
     {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
-    <div class="login-brand">Query<span>Bot</span></div>
+    <div class="login-brand">{{ wordmark() }}</div>
   </div>
   <div class="card">
     <div class="card-body login-card-body">

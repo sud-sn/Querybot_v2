@@ -132,7 +132,7 @@ class ParseEventSubmitTests(unittest.TestCase):
     def test_mention_prefix_still_stripped_on_text_messages(self):
         activity = {
             "type": "message",
-            "text": "<at>QueryBot</at> show me revenue",
+            "text": "<at>Solviz</at> show me revenue",
             "from":         {"id": "u"},
             "conversation": {"id": "c"},
             "serviceUrl":   "https://x/",
@@ -279,7 +279,7 @@ class SendStatusTests(unittest.TestCase):
 
         self.assertEqual(calls[0], {"type": "typing"})
         self.assertEqual(calls[1]["type"], "message")
-        self.assertIn("QueryBot is working", calls[1]["text"])
+        self.assertIn("Solviz is working", calls[1]["text"])
         self.assertEqual(event.raw["_teams_progress_activity_id"], "progress-1")
 
     def test_final_message_updates_visible_progress_activity(self):

@@ -1,41 +1,43 @@
 {# ============================================================
-   QueryBot Portal — Jinja2 macros  (Sprint A)
+   Solviz Portal — Jinja2 macros  (Sprint A)
    ============================================================ #}
 {% from "icons.html" import ic %}
 
-{# Animated Query Lens. `uid` must be unique when more than one mark appears. #}
+{# The Solviz mark, drawn inline so the working state can move its dot. #}
 {% macro brand_motion(uid='qb-brand', state='idle', size='md', label='', root_id='', label_id='', label_class='qb-brand-motion__label', extra_class='', status=false) -%}
 <div{% if root_id %} id="{{ root_id }}"{% endif %}
      class="qb-brand-motion qb-brand-motion--{{ size }}{% if extra_class %} {{ extra_class }}{% endif %}"
      data-state="{{ state }}"{% if status %} role="status" aria-live="polite"{% else %} aria-hidden="true"{% endif %}>
-  {# A speech bubble (the question) with three rising bars cut out of it (the
-     answer): the same drawing as static/img/logo-mark.svg, on the 24-unit icon
-     grid -- a 2.5-unit margin, bars 2.8 wide with 1.7-unit gaps on one
-     baseline (y = 14.5), corners half the bar width. The bars are holes, cut
-     with a mask, so they show whatever the mark sits on: no second colour to
-     keep in step with the ground.
+  {# Two corner brackets (the frame a question is asked in) and a dot at the
+     centre (the answer found in it): the same drawing as
+     static/img/logo-mark.svg, on its 32-unit grid. The brackets take
+     --qb-mark-glyph and the dot --qb-mark-dot, so the mark reads on a light
+     ground and on the navy sidebar alike.
 
      It is still everywhere but one place. While an answer is being worked out
-     its bars rise and fall from the baseline (the working wave); the moment
-     the answer arrives the mark goes with the working line. No hover tilt, no
-     pop on load, no red and no shake on error -- the words carry a failure,
-     never the brand -- and under reduced motion it never moves. #}
-  <svg class="qb-brand-motion__mark" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
-    <defs>
-      <mask id="{{ uid }}-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-        <rect width="24" height="24" fill="#FFFFFF"/>
-        <g class="qb-brand-motion__dots">
-          <rect class="qb-brand-motion__dot" x="6.1" y="10.5" width="2.8" height="4" rx="1.4" fill="#000000"/>
-          <rect class="qb-brand-motion__dot" x="10.6" y="8" width="2.8" height="6.5" rx="1.4" fill="#000000"/>
-          <rect class="qb-brand-motion__dot" x="15.1" y="5.5" width="2.8" height="9" rx="1.4" fill="#000000"/>
-        </g>
-      </mask>
-    </defs>
-    <path class="qb-brand-motion__bowl" mask="url(#{{ uid }}-cut)" d="M8 2.5H16A5.5 5.5 0 0 1 21.5 8V12.5A5.5 5.5 0 0 1 16 18H11.4L7.05 21.25C6.35 21.78 5.4 21.17 5.58 20.32L6.05 18.05A5.5 5.5 0 0 1 2.5 12.5V8A5.5 5.5 0 0 1 8 2.5Z"/>
+     the dot pulses (the working beat); the moment the answer arrives the mark
+     goes with the working line. No hover tilt, no pop on load, no red and no
+     shake on error -- the words carry a failure, never the brand -- and under
+     reduced motion it never moves. `uid` is kept for the callers that name
+     each mark; the drawing needs no ids of its own. #}
+  <svg class="qb-brand-motion__mark" viewBox="0 0 32 32" fill="none" aria-hidden="true" focusable="false">
+    <g class="qb-brand-motion__brackets" stroke-width="3.6" stroke-linecap="round">
+      <path d="M6.5 14V10a3.5 3.5 0 0 1 3.5-3.5h4"/>
+      <path d="M25.5 18v4a3.5 3.5 0 0 1-3.5 3.5h-4"/>
+    </g>
+    <circle class="qb-brand-motion__dot" cx="16" cy="16" r="4.2"/>
   </svg>
   {% if label %}<span{% if label_id %} id="{{ label_id }}"{% endif %} class="{{ label_class }}" data-brand-label>{{ label }}</span>{% endif %}
 </div>
 {%- endmacro %}
+
+{# The Solviz wordmark: "solvız" with the dot of its i in turmeric, the dot of
+   the mark. Read aloud as one word, "Solviz". `extra_class` lets it be the
+   shell's own brand text, so no wrapper changes the layout. #}
+{% macro wordmark(extra_class='') -%}
+<span class="qb-wordmark{% if extra_class %} {{ extra_class }}{% endif %}" role="img" aria-label="Solviz">solv<span class="qb-wordmark__i">ı</span>z</span>
+{%- endmacro %}
+
 
 
 {# ── page_header ───────────────────────────────────────────

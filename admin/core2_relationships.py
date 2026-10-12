@@ -92,7 +92,7 @@ async def relationships_check_link(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import links
 
     try:
@@ -113,7 +113,7 @@ async def relationships_save_link(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import links
     from core2.model.overrides import target
 
@@ -169,7 +169,7 @@ async def relationships_turn_off_link(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     join = model.joins.get(str((await _body(request)).get("key") or ""))
     if join is None:
         return _refused("That link is not in the data any more.")
@@ -183,7 +183,7 @@ async def relationships_turn_on_link(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model.overrides import target
 
     key = str((await _body(request)).get("key") or "")
@@ -223,7 +223,7 @@ async def relationships_check_table(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import links
 
     data = await _body(request)
@@ -249,7 +249,7 @@ async def relationships_check_all(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import links
 
     warehouse = _warehouse(account_id, client)
@@ -264,7 +264,7 @@ async def relationships_save_table(request: Request, account_id: str):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
     if model is None:
-        return _refused("QueryBot has to learn this database first.")
+        return _refused("Solviz has to learn this database first.")
     from core2.model import links
     from core2.model.overrides import target
 

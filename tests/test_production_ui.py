@@ -361,20 +361,16 @@ def test_the_animated_mark_carries_none_of_the_generic_ai_motifs():
         assert not found, f"{template}: brand_motion still contains {found}"
 
 
-def test_the_mark_is_a_bubble_carrying_three_bars():
-    """The 2026-08 redesign: a filled speech bubble (the question) with three
-    ascending bars inside it (the answer). The bars are the mark, not an
-    indicator -- they rest visible."""
+def test_the_mark_is_two_brackets_and_a_dot():
+    """The Solviz mark: two corner brackets (the frame a question is asked in)
+    and a dot at the centre (the answer found in it). The dot is the mark, not
+    an indicator -- it rests visible and only pulses while an answer is worked
+    out."""
     for template in ("admin/templates/macros.html", "portal/templates/macros.html"):
         macro = _brand_macro(template)
-        assert "qb-brand-motion__bowl" in macro, f"{template}: the bubble is missing"
-        bars = len(re.findall(r'class="qb-brand-motion__dot"', macro))
-        assert bars == 3, f"{template}: expected three bars, found {bars}"
-        heights = [float(h) for h in re.findall(
-            r'class="qb-brand-motion__dot"[^>]*height="([\d.]+)"', macro)]
-        assert heights == sorted(heights) and len(set(heights)) == 3, (
-            f"{template}: the bars must ascend -- that is the answer half of the mark"
-        )
+        assert "qb-brand-motion__brackets" in macro, f"{template}: the brackets are missing"
+        assert len(re.findall(r"<path ", macro)) == 2, f"{template}: expected two brackets"
+        assert len(re.findall(r'<circle class="qb-brand-motion__dot"', macro)) == 1, f"{template}: one dot"
 
 
 # The drawing, its one motion and where it appears are tests/test_the_mark.py

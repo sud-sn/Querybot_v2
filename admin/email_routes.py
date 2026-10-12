@@ -91,7 +91,7 @@ async def email_test(request: Request, to: str = Form("")):
         return RedirectResponse("/admin/system/email?error=" + quote("Give an address to send the test to."),
                                 status_code=303)
     config = mail_settings.load()
-    title = "QueryBot can send email"
+    title = "Solviz can send email"
     paragraphs = [f"This test was sent through {describe(config)}.",
                   "Follows, scheduled dashboards, alerts and invitations will come the same way."]
     email_id = outbox.queue(kind="test", to=to, subject=title,

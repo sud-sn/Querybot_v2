@@ -545,7 +545,7 @@ def is_ddl_attempt(text: str) -> bool:
 
 _DDL_USER_MESSAGE = (
     "🔒 *That operation is not permitted.*\n\n"
-    "QueryBot is a read-only analytics assistant — it can only run SELECT queries "
+    "Solviz is a read-only analytics assistant — it can only run SELECT queries "
     "to retrieve and analyse data.\n\n"
     "Operations that modify data (CREATE, DROP, INSERT, UPDATE, DELETE, etc.) "
     "are blocked for security. If you need to make database changes, please use "

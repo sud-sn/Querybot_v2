@@ -553,9 +553,9 @@ class TeamsAdapter(GovernedChannelSessionMixin, PlatformAdapter):
                     raw = event.raw
                 progress_id = raw.get("_teams_progress_activity_id", "")
                 progress_started = raw.get("_teams_progress_started", False)
-                progress_text = "QueryBot is working on your question..."
+                progress_text = "Solviz is working on your question..."
                 if label:
-                    progress_text = f"QueryBot is working... {label}"
+                    progress_text = f"Solviz is working... {label}"
 
                 progress_activity = {
                     "type": "message",

@@ -1,32 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="QueryBot">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Solviz">
   <!--
-    QueryBot mark: a speech bubble (the question) with three rising bars cut
-    out of it (the answer). One drawing at every size, on the 24-unit grid the
-    product's icons use: a 2.5-unit margin, a 19 x 19 live area, bars 2.8 wide
-    with 1.7-unit gaps on one baseline (y = 14.5), corners half the bar width.
-    At 16px each bar is 1.9px with a 1.1px gap, so the three bars stay apart
-    at favicon size and no second "small" drawing is needed.
+    Solviz mark: two corner brackets (the frame a question is asked in) and a
+    dot at the centre (the answer found in it). One drawing at every size, on
+    a 32-unit grid: the brackets are 3.6 wide with round ends, the dot has a
+    4.2 radius. At 16px a bracket is 1.8px and the dot 4.2px across, so the
+    mark holds at favicon size and no second "small" drawing is needed.
 
-    Flat, no tile and no gradient: the bars are cut out with a mask, so they
-    show whatever the mark sits on. Primary (#2151CA, 6.8:1 on white); in a
-    dark browser, the favicon turns to the shell's accent (#93ADF6).
+    Flat, no tile and no gradient. The brackets are Primary (#2151CA, 6.8:1
+    on white) and the dot turmeric; in a dark browser the brackets turn to
+    the shell's accent (#93ADF6) and the dot to the brighter turmeric.
 
     This file is the favicon and any <img> of the mark. Pages draw the mark
     inline with the brand_motion macro, from the same geometry, so a state
-    can move its bars. It never animates here.
+    can move its dot. It never animates here.
   -->
   <style>
-    .qb-glyph { fill: #2151CA; }
-    @media (prefers-color-scheme: dark) { .qb-glyph { fill: #93ADF6; } }
+    .qb-glyph { stroke: #2151CA; }
+    .qb-dot { fill: #E59D12; }
+    @media (prefers-color-scheme: dark) { .qb-glyph { stroke: #93ADF6; } .qb-dot { fill: #F7B63C; } }
   </style>
-  <defs>
-    <mask id="qbCut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-      <rect width="24" height="24" fill="#FFFFFF"/>
-      <rect x="6.1" y="10.5" width="2.8" height="4" rx="1.4" fill="#000000"/>
-      <rect x="10.6" y="8" width="2.8" height="6.5" rx="1.4" fill="#000000"/>
-      <rect x="15.1" y="5.5" width="2.8" height="9" rx="1.4" fill="#000000"/>
-    </mask>
-  </defs>
-  <path class="qb-glyph" mask="url(#qbCut)"
-        d="M8 2.5H16A5.5 5.5 0 0 1 21.5 8V12.5A5.5 5.5 0 0 1 16 18H11.4L7.05 21.25C6.35 21.78 5.4 21.17 5.58 20.32L6.05 18.05A5.5 5.5 0 0 1 2.5 12.5V8A5.5 5.5 0 0 1 8 2.5Z"/>
+  <g class="qb-glyph" fill="none" stroke-width="3.6" stroke-linecap="round">
+    <path d="M6.5 14V10a3.5 3.5 0 0 1 3.5-3.5h4"/>
+    <path d="M25.5 18v4a3.5 3.5 0 0 1-3.5 3.5h-4"/>
+  </g>
+  <circle class="qb-dot" cx="16" cy="16" r="4.2"/>
 </svg>

@@ -1,6 +1,6 @@
 {% extends "portal_base.html" %}
 {% from "macros.html" import alert %}
-{% from "macros.html" import brand_motion %}
+{% from "macros.html" import brand_motion, wordmark %}
 {% from "icons.html" import ic %}
 {% block title %}{{ t('ui.title.sign_in') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block content %}
@@ -8,7 +8,7 @@
 <div class="login-shell">
   <div class="login-brand-identity">
     {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
-    <div class="login-brand">Query<span>Bot</span></div>
+    <div class="login-brand">{{ wordmark() }}</div>
     <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
   </div>
 
@@ -58,7 +58,6 @@
 .login-shell{max-width:400px;margin:4rem auto}
 .login-brand-identity{display:flex;flex-direction:column;align-items:center;gap:.5rem;margin-bottom:1.6rem;text-align:center}
 .login-brand{font-size:var(--font-3xl);font-weight:var(--weight-bold);color:var(--navy);letter-spacing:-.03em;line-height:1.1}
-.login-brand span{color:var(--blue)}
 .login-tagline{color:var(--text-muted);font-size:var(--font-sm);margin:0;line-height:1.45}
 .login-card-body{padding:1.75rem}
 .login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}

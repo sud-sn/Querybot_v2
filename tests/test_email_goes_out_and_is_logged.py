@@ -480,9 +480,9 @@ class TestTheAdminPage:
                 "smtp_username": "", "smtp_password": "", "reply_to": "", "allowed_domains": "example.com"})
             tested = client.post("/admin/system/email/test", data={"to": me})
             assert "Sent</b> to " + me in tested.text
-            assert inbox.to(me)[0]["Subject"] == "QueryBot can send email"
+            assert inbox.to(me)[0]["Subject"] == "Solviz can send email"
             log_page = client.get("/admin/system/email?status=sent").text
-            assert "QueryBot can send email" in log_page and "SMTP 127.0.0.1" in log_page
+            assert "Solviz can send email" in log_page and "SMTP 127.0.0.1" in log_page
         finally:
             server.shutdown()
             server.server_close()

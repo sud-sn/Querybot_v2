@@ -1,6 +1,6 @@
 """The learned page shows what Learn is doing while it runs, and what it left out.
 
-Learn on a real warehouse takes minutes, and the page said only "QueryBot is
+Learn on a real warehouse takes minutes, and the page said only "Solviz is
 studying the database" -- the same words beside a failure that had already
 happened. Each step is now written as it happens (connecting, each table read,
 keys, calendars, the joins tested, dates, measures, checks, naming, saving,
@@ -79,10 +79,10 @@ def test_while_learn_runs_the_page_shows_the_steps_and_asks_for_more(workspace):
     store.add_core2_build_line(ACCOUNT, db_id, started, "Read  ORDER_LINES (1 of 9):   4,000 rows")
     page = _page(query="saved=building")
     assert "Learning now" in page and "each step appears below as it happens" in page
-    assert "What QueryBot is doing now" in page and 'id="lq-log"' in page
+    assert "What Solviz is doing now" in page and 'id="lq-log"' in page
     assert "Reading 9 tables" in page and "Read ORDER_LINES (1 of 9): 4,000 rows" in page   # one line, spaces kept tidy
     assert f'encodeURIComponent("{ACCOUNT}") + "/learned/progress"' in page and "window.location.replace" in page
-    assert "QueryBot is studying the database. Each step appears below" in page
+    assert "Solviz is studying the database. Each step appears below" in page
     assert "has not studied this database yet" not in page   # it is studying it
     assert "disabled" in page.split("Learn this database")[0].rsplit("<button", 1)[1]
     progress = _progress()
@@ -91,7 +91,7 @@ def test_while_learn_runs_the_page_shows_the_steps_and_asks_for_more(workspace):
 
     store.finish_core2_build(ACCOUNT, db_id, started, status="done", version=1)
     page = _page(query="saved=building")
-    assert "QueryBot is studying the database" not in page   # the notice goes with the run
+    assert "Solviz is studying the database" not in page   # the notice goes with the run
 
 
 def test_a_run_that_stops_says_where(workspace):  # noqa: F811
@@ -160,7 +160,7 @@ def test_a_run_cut_off_by_a_restart_is_said_and_does_not_block_learning_again(wo
     assert not run.called   # queued, not run here
     # ...and already recorded as running, so the page the browser goes to shows it at once.
     page = _page(query="saved=building")
-    assert "What QueryBot is doing now" in page and "QueryBot is studying the database" in page
+    assert "What Solviz is doing now" in page and "Solviz is studying the database" in page
     assert tasks.tasks[0].args == (ACCOUNT, store.latest_core2_build(ACCOUNT, db_id)["started_at"])
 
 

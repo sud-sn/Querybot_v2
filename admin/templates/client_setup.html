@@ -1081,8 +1081,8 @@
   </div>
   <div class="step-body">
     <p style="font-size:var(--font-sm);margin:0 0 .75rem">
-      {% if learn.running %}QueryBot is learning the database now.
-      {% elif learn.behind %}<strong>Out of date.</strong> Discovery has run since QueryBot last learned (version {{ learn.version }}, {{ learn.built_at }} UTC) and found other tables, columns or masking. Learn again so the new core uses them.
+      {% if learn.running %}Solviz is learning the database now.
+      {% elif learn.behind %}<strong>Out of date.</strong> Discovery has run since Solviz last learned (version {{ learn.version }}, {{ learn.built_at }} UTC) and found other tables, columns or masking. Learn again so the new core uses them.
       {% elif learn.version %}Learned: version {{ learn.version }}, {{ learn.built_at }} UTC. Metrics, links and names changed in the steps above reach the new core by themselves; learn again whenever discovery runs again.
       {% elif learn.failed %}The last attempt stopped: {{ learn.failed }}
       {% else %}Not learned yet. Learn after discovery (Step 3), once the tables and masking above are set.
@@ -1091,7 +1091,7 @@
       Portal questions are answered by
       {% if learn.engine == 'core2' %}the new core (today's pipeline takes what it cannot answer).
       {% elif learn.engine == 'compare' %}today's pipeline, with the new core's answer shown beside it.
-      {% else %}today's pipeline; choose the new core on the What QueryBot learned page.{% endif %}
+      {% else %}today's pipeline; choose the new core on the What Solviz learned page.{% endif %}
       {% endif %}
     </p>
     <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">
@@ -1100,7 +1100,7 @@
         <button type="submit" class="btn btn-primary btn-sm">{% if learn.version %}Learn again{% else %}Learn this database{% endif %}</button>
       </form>
       {% endif %}
-      <a href="/admin/clients/{{ client.account_id }}/learned" class="btn btn-secondary btn-sm">What QueryBot learned</a>
+      <a href="/admin/clients/{{ client.account_id }}/learned" class="btn btn-secondary btn-sm">What Solviz learned</a>
     </div>
   </div>
 </div>

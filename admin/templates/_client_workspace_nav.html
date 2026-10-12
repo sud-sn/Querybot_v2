@@ -7,7 +7,7 @@
    into its reader chat, the six areas (Overview · Data · Questions · People ·
    Compliance · Settings) and the open area's own menu on a band beneath.
 
-   Data holds the new core's semantic layer an admin corrects: Setup, what QueryBot
+   Data holds the new core's semantic layer an admin corrects: Setup, what Solviz
    learned, the knowledge base, relationships, dates and metrics, and the changes
    readers asked for (Requests). Questions is the log, the
    answers readers flagged and usage. The AI egress log sits with its policy under
@@ -46,7 +46,7 @@
 
 {# The open area's menu: (path segment, label). #}
 {% if _is_data %}
-  {% set _menu = [('setup', 'Setup'), ('learned', 'What QueryBot learned'), ('knowledge', 'Knowledge base'),
+  {% set _menu = [('setup', 'Setup'), ('learned', 'What Solviz learned'), ('knowledge', 'Knowledge base'),
                   ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics'), ('requests', 'Requests')] %}
 {% elif _is_questions %}
   {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
