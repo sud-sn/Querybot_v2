@@ -217,3 +217,24 @@ Back up PostgreSQL (when `DATABASE_URL` is set), the Qdrant volume or cloud
 collection, `.env` and the `.querybot_key` file before upgrading. Keep `.env`
 and the key file together: without the key, stored database passwords cannot
 be read.
+
+## 9. Learn on a large or busy database
+
+Learn reads four tables at a time and lets each query run for two minutes. A
+table of more than a million rows that the database cannot read whole in that
+time is read on a sample of about a million rows, and the progress log says so. If QueryBot restarts while Learn
+runs (an update, a reboot), press Learn again within a day: it starts where it
+was and reads again only the tables whose columns, size or masking changed.
+
+On a small database that others use during the day, read fewer tables at once
+and give each query longer, in `.env`:
+
+```
+QUERYBOT_LEARN_WORKERS=2
+QUERYBOT_LEARN_QUERY_TIMEOUT_SECONDS=300
+```
+
+then restart QueryBot. On Azure SQL or SQL Server, `deploy/sql/columnstore_suggestions.sql`
+lists the large tables that would answer faster with a columnstore index, with the
+statement to create each. It changes nothing itself: run it in the database
+QueryBot reads and agree the indexes with whoever runs that database.
