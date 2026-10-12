@@ -414,7 +414,7 @@ In an Administrator PowerShell:
 Set-Location C:\QueryBot\app
 
 powershell -ExecutionPolicy Bypass `
-  -File .\deploy\windows\update-querybot.ps1 -Branch core-v2
+  -File .\deploy\windows\update-querybot.ps1
 ```
 
 It stops QueryBot, copies the SQLite database, moves to the latest commit of

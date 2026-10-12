@@ -203,7 +203,7 @@ In an Administrator PowerShell:
 
 ```powershell
 Set-Location C:\QueryBot\app
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\update-querybot.ps1 -Branch core-v2
+powershell -ExecutionPolicy Bypass -File .\deploy\windows\update-querybot.ps1
 ```
 
 It stops QueryBot, copies the SQLite database (`data\querybot.db.bak-<time>`,
@@ -212,6 +212,10 @@ branch on GitHub, installs `requirements-windows.txt` and the PDF browser,
 starts QueryBot again and checks it. Files changed on the server are kept
 unless the update changes them too: git then stops and nothing changes. The
 line to go back to where the server was is printed at the end.
+
+It takes `main`, the release. The next version is built on `core-v2`:
+`-Branch core-v2` moves a test server to it, and the plain command moves it
+back.
 
 Back up PostgreSQL (when `DATABASE_URL` is set), the Qdrant volume or cloud
 collection, `.env` and the `.querybot_key` file before upgrading. Keep `.env`

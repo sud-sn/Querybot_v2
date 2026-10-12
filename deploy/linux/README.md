@@ -41,7 +41,7 @@ sudo systemctl restart querybot
 As the user the service runs as (it asks for sudo only to restart):
 
 ```bash
-bash deploy/linux/update.sh --branch core-v2
+bash deploy/linux/update.sh
 ```
 
 It copies the SQLite database (`data/querybot.db.bak-<time>`, taken with
@@ -52,6 +52,10 @@ service, checks `/health` and shows any error logged since. Files changed on
 the server are kept unless the update changes them too: git then stops and
 nothing changes. The line to go back to where the server was is printed at
 the end.
+
+It takes `main`, the release. The next version is built on `core-v2`:
+`bash deploy/linux/update.sh --branch core-v2` moves a test server to it, and
+the plain command moves it back.
 
 If it says Chromium will not start, install its system libraries once:
 

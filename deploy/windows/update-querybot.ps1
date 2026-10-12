@@ -4,8 +4,8 @@ Brings this QueryBot to the latest commit of a branch, installs what it needs an
 
 .DESCRIPTION
 In an Administrator PowerShell, from the QueryBot folder:
-    powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1                 # branch core-v2
-    powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1 -Branch main
+    powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1                  # branch main (the release)
+    powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1 -Branch core-v2  # the next version, to try it
 
 The local branch is set to the branch on GitHub every time, so the server never stays on an older copy of it by
 mistake. QueryBot is stopped first, the SQLite database copied (data\querybot.db.bak-<time>), then started again
@@ -13,7 +13,7 @@ and checked. Files changed on this server are kept unless the update changes the
 changes, and QueryBot is started again as it was. The line to go back to where the server was is printed at the end.
 #>
 param(
-    [string]$Branch = "core-v2",
+    [string]$Branch = "main",
     [string]$TaskName = "QueryBot",
     [int]$Port = 0
 )

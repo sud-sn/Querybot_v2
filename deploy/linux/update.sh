@@ -2,8 +2,8 @@
 # Brings a QueryBot server to the latest commit of a branch, installs what that commit needs and restarts the
 # service. Run it as the user the service runs as (it asks for sudo only to restart):
 #
-#   bash deploy/linux/update.sh                     # branch core-v2, service "querybot"
-#   bash deploy/linux/update.sh --branch main --name querybot
+#   bash deploy/linux/update.sh                     # branch main (the release), service "querybot"
+#   bash deploy/linux/update.sh --branch core-v2     # the next version, to try it
 #
 # The local branch is set to the branch on GitHub every time, so a server never stays on an older copy of it
 # by mistake. Files changed on the server are kept unless the update changes them too, in which case git stops
@@ -11,7 +11,7 @@
 # to where the server was is printed at the end.
 set -euo pipefail
 
-BRANCH=core-v2
+BRANCH=main
 NAME=querybot
 while [ $# -gt 0 ]; do
   case "$1" in
