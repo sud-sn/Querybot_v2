@@ -33,7 +33,7 @@ from core2.bootstrap import names
 from core2.model.schema import Attribute, Entity, Measure, SemanticModel
 from core2.plan import analyses
 from core2.plan.ir import Plan
-from core2.resolve.resolver import Context, ResolveError, resolve
+from core2.resolve.resolver import Context, ResolveError, _date_role_for, resolve
 
 May = Callable[[str], bool]
 
@@ -181,7 +181,7 @@ def _figures(model: SemanticModel, may: May) -> list[Measure]:
     out = []
     for m in model.measures.values():
         table = model.tables.get(m.table)
-        if m.hidden or table is None or not may(m.table) or not m.default_date or table.kind == "dimension" \
+        if m.hidden or table is None or not may(m.table) or not dated(model, m) or table.kind == "dimension" \
                 or _mixed(model, m) or _words(table.business_name) & _COPIES:
             continue
         agg = getattr(m.expr, "agg", "")
@@ -191,6 +191,12 @@ def _figures(model: SemanticModel, may: May) -> list[Measure]:
             continue
         out.append(m)
     return out
+
+
+def dated(model: SemanticModel, m: Measure) -> bool:
+    """Counted on rows that happen on a date: its own, or, for an order line with no date of its own, its order's."""
+    return bool(m.default_date) or m.table in model.tables and _date_role_for(
+        model, Plan.model_validate({"kind": "query"}), m, m.table) is not None
 
 
 def _mixed(model: SemanticModel, m: Measure) -> bool:

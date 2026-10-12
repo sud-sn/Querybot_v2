@@ -394,7 +394,8 @@ def _created(account_id: str, portal_user: dict | None, payload: dict[str, Any],
             "dashboard": {"id": saved["id"], "name": saved["name"], "url": url},
             "tiles": len(tiles),
             "tabs": [{"name": tab, "tiles": on.get(tab, 0), "url": f"{url}&tab={quote(tab)}"} for tab in tabs],
-            "not_built": list(payload.get("not_built") or []), "checks": list(payload.get("checks") or [])}
+            "not_built": list(payload.get("not_built") or []), "checks": list(payload.get("checks") or []),
+            "other_recipes": list(payload.get("other_recipes") or [])}
 
 
 # ── Changes to a dashboard asked for in the chat (core2/dashboard_talk.py) ──

@@ -88,9 +88,13 @@ def test_a_breakdown_names_the_leader_and_its_share(shop):
 
 
 def test_each_fact_says_how_it_was_worked_out_in_both_languages(shop):
-    for fact in _trend(shop)["reading"]["facts"]:
-        assert fact["en"] and fact["fr"] and fact["how"]
+    reading = _trend(shop)["reading"]
+    for fact in reading["facts"]:
+        assert fact["en"] and fact["fr"] and fact["how"] and fact["how_fr"]
         assert fact["section"] in notes.SECTIONS
+    note = notes.template(reading, "fr")
+    assert note["how"] and all(h["how"] in {f["how_fr"] for f in reading["facts"]} for h in note["how"])
+    assert not any("median" in h["how"] or "whole" in h["how"] for h in note["how"])
 
 
 def test_the_note_keeps_only_sentences_the_facts_hold(shop):

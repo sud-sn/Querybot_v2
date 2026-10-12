@@ -146,7 +146,18 @@ def adds_up(o: OutMeasure) -> bool:
         return False
     if isinstance(o.expr, DaysBetween):
         return o.expr.agg == "sum"
-    return isinstance(o.expr, AggExpr) and o.expr.agg in ("sum", "count")
+    return isinstance(o.expr, AggExpr) and o.expr.agg in ("sum", "count") or one_total(o)
+
+
+# One SUM or COUNT around the whole definition ("SUM(quantity * unit_price)"): a total like a summed column.
+_ONE_TOTAL = re.compile(r"^\s*(?:SUM|COUNT)\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)\s*$", re.IGNORECASE)
+
+
+def one_total(o: OutMeasure) -> bool:
+    """A definition Learn or an admin wrote as one sum of each row's value (units times their price): its groups'
+    values add up to the whole as a summed column's do."""
+    return isinstance(o.expr, SqlExpr) and o.measure is not None and o.measure.additivity == "additive" \
+        and bool(_ONE_TOTAL.match(o.expr.sql))
 
 
 def _own_conditions(o: OutMeasure) -> set[str]:
@@ -303,6 +314,8 @@ class _Aliases:
 
 def _output_name(text: str, taken: set[str]) -> str:
     base = ids.slug(text)[:40] or "value"
+    if "%" in text and base in taken:
+        base = ids.slug(text.replace("%", " pct"))[:40]      # "gross_margin_pct", beside "gross_margin"
     if base in _UNSAFE_ALIASES:
         base = f"{base}_value"
     return ids.unique_slug(base, taken)
@@ -1012,7 +1025,13 @@ def _via_words(model: SemanticModel, plan: Plan, slug: str) -> str:
 
 
 def _plain(text: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+    # "Gross margin %" is not "Gross margin": the sign is a word of the name.
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold().replace("%", " percent ")))
+
+
+def _bare(text: str) -> str:
+    """A name as a filter may write it: "of_target" for "% of target"."""
+    return _plain(text).removeprefix("percent ")
 
 
 def _duration_dates(model: SemanticModel, d: Duration) -> tuple[DateRole, DateRole]:
@@ -1492,10 +1511,28 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             notes.append(f"Only {model.tables[start_role.table].business_name.lower()} rows whose "
                          f"{duration.name.lower()} is {_op_words(f).split(' ', 1)[-1] if f.op in ('eq', 'ne') else _op_words(f)} days.")
             continue
+        worked = next((o for o in measures_out if o.measure is None
+                       and _bare(o.label) == _bare(f.field)), None)
+        if worked is not None and find_slug(model, f.field) is None:
+            # A figure worked out for the question ("Difference", "% of target", "Return rate"): each group
+            # whose own figure is above or below a number.
+            try:
+                values = [float(v) for v in f.values]
+            except (TypeError, ValueError):
+                raise ResolveError("unsupported", f"{worked.label} is compared with a number") from None
+            having.append(Pred("", worked.name, f.op, values, f"{worked.label} {_op_words(f)}"))
+            conditions.append(Condition("total", worked.label.lower(), f.op, list(f.values), format=worked.format))
+            continue
         found = find_slug(model, f.field)
         if not found:
             raise ResolveError("unknown", f"nothing to filter on called {f.field}", _closest(f.field, _slugs(model, "group") + _slugs(model, "date") + _slugs(model, "measure")))
         kind, obj = found
+        if kind == "measure" and any(isinstance(v, str) and find_slug(model, v) for v in f.values):
+            # "Stores whose net amount is below their target amount": one figure against another is their
+            # difference against 0, worked out first -- never the second figure's name as a text.
+            raise ResolveError("unsupported", f"{obj.business_name} is compared with a number; to compare it with "
+                               f"{f.values[0]}, work out their difference (derived) and keep the groups whose "
+                               "difference is above or below 0")
         if kind == "measure":
             m = obj
             assert isinstance(m, Measure)

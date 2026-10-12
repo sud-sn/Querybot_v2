@@ -5599,7 +5599,32 @@ MESSAGES: dict[str, dict[str, str]] = {
                                   "fr": "« {number} » vaut {total}, mais « {trend} » donne {of_trend}."},
     "ui.chat.dashmade.not_built": {"en": "{count} could not be built:", "fr": "{count} n’ont pas pu être construites :"},
     "ui.chat.dashmade.define": {"en": "Define it", "fr": "Le définir"},
+    "ui.dash.new": {"en": "New dashboard", "fr": "Nouveau tableau de bord"},
+    "ui.dash.recipes.title": {"en": "Start from a recipe", "fr": "Partir d’un modèle"},
+    "ui.dash.recipes.intro": {"en": "Checked against the data you can see. Each one is built in code, with a written "
+                                    "summary on top and a line under every tile.",
+                              "fr": "Vérifiés sur les données que vous pouvez voir. Chacun est construit en code, avec un "
+                                    "résumé en tête et une ligne sous chaque tuile."},
+    "ui.dash.recipes.loading": {"en": "Checking the recipes against your data…",
+                                "fr": "Vérification des modèles sur vos données…"},
+    "ui.dash.recipes.failed": {"en": "The recipes could not be listed. You can still describe a dashboard in the chat.",
+                               "fr": "Les modèles n’ont pas pu être listés. Vous pouvez toujours décrire un tableau de "
+                                     "bord dans le chat."},
+    "ui.dash.recipes.none": {"en": "No recipe fits this data yet: describe the dashboard you need in the chat.",
+                             "fr": "Aucun modèle ne correspond encore à ces données : décrivez le tableau de bord voulu "
+                                   "dans le chat."},
+    "ui.dash.recipes.ready": {"en": "Ready", "fr": "Prêt"},
+    "ui.dash.recipes.partly": {"en": "Partly", "fr": "En partie"},
+    "ui.dash.recipes.no": {"en": "Not for this data", "fr": "Pas pour ces données"},
+    "ui.dash.recipes.tiles": {"en": "{count} tiles · uses {uses}", "fr": "{count} tuiles · utilise {uses}"},
+    "ui.dash.recipes.missing": {"en": "Built without: {missing}", "fr": "Construit sans : {missing}"},
+    "ui.dash.recipes.needs": {"en": "Needs {needs}", "fr": "Nécessite {needs}"},
+    "ui.dash.recipes.build": {"en": "Build", "fr": "Construire"},
+    "ui.dash.recipes.own": {"en": "Describe my own", "fr": "Décrire le mien"},
+    "ui.dash.recipes.more": {"en": "{count} not for this data", "fr": "{count} pas pour ces données"},
     "ui.chat.dashmade.open": {"en": "Open dashboard", "fr": "Ouvrir le tableau de bord"},
+    "ui.chat.dashmade.others": {"en": "Your request also fits these dashboards:",
+                                "fr": "Votre demande correspond aussi à ces tableaux de bord :"},
     # A change to a dashboard asked for in the chat ("remove the Shipping tab"), one version of it.
     "ui.chat.dashchanged.kicker": {"en": "Dashboard changed", "fr": "Tableau de bord modifié"},
     "ui.chat.dashchanged.version": {"en": "Version {version} of “{name}”: its history lists each change.",

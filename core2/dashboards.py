@@ -139,6 +139,7 @@ class Draft:
     tiles: list[Tile]
     tabs: list[str] = field(default_factory=list)        # the tabs' names, in order; a tile's layout tab is a place here
     checks: list[dict[str, Any]] = field(default_factory=list)   # each headline number against its trend
+    others: list[str] = field(default_factory=list)      # other recipes the request named that the data gives
 
 
 def design(model, request: str, complete: Callable[[str, str], str], *, scrub: Callable[[str], str] | None = None,
@@ -239,6 +240,11 @@ class DesignError(ValueError):
     pass
 
 
+def language(request: str) -> str:
+    """The language a request for a dashboard is written in: "fr" for "Crée-moi un tableau de bord ...", else "en"."""
+    return "fr" if _DEMANDE.match(_POLITE.sub("", request or "")) else "en"
+
+
 def executive(model, request: str, *, today: dt.date, allowed: set[str] | None = None) -> tuple[str, list[Tile]] | None:
     """The whole business's dashboard by the recipe of its kind, when the request asks for the whole business
     ("an executive dashboard", "a CFO dashboard for 2025", a dashboard of nothing named)."""
@@ -250,12 +256,32 @@ def executive(model, request: str, *, today: dt.date, allowed: set[str] | None =
     whole, year = recipes.whole_business(about)
     if not whole:
         return None
-    language = "fr" if _DEMANDE.match(_POLITE.sub("", request or "")) else "en"
-    made = recipes.executive(model, today=today, year=year, language=language, allowed=allowed)
+    made = recipes.executive(model, today=today, year=year, language=language(request), allowed=allowed)
     if made is None:
         return None
     name, tiles = made
     return name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in tiles]
+
+
+def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None = None
+              ) -> tuple[str, list[Tile], list[str]] | None:
+    """The dashboard of the catalogue's recipe the request names (core2/recipe_book.py: "a dashboard for the sales
+    team", "customer retention dashboard", "a CFO dashboard"), when the data gives it, at least in part: its
+    name, its tiles, and the other recipes the request also names that the data gives (the reader may want one of
+    them instead). None when it names none the data gives: the whole business's recipe, or the AI's design."""
+    from core2 import recipe_book
+
+    about = asked_for(request)
+    if about is None:
+        return None
+    lang = language(request)
+    built = [b for b in (recipe_book.build(model, key, today=today, lang=lang, allowed=allowed)
+                         for key in recipe_book.find(about, lists=_lists(about))) if b.state != "no"]
+    if not built:
+        return None
+    first = built[0]
+    tiles = [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in first.tiles]
+    return first.name, tiles, [b.book.key for b in built[1:3]]
 
 
 def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[..., dict], *,
@@ -269,10 +295,16 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     ``answer(question, plan)`` runs a recipe tile's plan as it is. A tile that cannot be built says why; the
     others are built. ``progress(draft)`` is told the draft once it is designed and again as each tile lands,
     from the thread that built it, one call at a time."""
-    recipe = executive(model, request, today=today or dt.date.today(), allowed=allowed)
-    name, tiles = recipe if recipe is not None else design(model, request, complete, scrub=scrub,
-                                                           personal_shown=personal_shown)
-    draft = Draft(name=name, request=request, tiles=tiles)
+    day = today or dt.date.today()
+    book = from_book(model, request, today=day, allowed=allowed)
+    recipe = executive(model, request, today=day, allowed=allowed) if book is None else None
+    if book is not None:
+        name, tiles, others = book
+    else:
+        others = []
+        name, tiles = recipe if recipe is not None else design(model, request, complete, scrub=scrub,
+                                                               personal_shown=personal_shown)
+    draft = Draft(name=name, request=request, tiles=tiles, others=others)
     draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
 

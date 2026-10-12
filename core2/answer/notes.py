@@ -59,8 +59,9 @@ def template(reading: dict[str, Any], lang: str = "en") -> dict[str, Any]:
         section = f.get("section") if f.get("section") in SECTIONS else STANDS
         if len(note[section]) < LIMITS[section] and f.get(key):
             note[section].append(f[key])
-    note["how"] = [{"fact": f.get(key) or f.get("en"), "how": f.get("how") or "", "query": f.get("query") or ""}
-                   for f in facts if f.get("how")]
+    how = "how_fr" if key == "fr" else "how"
+    note["how"] = [{"fact": f.get(key) or f.get("en"), "how": f.get(how) or f.get("how") or "",
+                    "query": f.get("query") or ""} for f in facts if f.get("how")]
     note["lead"] = (reading.get("lead") or {}).get(key) or ""
     note["by"] = "facts"
     return note

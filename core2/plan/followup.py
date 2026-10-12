@@ -193,6 +193,18 @@ def keeps_period(question: str) -> bool:
     return bool(_THAT_PERIOD.search(question)) and not named
 
 
+# "Did we hit target for the quarter?" after a Q1 answer: that quarter, said with "the".
+_THE_PERIOD = re.compile(r"\b(?:for|in|over|during|across|of|on)\s+the\s+(day|week|month|quarter|half|year)\b"
+                         r"(?!\s+(?:before|after|to\s+date|ahead|ending|so\s+far|just\s+gone))", re.IGNORECASE)
+
+
+def the_period(question: str) -> str | None:
+    """The unit of a period the question names with "the" ("for the quarter"): the one on screen when its window
+    is one such period (the caller checks); None when it names none."""
+    found = _THE_PERIOD.search(question)
+    return found.group(1).lower() if found else None
+
+
 def points_at_period(question: str) -> bool:
     """Does the question point at the period of the answer above ("due that month", "for the same period")?"""
     return bool(_THAT_PERIOD.search(question))

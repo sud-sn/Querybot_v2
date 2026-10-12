@@ -1436,7 +1436,12 @@
 
     // ── Line / area ────────────────────────────────────────────────────────
     if (type === 'line' || type === 'area') {
-      const single = yKeys.length === 1;
+      // The period before, set beside a series ("against the year before"): a quiet dashed line, never read as
+      // a second figure -- the series itself is still the one line labelled, washed and named at its end.
+      const cmp = (payload && payload.compare && payload.compare.prior && yKeys.includes(payload.compare.prior))
+        ? payload.compare : null;
+      const isPrior = k => Boolean(cmp) && k === cmp.prior;
+      const single = yKeys.filter(k => !isPrior(k)).length === 1;
       // The members past the largest, added up as one line: drawn in a neutral ink, not a series hue.
       const otherName = payload && payload.other ? String(payload.other.label || '') : '';
       option.tooltip = Object.assign(tooltipBase(c), {
@@ -1462,8 +1467,18 @@
       // lowest point named, and the dashboard's chosen period is shaded (its own range is kept).
       const onTile = Boolean(payload && payload.tile) && single && type === 'line';
       const band = tileBand(payload, rows, xKey, labels, c);
+      if (cmp && option.legend) {
+        option.legend.formatter = name => name === cmp.prior ? (cmp.prior_label || columnLabel(payload, name))
+          : name === cmp.current ? (cmp.current_label || columnLabel(payload, name)) : columnLabel(payload, name);
+      }
       option.series = yKeys.map((k, i) => {
         const values = rows.map(r => num(r && r[k]));
+        if (isPrior(k)) {
+          return {name: k, type: 'line', data: values, smooth: smooth ? 0.35 : false, smoothMonotone: smooth ? 'x' : undefined,
+                  showSymbol: false, symbol: 'circle', symbolSize: 6, z: 1,
+                  lineStyle: {width: 1.5, color: c.muted, type: 'dashed', cap: 'round', join: 'round'},
+                  itemStyle: {color: c.muted}, emphasis: {focus: 'none', lineStyle: {width: 1.5}}};
+        }
         const color = otherName && k === otherName ? c.muted : colors[i % colors.length];
         const marks = i === 0 ? annotationMarkPoints(payload, labels, values) : [];
         const low = onTile && i === 0 ? lowPoint(values, labels, v => valueFmt(v, k, true), c) : [];

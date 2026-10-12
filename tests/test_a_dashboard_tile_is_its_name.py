@@ -184,6 +184,14 @@ def test_a_number_tile_given_its_own_name_says_its_measure_too():
     assert '<div class="dash-kpi-label">Net amount</div>' in markup
 
 
+def test_a_number_tile_named_by_its_measure_and_more_does_not_say_the_measure_again():
+    """ "Net amount year to date" already says it is the net amount: the name under it would push the number out
+    of a recipe's narrow card."""
+    markup = _visible(_render([_chart(title="Net amount year to date", chart_type="kpi", kpi=KPI,
+                                      kpi_display="$185.9K")]))
+    assert 'class="dash-kpi-label"' not in markup
+
+
 def test_the_wash_under_a_trend_closes_on_its_foot_and_never_across_a_gap():
     drawn = sparkline([1.0, 3.0, 2.0, 5.0])
     assert drawn["area"] == drawn["path"] + " L118.0,32 L2.0,32 Z"

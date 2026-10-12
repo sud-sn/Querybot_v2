@@ -24,9 +24,9 @@ from pydantic import ValidationError
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
-from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
+from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period, the_period
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
-from core2.plan.ir import Clarify, Compare, Filter, PerMember, Plan, Sort, Window, schema_text
+from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -1671,7 +1671,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
         for rule in (dates_as_window, where_we_have, counted_each, in_time_order, average_asked,
-                     date_in_a_name, list_date_unasked, each_named, named_not_coded, one_time_axis):
+                     date_in_a_name, list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates):
             # 2024 as a date filter, "where do we have", "$1,000 each", Q1 vs Q2, "average subtotal", "by ship
             # method" (no ship date), "bought in Q2" (not by the customer's own first invoice date), "in A and B"
             # (each), a code's description, "by month" planned twice over
@@ -1778,6 +1778,7 @@ def ways_on(tried: Plan | None, model: SemanticModel) -> list[str]:
 # customer's signup date, "subscriptions cancelled in 2025" by the subscription's end date -- never by what they
 # did on the invoices of that year (a customer invoiced in 2025 may have signed up in 2022).
 _STARTED = re.compile(r"\b(?:sign(?:ed|s|ing)?[\s-]*ups?|join(?:ed|s|ing)?|start(?:ed|s|ing)?|began|begin|"
+                      r"add(?:ed|s|ing)?|acquir(?:ed|es|e|ing)|gain(?:ed|s)?|won|ajout(?:é|ée|és|ées)|acquis|"
                       r"open(?:ed|s)?|creat(?:ed|es|ion)|regist(?:ered|ers|ration)|enroll?(?:ed|s|ment)?|hired?|"
                       r"onboard(?:ed)?|inscri(?:ts?|tes?|ption)|embauch(?:é|ée|és|ées))\b", re.IGNORECASE)
 _ENDED = re.compile(r"\b(?:cancel(?:l?ed|s|l?ation)?|churn(?:ed|s)?|terminat(?:ed|es|ion)|end(?:ed|s)?|clos(?:ed|es)|"
@@ -1787,6 +1788,32 @@ _START_WORDS = frozenset({"start", "signup", "sign", "join", "joined", "created"
                           "registration", "registered", "hire", "hired", "enrolled", "enrollment", "begin", "onboard"})
 _END_WORDS = frozenset({"end", "ended", "cancel", "cancelled", "canceled", "cancellation", "termination", "terminated",
                         "churn", "churned", "close", "closed", "expiry", "expiration", "leave", "left", "exit"})
+
+
+def restated_rates(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "The return rate for Frozen, as refunds over net sales": a rate whose condition only says again what the
+    question filters on is no condition (every row meets it): it is the figure over the other one the plan names."""
+    if not plan.rates or not any(_restated(rate, plan) for rate in plan.rates):
+        return plan
+    kept, made = [], []
+    for rate in plan.rates:
+        others = [m for m in plan.measures if m != rate.measure]
+        if not _restated(rate, plan):
+            kept.append(rate)
+        elif len(others) == 1:
+            made.append(Derived(name=rate.name, op="ratio", measures=[rate.measure, others[0]], scale=100))
+    update: dict[str, Any] = {"rates": kept, "derived": [*plan.derived, *made]}
+    if made:
+        update["measures"] = [m for m in plan.measures if all(m not in d.measures for d in made)]
+    return plan.model_copy(update=update)
+
+
+def _restated(rate: Any, plan: Plan) -> bool:
+    """Does every condition of the rate say again a filter of the whole question?"""
+    def same(a: Filter, b: Filter) -> bool:
+        return a.field == b.field and a.op == b.op and {str(v) for v in a.values} == {str(v) for v in b.values}
+
+    return all(any(same(w, f) for f in plan.filters) for w in rate.where)
 
 
 def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
@@ -1800,6 +1827,22 @@ def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
             if found is not None and getattr(found[1], "column", None) in left_out:
                 return True
     return False
+
+
+_SPANS = {"month": 1, "quarter": 3, "half": 6, "year": 12}
+
+
+def _one_period(window: Window, unit: str | None) -> bool:
+    """Is ``window`` exactly one ``unit`` (a quarter: Q1 2026, "last quarter"; a month, a half, a year)?"""
+    if unit is None:
+        return False
+    if window.kind in ("this", "last", "previous") and window.unit == unit and (window.n or 1) == 1:
+        return True
+    if window.kind != "between" or window.start is None or window.end is None or unit not in _SPANS:
+        return False
+    months = (window.end.year - window.start.year) * 12 + window.end.month - window.start.month + 1
+    ends = (window.end + dt.timedelta(days=1)).day == 1
+    return window.start.day == 1 and ends and months == _SPANS[unit] and (window.start.month - 1) % months == 0
 
 
 def _lists_own_date(plan: Plan, model: SemanticModel, question: str) -> str | None:
@@ -1876,6 +1919,9 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
                 kept["compare"] = previous.time.compare
             if kept:
                 time = time.model_copy(update=kept)
+        elif time.window != previous.time.window and _one_period(previous.time.window, the_period(question)):
+            # "Did we hit our target for the quarter?" after Q1 2026: Q1 2026, not the quarter we are in.
+            time = time.model_copy(update={"window": previous.time.window})
         if previous.via and any(k not in plan.via for k in previous.via):
             update["via"] = {**previous.via, **plan.via}
     window = time.window
@@ -1895,6 +1941,12 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         # "Cancellation rate": the rows a table leaves out by default (cancelled ones) are what it counts.
         update["include_left_out"] = True
     own = _lists_own_date(plan, model, question) if not time.date and time.window.kind != "all" else None
+    if own is not None and plan.lifecycle is not None and plan.lifecycle.status == "new":
+        # "How many new customers did we add in 2023?": the customers created then, by their own date -- not
+        # those whose first order fell then (every customer is "new" in the data's first month).
+        update["lifecycle"] = None
+        if not asks_series(question):
+            time = time.model_copy(update={"grain": None})
     if own is not None:
         time = time.model_copy(update={"date": own})
     if time != plan.time:

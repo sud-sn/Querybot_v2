@@ -53,6 +53,7 @@ HISTORY = 3          # turns of the conversation the planner sees
 FOLLOW_UP = "follow_up"                                   # Pending.field: is it about the answer above, or new?
 END = "end"                                               # Pending.field: "the worst one": which end of the answer
 ABOVE, AFRESH = "About the answer above", "A new question"
+LEFT_OUT_CHIP = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
 MAX_ROWS = 5000
 
 
@@ -425,9 +426,15 @@ def _described(question: str, services: Services) -> dict[str, Any]:
     if not built:
         return _frame(question, "I could not build any tile of that dashboard: " + "; ".join(
             sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
+    from core2 import recipe_book
+
+    lang = dashboards.language(question)
+    # The other recipes the request named that the data gives: the reader may have meant one of them.
+    others = [{"label": recipe_book.BY_KEY[key].name[1 if lang == "fr" else 0],
+               "question": recipe_book.request_for(key, lang)} for key in draft.others]
     return {"type": "dashboard_built", "engine": "core2", "question": question, "name": draft.name,
             "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
-            "not_built": dashboards.not_built(draft), "checks": list(draft.checks)}
+            "not_built": dashboards.not_built(draft), "checks": list(draft.checks), "other_recipes": others}
 
 
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
@@ -612,8 +619,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     chips = offered(plan, model)
     if chips:
         session.offers = {_plain(words): changed for words, changed in chips}
+        rest = payload.get("follow_up_suggestions", [])
+        if any(changed.include_left_out for _, changed in chips):
+            rest = [s for s in rest if s.get("question") != LEFT_OUT_CHIP["question"]]     # the chip says it better
         payload["follow_up_suggestions"] = [*({"label": words, "question": words, "kind": "setting"}
-                                              for words, _ in chips), *payload.get("follow_up_suggestions", [])]
+                                              for words, _ in chips), *rest]
     if unquoted:
         _say_unquoted(payload, question, unquoted,
                       _visible(services.index.match(question), model, services.allowed_tables))
@@ -1008,8 +1018,7 @@ def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: 
     answer = payload.setdefault("answer", {})
     said = (answer.get("headline") or "No rows match.").rstrip(".")
     answer["headline"] = f"{said}: every row that matches is left out by default ({words})."
-    chip = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
-    payload["follow_up_suggestions"] = [chip, *(payload.get("follow_up_suggestions") or [])][:4]
+    payload["follow_up_suggestions"] = [dict(LEFT_OUT_CHIP), *(payload.get("follow_up_suggestions") or [])][:4]
     return plan
 
 
@@ -1131,6 +1140,13 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex,
             thing = entity.business_name.lower()
         if attribute is None or attribute.slug not in index.attributes:
             return f
+        if f.op in ("eq", "in") and all(isinstance(v, str) and index.stored(attribute.slug, v) is None
+                                         for v in f.values):
+            # "Sales of Lakeshore" put on the region: the one other grouping that has the member, reached from
+            # the figure, holds it ("Lakeshore Store", a store).
+            elsewhere = _member_home(model, plan, index, [str(v) for v in f.values], attribute.slug)
+            if elsewhere is not None:
+                return f.model_copy(update={"field": elsewhere[0], "values": elsewhere[1]})
         values = []
         for value in f.values:
             stored = index.stored(attribute.slug, value) if isinstance(value, str) else value
@@ -1145,6 +1161,33 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex,
     absent = plan.absent.model_copy(update={"without": spelled(plan.absent.without),
                                             "had": spelled(plan.absent.had)}) if plan.absent is not None else None
     return plan.model_copy(update={"filters": filters, "absent": absent}), missing
+
+
+def _member_home(model: SemanticModel, plan: Plan, index: MemberIndex, values: list[str],
+                 chosen: str) -> tuple[str, list[str]] | None:
+    """The one grouping, other than ``chosen``, whose members ``values`` all name and that the plan's figures
+    reach, with those members as stored; None when there is no such grouping, or more than one."""
+    from core2.resolve import paths as P
+
+    homes: dict[str, list[str]] = {}
+    for value in values:
+        found = {a: v for a, v in index.homes(value) if a != chosen}
+        for a in list(homes) or list(found):
+            if a in found:
+                homes.setdefault(a, []).append(found[a])
+            else:
+                homes.pop(a, None)
+        if not homes:
+            return None
+    homes = {a: vs for a, vs in homes.items() if len(vs) == len(values)}
+    tables = {m.table for m in (find_slug(model, s) for s in plan.measures) if m is not None
+              for m in [m[1]] if isinstance(m, Measure)}
+    reached = [a for a in homes if a in model.attributes and model.attributes[a].column in model.columns
+               and all(model.columns[model.attributes[a].column].table == t
+                       or P.all_paths(model, t, model.columns[model.attributes[a].column].table) for t in tables)]
+    if len(reached) != 1:
+        return None
+    return reached[0], homes[reached[0]]
 
 
 def _grounded(matches: list[ValueMatch], session: Session) -> set[str]:
@@ -1617,6 +1660,21 @@ def forget_own_metric(token: str, account_id: str, user_id: str) -> bool:
             session.own.pop(found["measure"].key, None)
         _OWN_TOKENS.pop(token, None)
     return True
+
+
+def portal_recipes(account_id: str, portal_user: dict[str, Any] | None, *, lang: str = "en") -> dict[str, Any]:
+    """The catalogue of dashboard recipes as this reader's tables give them (core2/recipe_book.py): each ready,
+    partly (and what is missing), or not for this data (and what it needs). Only the model is read: no query."""
+    import store
+    from core2 import recipe_book
+    from core2.bootstrap.service import answering_model
+
+    client = store.get_client(account_id) or {}
+    model = answering_model(account_id, client)
+    if model is None:
+        return {"ok": False, "recipes": [], "reason": "not_learned"}
+    allowed = _allowed_model_tables(model, store.get_allowed_tables(portal_user) if portal_user else None)
+    return {"ok": True, "recipes": recipe_book.catalogue(model, today=dt.date.today(), lang=lang, allowed=allowed)}
 
 
 def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[str, Any] | None, *,

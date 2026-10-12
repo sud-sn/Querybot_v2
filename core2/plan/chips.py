@@ -61,6 +61,7 @@ def offered(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:
     if plan.bands is not None and plan.bands.edges:
         chips.append(("Ranges picked from the data", plan.model_copy(update={
             "bands": plan.bands.model_copy(update={"edges": []})})))
+    chips += _left_out(plan, model)
     seen: set[str] = set()
     out = []
     for words, changed in chips:
@@ -68,6 +69,30 @@ def offered(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:
             seen.add(words.casefold())
             out.append((words, changed.model_copy(update={"follow_up": "refine"})))
     return out[:MOST]
+
+
+def _left_out(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:
+    """ "How many bookings did we take in 2025?" counted without the cancelled, duplicate and voided ones, as the
+    table leaves them out by default (and the answer says): the same answer with them, one click away."""
+    if plan.kind != "query" or plan.include_left_out:
+        return []
+    slugs = [*plan.measures, *(s for d in plan.derived for s in d.measures), *(r.measure for r in plan.rates)]
+    tables = {m.table for m in (find_slug(model, s) for s in slugs) if m is not None and m[0] == "measure"
+              for m in [m[1]]}
+    named: list[str] = []
+    rules = 0
+    for key in sorted(tables):
+        table = model.tables.get(key)
+        if table is None or not table.readers_may_include:
+            continue
+        for f in table.default_filters:
+            rules += 1
+            named += [str(v) for v in (getattr(f, "shown", None) or [])]
+    if not rules:
+        return []
+    words = (f"Including {', '.join(named[:-1])} and {named[-1]}" if 1 < len(named) <= 3 else
+             f"Including {named[0]}" if len(named) == 1 else "Including the rows left out by default")
+    return [(words, plan.model_copy(update={"include_left_out": True}))]
 
 
 def _per(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:

@@ -142,7 +142,36 @@ class MemberIndex:
         members were read: elsewhere nothing can be said.
         """
         found = next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
-        return found if found is not None else self._place(attribute, str(value))
+        if found is None:
+            found = self._place(attribute, str(value))
+        return found if found is not None else self._part(attribute, str(value))
+
+    def _part(self, attribute: str, value: str) -> str | None:
+        """The one member of ``attribute`` named by some of its own words: "Lakeshore" is the store "Lakeshore
+        Store" when no other store has that word; "Apples" names neither "Apples Large" nor "Apples Small", and a
+        word of every member ("Store") names none."""
+        words = set(normalise(value).split())
+        if not words or any(len(w) < 3 and not w.isdigit() for w in words):
+            return None
+        hits = {v for key, entries in self.names.items() if words <= set(key.split())
+                for a, v in entries if a == attribute}
+        return hits.pop() if len(hits) == 1 else None
+
+    def homes(self, value: str) -> list[tuple[str, str]]:
+        """Every grouping with a member ``value`` names, whole or by its own words, and that member."""
+        out = {(a, v) for a, v in self._entries(normalise(value))}
+        words = set(normalise(value).split())
+        if not words or any(len(w) < 3 and not w.isdigit() for w in words):
+            return sorted(out)
+        whole = {a for a, _ in out}
+        parts: dict[str, set[str]] = {}
+        for key, entries in self.names.items():
+            if words <= set(key.split()):
+                for a, v in entries:
+                    if a not in whole:
+                        parts.setdefault(a, set()).add(v)
+        out |= {(a, next(iter(vs))) for a, vs in parts.items() if len(vs) == 1}
+        return sorted(out)
 
     def _place(self, attribute: str, value: str) -> str | None:
         from core2.answer import geo

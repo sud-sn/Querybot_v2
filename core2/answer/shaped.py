@@ -347,6 +347,14 @@ def _pct_words(value: float | None) -> str:
     return "" if value is None else f"{value:.0f}%" if abs(value) >= 10 else f"{value:.1f}%"
 
 
+def _target_pct(value: float | None) -> str:
+    """A share of target, never rounded across the line: 99.6% is no "100%" for a store that missed it."""
+    if value is None:
+        return ""
+    whole = _pct_words(value)
+    return f"{value:.1f}%" if round(value) == 100 and value != 100 else whole
+
+
 def pareto_headline(payload: dict[str, Any], shape: ParetoShape, span: str, total: float | None,
                     first_cut: float | None = None) -> str:
     """ "18 of 103 customers made the first 80% of net amount in 2025." / "A: 41 of 111 products (37%) made 80%
@@ -486,10 +494,17 @@ def target_headline(payload: dict[str, Any], logical: Logical, info: TargetInfo,
     if len(words) > 1 and words[-1] in ("name", "code", "id", "number"):
         words = words[:-1]                          # "Store name": stores
     things = plural(" ".join(words))
+    best_pct, worst_pct = _target_pct(_float(best.get(share))), _target_pct(_float(worst.get(share)))
+    over, under = ("under", "over") if info.lower_is_better else ("above", "below")
+    if hits == 0:
+        # None reached it ("which stores missed target"): the nearest is the closest, never "furthest above".
+        return (f"None of the {len(known)} {things} {reached} their {info.target.lower()}{when}; {name(best)} came "
+                f"closest ({best_pct}), {name(worst)} is furthest {under} ({worst_pct}).")
+    if hits == len(known) and len(known) > 1:
+        return (f"All {len(known)} {things} {reached} their {info.target.lower()}{when}; {name(best)} is furthest "
+                f"{over} it ({best_pct}), {name(worst)} the nearest to it ({worst_pct}).")
     return (f"{hits} of {len(known)} {things} {reached} their {info.target.lower()}{when}; {name(best)} is furthest "
-            f"{'under' if info.lower_is_better else 'above'} it ({_pct_words(_float(best.get(share)))}), "
-            f"{name(worst)} furthest {'over' if info.lower_is_better else 'below'} "
-            f"({_pct_words(_float(worst.get(share)))}).")
+            f"{over} it ({best_pct}), {name(worst)} furthest {under} ({worst_pct}).")
 
 
 def _period_name(value: Any, grain: str | None) -> str:

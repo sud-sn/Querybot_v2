@@ -265,8 +265,9 @@ def test_an_answer_whose_rows_are_all_left_out_by_default_says_so_and_offers_the
     first, then = _ask(shop, Recorded(cancelled, {**cancelled, "include_left_out": True, "follow_up": "refine"}),
                        "net amount of the orders that never went out in 2025", "Include the rows left out by default")
     assert "every row that matches is left out by default" in first["answer"]["headline"], first["answer"]
-    chip = first["follow_up_suggestions"][0]
-    assert chip == {"label": "Include the rows left out", "question": "Include the rows left out by default"}
+    chip = first["follow_up_suggestions"][0]          # one click, the same plan with them, named by what they are
+    assert chip == {"label": "Including Cancelled", "question": "Including Cancelled", "kind": "setting"}
+    assert not any(c["question"] == "Include the rows left out by default" for c in first["follow_up_suggestions"])
     want = _sql(shop, "SELECT ROUND(SUM(amount), 2) FROM sales WHERE status_id = 9 AND "
                       "order_date BETWEEN '2025-01-01' AND '2025-12-31'")[0][0]
     assert round(then["kpi"]["value"], 2) == want

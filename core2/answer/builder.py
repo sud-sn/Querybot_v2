@@ -1327,6 +1327,13 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         x, ys, kind = periods[0], [m.name], "bar"
     elif periods:
         x, ys, kind = periods[0], [c.name for c in measures], "line"
+        prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None) \
+            if logical.compare is not None and not members else None
+        if prior is not None:
+            # "Net sales by month against the year before": the year before as a quiet line under this one's.
+            ys = [m.name, prior.name]
+            compare = {"prior": prior.name, "current": m.name, "prior_label": _period_badge(logical.compare),
+                       "current_label": _period_badge(logical.window)}
         if members:   # one line per member
             return _pivot(logical, periods[0], members[0], m, records, formats, labels, display, unit=unit)
     elif len(members) == 2 and len(measures) == 1 and pair is None:

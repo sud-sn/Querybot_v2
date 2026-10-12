@@ -2614,6 +2614,27 @@ async def pin_confirm_submit(
     )
 
 
+@router.get("/api/dashboard-recipes")
+async def dashboard_recipes_api(request: Request):
+    """The dashboard recipes for the "New dashboard" picker, as the reader's tables give them: ready, partly (and
+    what is missing), or not for this data (and what it needs). A recipe is built by asking for it in the chat."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "code": "not_authenticated", "error": "Authentication required."},
+                            status_code=401)
+    if not can_do(user, "create_dashboard"):
+        return JSONResponse({"ok": False, "code": "not_allowed", "error": "Not allowed."}, status_code=403)
+    from core2.service import portal_recipes
+
+    lang = "fr" if str(user.get("lang") or "en") == "fr" else "en"
+    try:
+        reply = await asyncio.to_thread(portal_recipes, user["account_id"], user, lang=lang)
+    except Exception as exc:  # noqa: BLE001 - the picker says it could not list them; the chat still builds any
+        log.warning("Dashboard recipes could not be listed for %s: %s", user["account_id"], exc, exc_info=True)
+        return JSONResponse({"ok": False, "recipes": [], "error": "The recipes could not be listed."}, status_code=500)
+    return JSONResponse(reply)
+
+
 @router.get("/api/dashboards")
 async def list_dashboards_api(request: Request):
     """Return only dashboards the signed-in user can add content to."""

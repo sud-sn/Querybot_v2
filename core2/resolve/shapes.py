@@ -52,6 +52,7 @@ from core2.resolve.resolver import (
     _reaches,
     _shown,
     find_slug,
+    one_total,
     resolve_plain,
 )
 from core2.resolve.time import Range, add_units, periods, resolve_window, unit_start
@@ -439,7 +440,7 @@ def _whole(o: OutMeasure) -> bool:
 
 def _adds(o: OutMeasure) -> bool:
     return (isinstance(o.expr, AggExpr) and o.expr.agg in ("sum", "count", "count_distinct")) or (
-        isinstance(o.expr, DaysBetween) and o.expr.agg == "sum")
+        isinstance(o.expr, DaysBetween) and o.expr.agg == "sum") or one_total(o)
 
 
 def per_label(shape: PerShape) -> tuple[str, str]:
@@ -1666,6 +1667,38 @@ def _by_period(plan: Plan, model: SemanticModel, tables: tuple[str, str]) -> Pla
                                    "time": plan.time.model_copy(update={"grain": finest})})
 
 
+_FLIPPED = {"lt": "gt", "lte": "gte", "gt": "lt", "gte": "lte", "eq": "eq", "ne": "ne"}
+
+
+def _on_target(plan: Plan, actual: Measure, target: Measure) -> list:
+    """The plan's filters, with a figure set against its target said as the difference ("which stores missed
+    target": the actual below the target is a difference below 0), and one on a difference or share the AI
+    worked out itself said as the answer's own ("Difference", "% of target")."""
+    from core2.resolve.resolver import _plain
+
+    own = {_plain(d.name): d for d in plan.derived}
+    out = []
+    for f in plan.filters:
+        names = {actual.slug, target.slug}
+        if f.field in names and len(f.values) == 1 and f.values[0] in names - {f.field} and f.op in _FLIPPED:
+            op = f.op if f.field == actual.slug else _FLIPPED[f.op]
+            out.append(f.model_copy(update={"field": TARGET_DIFFERENCE, "op": op, "values": [0], "total": True}))
+            continue
+        made = own.get(_plain(f.field))
+        if made is not None and set(made.measures) == names:
+            name = TARGET_DIFFERENCE if made.op == "difference" else TARGET_SHARE if made.op == "ratio" else None
+            if name is not None:
+                values = f.values
+                if made.op == "difference" and made.measures[0] == target.slug:   # target less actual
+                    values, f = [-float(v) for v in f.values], f.model_copy(update={"op": _FLIPPED.get(f.op, f.op)})
+                elif made.op == "ratio" and made.scale != 100:
+                    values = [float(v) * 100 / (made.scale or 1) for v in f.values]
+                out.append(f.model_copy(update={"field": name, "values": values, "total": True}))
+                continue
+        out.append(f)
+    return out
+
+
 def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
     """The plan of a figure against its target: both figures, their difference, the actual as a % of the target."""
     from core2.plan.ir import Derived
@@ -1685,6 +1718,7 @@ def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
     derived = [Derived(name=TARGET_DIFFERENCE, op="difference", measures=[actual.slug, target.slug]),
                Derived(name=TARGET_SHARE, op="ratio", measures=[actual.slug, target.slug], scale=100.0)]
     plan = _by_period(plan, model, (actual.table, target.table))
+    plan = plan.model_copy(update={"filters": _on_target(plan, actual, target)})
     plan = plan.model_copy(update={"target": None, "measures": [actual.slug, target.slug], "derived": derived,
                                    "intent": plan.intent or ("trend" if plan.time.grain else "breakdown"
                                                              if plan.group_by else "value")})

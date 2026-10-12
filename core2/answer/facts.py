@@ -58,11 +58,13 @@ class Fact:
     figures: list[float] = field(default_factory=list)
     size: float = 0.0
     how: str = ""
+    how_fr: str = ""             # the same in French
     query: str = ""              # the small query beyond the answer it came from; "" for the rows on screen
     members: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.en, self.fr = _capital(self.en), _capital(self.fr)
+        self.how, self.how_fr = _capital(self.how), _capital(self.how_fr)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -203,7 +205,9 @@ class Reading:
 def read(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, *, truncated: bool = False) -> Reading:
     """The facts an analyst would read off this answer's rows."""
     measures = cols.of("measure")
-    if not raw or not measures or logical.intent == "list" or logical.shape is not None:
+    if not raw or not measures or logical.intent == "list" or logical.shape is not None or logical.target is not None:
+        # An analysis or a figure against its target says what it found in its own headline ("4 of 12 stores
+        # reached their target"): read as a plain breakdown, its first figure's leader and share mislead.
         return Reading()
     periods = cols.of("period")
     members = [c for c in cols.of("attribute") if c.name != logical.unit_group]
@@ -271,7 +275,9 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                           f"{name(d, 'fr', long=True)} ({say(v, 'fr')}) est exceptionnel : {how_fr}.",
                           figures, size=3.0 + min(abs(v - middle) / (abs(middle) or 1), 5),
                           how=(f"{name(d)} is outside the median of the whole {w_en}s by more than "
-                               f"{ONE_OFF:g} times their usual spread.")))
+                               f"{ONE_OFF:g} times their usual spread."),
+                          how_fr=(f"{name(d, 'fr')} s'écarte de la médiane des périodes complètes de plus de "
+                                  f"{ONE_OFF:g} fois leur écart habituel.")))
 
     # The typical level and the range, without the one-offs.
     lows = min(usual, key=lambda x: (x[1], x[0]))
@@ -285,7 +291,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                           f"{label_fr} est resté proche de {say(middle, 'fr')} par {w_fr} de {name(first, 'fr')} à "
                           f"{name(last, 'fr')}" + (", hors exception." if odd else "."),
                           [middle], size=2.0, how=f"The median of the whole {w_en}s"
-                          + (", without the one-off." if odd else ".")))
+                          + (", without the one-off." if odd else "."),
+                          how_fr="La médiane des périodes complètes" + (", hors exception." if odd else ".")))
     if len(usual) >= 4:
         other = "Every other" if odd else "Every"
         facts.append(Fact("range", STANDS,
@@ -295,7 +302,9 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                           f"{say(lows[1], 'fr')} ({name(lows[0], 'fr')}) et {say(highs[1], 'fr')} "
                           f"({name(highs[0], 'fr')}).",
                           [lows[1], highs[1]], size=1.6 if steady else 1.9,
-                          how=f"The lowest and highest whole {w_en}s" + (", without the one-off." if odd else ".")))
+                          how=f"The lowest and highest whole {w_en}s" + (", without the one-off." if odd else "."),
+                          how_fr="La plus basse et la plus haute des périodes complètes"
+                          + (", hors exception." if odd else ".")))
 
     # The latest whole periods of the year against the same ones a year before (whole periods only).
     if grain in ("month", "quarter", "week") and sums:
@@ -322,7 +331,9 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                                   f"{'de plus' if change > 0 else 'de moins'} que sur la même période de "
                                   f"{latest_year - 1} ({say(then, 'fr')}){with_fr}.",
                                   [now, rounded(abs(change)), then], size=2.6 + min(abs(change), 1),
-                                  how=f"The whole {w_en}s of {latest_year} against the same {w_en}s a year before."))
+                                  how=f"The whole {w_en}s of {latest_year} against the same {w_en}s a year before.",
+                                  how_fr=f"Les périodes complètes de {latest_year} face aux mêmes périodes un an "
+                                         "plus tôt."))
 
     # The pace: the last three whole periods against the three before. A one-off in either three would be all the
     # change, so then it is the average of the others that is compared, and the sentence says the one-off is out.
@@ -346,7 +357,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                 f"Hors exception, les trois derniers {_word(grain, 'fr', True)} font en moyenne {say(recent, 'fr')} "
                 f"par {w_fr}, {lean_fr} la moyenne des trois précédents ({say(earlier, 'fr')}).",
                 [recent, rounded(abs(change)), earlier], size=1.2 + min(abs(change) * 3, 1.2),
-                how=f"The average of the last three whole {w_en}s against the three before, without the one-off."))
+                how=f"The average of the last three whole {w_en}s against the three before, without the one-off.",
+                how_fr="La moyenne des trois dernières périodes complètes face aux trois précédentes, hors exception."))
     elif n >= 6 and sums:
         recent = sum(v for _, v in whole[-3:])
         earlier = sum(v for _, v in whole[-6:-3])
@@ -363,7 +375,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                       f"{'hausse' if change > 0 else 'baisse'} de {percent(abs(change), lang='fr')} par rapport "
                       f"aux trois précédents.")
             facts.append(Fact("pace", STANDS, en, fr, [rounded(abs(change))], size=1.2 + min(abs(change) * 3, 1.2),
-                              how=f"The sum of the last three whole {w_en}s against the three before."))
+                              how=f"The sum of the last three whole {w_en}s against the three before.",
+                              how_fr="La somme des trois dernières périodes complètes face aux trois précédentes."))
 
     # A run of rises or falls up to the latest whole period.
     run, direction = 0, 0
@@ -378,7 +391,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                           f"{name(whole[-1][0])}.",
                           f"{label_fr} est en {'hausse' if direction > 0 else 'baisse'} depuis {run} "
                           f"{_word(grain, 'fr', True)} d'affilée, jusqu'à {name(whole[-1][0], 'fr')}.",
-                          [run], size=1.4 + run / 10, how=f"Each whole {w_en} against the one before."))
+                          [run], size=1.4 + run / 10, how=f"Each whole {w_en} against the one before.",
+                          how_fr="Chaque période complète face à la précédente."))
 
     # The same months high in every year (two years or more of whole months).
     if grain == "month" and len(usual) >= 24:
@@ -397,7 +411,9 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                                   f"{en_names} {'are' if len(months) > 1 else 'is'} the high point of every year.",
                                   f"{fr_names.capitalize()} {'sont' if len(months) > 1 else 'est'} le point haut de "
                                   "chaque année.", [], size=1.5,
-                                  how="The two highest months of each whole year, the same in every year."))
+                                  how="The two highest months of each whole year, the same in every year.",
+                                  how_fr="Les deux mois les plus hauts de chaque année complète, les mêmes chaque "
+                                         "année."))
 
     # A period the data covers in part: what it holds so far, and where it is heading.
     tail = [(d, v) for d, v in points if d.isoformat() in partial]
@@ -421,7 +437,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                 en += "."
                 fr += "."
             facts.append(Fact("part_period", WATCH, en, fr, figures, size=1.8,
-                              how=f"What {name(d)} holds so far, scaled to its {length} days."))
+                              how=f"What {name(d)} holds so far, scaled to its {length} days.",
+                              how_fr=f"Ce que {name(d, 'fr')} compte à ce jour, ramené à ses {length} jours."))
 
     # One-offs pull the average away from the typical period: the median is the one to read.
     if odd and len(values) >= 6:
@@ -433,7 +450,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
                               f"La moyenne de ces {len(values)} {_word(grain, 'fr', True)} ({say(mean, 'fr')}) "
                               f"inclut l'exception ; la médiane, {say(middle, 'fr')}, est le {w_fr} type.",
                               [len(values), mean, middle], size=1.3,
-                              how="The mean and the median of the whole periods."))
+                              how="The mean and the median of the whole periods.",
+                              how_fr="La moyenne et la médiane des périodes complètes."))
 
     reading.lead = _series_lead(reading, label, label_fr, middle, steady, first, last, whole, odd, name, say, w_en,
                                 w_fr)
@@ -500,7 +518,8 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
                               f"{percent(lo, lang='fr')} et {percent(hi, lang='fr')} du total, et les 3 premiers "
                               f"{percent(top3, lang='fr')}.",
                               [n, rounded(lo), rounded(hi), 3, rounded(top3)], size=1.9,
-                              how=f"Each {singular(noun)}'s share of the total of all {n}."))
+                              how=f"Each {singular(noun)}'s share of the total of all {n}.",
+                              how_fr=f"La part de chacun dans le total des {n}."))
         else:
             running, k = 0.0, 0
             for s in shares:
@@ -513,19 +532,22 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
                                   f"{k} of the {n} {noun} make {percent(running)} of the total.",
                                   f"{k} des {n} font {percent(running, lang='fr')} du total.",
                                   [k, n, rounded(running)], size=2.2,
-                                  how=f"The {noun} from the largest, until 80% of the total."))
+                                  how=f"The {noun} from the largest, until 80% of the total.",
+                                  how_fr="Du plus grand au plus petit, jusqu'à 80 % du total."))
             elif n >= 4:
                 facts.append(Fact("concentration", STANDS,
                                   f"The top 3 of the {n} {noun} make {percent(top3)} of the total.",
                                   f"Les 3 premiers des {n} font {percent(top3, lang='fr')} du total.",
-                                  [3, n, rounded(top3)], size=1.7, how="The three largest shares of the total."))
+                                  [3, n, rounded(top3)], size=1.7, how="The three largest shares of the total.",
+                                  how_fr="Les trois plus grandes parts du total."))
             if n >= 10:
                 half = sum(shares[n // 2:])
                 if half < 0.1:
                     facts.append(Fact("tail", WATCH,
                                       f"The smaller half of the {noun} make {percent(half)} of the total together.",
                                       f"La moitié la plus petite ne représente que {percent(half, lang='fr')} du total.",
-                                      [rounded(half)], size=1.2, how="The shares of the smaller half, added."))
+                                      [rounded(half)], size=1.2, how="The shares of the smaller half, added.",
+                                      how_fr="Les parts de la moitié la plus petite, additionnées."))
         # The leader, and how far ahead.
         if not upward and v1 > 0:
             share = v1 / total
@@ -545,7 +567,8 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
                 figures = [v1, rounded(share), total, v2]
             reading.lead = {"en": lead_en, "fr": lead_fr}
             facts.append(Fact("leader", STANDS, lead_en, lead_fr, figures, size=1.5, members=[first, second],
-                              how=f"The largest {singular(noun)}, its share of the total and the next one."))
+                              how=f"The largest {singular(noun)}, its share of the total and the next one.",
+                              how_fr="Le plus grand, sa part du total et le suivant."))
 
     if below and sums:
         together = sum(v for _, v in below)
@@ -558,7 +581,8 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
             fr = f"{len(below)} sont négatifs, {say(together, 'fr')} au total."
             figures = [len(below), together]
         facts.append(Fact("below_zero", WATCH, en, fr, figures, size=2.0, members=[n for n, _ in below[:3]],
-                          how="The members whose figure is under zero."))
+                          how="The members whose figure is under zero.",
+                          how_fr="Les membres dont le chiffre est sous zéro."))
 
     # A member far above all the others.
     if len(values) >= 6 and not upward:
@@ -571,7 +595,8 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
                               f"{first} dépasse nettement tous les autres : {say(v1, 'fr')} pour "
                               f"{say(middle, 'fr')} habituellement.",
                               [v1, middle], size=2.4, members=[first],
-                              how=f"Outside the median of the {noun} by more than {ONE_OFF:g} times their usual spread."))
+                              how=f"Outside the median of the {noun} by more than {ONE_OFF:g} times their usual spread.",
+                              how_fr=f"S'écarte de la médiane de plus de {ONE_OFF:g} fois l'écart habituel."))
 
     if not sums and len(values) >= 5:
         middle = statistics.median(v for _, v in values)
@@ -582,7 +607,8 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn,
                           f"De {say(low, 'fr')} ({low_name}) à {say(v1, 'fr')} ({first}) ; la moitié est "
                           f"au-dessus de {say(middle, 'fr')}.",
                           [low, v1, middle], size=1.6, members=[low_name, first],
-                          how="The lowest, the highest and the median."))
+                          how="The lowest, the highest and the median.",
+                          how_fr="Le plus bas, le plus haut et la médiane."))
     return reading
 
 
@@ -620,7 +646,8 @@ def _comparison(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn
         facts.append(Fact("rose_fell", STANDS,
                           f"{len(up)} of the {len(moves)} {noun} rose and {len(down)} fell.",
                           f"{len(up)} des {len(moves)} sont en hausse et {len(down)} en baisse.",
-                          [len(up), len(moves), len(down)], size=1.4, how="Each member's change, counted by sign."))
+                          [len(up), len(moves), len(down)], size=1.4, how="Each member's change, counted by sign.",
+                          how_fr="La variation de chacun, comptée par signe."))
     if _sums(o, m) and net:
         same = sorted([x for x in moves if (x[1] > 0) == (net > 0)], key=lambda x: -abs(x[1]))
         if same:
@@ -638,7 +665,8 @@ def _comparison(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn
                                   f"({signed(by, 'fr')}, {percent(part, lang='fr')} de la {rise_fr} nette).",
                                   [by, rounded(part), *[b for _, b, _, _ in others[:2]]], size=2.5,
                                   members=[name, *[n for n, _, _, _ in others[:2]]],
-                                  how="Each member's change as a share of the net change."))
+                                  how="Each member's change as a share of the net change.",
+                                  how_fr="La variation de chacun en part de la variation nette."))
             opposite = sorted([x for x in moves if (x[1] > 0) != (net > 0)], key=lambda x: -abs(x[1]))[:2]
             if opposite:
                 listed_en = " and ".join(f"{n} ({'+' if b > 0 else ''}{say(b)})" for n, b, _, _ in opposite)
@@ -647,7 +675,8 @@ def _comparison(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn
                                   f"{listed_en} {'fell' if net > 0 else 'rose'} against the trend.",
                                   f"{listed_fr} {'ont baissé' if net > 0 else 'ont progressé'} à contre-courant.",
                                   [b for _, b, _, _ in opposite], size=2.0, members=[n for n, _, _, _ in opposite],
-                                  how="The members that moved the other way, largest first."))
+                                  how="The members that moved the other way, largest first.",
+                                  how_fr="Ceux qui ont varié dans l'autre sens, les plus grands d'abord."))
     total_before = sum(b for _, _, b, _ in moves if b)
     rated = [(n, by / before, before) for n, by, before, _ in moves
              if before and before > 0 and total_before and before / total_before >= SMALL_BASE]
@@ -661,7 +690,9 @@ def _comparison(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn
                               f"{name} progresse le plus vite ({percent(ratio, signed=True, lang='fr')})"
                               + (f", sur une petite base ({say(before, 'fr')})." if small else "."),
                               [rounded(ratio), *([before] if small else [])], size=1.8, members=[name],
-                              how=f"The change in percent, among {noun} with at least {SMALL_BASE:.0%} of the total before."))
+                              how=f"The change in percent, among {noun} with at least {SMALL_BASE:.0%} of the total before.",
+                              how_fr=f"La variation en pourcentage, parmi ceux qui avaient au moins "
+                                     f"{SMALL_BASE * 100:.0f} % du total avant."))
     return reading
 
 
@@ -680,7 +711,8 @@ def _grid(rows: list[dict], m: OutColumn, o: OutMeasure | None, a: OutColumn, b:
     reading.facts.append(Fact("biggest_cell", STANDS,
                               f"The largest is {big[0]} with {big[1]}, at {say(big[2])}.",
                               f"Le plus important : {big[0]} avec {big[1]}, à {say(big[2], 'fr')}.",
-                              [big[2]], size=1.4, members=[big[0], big[1]], how="The largest cell of the grid."))
+                              [big[2]], size=1.4, members=[big[0], big[1]], how="The largest cell of the grid.",
+                              how_fr="La plus grande case de la grille."))
     if not _sums(o, m):
         return reading
     # The mix: the share of each column within each row, and the column whose share differs most between rows.
@@ -706,5 +738,6 @@ def _grid(rows: list[dict], m: OutColumn, o: OutMeasure | None, a: OutColumn, b:
                                   f"{y} représente {percent(hi[1], lang='fr')} pour {hi[0]} mais "
                                   f"{percent(lo[1], lang='fr')} pour {lo[0]}.",
                                   [rounded(hi[1]), rounded(lo[1])], size=1.9, members=[y, hi[0], lo[0]],
-                                  how=f"The share of each {_noun(b.label)} within each {_noun(a.label)}, and where it differs most."))
+                                  how=f"The share of each {_noun(b.label)} within each {_noun(a.label)}, and where it differs most.",
+                                  how_fr="La part de chacun dans chaque groupe, et là où elle diffère le plus."))
     return reading

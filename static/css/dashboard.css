@@ -299,6 +299,10 @@
   /* One line: a long name ends in an ellipsis (the whole of it its tooltip) rather than push the number out. */
   display: block; white-space: nowrap; text-overflow: ellipsis; }
 .chart-card.is-kpi .chart-card-body { padding-top: 2px; }
+/* Four numbers in a row leave each name a few words: its period goes on a line of its own under it, so "Net
+   amount" and "Number of orders" are read whole rather than cut to "Net Amo…". */
+.chart-card.is-kpi .chart-card-header { flex-wrap: wrap; row-gap: 0; }
+.chart-card.is-kpi .chart-card-note { order: 3; flex-basis: 100%; text-align: left; }
 .dash-kpi { height: 100%; display: flex; flex-direction: column; justify-content: flex-start; gap: 2px; min-width: 0; }
 .dash-kpi-change { display: flex; align-items: baseline; gap: 4px; font-size: var(--font-sm); color: var(--text-muted); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -405,3 +409,31 @@
 .dash-changed-move { color: var(--text-muted); }
 .dash-changed-leaders { margin-top: 4px; color: var(--text-muted); }
 .dash-changed-leader b { color: var(--text); font-weight: var(--weight-semibold); }
+
+/* "New dashboard": the recipes as this workspace's data gives them. */
+.page-header-actions { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.recipe-intro { margin: 4px 0 0; color: var(--text-muted); font-size: var(--font-sm); }
+.recipe-list { padding: 4px 20px 8px; }
+.recipe-status { color: var(--text-muted); font-size: var(--font-sm); margin: 12px 0; }
+.recipe-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.recipe-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.recipe-row.is-no { background: transparent; color: var(--text-muted); }
+.recipe-copy { min-width: 0; }
+.recipe-copy strong { font-weight: var(--weight-semibold); }
+.recipe-reader { color: var(--text-muted); font-size: var(--font-sm); }
+.recipe-copy small { display: block; margin-top: 2px; color: var(--text-muted); font-size: var(--font-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recipe-state { font-size: var(--font-xs); font-weight: var(--weight-semibold); display: inline-flex; align-items: center; gap: 6px; }
+.recipe-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 2px solid currentColor; }
+.is-ready .recipe-state { color: var(--success); }
+.is-ready .recipe-state::before { background: currentColor; }
+.is-partly .recipe-state { color: var(--warning); }
+.is-partly .recipe-state::before { background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+.is-no .recipe-state { color: var(--text-muted); }
+.recipe-more { margin-top: 12px; }
+.recipe-more summary { cursor: pointer; color: var(--text-muted); font-size: var(--font-sm); padding: 6px 0; }
+@media (max-width: 560px) {
+  .recipe-row { grid-template-columns: 1fr auto; }
+  .recipe-state { grid-column: 1 / -1; }
+}
