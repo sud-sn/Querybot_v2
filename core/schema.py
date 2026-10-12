@@ -930,7 +930,28 @@ def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
         return []
 
 
-def _build_join_map(master: dict) -> str:
+_JOIN_MAP_DIALECT = {"snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres"}
+
+
+def _join_map_names(db_type: str):
+    """How the join map writes a table, a column and an alias in its SQL: as the database's own SQL does.
+
+    Azure SQL's brackets were written for every database, and Snowflake, Oracle and PostgreSQL refuse
+    them, so the SQL model read a join it could not copy. Elsewhere a table is written by its own name
+    (a key's last part), quoted only where the database needs it: a PostgreSQL name with capitals.
+    """
+    dialect = _JOIN_MAP_DIALECT.get(str(db_type or "").lower())
+    if not dialect:
+        return (lambda name: f"[{name}]"), (lambda col: col), (lambda alias: f"[{alias}]")
+    from core2.warehouse.dialect import quote
+
+    def table(name):
+        return quote(str(name).split(".")[-1], dialect)
+
+    return table, (lambda col: quote(str(col), dialect)), (lambda alias: alias)
+
+
+def _build_join_map(master: dict, db_type: str = "azure_sql") -> str:
     """
     Analyse all discovered tables and auto-detect FK relationships by matching
     column names across tables. Also injects ERP↔DMS alias joins where a
@@ -955,6 +976,7 @@ def _build_join_map(master: dict) -> str:
     # drifted to three entries against eight.
     # Sorted on both axes: the vocabulary stores these as sets, and an
     # unsorted join map is a gratuitous diff on every rebuild.
+    q, qc, qa = _join_map_names(db_type)
     join_equivalents = {
         str(column).upper(): sorted(str(code).upper() for code in codes)
         for column, codes in sorted((get_active_vocab().join_synonyms or {}).items())
@@ -1037,7 +1059,7 @@ def _build_join_map(master: dict) -> str:
         join_type = "INNER" if enforced and all_required else "LEFT"
         source_label = "DB-enforced FK" if enforced else "DB-declared FK; validate data"
         condition = " AND ".join(
-            f"[{pt}].[{pc}] = [{rt}].[{rc}]" for pc, rc in pairs
+            f"{q(pt)}.{q(pc)} = {q(rt)}.{q(rc)}" for pc, rc in pairs
         )
         readable = " AND ".join(
             f"`{pt}.{pc}` = `{rt}.{rc}`" for pc, rc in pairs
@@ -1048,7 +1070,7 @@ def _build_join_map(master: dict) -> str:
             f"`{pt}` is the many-side and `{rt}` is the parent."
         )
         db_fk_lines.append("```sql")
-        db_fk_lines.append(f"{join_type} JOIN [{rt}] ON {condition}")
+        db_fk_lines.append(f"{join_type} JOIN {q(rt)} ON {condition}")
         db_fk_lines.append("```")
         db_fk_lines.append("")
 
@@ -1057,7 +1079,7 @@ def _build_join_map(master: dict) -> str:
     # column name two tables happened to share: two facts on every dimension
     # key and every measure they both carried, and a fact to a dimension on a
     # key that dimension does not own. The SQL model reads this document.
-    graph_lines = _graph_join_lines(master)
+    graph_lines = _graph_join_lines(master, db_type)
 
     # ── Pass 2: ERP↔DMS alias joins (different column names, same concept) ────
     # join_synonyms from the tenant's vocabulary, e.g.
@@ -1086,7 +1108,7 @@ def _build_join_map(master: dict) -> str:
                     )
                     alias_lines.append("```sql")
                     alias_lines.append(
-                        f"JOIN [{erp_tbl}] ON [{dms_tbl}].{dms_col} = [{erp_tbl}].{erp_code}"
+                        f"JOIN {q(erp_tbl)} ON {q(dms_tbl)}.{qc(dms_col)} = {q(erp_tbl)}.{qc(erp_code)}"
                     )
                     alias_lines.append("```")
                     alias_lines.append("")
@@ -1159,7 +1181,8 @@ def _build_join_map(master: dict) -> str:
                     )
                 date_role_lines.append("```sql")
                 date_role_lines.append(
-                    f"JOIN [{date_tbl}] AS [{role.key}] ON [{fact_tbl}].{fact_col} = [{role.key}].{date_pk}"
+                    f"JOIN {q(date_tbl)} AS {qa(role.key)} ON {q(fact_tbl)}.{qc(fact_col)} = "
+                    f"{qa(role.key)}.{qc(date_pk)}"
                 )
                 date_role_lines.append("```")
                 date_role_lines.append("")
@@ -1227,7 +1250,7 @@ def _build_join_map(master: dict) -> str:
     return "\n".join(lines)
 
 
-def _graph_join_lines(master: dict) -> list[str]:
+def _graph_join_lines(master: dict, db_type: str = "azure_sql") -> list[str]:
     """The join map's lines for the entity graph's key edges.
 
     A database's own constraints and the role-playing dates have passes of
@@ -1235,6 +1258,7 @@ def _graph_join_lines(master: dict) -> list[str]:
     it, and a key naming a role of one -- with the edge's join type. A role
     joins under an alias, so one query can read two roles of one table.
     """
+    q, qc, qa = _join_map_names(db_type)
     graph = build_entity_graph(_normalize_schema(master))
     # The graph names an entity's table and schema the way it split the key.
     fqn_by_table: dict[tuple[str, str], str] = {}
@@ -1275,8 +1299,8 @@ def _graph_join_lines(master: dict) -> list[str]:
             )
             lines.append("```sql")
             lines.append(
-                f"{join_type} JOIN [{right}] AS [{alias}] "
-                f"ON [{left}].{from_col} = [{alias}].{to_col}"
+                f"{join_type} JOIN {q(right)} AS {qa(alias)} "
+                f"ON {q(left)}.{qc(from_col)} = {qa(alias)}.{qc(to_col)}"
             )
         else:
             lines.append(f"### {left} → {right}")
@@ -1285,7 +1309,7 @@ def _graph_join_lines(master: dict) -> list[str]:
                 f"`{left}` to one of `{right}`. {join_type} JOIN: {why}."
             )
             lines.append("```sql")
-            lines.append(f"{join_type} JOIN [{right}] ON [{left}].{from_col} = [{right}].{to_col}")
+            lines.append(f"{join_type} JOIN {q(right)} ON {q(left)}.{qc(from_col)} = {q(right)}.{qc(to_col)}")
         lines.append("```")
         lines.append("")
     return lines
@@ -2351,7 +2375,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
     finally:
         conn.close()
     _write_schema_json(out, master)
-    _write_join_map(out, master)
+    _write_join_map(out, master, "snowflake")
     # Count TABLES, not bookkeeping entries — master also carries
     # __db_fk_constraints__, which was making discovery report 15/14.
     return len(discovered_tables(master))
@@ -2616,7 +2640,7 @@ def _discover_oracle(cfg: dict, out: Path, allowed: set[str] | None = None, mc: 
     finally:
         conn.close()
     _write_schema_json(out, master)
-    _write_join_map(out, master)
+    _write_join_map(out, master, "oracle")
     # Count TABLES, not bookkeeping entries — master also carries
     # __db_fk_constraints__, which was making discovery report 15/14.
     return len(discovered_tables(master))
@@ -3436,7 +3460,7 @@ def _discover_postgres(cfg: dict, out: Path, allowed: set[str] | None = None, mc
                     if (not only or r[0] in only) and _allowed_table_match(allowed, r[1], r[0], db_upper)]
         if not selected:
             _write_schema_json(out, master)
-            _write_join_map(out, master)
+            _write_join_map(out, master, "postgres")
             return 0
         pk_map = _fetch_pk_columns_postgres(cur)
         name_counts: dict[str, int] = {}
@@ -3559,7 +3583,7 @@ def _discover_postgres(cfg: dict, out: Path, allowed: set[str] | None = None, mc
         conn.close()
 
     _write_schema_json(out, master)
-    _write_join_map(out, master)
+    _write_join_map(out, master, "postgres")
     return len(discovered_tables(master))
 
 
@@ -3681,8 +3705,8 @@ def _write_schema_json(out: Path, master: dict) -> None:
     )
 
 
-def _write_join_map(out: Path, master: dict) -> None:
-    """Write auto-detected cross-table join relationships to _join_map.md."""
-    content = _build_join_map(master)
+def _write_join_map(out: Path, master: dict, db_type: str = "azure_sql") -> None:
+    """Write auto-detected cross-table join relationships to _join_map.md, in ``db_type``'s SQL."""
+    content = _build_join_map(master, db_type)
     (out / "_join_map.md").write_text(content, encoding="utf-8")
     log.info("Join map written to %s/_join_map.md", out)

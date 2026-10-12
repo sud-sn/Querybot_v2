@@ -661,6 +661,21 @@ def build_sql_system_prompt(
     label  = _DB_LABELS.get(db_type, db_type)
     syntax = _SQL_SYNTAX.get(db_type, "- Use standard ANSI SQL\n")
 
+    # The shared rules' examples in this database's own SQL. Brackets and COUNT_BIG are Azure SQL's
+    # alone; a PostgreSQL, Snowflake or Oracle prompt that showed them taught SQL its database refuses.
+    _ex_table = "[schema].[table]" if db_type == "azure_sql" else "schema.table"
+    if db_type == "azure_sql":
+        _diag_not = "COUNT_BIG(*), COUNT(*), [MatchedRows], [NonNullMetricRows]"
+        _diag_add = ("COUNT_BIG(*) AS [MatchedRows] on Azure SQL (COUNT(*) AS MatchedRows on other DBs), "
+                     "COUNT(metric_col) AS [NonNullMetricRows], and COALESCE(SUM(metric_col), 0) AS "
+                     "[MetricName]")
+    else:
+        _diag_not = "COUNT(*), MatchedRows, NonNullMetricRows"
+        _diag_add = ("COUNT(*) AS MatchedRows, COUNT(metric_col) AS NonNullMetricRows, and "
+                     "COALESCE(SUM(metric_col), 0) AS MetricName")
+    _week_back = {"oracle": "... - 7", "postgres": "... - INTERVAL '7 days'"}.get(db_type, "DATEADD(day, -7, ...)")
+    _year_others = "Snowflake / Oracle" if db_type in ("azure_sql", "snowflake", "oracle") else label
+
     _date_role_tokens = _find_date_role_tokens(_kb_gate_text)
     _governed_key_types = _governed_date_key_types(semantic_plan)
     _has_plain_date_role_key = any(
@@ -1114,7 +1129,7 @@ def build_sql_system_prompt(
         "    FROM base c\n"
         "    LEFT JOIN base p ON p.YR = c.YR - 1\n"
         "    WHERE c.YR = (SELECT MAX(YR) FROM base);\n"
-        "  Snowflake / Oracle: same pattern with dialect date functions.\n"
+        f"  {_year_others}: same pattern with dialect date functions.\n"
         "  NEVER use MAX(col)-1 in a WHERE clause for year anchoring — use the CTE "
         "approach above so the anchor is derived once and reused cleanly.\n")
         + "- DISTINCT ENTITY RULE: When the question asks to LIST, SHOW, FIND, GET, "
@@ -1202,7 +1217,7 @@ def build_sql_system_prompt(
         "    SUM(CASE WHEN status_col = 'Active'   THEN 1 ELSE 0 END) AS ACTIVE_COUNT,\n"
         "    SUM(CASE WHEN status_col = 'Inactive' THEN 1 ELSE 0 END) AS INACTIVE_COUNT,\n"
         "    COUNT(*) AS TOTAL\n"
-        "  FROM [schema].[table]\n"
+        f"  FROM {_ex_table}\n"
         "  Use the exact distinct values from the KB for CASE WHEN conditions.\n\n"
         + _rule("month_over_month",
         "- MONTH-OVER-MONTH / QUARTER-OVER-QUARTER RULE: When the user asks for MoM trend, "
@@ -1267,11 +1282,11 @@ def build_sql_system_prompt(
         "range, BETWEEN, or 'last N days' / 'this month' / 'this year' style window, with "
         "nothing else filtered)? If yes: write a PLAIN aggregate and STOP — "
         "SELECT SUM(metric_col) AS MetricName FROM ... WHERE date_col >= X. "
-        "Do NOT add COUNT_BIG(*), COUNT(*), [MatchedRows], [NonNullMetricRows], or a "
+        f"Do NOT add {_diag_not}, or a "
         "COALESCE/ISNULL wrapper around the SUM — none of that belongs on a time-only filter. "
         "Worked example — question: 'what is my sales for the last 7 days' → "
         "SELECT SUM(SalesAmt) AS TotalSales FROM Orders "
-        "WHERE OrderDate >= DATEADD(day, -7, ...) — three columns (MatchedRows/"
+        f"WHERE OrderDate >= {_week_back} — three columns (MatchedRows/"
         "NonNullMetricRows/TotalSales) would be WRONG here.\n"
         "  STEP 2 — only reached if step 1 was no: does the WHERE clause filter to a "
         "SPECIFIC KEY, ENTITY, or CATEGORY that might not exist or might match zero rows "
@@ -1279,9 +1294,7 @@ def build_sql_system_prompt(
         "revenue for customer 123, cost for item X, revenue for status = 'Cancelled')? If "
         "yes: THIS is the case that needs diagnostics, because the answer must be able to "
         "tell 'no such record' apart from 'the value is genuinely zero'. Add "
-        "COUNT_BIG(*) AS [MatchedRows] on Azure SQL (COUNT(*) AS MatchedRows on other DBs), "
-        "COUNT(metric_col) AS [NonNullMetricRows], and COALESCE(SUM(metric_col), 0) AS "
-        "[MetricName].\n"
+        f"{_diag_add}.\n"
         "  A question can combine both ('revenue for customer 123 in the last 7 days') — "
         "that still needs step 2's diagnostics, because the entity filter is present "
         "alongside the date filter. But a time-only filter by itself never gets the "
@@ -1294,7 +1307,7 @@ def build_sql_system_prompt(
         "  SELECT entity_col,\n"
         "         SUM(metric_col) AS TOTAL,\n"
         "         RANK() OVER (ORDER BY SUM(metric_col) DESC) AS RANK\n"
-        "  FROM [schema].[table]\n"
+        f"  FROM {_ex_table}\n"
         "  GROUP BY entity_col\n"
         "  ORDER BY RANK\n"
         "  Use DENSE_RANK() when the user explicitly asks for no gaps in rank numbers after ties. "
