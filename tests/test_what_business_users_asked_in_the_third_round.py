@@ -206,3 +206,70 @@ def test_a_share_of_rows_by_a_status_kept_in_a_lookup_table():
                            "JOIN calendar c ON c.date_key = b.booked_date_key "
                            "WHERE c.full_date BETWEEN '2025-01-01' AND '2025-12-31'")
     assert payload["data"]["rows"][0]["cancelled_share"] == pytest.approx(float(want), rel=1e-6)
+
+
+def test_documents_are_counted_not_their_lines():
+    """ "How many movement documents were voided in 2025?" counted the movement lines; a document has several."""
+    built, _ = _domain("inventory")
+    voided = {"intent": "value", "measures": ["number_of_stock_movements"], "time": Y2025,
+              "filters": [{"field": "stock_movement.status", "op": "eq", "values": ["V"]}]}
+    status = built.con.execute("SELECT status FROM stock_movements GROUP BY 1 ORDER BY COUNT(*) LIMIT 1").fetchone()[0]
+    voided["filters"][0]["values"] = [status]
+    docs = _chat("inventory", voided)("How many movement documents had that status in 2025?")
+    lines = _chat("inventory", voided)("How many movement lines had that status in 2025?")
+    days = "CAST(movement_ts AS DATE) BETWEEN '2025-01-01' AND '2025-12-31'"
+    want_docs = _one(built.con, f"SELECT COUNT(DISTINCT movement_number) FROM stock_movements WHERE status = '{status}' "
+                                f"AND {days}")
+    want_lines = _one(built.con, f"SELECT COUNT(*) FROM stock_movements WHERE status = '{status}' AND {days}")
+    assert want_docs < want_lines
+    assert list(docs["data"]["rows"][0].values())[0] == want_docs
+    assert list(lines["data"]["rows"][0].values())[0] == want_lines
+
+
+def test_a_year_written_as_since_and_up_to_is_the_answers_period():
+    """ "Top 3 prescribers by number of new prescriptions in 2025" was written as "written date since 1 Jan 2025" and
+    "up to 31 Dec 2025": two filters the next question ("vet scripts in Q1 2026 vs Q1 2025") kept."""
+    built, _ = _domain("compounding_pharmacy")
+    since_until = {"intent": "value", "measures": ["number_of_prescriptions"], "filters": [
+        {"field": "written_date", "op": "gte", "values": ["2025-01-01"]},
+        {"field": "written_date", "op": "lte", "values": ["2025-12-31"]}]}
+    payload = _chat("compounding_pharmacy", since_until)("How many new prescriptions did we get in 2025?")
+    assert not payload["plan"].get("filters"), payload["plan"]
+    assert payload["plan"]["time"]["window"] == {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}
+    want = _one(built.con, "SELECT COUNT(*) FROM prescriptions WHERE written_date BETWEEN '2025-01-01' AND "
+                           "'2025-12-31'")
+    assert payload["data"]["rows"] == [{"number_of_prescriptions": want}]
+
+
+def test_patients_filled_for_are_counted_through_their_prescriptions():
+    built, _ = _domain("compounding_pharmacy")
+    payload = _chat("compounding_pharmacy", {"intent": "value", "measures": ["number_of_patients"], "time": Y2025})(
+        "How many distinct patients did we fill for in 2025?")
+    want = _one(built.con, "SELECT COUNT(DISTINCT r.patient_id) FROM fills f JOIN prescriptions r "
+                           "ON r.rx_number = f.rx_number WHERE f.fill_date BETWEEN '2025-01-01' AND '2025-12-31'")
+    assert list(payload["data"]["rows"][0].values())[0] == want
+
+
+def test_members_with_more_than_n_rows_are_counted_by_those_rows():
+    built, _ = _domain("compounding_pharmacy")
+    plan = {"intent": "count", "measures": ["number_of_patients"], "time": Y2025,
+            "per": {"of": "patient", "summary": "count", "op": "gt", "values": [10]}}
+    payload = _chat("compounding_pharmacy", plan)("How many patients had more than 10 fills in 2025?")
+    want = _one(built.con, "SELECT COUNT(*) FROM (SELECT r.patient_id FROM fills f JOIN prescriptions r "
+                           "ON r.rx_number = f.rx_number WHERE f.fill_date BETWEEN '2025-01-01' AND '2025-12-31' "
+                           "GROUP BY 1 HAVING COUNT(*) > 10)")
+    assert list(payload["data"]["rows"][0].values())[0] == want
+
+
+def test_amounts_kept_apart_by_currency_say_which_is_which():
+    """ "How much cash went out in fiscal 2025?" read "$5.14M, $803,429.83": two currencies, neither named."""
+    built, _ = _domain("finance")
+    payload = _chat("finance", {"intent": "value", "measures": ["debit_amount"], "time": Y2025})(
+        "How much was debited in 2025?")
+    rows = {code: total for code, total in built.con.execute(
+        "SELECT l.currency_code, SUM(l.debit_amount) FROM journal_lines l JOIN calendar c "
+        "ON c.date_key = l.posting_date_key WHERE c.full_date BETWEEN '2025-01-01' AND '2025-12-31' "
+        "GROUP BY 1").fetchall()}
+    assert len(rows) == 2
+    headline = payload["answer"]["headline"]
+    assert all(f"{code} " in headline for code in rows) and "$" not in headline, headline

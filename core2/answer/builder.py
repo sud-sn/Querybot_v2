@@ -108,11 +108,12 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
     if format_ == "currency":
         sign = "-" if number < 0 else ""
         number = abs(number)
-        if number >= 1e9:
-            return f"{sign}${number / 1e9:,.2f}B"
-        if number >= 1e6:
-            return f"{sign}${number / 1e6:,.2f}M"
-        return f"{sign}${number:,.2f}"
+        body = (f"{number / 1e9:,.2f}B" if number >= 1e9 else f"{number / 1e6:,.2f}M" if number >= 1e6
+                else f"{number:,.2f}")
+        code = (unit or "").strip()
+        if len(code) == 3 and code.isalpha():
+            return f"{sign}{code.upper()} {body}"     # amounts kept apart by currency: "CAD 5.14M, USD 803,429.83"
+        return f"{sign}${body}"
     if format_ in ("percent", "percentage"):
         return f"{number:,.1f}%"
     if format_ == "days":

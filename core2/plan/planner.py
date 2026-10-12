@@ -22,7 +22,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from core2.bootstrap import names
-from core2.model.schema import AggExpr, DateRole, Measure, SemanticModel
+from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period, the_period
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
@@ -775,14 +775,69 @@ def members_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
         "sort": [Sort(by=measure, desc=per.op in ("gt", "gte"))]})
 
 
-_HOW_MANY = re.compile(r"^\s*(?:how\s+many|combien\s+(?:de|d'))\s*([a-zà-ÿ'-]+(?:\s+[a-zà-ÿ'-]+)?)", re.IGNORECASE)
+def counted_per_itself(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many patients had more than 10 fills in 2025?" was planned as each patient's number of patients (one,
+    always) above 10: none. A member's own count is never its figure per member; the count the question names
+    ("fills") is."""
+    per = plan.per
+    if plan.kind != "query" or per is None or not per.of or len(plan.measures) != 1:
+        return plan
+    from core2.resolve.resolver import find_slug
+
+    by_slug = {m.slug: m for m in model.measures.values()}
+    figure = by_slug.get(plan.measures[0])
+    found = find_slug(model, per.of)
+    table = found[1].table if found is not None and isinstance(found[1], Entity) else None
+    if figure is None or table is None or figure.table != table \
+            or getattr(figure.expr, "agg", None) not in ("count", "count_distinct"):
+        return plan
+    named = [s for s in measures_named(model, question) if s in by_slug and by_slug[s].table != table
+             and getattr(by_slug[s].expr, "agg", None) in ("count", "count_distinct")]
+    if len(named) != 1:
+        return plan
+    return plan.model_copy(update={"measures": named, "sort": [
+        s.model_copy(update={"by": named[0]}) if s.by == figure.slug else s for s in plan.sort]})
+
+
+# "How many movement documents were voided?", "issue docs", "combien de documents": documents, not their lines.
+_DOCUMENTS = re.compile(r"\b(?:documents?|docs?|vouchers?|pièces?)\b", re.IGNORECASE)
+
+
+def documents_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many movement documents were voided in 2025?" counted the movement lines (one document has several):
+    a question that counts documents counts the distinct document numbers of the same rows, where the data keeps
+    that count beside the count of rows."""
+    if plan.kind != "query" or not _DOCUMENTS.search(question or ""):
+        return plan
+    by_slug = {m.slug: m for m in model.measures.values()}
+    swap: dict[str, str] = {}
+    for slug in plan.measures:
+        rows = by_slug.get(slug)
+        if rows is None or getattr(rows.expr, "agg", None) != "count" or getattr(rows.expr, "column", None):
+            continue
+        docs = [m for m in by_slug.values() if m.table == rows.table and not m.hidden
+                and getattr(m.expr, "agg", None) == "count_distinct" and getattr(m.expr, "column", None)
+                and not getattr(m.expr, "filters", None)
+                and any(a.column == m.expr.column and a.kind == "identifier" for a in model.attributes.values())]
+        if len(docs) == 1:
+            swap[slug] = docs[0].slug
+    if not swap:
+        return plan
+    return plan.model_copy(update={
+        "measures": [swap.get(m, m) for m in plan.measures],
+        "sort": [s.model_copy(update={"by": swap[s.by]}) if s.by in swap else s for s in plan.sort],
+        "filters": [f.model_copy(update={"field": swap[f.field]}) if f.field in swap else f for f in plan.filters]})
+
+
+_HOW_MANY_ROLE = re.compile(r"^\s*(?:how\s+many|combien\s+(?:de|d'))\s*([a-zà-ÿ'-]+(?:\s+[a-zà-ÿ'-]+)?)",
+                            re.IGNORECASE)
 
 
 def role_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many managers do we have?" was planned as the employees counted under each manager, and answered with
     the manager who has most ("Quinn Lopez leads with 19 across 40"). The things counted are the members of the
     role the grouping follows: those with at least one row, counted."""
-    hit = _HOW_MANY.match(question or "")
+    hit = _HOW_MANY_ROLE.match(question or "")
     if plan.kind != "query" or hit is None or len(plan.group_by) != 1 or plan.shaped() or len(plan.measures) != 1 \
             or plan.derived or plan.time.grain or plan.limit:
         return plan
@@ -831,8 +886,11 @@ def counted_where_done(plan: Plan, model: SemanticModel, question: str) -> Plan:
         word = _row_word(model, m.table)
         if len(word) < 3 or not done & {word, f"{word}ed", f"{word}d", f"{word}ing", f"{word}s"}:
             continue
-        if not any(j.from_table == m.table and j.to_table == counted.table and P.usable(j)
-                   for j in model.joins.values()):
+        try:
+            reached = P.best_path(model, m.table, counted.table) is not None   # a fill's prescription's patient
+        except P.Ambiguous:
+            reached = False
+        if not reached:
             continue
         entity = next((e for e in model.entities.values() if e.table == counted.table and not e.role), None)
         role = next((r for r in model.date_roles.values() if r.slug == plan.time.date), None)
@@ -996,11 +1054,15 @@ def one_time_axis(plan: Plan, model: SemanticModel, question: str) -> Plan:
 def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many customers placed an order in 2024?" was written with the year as a filter on the order date
     (between 1 January and 31 December) and refused: the customers are counted by what they did in a period only
-    through the plan's time. A date filter between two days, with no period of its own, is the plan's period."""
+    through the plan's time. A date filter between two days, with no period of its own, is the plan's period; so
+    is "since 1 January 2025" with "up to 31 December 2025" on the same date ("top prescribers in 2025" was
+    written so, and the follow-ups kept both filters into another year)."""
     if plan.kind != "query" or plan.time.window.kind != "all":
         return plan
     roles = {r.slug for r in model.date_roles.values()}
     found = [f for f in plan.filters if f.field in roles and f.op == "between" and len(f.values) == 2]
+    if not found:
+        found = _since_and_until(plan, roles)
     if len(found) != 1 or plan.time.date not in (None, found[0].field):
         return plan
     f = found[0]
@@ -1008,9 +1070,30 @@ def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
         start, end = (dt.date.fromisoformat(str(v)[:10]) for v in f.values)
     except ValueError:
         return plan
+    used = [x for x in plan.filters if x.field == f.field and x.op in ("between", "gte", "gt", "lte", "lt")]
     return plan.model_copy(update={
-        "filters": [x for x in plan.filters if x is not f],
+        "filters": [x for x in plan.filters if x is not f and x not in used],
         "time": plan.time.model_copy(update={"date": f.field, "window": Window(kind="between", start=start, end=end)})})
+
+
+def _since_and_until(plan: Plan, roles: set[str]) -> list[Filter]:
+    """One "since" and one "up to" filter on the same date, as the one span they make (empty when there are not
+    exactly those two)."""
+    on = [f for f in plan.filters if f.field in roles and f.op in ("gte", "gt", "lte", "lt") and len(f.values) == 1]
+    lower = [f for f in on if f.op in ("gte", "gt")]
+    upper = [f for f in on if f.op in ("lte", "lt")]
+    if len(lower) != 1 or len(upper) != 1 or lower[0].field != upper[0].field:
+        return []
+    try:
+        start = dt.date.fromisoformat(str(lower[0].values[0])[:10])
+        end = dt.date.fromisoformat(str(upper[0].values[0])[:10])
+    except ValueError:
+        return []
+    start += dt.timedelta(days=1) if lower[0].op == "gt" else dt.timedelta(0)
+    end -= dt.timedelta(days=1) if upper[0].op == "lt" else dt.timedelta(0)
+    if end < start:
+        return []
+    return [Filter(field=lower[0].field, op="between", values=[start.isoformat(), end.isoformat()])]
 
 
 _DATE_WORDS = {"date", "dates", "time", "day", "on", "at", "of", "the", "when", "dt"}
@@ -1795,13 +1878,14 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (dates_as_window, where_we_have, counted_each, members_asked, counted_where_done, role_counted,
-                     in_time_order, average_asked, date_in_a_name, list_date_unasked, each_named, named_not_coded,
-                     one_time_axis, restated_rates, margin_over_sales):
-            # 2024 as a date filter, "where do we have", "$1,000 each", "which techs had fewer than 3", "did we fill",
-            # "how many managers", Q1 vs Q2, "average subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's
-            # own first invoice date), "in A and B" (each), a code's description, "by month" planned twice over, a
-            # margin % as sales over cost
+        for rule in (dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+                     counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+                     list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales):
+            # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
+            # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
+            # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice
+            # date), "in A and B" (each), a code's description, "by month" planned twice over, a margin % as sales
+            # over cost
             ruled = rule(plan, model, question)
             if ruled is not plan and not check(ruled, model, today, shown)[0]:
                 plan = ruled
