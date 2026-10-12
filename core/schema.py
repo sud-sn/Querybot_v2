@@ -3547,7 +3547,11 @@ def _discover_postgres(cfg: dict, out: Path, allowed: set[str] | None = None, mc
             log.info("PostgreSQL: discovered %s.%s.%s (%d cols, %d categorical)",
                      database, schema, name, len(columns), len(distinct_map))
 
-        fks = _fetch_fk_constraints_postgres(cur)
+        # Only links between tables discovered here: a key into another schema, or into a table the
+        # connection is not given, names a table the knowledge base does not have.
+        found = {(schema, name) for schema, name, *_ in selected}
+        fks = [fk for fk in _fetch_fk_constraints_postgres(cur)
+               if (fk["parent_schema"], fk["parent_table"]) in found and (fk["ref_schema"], fk["ref_table"]) in found]
         if fks:
             master["__db_fk_constraints__"] = fks
             log.info("PostgreSQL: %d declared foreign key column pairs in %s", len(fks), database)

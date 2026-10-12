@@ -97,6 +97,22 @@ def test_discovery_reads_every_table_its_columns_keys_and_links(retail, tmp_path
         assert f'"{schema}"' not in text and '."' in text   # schema in small letters bare, the table quoted
 
 
+
+def test_a_connection_limited_to_one_schema_reads_only_that_schemas_links(creds, tmp_path):
+    """A second copy of the same warehouse sits in another schema of the database, with the same table
+    names and links. Discovery limited to the first reads the first's links only: a link into a schema
+    it was not given names a table the knowledge base does not have."""
+    from core.schema import discover_and_write
+    from evals.core2 import domains
+    from evals.core2.framework import materialize
+
+    built = materialize(domains.build("retail"), "descriptive")
+    with pg.copied(built, creds) as mine, pg.copied(built, creds) as other:
+        discover_and_write({**creds, "schemas": mine}, "postgres", str(tmp_path))
+        links = json.loads((tmp_path / "_schema.json").read_text()).get("__db_fk_constraints__", [])
+        assert links and {(f["parent_schema"], f["ref_schema"]) for f in links} == {(mine, mine)}
+        assert len(links) == len(built.declared_fks), other
+
 @pytest.fixture(scope="module")
 def learned(retail, tmp_path_factory):
     """Learn on the PostgreSQL copy, from what discovery wrote, as production runs it."""
