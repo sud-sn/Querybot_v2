@@ -31,12 +31,13 @@ from core2.bootstrap import names
 from core2.answer.builder import _period_badge, against, build_answer, sparkline
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
+from core2.answer.extra import extra_facts
 from core2.answer.forecast import answer_forecast
 from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query, repeats_sql
 from core2.compile.shapes import fill_edges
-from core2.plan.chips import offered
+from core2.plan.chips import french as chip_french, offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
@@ -53,7 +54,10 @@ HISTORY = 3          # turns of the conversation the planner sees
 FOLLOW_UP = "follow_up"                                   # Pending.field: is it about the answer above, or new?
 END = "end"                                               # Pending.field: "the worst one": which end of the answer
 ABOVE, AFRESH = "About the answer above", "A new question"
-LEFT_OUT_CHIP = {"label": "Include the rows left out", "question": "Include the rows left out by default"}
+LEFT_OUT_CHIP = {"label": "Include the rows left out", "question": "Include the rows left out by default",
+                 "label_fr": "Inclure les lignes écartées", "question_fr": "Inclure les lignes écartées par défaut"}
+# The two buttons of a question that could go either way, in French: a click on either is read as its English twin.
+_EITHER_FR = {ABOVE: "À propos de la réponse ci-dessus", AFRESH: "Une nouvelle question"}
 MAX_ROWS = 5000
 
 
@@ -107,6 +111,12 @@ def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
+def _english_either(reply: str) -> str:
+    """A French click on "about the answer above" or "a new question", read as its English twin."""
+    said = _plain(reply)
+    return next((en for en, fr in _EITHER_FR.items() if _plain(fr) == said), reply)
+
+
 def choose(reply: str, options: list[str]) -> str | None:
     """The option a reply picks: its name, its number ("2", "the second one"), or a start only it has."""
     text = _plain(reply)
@@ -141,7 +151,7 @@ _REPLY_WORDS = _AFRESH_WORDS | _ABOVE_WORDS | _FILLER | {
 def which_way(reply: str, options: list[str]) -> str | None:
     """"refine" or "new": what a reply to "about the answer above, or a new question?" says. None: neither
     (a question of its own, read as it is)."""
-    picked = choose(reply, options)
+    picked = choose(_english_either(reply), options)
     if picked is not None:
         return "refine" if picked == options[0] else "new"
     words = _plain(reply).split()
@@ -198,7 +208,8 @@ def _which_question(question: str, last: Turn) -> dict[str, Any]:
     text = f'Is "{question}" about the answer above ("{last.question}"), or a new question?'
     return _frame(question, text, kind="follow_up_or_new",
                   clarify={"about": FOLLOW_UP, "question": text, "options": [ABOVE, AFRESH]},
-                  follow_up_suggestions=[{"label": o, "question": o} for o in (ABOVE, AFRESH)])
+                  follow_up_suggestions=[{"label": o, "question": o, "label_fr": _EITHER_FR[o],
+                                          "question_fr": _EITHER_FR[o]} for o in (ABOVE, AFRESH)])
 
 
 def _read(question: str, last: Turn | None, model: SemanticModel, found: list[ValueMatch]) -> Reading:
@@ -460,7 +471,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     last = session.turns[-1] if session.turns else None
     following = False
     matches: list[ValueMatch] = []
-    picked = choose(question, pending.options) if pending is not None else None
+    picked = choose(_english_either(question), pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
     if planned is not None:
         outcome = Outcome(planned)
@@ -549,6 +560,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                               "stopped": " ".join(outcome.problems)}
         return asked
 
+    plan = _roles_named(plan, model, services.index)        # "per manager": the link, never a level called so
     plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
@@ -559,7 +571,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     periods: list[str] = []
     try:
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown,
-                           periods=periods)
+                           periods=periods, notes=True)
     except ResolveError as exc:
         if exc.kind == "ambiguous":
             session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
@@ -618,11 +630,13 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     chips = offered(plan, model)
     if chips:
-        session.offers = {_plain(words): changed for words, changed in chips}
+        # Either wording runs the chip's plan: a French reader's click sends the French words.
+        session.offers = {_plain(w): changed for words, changed in chips for w in (words, chip_french(words))}
         rest = payload.get("follow_up_suggestions", [])
         if any(changed.include_left_out for _, changed in chips):
             rest = [s for s in rest if s.get("question") != LEFT_OUT_CHIP["question"]]     # the chip says it better
-        payload["follow_up_suggestions"] = [*({"label": words, "question": words, "kind": "setting"}
+        payload["follow_up_suggestions"] = [*({"label": words, "question": words, "label_fr": chip_french(words),
+                                               "question_fr": chip_french(words), "kind": "setting"}
                                               for words, _ in chips), *rest]
     if unquoted:
         _say_unquoted(payload, question, unquoted,
@@ -638,7 +652,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
 
 
 def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
-             started: float, shown: list[tuple] | None = None, periods: list[str] | None = None) -> dict[str, Any]:
+             started: float, shown: list[tuple] | None = None, periods: list[str] | None = None,
+             notes: bool = False) -> dict[str, Any]:
     """The answer to a checked plan: one query, or the several a "why" or a forecast needs.
 
     ``shown``, when given, is filled with the answer's members in the order shown, for a
@@ -688,7 +703,34 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
+    if notes:
+        _more_for_the_note(plan, logical, payload, services, ctx, warehouse)
     return payload
+
+
+def _more_for_the_note(plan: Plan, logical: Any, payload: dict[str, Any], services: Services, ctx: Context,
+                       warehouse: Guarded) -> None:
+    """The analyst's next checks (core2/answer/extra.py): what made a one-off, the same period a year before, the
+    target, what moved the figure -- each one more small query, asked in the chat only (a dashboard tile says its
+    own line), and never at the cost of the answer."""
+    model = services.model
+    rules = replace(ctx, split_units=services.split_units)
+
+    def run(asked: Plan) -> tuple[Any, Any, Any]:
+        lg = resolve(asked, model, rules)
+        if any(part.snapshot for part in lg.parts):
+            lg = complete_snapshots(lg, model, warehouse)
+        compiled = compile_query(lg, model, warehouse.dialect)
+        return lg, compiled, warehouse.query(compiled.sql, max_rows=min(compiled.row_cap or 500, 500))
+
+    try:
+        more = extra_facts(plan, logical, payload, model, run, allowed=services.allowed_tables)
+    except Exception as exc:  # noqa: BLE001 - the answer stands with the facts of its own rows
+        log.info("core2 note: the next checks failed: %s", exc)
+        return
+    if more:
+        reading = payload.setdefault("reading", {"shape": "value", "lead": {}, "one_offs": [], "facts": []})
+        reading["facts"] = [*(reading.get("facts") or []), *(f.as_dict() for f in more)]
 
 
 def _share_of_the_whole(plan: Plan, logical: Any, payload: dict[str, Any], model: SemanticModel, ctx: Context,
@@ -1161,6 +1203,76 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex,
     absent = plan.absent.model_copy(update={"without": spelled(plan.absent.without),
                                             "had": spelled(plan.absent.had)}) if plan.absent is not None else None
     return plan.model_copy(update={"filters": filters, "absent": absent}), missing
+
+
+def _table_of(model: SemanticModel, slug: str) -> str | None:
+    """The table a grouping or filter slug is on (an attribute's column's, an entity's own)."""
+    found = find_slug(model, slug)
+    if found is not None and isinstance(found[1], Attribute) and found[1].column in model.columns:
+        return model.columns[found[1].column].table
+    if found is not None and isinstance(found[1], Entity):
+        return found[1].table
+    return None
+
+
+def _role_said(model: SemanticModel, plan: Plan, f: Any, index: MemberIndex) -> str | None:
+    """The link role a filter's values name in place of a member ("manager" on the job level: no level is called
+    so, and an employee's manager is a link of the employees to themselves); None when they name a member, or no
+    such role of the table the filter is on."""
+    from core2.resolve import paths as P
+
+    if f.op not in ("eq", "in") or not f.values or not all(isinstance(v, str) for v in f.values):
+        return None
+    found = find_slug(model, f.field)
+    table = _table_of(model, f.field)
+    if found is None or table is None:
+        return None
+    attribute = found[1] if isinstance(found[1], Attribute) else next(
+        (a for a in model.attributes.values() if isinstance(found[1], Entity) and a.column == found[1].label_column),
+        None)
+    if attribute is None or attribute.slug not in index.attributes \
+            or any(_member_form(index, attribute.slug, v) != v or index.stored(attribute.slug, v) for v in f.values):
+        return None
+    starts = {m.table for m in model.measures.values() if m.slug in plan.measures} or {table}
+    roles = {r for start in starts for r in P.role_names(model, start, table)}
+
+    def said(text: str) -> tuple[str, ...]:
+        return tuple(names.singular(w) for w in _plain(text).split())
+
+    hits = [{r for r in roles if said(str(v)) == said(r)} for v in f.values]
+    if any(len(h) != 1 for h in hits) or len(set().union(*hits)) != 1:
+        return None
+    return hits[0].pop()
+
+
+def _roles_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> Plan:
+    """ "Avg number of direct reports per manager" and "which 5 managers have the most active direct reports?" were
+    planned with a job level called "manager", which the data does not have, and refused. "Manager" names the link
+    from an employee to another employee: a filter whose values are no member but name such a link is that link --
+    the plan's grouping of that table, or what it works out per member, follows it -- and the filter goes. A plan
+    that reaches the table no such way keeps the filter, and its refusal."""
+    if plan.kind != "query" or not plan.filters:
+        return plan
+    per = [plan.per.of] if plan.per is not None and plan.per.of else []
+    via = dict(plan.via)
+    kept = []
+    for f in plan.filters:
+        role = _role_said(model, plan, f, index)
+        table = _table_of(model, f.field) if role else None
+        reached = [s for s in [*plan.group_by, *per] if table and _table_of(model, s) == table]
+        if role is None or not reached:
+            kept.append(f)
+            continue
+        if any(_plain(via.get(s, "").removeprefix("role:")) == _plain(role) for s in reached):
+            continue                                      # the grouping follows the link already
+        free = list(dict.fromkeys(s for s in reached if not via.get(s)))
+        if len(free) != 1:
+            kept.append(f)
+            continue
+        via[free[0]] = role
+    if len(kept) == len(plan.filters):
+        return plan
+    return plan.model_copy(update={"filters": kept, "via": via})
 
 
 def _member_home(model: SemanticModel, plan: Plan, index: MemberIndex, values: list[str],

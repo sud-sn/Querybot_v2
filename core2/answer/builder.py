@@ -28,6 +28,9 @@ log = logging.getLogger("querybot.core2")
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
            "November", "December"]
+_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre",
+         "décembre"]
+_MOIS_COURTS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 _PERIOD_STYLE = {"day": "iso_date", "week": "iso_date", "month": "month_year_long", "quarter": "quarter",
                  "year": "year"}
 _TABLE_FORMAT = {"currency": "currency", "percent": "percentage", "count": "number", "integer": "number",
@@ -126,17 +129,27 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
 
 
 _OP_TEXT = {"gt": "above", "gte": "at least", "lt": "below", "lte": "at most"}
+_OP_TEXT_FR = {"gt": "au-dessus de", "gte": "au moins", "lt": "en dessous de", "lte": "au plus"}
 
 
 def _listed(values: list, joiner: str) -> str:
     shown = [str(v) for v in values[:3]]
     if len(values) > 3:
-        return f"{', '.join(shown)} {joiner} {len(values) - 3} more"
+        more = "autres" if joiner in ("ou", "et") else "more"
+        return f"{', '.join(shown)} {joiner} {len(values) - 3} {more}"
     return shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} {joiner} {shown[-1]}"
 
 
-def _compared(op: str, values: list[str]) -> str:
-    """A comparison in words: "above 10", "between 7 and 14", "not 3"."""
+def _compared(op: str, values: list[str], lang: str = "en") -> str:
+    """A comparison in words: "above 10", "between 7 and 14", "not 3" ("au-dessus de 10", "entre 7 et 14")."""
+    if lang == "fr":
+        if op == "between" and len(values) == 2:
+            return f"entre {values[0]} et {values[1]}"
+        if op in _OP_TEXT_FR and values:
+            return f"{_OP_TEXT_FR[op]} {values[0]}"
+        if op in ("ne", "not_in"):
+            return f"autre que {_listed(values, 'ou')}"
+        return _listed(values, "ou") if values else ""
     if op == "between" and len(values) == 2:
         return f"between {values[0]} and {values[1]}"
     if op in _OP_TEXT and values:
@@ -161,9 +174,12 @@ def article(words: str) -> str:
     return "an" if low[0] in "aeiou" or low.startswith(("hour", "honest", "honou", "heir")) else "a"
 
 
-def condition_words(c: Condition, *, quoted: bool = False) -> str:
+def condition_words(c: Condition, *, quoted: bool = False, lang: str = "en") -> str:
     """A condition as the answer's sentence names it: "for customer type Wholesale". ``quoted``: its members in
-    quotes, for a question the reader can send again (a name narrows an answer only when it is quoted)."""
+    quotes, for a question the reader can send again (a name narrows an answer only when it is quoted). ``lang``
+    "fr": the same in French ("pour customer type Wholesale"); the data's own names stay as they are."""
+    if lang == "fr":
+        return _condition_fr(c, quoted)
     if c.kind == "activity":
         return f"with {article(c.label)} {c.label}"
     if c.kind == "by":
@@ -213,6 +229,51 @@ def condition_words(c: Condition, *, quoted: bool = False) -> str:
     return f"where {c.label} is {_compared(c.op, [str(v) for v in c.values])}"
 
 
+def _condition_fr(c: Condition, quoted: bool) -> str:
+    if c.kind == "activity":
+        return f"avec {c.label}"
+    if c.kind == "by":
+        return f"selon {c.label}"
+    if c.kind == "snapshot":
+        return "au dernier relevé"
+    if c.kind == "age":
+        return c.label
+    if c.kind == "everyone":
+        return f"en comptant chaque {c.label} de la liste"
+    if c.kind == "absent":
+        return ""
+    if c.kind == "date" and c.op in ("is_null", "not_null"):
+        return f"{'sans' if c.op == 'is_null' else 'avec'} {c.label}"
+    if c.kind == "date":
+        return f"avec {c.label} {span_words(c.dates, 'fr')}" if c.dates is not None else ""
+    if c.kind in ("days_total", "days"):
+        about = "environ " if c.kind == "days_total" and c.op == "eq" else ""
+        return f"où {c.label} est {about}{_compared(c.op, [fmt(v, 'number') for v in c.values], 'fr')} jours"
+    if c.kind == "total":
+        amounts = [f"${float(v):,.0f}" if c.format == "currency" and _number(v) is not None
+                   and float(v).is_integer() else fmt(v, c.format or "number") for v in c.values]
+        return f"avec {c.label} {_compared(c.op, amounts, 'fr')}"
+    if c.kind == "number":
+        return f"où {c.label} est {_compared(c.op, [str(v) for v in c.values], 'fr')}"
+    if c.kind == "flag":
+        words = [f'"{v}"' if quoted else str(v)[:1].lower() + str(v)[1:] if not str(v).split()[0].isupper() else str(v)
+                 for v in c.values if str(v)]
+        return f"{'hors' if c.op in ('ne', 'not_in') else 'pour'} {_listed(words, 'ou')}" if words else ""
+    values = [f'"{v}"' if quoted and isinstance(v, str) else v for v in c.values]
+    if c.op in ("eq", "in"):
+        return f"pour {c.label} {_listed(values, 'ou')}"
+    if c.op in ("ne", "not_in"):
+        return f"hors {c.label} {_listed(values, 'et')}"
+    if c.op in ("contains", "starts_with"):
+        verb = "contient" if c.op == "contains" else "commence par"
+        return f"où {c.label} {verb} \u201c{c.values[0] if c.values else ''}\u201d"
+    if c.op == "is_null":
+        return f"où {c.label} est vide"
+    if c.op == "not_null":
+        return f"où {c.label} est renseigné"
+    return f"où {c.label} est {_compared(c.op, [str(v) for v in c.values], 'fr')}"
+
+
 def scope_words(logical: Logical) -> tuple[str, str]:
     """What the answer counts, around its period: ("with a customer order invoice", "in Q2 2026 by order
     date, for customer type Wholesale"). The first goes after the measure, the second is the period and
@@ -242,11 +303,14 @@ def conditions_tail(logical: Logical) -> str:
     return f", {', '.join(words)}" if words else ""
 
 
-def span_words(rng: Range) -> str:
-    """A window in words: "in 2025", "in March 2026", "from 1 Jun 2026 to 7 Jun 2026", "since ..."."""
+def span_words(rng: Range, lang: str = "en") -> str:
+    """A window in words: "in 2025", "in March 2026", "from 1 Jun 2026 to 7 Jun 2026", "since ..." ("en 2025",
+    "en mars 2026", "du 1 juin 2026 au 7 juin 2026", "depuis le ...")."""
     start, end = rng.start, rng.end
     if start is None and end is None:
         return ""
+    if lang == "fr":
+        return _span_fr(start, end)
     if start and end:
         last = end - dt.timedelta(days=1)
         if last == start:
@@ -268,6 +332,35 @@ def span_words(rng: Range) -> str:
     return f"up to {last.day} {last:%b %Y}"
 
 
+def _mois(day: dt.date) -> str:
+    return f"{_MOIS_COURTS[day.month - 1]} {day.year}"
+
+
+def _jour(day: dt.date) -> str:
+    return f"{'1er' if day.day == 1 else day.day} {_MOIS_COURTS[day.month - 1]} {day.year}"
+
+
+def _span_fr(start: dt.date | None, end: dt.date | None) -> str:
+    if start and end:
+        last = end - dt.timedelta(days=1)
+        if last == start:
+            return f"le {_jour(start)}"
+        if start.month == 1 and start.day == 1 and end.month == 1 and end.day == 1 and end.year == start.year + 1:
+            return f"en {start.year}"
+        if start.day == 1 and end.day == 1 and last.year == start.year and last.month == start.month:
+            return f"en {_MOIS[start.month - 1]} {start.year}"
+        if start.day == 1 and end.day == 1 and start.month in (1, 4, 7, 10) and last.year == start.year \
+                and last.month == start.month + 2:
+            return f"au T{(start.month - 1) // 3 + 1} {start.year}"
+        if start.day == 1 and end.day == 1:
+            return f"de {_mois(start)} à {_mois(last)}"
+        return f"du {_jour(start)} au {_jour(last)}"
+    if start:
+        return f"depuis le {_jour(start)}"
+    assert end is not None
+    return f"jusqu'au {_jour(end - dt.timedelta(days=1))}"
+
+
 def versus(rng: Range) -> str:
     """How a comparison names what it is compared with: "on April 2026", "against 17 Aug 2026"."""
     words = span_words(rng)
@@ -276,8 +369,22 @@ def versus(rng: Range) -> str:
     return "against " + words.removeprefix("on ").removeprefix("from ")
 
 
-def _period_badge(rng: Range) -> str:
+def _period_badge(rng: Range, lang: str = "en") -> str:
     """A window as a short label: "April 2026", "Jan–Jun 2026", "Mar 2025 – Feb 2026", "since 1 Jan 2025"."""
+    if lang == "fr":
+        words = span_words(rng, "fr")
+        for lead in ("en ", "le ", "au "):
+            if words.startswith(lead):
+                return words[len(lead):]
+        if words.startswith("de ") and " à " in words:
+            start, _, end = words[3:].partition(" à ")
+            first, last = start.rsplit(" ", 1), end.rsplit(" ", 1)
+            if len(first) == len(last) == 2 and first[1] == last[1]:
+                return f"{first[0]}–{last[0]} {first[1]}"         # "janv.–juin 2026"
+            return f"{start} – {end}"
+        if words.startswith("du ") and " au " in words:
+            return words[3:].replace(" au ", " – ", 1)
+        return words
     words = span_words(rng)
     for lead in ("in ", "on "):
         if words.startswith(lead):
@@ -295,15 +402,16 @@ def answer_badges(logical: Logical) -> list[dict[str, str]]:
     """What the answer counted, as short labels above its sentence: the period (and what it is compared
     with) and the date it was counted by. The sentence and the notes say the same at length."""
     badges: list[dict[str, str]] = []
-    period = _period_badge(logical.window)
+    period, period_fr = _period_badge(logical.window), _period_badge(logical.window, "fr")
     if period and logical.compare is not None:
-        prior = _period_badge(logical.compare)
+        prior, prior_fr = _period_badge(logical.compare), _period_badge(logical.compare, "fr")
         period = f"{period} vs {prior}" if prior else period
+        period_fr = f"{period_fr} vs {prior_fr}" if prior_fr else period_fr
     if period:
-        badges.append({"kind": "period", "text": period})
+        badges.append({"kind": "period", "text": period, "text_fr": period_fr})
     roles = list(dict.fromkeys(p.date.role.name.lower() for p in logical.parts if p.date is not None))
     if roles:
-        badges.append({"kind": "date", "text": "by " + " and ".join(roles)})
+        badges.append({"kind": "date", "text": "by " + " and ".join(roles), "text_fr": "selon " + " et ".join(roles)})
     return badges
 
 
@@ -1150,17 +1258,27 @@ MOST_LINES = 6      # members a chart over time draws one line each; past it, th
 TOP_LINES = 5
 
 
-def chart_title(logical: Logical, measure: str, by: list[str], unit: str = "") -> str:
+# A split by a period, in French; any other split is the data's own name and stays as it is.
+_BY_FR = {"month": "mois", "quarter": "trimestre", "year": "année", "week": "semaine", "day": "jour",
+          "half": "semestre", "fiscal month": "mois fiscal", "fiscal quarter": "trimestre fiscal",
+          "fiscal year": "exercice", "fiscal week": "semaine fiscale", "fiscal half": "semestre fiscal",
+          "period": "période"}
+
+
+def chart_title(logical: Logical, measure: str, by: list[str], unit: str = "", lang: str = "en") -> str:
     """What a chart shows, and what the dashboard tile pinned from it is called: "Net amount by store",
     "Quantity (EA) by warehouse and month, for item group Bolts". Never its period: a tile's subtitle says
-    that, and it moves on with a window like "last month" while the title stays."""
+    that, and it moves on with a window like "last month" while the title stays. ``lang`` "fr": the same for a
+    French screen ("Net amount par store et mois, pour item group Bolts")."""
     order = {"activity": 0}
     kept = [c for c in sorted(logical.conditions, key=lambda c: order.get(c.kind, 1))
             if c.kind not in ("by", "date")]
-    activity = [w for w in (condition_words(c) for c in kept if c.kind == "activity") if w]
-    rest = [w for w in (condition_words(c) for c in kept if c.kind != "activity") if w]
+    activity = [w for w in (condition_words(c, lang=lang) for c in kept if c.kind == "activity") if w]
+    rest = [w for w in (condition_words(c, lang=lang) for c in kept if c.kind != "activity") if w]
     title = " ".join([measure + (f" ({unit})" if unit else ""), *activity])
-    if by:
+    if by and lang == "fr":
+        title += " par " + _listed([_BY_FR.get(b, b.replace("pair of ", "paires de ", 1)) for b in by], "et")
+    elif by:
         title += " by " + _listed(by, "and")
     return f"{title}, {', '.join(rest)}" if rest else title
 
@@ -1457,7 +1575,10 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     bys = [_by_words(c, labels) for c in [*members, *periods]]
     if together:
         bys = [f"pair of {names.plural(_thing(labels[x.name]))}"]
-    return {"title": chart_title(logical, measure, bys, unit),
+    measure_fr = labels[m.name] if len(ys) == 1 or compare else _listed(
+        [labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "et")
+    return {"title": chart_title(logical, measure, bys, unit), "title_fr": chart_title(logical, measure_fr, bys, unit,
+                                                                                      lang="fr"),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,
             "x_style": "" if ranked else (display.get(x.name) or {}).get("style", ""),
             "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
@@ -1530,8 +1651,9 @@ def _cross(logical: Logical, first: OutColumn, second: OutColumn, m: OutColumn, 
         roles[c] = {"column": c, "label": c, "role": "measure", "format": formats[m.name]}
     kind = "heatmap" if grid else ("stacked" if adds else "bar")
     shapes = ["heatmap"] if grid else (["stacked", "bar", "heatmap"] if adds else ["bar", "heatmap"])
-    return {"title": chart_title(logical, labels[m.name], [_by_words(first, labels), _by_words(second, labels)],
-                                 unit),
+    pair = [_by_words(first, labels), _by_words(second, labels)]
+    return {"title": chart_title(logical, labels[m.name], pair, unit),
+            "title_fr": chart_title(logical, labels[m.name], pair, unit, lang="fr"),
             "chart_type": kind, "x_key": across.name, "y_keys": series, "rows": rows, "other": None,
             "x_style": "", "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
             "renderable_types": shapes, "allowed_types": shapes, "recommended_type": kind,
@@ -1576,8 +1698,9 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
     roles: dict[str, dict] = {period.name: {"column": period.name, "label": labels[period.name], "role": "temporal"}}
     for s in series:
         roles[s] = {"column": s, "label": s, "role": "measure", "format": formats[m.name]}
-    return {"title": chart_title(logical, labels[m.name], [_by_words(member, labels), _by_words(period, labels)],
-                                 unit),
+    pair = [_by_words(member, labels), _by_words(period, labels)]
+    return {"title": chart_title(logical, labels[m.name], pair, unit),
+            "title_fr": chart_title(logical, labels[m.name], pair, unit, lang="fr"),
             "chart_type": "line", "x_key": period.name, "y_keys": series, "rows": rows, "other": other,
             "x_style": (display.get(period.name) or {}).get("style", ""), "column_roles": roles,
             "column_formats": {s: formats[m.name] for s in series}, "renderable_types": ["line", "bar", "area"],

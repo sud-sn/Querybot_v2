@@ -8,6 +8,8 @@ as it is, so the answer changes exactly as the chip says and nothing else is rea
 
 from __future__ import annotations
 
+import re
+
 from core2.bootstrap.names import plural
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan
@@ -180,3 +182,59 @@ def _absent(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:
             chips.append((f"Only those with {activity} before", plan.model_copy(update={
                 "absent": a.model_copy(update={"active_before": True})})))
     return chips
+
+
+# ── the same chips in French ───────────────────────────────────────────────
+# A chip's words come from a few fixed forms; a French reader sees and sends each in French, and the click finds the
+# same plan by either wording. The data's own names (a member, a figure) stay as they are.
+
+_UNITS_FR = {"day": ("jours", "derniers"), "week": ("semaines", "dernières"), "month": ("mois", "derniers"),
+             "quarter": ("trimestres", "derniers"), "year": ("ans", "derniers")}
+_FIXED_FR = {
+    "Median instead": "Médiane à la place", "Average instead": "Moyenne à la place",
+    "Highest instead": "Le plus haut à la place", "Lowest instead": "Le plus bas à la place",
+    "Year to date instead": "Depuis le début de l'année à la place",
+    "Running total since the data begins": "Cumul depuis le début des données",
+    "Running total instead": "Cumul à la place", "Ranges picked from the data": "Tranches tirées des données",
+    "Including the rows left out by default": "En incluant les lignes écartées par défaut",
+}
+
+
+def _moving(m: "re.Match[str]") -> str:
+    return f"Moyenne mobile sur {m[1]} {_UNITS_FR.get(m[2], (m[2] + 's', ''))[0]}"
+
+
+def _total_last(m: "re.Match[str]") -> str:
+    words, last = _UNITS_FR.get(m[2], (m[2] + "s", "derniers"))
+    return f"Total des {m[1]} {last} {words}"
+
+
+def _including(m: "re.Match[str]") -> str:
+    named = m[1].rsplit(" and ", 1)
+    return "En incluant " + (" et ".join(named) if len(named) == 2 else m[1])
+
+
+_FORMS_FR = [
+    (re.compile(r"^(\d+)(?:st|nd|rd|th) percentile instead$"), lambda m: f"{m[1]}e centile à la place"),
+    (re.compile(r"^(\d+) or more (.*?) ?instead$"), lambda m: f"{m[1]} {m[2]} ou plus à la place".replace("  ", " ")),
+    (re.compile(r"^Only (.+) with rows$"), lambda m: f"Seulement les {m[1]} qui ont des lignes"),
+    (re.compile(r"^Counting every (.+) listed$"), lambda m: f"En comptant chaque {m[1]} de la liste"),
+    (re.compile(r"^(\d+)-(\w+) moving average$"), _moving),
+    (re.compile(r"^Total of the last (\d+) (\w+?)s$"), _total_last),
+    (re.compile(r"^Top (\d+) in each (.+)$"), lambda m: f"Top {m[1]} dans chaque {m[2]}"),
+    (re.compile(r"^No (.+) in the last (\d+) days$"), lambda m: f"Sans {m[1]} depuis {m[2]} jours"),
+    (re.compile(r"^Every (.+) listed$"), lambda m: f"Chaque {m[1]} de la liste"),
+    (re.compile(r"^Only those with (.+) before$"), lambda m: f"Seulement ceux qui avaient {m[1]} avant"),
+    (re.compile(r"^Including (.+)$"), _including),
+]
+
+
+def french(words: str) -> str:
+    """A chip's words in French: "Median instead" -> "Médiane à la place"; words of no known form stay as they are."""
+    if words in _FIXED_FR:
+        return _FIXED_FR[words]
+    for form, say in _FORMS_FR:
+        m = form.match(words)
+        if m:
+            return say(m)
+    return words

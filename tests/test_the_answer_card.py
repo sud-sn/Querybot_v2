@@ -44,6 +44,8 @@ FUNCTIONS = [
     "function _answerChartTitle(chart)",
     "function _answerChartHeight(chart)",
     "function _answerVisualHtml(msg, ids)",
+    "function _oneOffs(msg)",
+    "function _oneOffToggleHtml(msg)",
     "function _answerSummaryHtml(text)",
     "function _noteFromReading(reading)",
     "function _analystNoteInner(note)",
@@ -62,6 +64,7 @@ FUNCTIONS = [
     "function _isANumericColumn(rows, header)",
     "function _displayFormatSpec(data, column)",
     "function _followUpChip(entry)",
+    "function _inLang(entry, key)",
     "function renderChartWarnings(payload)",
     "function _qbMoney(body, symbol)",
 ]

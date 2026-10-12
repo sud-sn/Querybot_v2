@@ -1849,7 +1849,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         result["note_size"] = max((float(f.get("size") or 0) for f in reading.get("facts") or []), default=0.0)
     # The tile says what period it counts ("April 2026 vs March 2026"), as its answer did.
     badges = (payload.get("answer") or {}).get("badges") or []
-    result["subtitle"] = next((str(b.get("text") or "") for b in badges if b.get("kind") == "period"), "")
+    french = str(user.get("lang") or "en") == "fr"
+    result["subtitle"] = next((str((french and b.get("text_fr")) or b.get("text") or "") for b in badges
+                               if b.get("kind") == "period"), "")
     kind = str(chart.get("chart_type") or "")
     shape = payload.get("chart")
     # A tile pinned while its title was only the measure ("Net amount") reads as its answer now does ("Net amount

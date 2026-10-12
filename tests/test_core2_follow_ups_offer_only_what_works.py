@@ -138,4 +138,4 @@ def test_the_chips_are_what_the_service_sends(retail):
     logical = resolve(plan, model, Context(today=TODAY))
     payload = _ask(con, model, plan.model_dump(mode="json", exclude_defaults=True))
     assert payload["follow_up_suggestions"] == follow_ups(plan, logical, payload, model, None)
-    assert all(set(c) == {"label", "question"} for c in payload["follow_up_suggestions"])
+    assert all(set(c) == {"label", "question", "label_fr", "question_fr"} for c in payload["follow_up_suggestions"])

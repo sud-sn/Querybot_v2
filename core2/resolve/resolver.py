@@ -686,7 +686,7 @@ def _rate(model: SemanticModel, plan: Plan, rate: Rate, chosen: list, notes: lis
         assert isinstance(attribute, Attribute)
         _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
         column = model.columns[attribute.column]
-        if column.table != m.table:
+        if column.table != m.table and not _reaches(model, m.table, column.table):
             raise ResolveError("unsupported", f"{rate.name}: the condition is on {m.business_name}'s own rows "
                                f"({model.tables[m.table].business_name}); {attribute.business_name} is on "
                                f"{model.tables[column.table].business_name}")

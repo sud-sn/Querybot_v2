@@ -141,8 +141,11 @@ def test_a_member_is_never_broken_down_by_its_own_grouping(retail):
 def test_a_period_opens_its_breakdown_and_why_the_measure_changed_in_it(retail):
     drill = _drill(retail, MONTHLY)
     assert drill == {"on": "period", "series": "", "items": [
-        {"label": "{period} by store", "question": "Net amount by store in {period}"},
-        {"label": "Why changed in {period}", "question": "Why did net amount change in {period}?"}]}
+        {"label": "{period} by store", "question": "Net amount by store in {period}",
+         "label_fr": "{period} par store", "question_fr": "Net amount par store en {period}"},
+        {"label": "Why changed in {period}", "question": "Why did net amount change in {period}?",
+         "label_fr": "Pourquoi cette variation en {period}",
+         "question_fr": "Pourquoi net amount a-t-il varié en {period} ?"}]}
 
 
 def test_a_line_per_member_opens_for_the_member_of_the_line_clicked(retail):
@@ -169,7 +172,7 @@ def _choices(payload: dict, params: dict) -> list[dict]:
     from tests.chat_js import run
 
     return run(f"JSON.stringify(_drillChoices({json.dumps(payload)}, {json.dumps(params)}));",
-               functions=["function _drillChoices(payload, params)"],
+               functions=["function _drillChoices(payload, params)", "function _inLang(entry, key)"],
                preamble="var window = this; window.QBCharts = {periodLabel: function (raw) {"
                         " return raw === '2026-03-01' ? 'Mar 2026' : raw; }};")
 

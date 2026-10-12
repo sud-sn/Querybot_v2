@@ -319,6 +319,9 @@ def _per(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     of = per.of if per is not None else band.per if band is not None else None
     _one_figure(plan)
     slug, column, member = _member_of(model, of) if of else (None, None, "row")
+    role = str(plan.via.get(of) or "").removeprefix("role:").strip() if of else ""
+    if role and find_slug(model, role) is None:
+        member = role.lower()             # each manager, not each employee: the link the grouping follows
     summary = per.summary if per is not None else "avg"
     if per is not None and per.everyone and summary in ("median", "percentile"):
         raise ResolveError("unsupported", "a median or percentile is worked out over the members with rows: ask "

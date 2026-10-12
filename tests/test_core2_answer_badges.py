@@ -41,31 +41,33 @@ def _badges(retail, plan: dict) -> list[dict]:
 
 def test_one_number_names_its_month_and_its_date(retail):
     plan = {"intent": "value", "measures": ["net_amount"], "time": {"window": APRIL}}
-    assert _badges(retail, plan) == [{"kind": "period", "text": "April 2026"},
-                                     {"kind": "date", "text": "by order date"}]
+    assert _badges(retail, plan) == [{"kind": "period", "text": "April 2026", "text_fr": "avril 2026"},
+                                     {"kind": "date", "text": "by order date", "text_fr": "selon order date"}]
 
 
 def test_a_span_within_one_year_is_written_once(retail):
     plan = {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["store"], "time": {"window": H1}}
-    assert _badges(retail, plan)[0] == {"kind": "period", "text": "Jan–Jun 2026"}
+    assert _badges(retail, plan)[0] == {"kind": "period", "text": "Jan–Jun 2026", "text_fr": "janv.–juin 2026"}
 
 
 def test_a_span_across_years_names_both(retail):
     plan = {"intent": "trend", "measures": ["net_amount"],
             "time": {"grain": "month", "window": {"kind": "between", "start": "2025-03-01", "end": "2026-02-28"}}}
-    assert _badges(retail, plan)[0] == {"kind": "period", "text": "Mar 2025 – Feb 2026"}
+    assert _badges(retail, plan)[0] == {"kind": "period", "text": "Mar 2025 – Feb 2026",
+                                        "text_fr": "mars 2025 – févr. 2026"}
 
 
 def test_a_comparison_names_both_periods(retail):
     plan = {"intent": "compare", "measures": ["net_amount"], "group_by": ["store"],
             "time": {"window": APRIL, "compare": {"kind": "previous_period"}}}
-    assert _badges(retail, plan)[0] == {"kind": "period", "text": "April 2026 vs March 2026"}
+    assert _badges(retail, plan)[0] == {"kind": "period", "text": "April 2026 vs March 2026",
+                                        "text_fr": "avril 2026 vs mars 2026"}
 
 
 def test_the_date_badge_is_the_date_the_rows_were_counted_by(retail):
     plan = {"intent": "count", "measures": ["number_of_customers"],
             "time": {"date": "return_date", "window": APRIL}}
-    assert {"kind": "date", "text": "by return date"} in _badges(retail, plan)
+    assert {"kind": "date", "text": "by return date", "text_fr": "selon return date"} in _badges(retail, plan)
 
 
 def test_an_answer_with_no_period_has_no_badges(retail):

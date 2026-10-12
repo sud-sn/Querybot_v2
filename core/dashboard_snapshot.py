@@ -58,6 +58,7 @@ class Tile:
     height: int = 0
     error: str = ""
     changed: Optional[dict] = None            # "What changed": {"summary", "figures"} (core/what_changed.py)
+    reading: str = ""                         # the analyst's line under the tile (core2/answer/facts.py)
 
 
 @dataclass
@@ -72,6 +73,7 @@ class Snapshot:
     name: str
     drawn: str                                # "Drawn 12 Oct 2026, 08:00 UTC for Riley Reader"
     filters: str = ""                         # "Period: Last quarter · Region: West"
+    reading: list[dict] = field(default_factory=list)      # "What this dashboard shows": {"title", "line"}
     tabs: list[Tab] = field(default_factory=list)
     pdf: Optional[bytes] = None
     problems: list[str] = field(default_factory=list)       # message ids (snapshot.*)
@@ -139,6 +141,7 @@ def _tiles(charts: list[dict]) -> list[Tile]:
     for chart in ordered:
         tile = Tile(id=int(chart.get("id") or 0), title=str(chart.get("title") or ""), kind="empty")
         tile.note = " · ".join(n for n in (str(chart.get("top_note") or ""), str(chart.get("subtitle") or "")) if n)
+        tile.reading = str(chart.get("note_line") or "")
         if chart.get("error"):
             tile.kind, tile.error = "error", str(chart["error"])
         elif chart.get("what_changed"):
@@ -353,6 +356,7 @@ async def take(dashboard: dict, user: dict, *, drawer: Optional[Drawer], tabs: O
         html, context = await _tab_page(int(dashboard["id"]), user, tab, view or {}, lang, drawn)
         snapshot.tabs.append(Tab(name=tab, tiles=_tiles(list(context.get("charts") or []))))
         snapshot.filters = snapshot.filters or _filters_line(context, lang)
+        snapshot.reading = snapshot.reading or [r for r in context.get("dashboard_reading") or [] if r.get("line")]
         pages.append(html)
     if drawer is None or not drawer.ready:
         if drawer is not None and drawer.problem:

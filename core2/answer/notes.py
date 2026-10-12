@@ -9,6 +9,8 @@ never the rows -- and a checker reads every sentence it writes before the reader
   dropped;
 * "because", "due to", "driven by" and the like only where a fact names who moved the figure (a driver);
   anything else is said as what happened, not why;
+* the figures of one fact to a sentence: "August was a one-off at $1.42M and 32% above the year's target" put
+  the year's result against its target on August, and is dropped;
 * nothing but sentences: no headings, lists or markdown.
 
 Where the workspace keeps member names from the AI (a regulated tenant, value indexing off) and the facts name
@@ -42,8 +44,11 @@ the manager. Lead with what matters most.
 Rules:
 - Use only the figures in the facts, written the same way. Never work out a new figure: no sums, differences,
   averages or percentages of your own.
+- One fact per sentence: never put the figures of two facts in the same sentence (a month's one-off is not the
+  year's result against its target).
 - Say why something moved only when a fact in the why section names who moved it. Otherwise say what happened.
-- Keep every name exactly as written in the facts.
+- Keep every name exactly as written in the facts, the figure's own name too: never "revenue" or "sales" for a
+  figure the facts call something else.
 - Plain sentences: no headings, lists, markdown or quotation marks. Do not mention SQL, queries or columns.
 - Write in {language}.
 Answer with one JSON object: {{"stands_out": [...], "why": [...], "watch": [...]}}, each a list of sentences
@@ -93,7 +98,10 @@ def checked(said: Any, reading: dict[str, Any]) -> dict[str, list[str]] | None:
     if not isinstance(said, dict):
         return None
     known = _known(reading)
-    drivers = any(f.get("section") == WHY for f in reading.get("facts") or [])
+    each = [_known({"facts": [f]}) for f in reading.get("facts") or []]
+    drivers = [f for f in reading.get("facts") or [] if f.get("section") == WHY]
+    # A cause stands where a driver fact names who moved the figure, and the sentence names one of them.
+    movers = {str(m).casefold() for f in drivers for m in f.get("members") or [] if str(m).strip()}
     out: dict[str, list[str]] = {}
     for section in SECTIONS:
         kept = []
@@ -104,16 +112,26 @@ def checked(said: Any, reading: dict[str, Any]) -> dict[str, list[str]] | None:
             if not text or text.startswith(("#", "-", "*")) or len(text.split()) > 60:
                 continue
             plain = text.replace(" ", "").replace(" ", " ")
-            stray = [v for v, step in figures(plain) if not _held(v, step, known)]
+            found = figures(plain)
+            stray = [v for v, step in found if not _held(v, step, known)]
             if stray:
                 log.info("A note sentence was dropped: it states %s, which the facts do not hold", stray[:3])
                 continue
-            if CAUSE.search(text) and not drivers:
+            if not _one_fact(found, each):
+                log.info("A note sentence was dropped: it puts the figures of several facts together")
+                continue
+            if CAUSE.search(text) and (not drivers or movers and not any(m in text.casefold() for m in movers)):
                 log.info("A note sentence was dropped: it gives a cause no fact names")
                 continue
             kept.append(text)
         out[section] = kept[:LIMITS[section]]
     return out if any(out.values()) else None
+
+
+def _one_fact(found: list[tuple[float, float]], each: list[list[float]]) -> bool:
+    """Are a sentence's figures, years aside, all figures of one fact?"""
+    own = [(v, step) for v, step in found if not (1900 <= v <= 2199 and step == 0.5)]
+    return not own or any(all(_held(v, step, known) for v, step in own) for known in each)
 
 
 def _parse(reply: str) -> Any:

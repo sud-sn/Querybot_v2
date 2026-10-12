@@ -39,25 +39,21 @@ def _word(model: SemanticModel, slug: str) -> str:
 
 def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: SemanticModel,
                allowed: set[str] | None) -> list[dict[str, str]]:
+    """The next questions, each as its words and the question a click sends, in English and in French (a French
+    reader's click sends the French question; the data's own names stay as they are)."""
     measures = [m for m in logical.measures]
     if not measures or logical.intent == "list":
         return []
     # The conditions the answer applied go into every next question, so a click never widens it; members in
     # quotes, since a name narrows an answer only when the question quotes it
     # ("... by month in 2025, where days from order to invoice is above 10 days").
-    before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
-    by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
-    rest = ", ".join(w for w in (condition_words(c, quoted=True) for c in logical.conditions
-                                 if c.kind not in ("activity", "by")) if w)
-    tail = f", {rest}" if rest else ""
-    m = measures[0].label + (f" {before}" if before else "")
-    lower = measures[0].label.lower() + (f" {before}" if before else "")
-    span = " ".join(w for w in (span_words(logical.window), by) if w)
+    words = _Words(logical, "en")
+    fr = _Words(logical, "fr")
     bounded = logical.window.start is not None and logical.window.end is not None
     rows = (payload.get("data") or {}).get("rows") or []
     grouped = [g for g in logical.groups if g.kind == "attribute" and g.name != logical.unit_group]
     period = next((g for g in logical.groups if g.kind == "period"), None)
-    out: list[str] = []
+    out: list[tuple[str, str, str]] = []                          # (kind, English, French)
 
     if period is not None and not grouped:
         complete = [r for r in rows if r.get(period.name) and str(r.get(period.name)) not in
@@ -67,42 +63,83 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
             try:
                 import datetime as dt
 
-                label = period_label(dt.date.fromisoformat(str(last)[:10]), period.grain,
-                                     fiscal_start=logical.fiscal_start)
-                out.append(f"Why did {lower} change in {label}{tail}?")
+                day = dt.date.fromisoformat(str(last)[:10])
+                label = period_label(day, period.grain, fiscal_start=logical.fiscal_start)
+                label_fr = _period_fr(day, period.grain, logical.fiscal_start)
+                out.append(("why", f"Why did {words.lower} change in {label}{words.tail}?",
+                            f"Pourquoi {fr.lower} a-t-il varié en {label_fr}{fr.tail} ?"))
             except ValueError:
                 pass
         if period.grain in _FORECAST_GRAINS:
-            out.append(f"Forecast {lower} for the next 3 {_FORECAST_GRAINS[period.grain]}{tail}")
+            out.append(("forecast", f"Forecast {words.lower} for the next 3 {_FORECAST_GRAINS[period.grain]}{words.tail}",
+                        f"Prévision de {fr.lower} pour {_NEXT_FR[period.grain]}{fr.tail}"))
     elif grouped and period is None:
         top = next((str(r.get(grouped[0].name)) for r in rows
                     if r.get(grouped[0].name) not in (None, "", "Unknown")), "")
         # A class, a stage or a pair an analysis made is no member a question can name.
         if top and (not plan.shaped() or (grouped[0].attribute and measures[0].measure is not None)):
-            out.append(f'Monthly {lower} for "{top}"{tail}')
+            out.append(("member", f'Monthly {words.lower} for "{top}"{words.tail}',
+                        f'{fr.m} par mois pour "{top}"{fr.tail}'))
         if bounded and logical.compare is None:
-            out.append(f"Why did {lower} change {span}{tail}?")
+            out.append(("why", f"Why did {words.lower} change {words.span}{words.tail}?",
+                        f"Pourquoi {fr.lower} a-t-il varié {fr.span}{fr.tail} ?"))
         if not logical.share and logical.compare is None and logical.measures and adds_up(logical.measures[0]):
             word = (_word(model, grouped[0].attribute) if grouped[0].attribute else "") or \
                 Grouping("", grouped[0].label, []).word
-            out.append(f"Share of {lower} by {word} {span}".strip() + tail)
+            out.append(("share", f"Share of {words.lower} by {word} {words.span}".strip() + words.tail,
+                        f"Part de {fr.lower} par {word} {fr.span}".strip() + fr.tail))
     elif not grouped and period is None:
         if bounded:
-            out.append(f"Why did {lower} change {span}{tail}?")
-        out.append((f"{m} by month {span}".strip() if bounded else f"{m} by month for the last 12 months") + tail)
+            out.append(("why", f"Why did {words.lower} change {words.span}{words.tail}?",
+                        f"Pourquoi {fr.lower} a-t-il varié {fr.span}{fr.tail} ?"))
+        out.append(("trend", (f"{words.m} by month {words.span}".strip() if bounded
+                              else f"{words.m} by month for the last 12 months") + words.tail,
+                    (f"{fr.m} par mois {fr.span}".strip() if bounded
+                     else f"{fr.m} par mois sur les 12 derniers mois") + fr.tail))
 
     if len(out) < 3 and not grouped and logical.parts:
         skip = {f.field for f in plan.filters}
         slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip)
         word = _word(model, slugs[0]) if slugs else ""
         if word:
-            out.append(f"{m} by {word} {span}".strip() + tail)
+            out.append(("by", f"{words.m} by {word} {words.span}".strip() + words.tail,
+                        f"{fr.m} par {word} {fr.span}".strip() + fr.tail))
     if plan.shaped():
         # A figure per member, a running total or a rank is not yet explained, forecast or shared out.
-        out = [s for s in out if not s.startswith(("Why did ", "Forecast ", "Share of "))]
+        out = [s for s in out if s[0] not in ("why", "forecast", "share")]
     seen: set[str] = set()
-    unique = [s for s in out if not (s.lower() in seen or seen.add(s.lower()))]   # type: ignore[func-returns-value]
-    return [{"label": s, "question": s} for s in unique[:3]]
+    unique = [s for s in out if not (s[1].lower() in seen or seen.add(s[1].lower()))]   # type: ignore[func-returns-value]
+    return [{"label": en, "question": en, "label_fr": french, "question_fr": french} for _, en, french in unique[:3]]
+
+
+_NEXT_FR = {"month": "les 3 prochains mois", "quarter": "les 3 prochains trimestres",
+            "week": "les 3 prochaines semaines"}
+
+
+def _period_fr(day: Any, grain: str, fiscal_start: int | None) -> str:
+    """A period as a French question says it: "déc. 2025", "T1 2026", "semaine du 2 juin 2026"."""
+    from core2.answer.facts import period
+
+    text = period(day, grain, lang="fr", fiscal_start=fiscal_start)
+    if grain in ("quarter", "fiscal_quarter"):
+        text = text.replace("Q", "T")
+    return text[:1].lower() + text[1:] if text.startswith("Semaine") else text
+
+
+class _Words:
+    """The pieces of a next question in one language: the figure (with what it counted), its period, and the
+    conditions the answer applied."""
+
+    def __init__(self, logical: Logical, lang: str):
+        before = " ".join(condition_words(c, lang=lang) for c in logical.conditions if c.kind == "activity")
+        by = " ".join(condition_words(c, lang=lang) for c in logical.conditions if c.kind == "by")
+        rest = ", ".join(w for w in (condition_words(c, quoted=True, lang=lang) for c in logical.conditions
+                                     if c.kind not in ("activity", "by")) if w)
+        self.tail = f", {rest}" if rest else ""
+        label = logical.measures[0].label
+        self.m = label + (f" {before}" if before else "")
+        self.lower = label.lower() + (f" {before}" if before else "")
+        self.span = " ".join(w for w in (span_words(logical.window, lang), by) if w)
 
 
 def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: SemanticModel,
@@ -120,14 +157,7 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
     chart = payload.get("chart") or {}
     if not chart or not logical.measures or logical.intent == "list":
         return None
-    before = " ".join(condition_words(c) for c in logical.conditions if c.kind == "activity")
-    by = " ".join(condition_words(c) for c in logical.conditions if c.kind == "by")
-    rest = ", ".join(w for w in (condition_words(c, quoted=True) for c in logical.conditions
-                                 if c.kind not in ("activity", "by")) if w)
-    tail = f", {rest}" if rest else ""
-    m = logical.measures[0].label + (f" {before}" if before else "")
-    lower = logical.measures[0].label.lower() + (f" {before}" if before else "")
-    span = " ".join(w for w in (span_words(logical.window), by) if w)
+    w, fr = _Words(logical, "en"), _Words(logical, "fr")
     bounded = logical.window.start is not None and logical.window.end is not None
     period = next((g for g in logical.groups if g.kind == "period"), None)
     grouped = [g for g in logical.groups if g.kind == "attribute" and g.name != logical.unit_group]
@@ -137,26 +167,34 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
     slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip) if logical.parts else []
     word = _word(model, slugs[0]) if slugs else ""
     items: list[dict[str, str]] = []
+
+    def item(label: str, question: str, label_fr: str, question_fr: str) -> None:
+        items.append({"label": label, "question": question, "label_fr": label_fr, "question_fr": question_fr})
+
     if period is not None:
         member = "{member} " if grouped else ""
         for_member = ' for "{member}"' if grouped else ""
+        pour = ' pour "{member}"' if grouped else ""
         if word:
-            items.append({"label": f"{{member}} in {{period}} by {word}" if grouped else f"{{period}} by {word}",
-                          "question": f"{m}{for_member} by {word} in {{period}}{tail}"})
-        items.append({"label": f"Why {member}changed in {{period}}",
-                      "question": f"Why did {lower} change{for_member} in {{period}}{tail}?"})
+            item(f"{{member}} in {{period}} by {word}" if grouped else f"{{period}} by {word}",
+                 f"{w.m}{for_member} by {word} in {{period}}{w.tail}",
+                 f"{{member}} en {{period}} par {word}" if grouped else f"{{period}} par {word}",
+                 f"{fr.m}{pour} par {word} en {{period}}{fr.tail}")
+        item(f"Why {member}changed in {{period}}", f"Why did {w.lower} change{for_member} in {{period}}{w.tail}?",
+             "Pourquoi {member} a varié en {period}" if grouped else "Pourquoi cette variation en {period}",
+             f"Pourquoi {fr.lower} a-t-il varié{pour} en {{period}}{fr.tail} ?")
         return {"on": "period", "series": "member" if grouped else "", "items": items}
     if not grouped or (plan.shaped() and not grouped[0].attribute) or chart.get("x_pair"):
         return None
     long_window = bounded and (logical.window.end - logical.window.start).days > 80   # type: ignore[operator]
     if measure_dates(plan, model)[0] is not None:
-        when = span if long_window else "for the last 12 months"
-        items.append({"label": "{member} by month",
-                      "question": f'{m} by month for "{{member}}" {when}'.strip() + tail})
+        when, quand = (w.span, fr.span) if long_window else ("for the last 12 months", "sur les 12 derniers mois")
+        item("{member} by month", f'{w.m} by month for "{{member}}" {when}'.strip() + w.tail,
+             "{member} par mois", f'{fr.m} par mois pour "{{member}}" {quand}'.strip() + fr.tail)
     if word:
-        items.append({"label": f"{{member}} by {word}",
-                      "question": f'{m} for "{{member}}" by {word} {span}'.strip() + tail})
+        item(f"{{member}} by {word}", f'{w.m} for "{{member}}" by {word} {w.span}'.strip() + w.tail,
+             f"{{member}} par {word}", f'{fr.m} pour "{{member}}" par {word} {fr.span}'.strip() + fr.tail)
     if bounded and logical.compare is None:
-        items.append({"label": "Why {member} changed",
-                      "question": f'Why did {lower} change for "{{member}}" {span}{tail}?'})
+        item("Why {member} changed", f'Why did {w.lower} change for "{{member}}" {w.span}{w.tail}?',
+             "Pourquoi {member} a varié", f'Pourquoi {fr.lower} a-t-il varié pour "{{member}}" {fr.span}{fr.tail} ?')
     return {"on": "member", "series": "", "items": items} if items else None

@@ -73,10 +73,16 @@ def test_rows_left_out_by_default_are_brought_back_for_their_rate(retail):
 
 
 def test_the_condition_is_on_the_figures_own_rows(retail):
+    """On the figure's rows or on what each of them points to (an order's region, a booking's status kept in a
+    lookup table); never on a table the rows do not reach one each (a store has many customers)."""
     _, model = retail
-    plan = Plan.model_validate({"kind": "query", "intent": "breakdown", "group_by": ["region"], "time": Y25,
-                                "rates": [{"name": "Rate", "measure": "number_of_orders",
-                                           "where": [{"field": "region", "op": "eq", "values": ["East"]}]}]})
+    reached = Plan.model_validate({"kind": "query", "intent": "breakdown", "group_by": ["region"], "time": Y25,
+                                   "rates": [{"name": "Rate", "measure": "number_of_orders",
+                                              "where": [{"field": "region", "op": "eq", "values": ["East"]}]}]})
+    resolve(reached, model, Context(today=dt.date(2026, 6, 14)))
+    plan = Plan.model_validate({"kind": "query", "intent": "value",
+                                "rates": [{"name": "Rate", "measure": "number_of_stores",
+                                           "where": [{"field": "customer.segment", "op": "eq", "values": ["X"]}]}]})
     with pytest.raises(ResolveError) as raised:
         resolve(plan, model, Context(today=dt.date(2026, 6, 14)))
     assert "own rows" in raised.value.message

@@ -212,7 +212,8 @@ class TestTheBrowserRendersTheLabelAndWiresTheQuestion(unittest.TestCase):
         from js_lift import function as lift
 
         with open(self.PAGE, encoding="utf-8") as fh:
-            js = lift(fh.read(), "function _followUpChip(entry)")
+            page = fh.read()
+            js = lift(page, "function _inLang(entry, key)") + "\n" + lift(page, "function _followUpChip(entry)")
         return json.loads(dukpy.evaljs(
             js + "\nJSON.stringify(_followUpChip(%s))" % json.dumps(entry)))
 

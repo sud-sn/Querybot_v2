@@ -83,7 +83,7 @@ def _trim(text: str) -> str:
 
 
 def amount(value: float, format_: str, *, unit: str | None = None, lang: str = "en") -> str:
-    """A figure rounded as a reader rounds it: $1.11M, $124.5K, $4,518, 38.0%, 4,518 orders' worth."""
+    """A figure rounded as a reader rounds it: $1.42M, $124.5K, $4,518, 38.0%, 4,518 orders' worth."""
     v = float(value)
     sign = "−" if v < 0 else ""
     a = abs(v)
@@ -261,7 +261,8 @@ def _series(logical: Logical, rows: list[dict], m: OutColumn, o: OutMeasure | No
         d, v = whole[i]
         times = v / middle if middle else None
         above = v > middle
-        reading.one_offs.append({"period": d.isoformat(), "label": name(d), "value": v, "typical": middle})
+        reading.one_offs.append({"period": d.isoformat(), "label": name(d), "label_fr": name(d, "fr"), "value": v,
+                                  "typical": middle})
         if times and above and times >= 2:
             how_en = f"{times:.1f} times the typical {w_en} ({say(middle)})"
             how_fr = f"{times:.1f}".replace(".", ",") + f" fois le {w_fr} habituel ({say(middle, 'fr')})"

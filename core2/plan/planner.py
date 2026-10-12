@@ -749,6 +749,131 @@ def counted_each(plan: Plan, model: SemanticModel, question: str) -> Plan:
                                    "per": per, "intent": "count", "sort": [], "limit": None})
 
 
+# "Which techs had fewer than 3 visits?", "who placed more than 5 orders?", "list the stores with no ...": the
+# members themselves are asked for.
+_WHICH_MEMBERS = re.compile(r"^\s*(?:which|who|whom|list|name)\b", re.IGNORECASE)
+
+
+def members_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Which techs had fewer than 3 visits in December 2025?" was answered "1 rows": the members whose own figure
+    meets a condition were counted, where the question asks which they are. Asked with "which" or "who", they are
+    listed by name, each with its figure; "how many" still counts them."""
+    from core2.resolve.resolver import find_slug
+
+    per = plan.per
+    if plan.kind != "query" or per is None or per.summary != "count" or per.op is None or not per.of \
+            or per.everyone or plan.group_by or len(plan.measures) != 1 or not _WHICH_MEMBERS.match(question or "") \
+            or re.search(r"\bhow\s+many\b", question, re.IGNORECASE):
+        return plan
+    found = find_slug(model, per.of)
+    if found is None or found[0] not in ("entity", "attribute"):
+        return plan
+    measure = plan.measures[0]
+    return plan.model_copy(update={
+        "per": None, "group_by": [per.of], "intent": "list", "limit": None,
+        "filters": [*plan.filters, Filter(field=measure, op=per.op, values=list(per.values))],
+        "sort": [Sort(by=measure, desc=per.op in ("gt", "gte"))]})
+
+
+_HOW_MANY = re.compile(r"^\s*(?:how\s+many|combien\s+(?:de|d'))\s*([a-zà-ÿ'-]+(?:\s+[a-zà-ÿ'-]+)?)", re.IGNORECASE)
+
+
+def role_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many managers do we have?" was planned as the employees counted under each manager, and answered with
+    the manager who has most ("Quinn Lopez leads with 19 across 40"). The things counted are the members of the
+    role the grouping follows: those with at least one row, counted."""
+    hit = _HOW_MANY.match(question or "")
+    if plan.kind != "query" or hit is None or len(plan.group_by) != 1 or plan.shaped() or len(plan.measures) != 1 \
+            or plan.derived or plan.time.grain or plan.limit:
+        return plan
+    slug = plan.group_by[0]
+    role = str(plan.via.get(slug) or "").removeprefix("role:").strip()
+    said = [names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", hit.group(1).casefold())]
+    wanted = [names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", role.casefold())]
+    if not role or said[:len(wanted)] != wanted:
+        return plan
+    return plan.model_copy(update={"group_by": [], "intent": "count", "sort": [], "limit": None,
+                                   "per": PerMember(of=slug, summary="count", op="gte", values=[1.0])})
+
+
+# "How many prescriptions did we fill", "were invoiced", "we shipped": the verb of what was done to them.
+_DONE = re.compile(r"\b(?:did|do|does|have|has|had)\s+(?:we|you|they|i)\s+(\w+)|\b(?:were|was|been|got|get|being)\s+"
+                   r"(\w+)|\bwe\s+(\w+ed)\b", re.IGNORECASE)
+
+
+def _done_words(question: str) -> set[str]:
+    """The verbs the question says were done to what it counts, as written ("fill", "filled", "invoiced")."""
+    return {w.lower() for hit in _DONE.finditer(question) for w in hit.groups() if w}
+
+
+def _row_word(model: SemanticModel, table: str) -> str:
+    """One row of ``table`` in a word: "fill" for Fills, "invoice" for Invoice lines' "Invoices"."""
+    words = re.findall(r"[a-z]+", model.tables[table].business_name.casefold()) if table in model.tables else []
+    return names.singular(words[-1]) if words else ""
+
+
+def counted_where_done(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many prescriptions did we fill in 2025?" was counted by the prescriptions' own written date: 4,258
+    written, where the fills of 2025 were of 4,211. The verb is the name of the rows that point at those counted (a
+    fill is of a prescription, an invoice of a customer): those counted are the ones with such a row in the
+    period, by that row's own date ("how many customers did we invoice in Q2")."""
+    if plan.kind != "query" or plan.group_by or plan.shaped() or len(plan.measures) != 1 or plan.derived \
+            or plan.time.window.kind == "all" or plan.time.compare is not None or not question:
+        return plan
+    by_slug = {m.slug: m for m in model.measures.values()}
+    counted = by_slug.get(plan.measures[0])
+    done = _done_words(question)
+    if counted is None or getattr(counted.expr, "agg", None) not in ("count", "count_distinct") or not done:
+        return plan
+    for m in sorted(by_slug.values(), key=lambda m: m.slug):
+        if m.table == counted.table or m.hidden or getattr(m.expr, "agg", None) != "count":
+            continue
+        word = _row_word(model, m.table)
+        if len(word) < 3 or not done & {word, f"{word}ed", f"{word}d", f"{word}ing", f"{word}s"}:
+            continue
+        if not any(j.from_table == m.table and j.to_table == counted.table and P.usable(j)
+                   for j in model.joins.values()):
+            continue
+        entity = next((e for e in model.entities.values() if e.table == counted.table and not e.role), None)
+        role = next((r for r in model.date_roles.values() if r.slug == plan.time.date), None)
+        date = plan.time.date if role is not None and role.table == m.table else None
+        return plan.model_copy(update={
+            "measures": [m.slug], "intent": "count", "sort": [], "limit": None,
+            "per": PerMember(of=entity.slug if entity is not None else counted.slug, summary="count", op="gte",
+                             values=[1.0]),
+            "time": plan.time.model_copy(update={"date": date})})
+    return plan
+
+
+_MARGIN = re.compile(r"\bmargin|\bmarge\b", re.IGNORECASE)
+_COSTLY = re.compile(r"\b(?:cost|costs|cogs|expense|expenses|co[uû]t|co[uû]ts|charges)\b", re.IGNORECASE)
+_SHARE_WORDS = re.compile(r"\s*(?:%|percent(?:age)?|pct|rate|ratio|en\s+%|pourcentage|taux)\s*$", re.IGNORECASE)
+
+
+def margin_over_sales(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Whats the gross margin % on that" was planned as the price charged over the ingredient cost: 239.8%, a
+    markup. A margin is what is left of the sales once the cost is taken off, over the sales: (sales - cost) /
+    sales, worked out as their difference first."""
+    if plan.kind != "query" or not plan.derived:
+        return plan
+    named = {m.slug: m.business_name for m in model.measures.values()}
+    derived: list[Derived] = []
+    for d in plan.derived:
+        sales, cost = d.measures
+        if d.op != "ratio" or not _MARGIN.search(d.name) or sales not in named or cost not in named \
+                or not _COSTLY.search(named[cost]) or _COSTLY.search(named[sales]):
+            derived.append(d)
+            continue
+        left = _SHARE_WORDS.sub("", d.name).strip() or "Margin"
+        if left.casefold() == d.name.casefold() or any(x.name.casefold() == left.casefold() for x in plan.derived):
+            left = f"{left} amount"
+        derived += [Derived(name=left, op="difference", measures=[sales, cost]),
+                    d.model_copy(update={"measures": [left, sales]})]
+    if len(derived) == len(plan.derived):
+        return plan
+    return plan.model_copy(update={"derived": derived})
+
+
 def in_time_order(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """Two periods compared, read from the earlier to the later: "How did those items do in Q1 2026?" after Q2 was
     planned as Q1 against Q2, and answered "rose most" for what fell from Q1 to Q2."""
@@ -1670,11 +1795,13 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (dates_as_window, where_we_have, counted_each, in_time_order, average_asked,
-                     date_in_a_name, list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates):
-            # 2024 as a date filter, "where do we have", "$1,000 each", Q1 vs Q2, "average subtotal", "by ship
-            # method" (no ship date), "bought in Q2" (not by the customer's own first invoice date), "in A and B"
-            # (each), a code's description, "by month" planned twice over
+        for rule in (dates_as_window, where_we_have, counted_each, members_asked, counted_where_done, role_counted,
+                     in_time_order, average_asked, date_in_a_name, list_date_unasked, each_named, named_not_coded,
+                     one_time_axis, restated_rates, margin_over_sales):
+            # 2024 as a date filter, "where do we have", "$1,000 each", "which techs had fewer than 3", "did we fill",
+            # "how many managers", Q1 vs Q2, "average subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's
+            # own first invoice date), "in A and B" (each), a code's description, "by month" planned twice over, a
+            # margin % as sales over cost
             ruled = rule(plan, model, question)
             if ruled is not plan and not check(ruled, model, today, shown)[0]:
                 plan = ruled
@@ -2016,7 +2143,38 @@ def _reshaped(plan: Plan, previous: Plan, question: str, model: SemanticModel | 
         update["time"] = update.get("time", plan.time).model_copy(update={"grain": None})
         if plan.intent == "trend":
             update["intent"] = "value"
+    swapped = _another_member(plan, previous, question)
+    if swapped is not None:
+        update["filters"] = swapped
     return update
+
+
+# "And contractors?", "what about North?", "et les CDD ?": the same answer for another member of a field the answer
+# on screen was narrowed by -- in its place. "Both", "too", "together" ask for the two at once.
+_AND_ANOTHER = re.compile(r"^\s*(?:and|what about|how about|same for|et|et pour|et les|et la|et le|pareil pour)\s+"
+                          r"(?!by\b|per\b|par\b)[^?]*\??\s*$", re.IGNORECASE)
+_BOTH = re.compile(r"\b(?:both|together|combined|as well|too|also|including|plus|in all|in total|added|ensemble|"
+                   r"aussi|les deux|cumul\w*|compris|and|et|or|ou)\b|,|&|\+", re.IGNORECASE)
+
+
+def _another_member(plan: Plan, previous: Plan, question: str) -> list[Filter] | None:
+    """The filters of a follow-up that names another member ("and contractors?" after the part-time employees):
+    each filter whose members are the ones on screen and more keeps only the new ones; None when there is none.
+    The AI had counted part-time and contractors together (101), where the reader asked for contractors (42)."""
+    if not _AND_ANOTHER.match(question or "") or _BOTH.search(re.sub(r"^\s*\w+", "", question)) \
+            or len(re.findall(r"\w+", question)) > 8:
+        return None
+    before = {f.field: {str(v) for v in f.values} for f in previous.filters if f.op in ("eq", "in")}
+    changed = False
+    out: list[Filter] = []
+    for f in plan.filters:
+        now = [v for v in f.values if str(v) not in before.get(f.field, set())]
+        if f.op in ("eq", "in") and f.field in before and before[f.field] < {str(v) for v in f.values} and now:
+            out.append(f.model_copy(update={"op": "eq" if len(now) == 1 else "in", "values": now}))
+            changed = True
+        else:
+            out.append(f)
+    return out if changed else None
 
 
 # "Those items", "these stores", "their", "them", "the same customers": the members of the answer on screen.

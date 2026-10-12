@@ -251,6 +251,11 @@ _NO_FIGURE = re.compile(r"\b(?:break|split|cut|divide|slice|show|give|get|me|us|
                         r"full|whole|same|that|this|those|these)\b", re.IGNORECASE)
 
 
+# "... by total spend?", "by revenue": a figure's word ends the question ("by sales rep" is a field).
+_BY_FIGURE = re.compile(r"\b(?:spend|spending|spent|revenue|revenues|sales|turnover|amount|value|cost|costs|profit|"
+                        r"profits|margin|volume|takings|income|billing|billings)\s*[?.!]*\s*$", re.IGNORECASE)
+
+
 def _names_a_figure(head: str) -> bool:
     """Does the part of a turn before "by" hold a word for what is measured, once the words of a period and of a
     split command are taken out?"""
@@ -308,6 +313,11 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     head_measure = any(k == "measure" for k, _, _ in head_found)      # a measure by name, not a thing counted
     head_members = [m for m in own_members if m.lower() in head.lower()]
     which = _WHICH.match(question)
+    # "Top 10 customers by total spend": what follows "by" is the figure they are ranked by, no field to split by.
+    after_by = re.split(r"\b(?:by|per)\b", question, maxsplit=1, flags=re.IGNORECASE)
+    by_figure = model is not None and len(after_by) == 2 and not _found(model, after_by[1], ("field", "date")) \
+        and not _WHEN.search(after_by[1]) and (bool(_found(model, after_by[1], ("measure",)))
+                                               or bool(_BY_FIGURE.search(after_by[1])))
     if asks and not scoped(question) and len(words) <= 6 and _SUPERLATIVE.search(question):
         # "which store was lowest?": the store is what is ranked, not what is measured
         rest = question[which.end():] if which else question
@@ -341,7 +351,7 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         # A thing counted names a figure only when it is counted ("how many profit centres"), never when it is
         # how the answer is split ("by profit centre").
         measured = any(k == "measure" for k, _, _ in found) or any(k == "count" for k, _, _ in found) \
-            and _COUNTING.search(question) or bool(_FIGURE.search(question))
+            and _COUNTING.search(question) or bool(_FIGURE.search(question)) or by_figure
         # "Which devices are firewalls?" lists: only a split or a ranking word is of the figure on screen.
         if not measured and previous.measures and not _LISTS.match(question) \
                 and (grouped or _RANKING.search(question)):
@@ -349,6 +359,7 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
             # ranking that names no figure of its own is of the figure on screen (planned afresh, it had none).
             return Reading("refine", "it splits or ranks the answer on screen and names no figure of its own")
         if own and (grouped or which) and not period and not own_members and not _CONDITION.search(question) \
+                and not by_figure \
                 and (measures_named(model, head if grouped else question) & set(previous.measures)
                      or which and _says_measure_on_screen(model, question[which.end():], previous)) \
                 and previous.time.window.kind != "all":

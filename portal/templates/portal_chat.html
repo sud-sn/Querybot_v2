@@ -652,6 +652,8 @@ body:has(.chat-page) .main { background: var(--bg); }
 @media (max-width: 600px) { .answer-visual-copy { flex: 1 1 calc(100% - 56px); } }
 .answer-visual-title { font-weight: var(--weight-semibold); color: var(--text-strong); }
 .answer-visual-sub { font-size: var(--font-xs); color: var(--text-muted); }
+.answer-one-off { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: 6px; }
+.answer-one-off-said { font-size: var(--font-xs); color: var(--text-muted); }
 .answer-chart { width: 100%; }
 .answer-table .data-table-wrap { margin: 4px 0; }
 .answer-seg { display: inline-flex; gap: 4px; flex: none; }
@@ -2153,7 +2155,7 @@ function _drillChoices(payload, params) {
     member = raw;
   }
   const fill = text => String(text || '').split('{member}').join(member).split('{period}').join(period);
-  return (drill.items || []).map(item => ({label: fill(item.label), question: fill(item.question)}));
+  return (drill.items || []).map(item => ({label: fill(_inLang(item, 'label')), question: fill(_inLang(item, 'question'))}));
 }
 function _closeDrillMenu() {
   document.querySelectorAll('.drill-menu').forEach(menu => menu.remove());
@@ -3011,7 +3013,7 @@ function renderArtifactPreview(msg){
     : (msg.kpi?.label || msg.answer?.headline || msg.question || t('ui.chat.artifact.result'));
   document.getElementById('artifactTitle').textContent = title;
   const dashboard = msg.dashboard_artifact || null;
-  const badges = (Array.isArray(msg.answer?.badges) ? msg.answer.badges : []).map(b => b && b.text).filter(Boolean);
+  const badges = (Array.isArray(msg.answer?.badges) ? msg.answer.badges : []).map(b => b && _inLang(b, 'text')).filter(Boolean);
   document.getElementById('artifactKicker').textContent = dashboard
     ? `${dashboard.name} · ${dashboard.status}`
     : badges.join(' · ');
@@ -3201,8 +3203,8 @@ function _answerBadgesHtml(msg) {
   const answer = msg.answer || {};
   const badges = (Array.isArray(answer.badges) ? answer.badges : []).filter(b => b && b.text);
   const items = badges.map(b => b.kind === 'period'
-    ? `<span class="badge badge-brand">${qbIcon('calendar', 13)}${escHtml(b.text)}</span>`
-    : `<span class="badge">${escHtml(b.text)}</span>`);
+    ? `<span class="badge badge-brand">${qbIcon('calendar', 13)}${escHtml(_inLang(b, 'text'))}</span>`
+    : `<span class="badge">${escHtml(_inLang(b, 'text'))}</span>`);
   const scope = (msg.result_scope || {}).badge || answer.scope_badge || '';
   if (scope) items.push(`<span class="badge">${escHtml(scope)}</span>`);
   return items.length ? `<div class="answer-badges">${items.join('')}</div>` : '';
@@ -3218,7 +3220,7 @@ function _answerTiles(msg) {
     // A note that only names the period says what the badge above already says.
     const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
     let note = (msg.answer || {}).comparison || kpi.note || '';
-    if (period && note.replace(/^(in|on) /, '') === period.text) note = '';
+    if (period && [period.text, period.text_fr].includes(note.replace(/^(in|on|en|le) /, ''))) note = '';
     // Several numbers in one row ("net amount and cost in April"): a tile each, side by side.
     if (Array.isArray(kpi.group) && kpi.group.length > 1) {
       return kpi.group.map((g, i) => ({label: g.label || '',
@@ -3308,11 +3310,11 @@ function _kpiTrendHtml(trend) {
 }
 
 function _answerChartTitle(chart) {
-  const title = String(chart.title || '');
+  const title = String(_inLang(chart, 'title') || '');
   const x = chart.x_key ? ((chart.column_roles || {})[chart.x_key] || {}) : {};
   // "Store name" is a store: the word that names a member is not what is counted.
   const by = String(x.label || '').trim().replace(/\s+(name|description|desc|code|label|title)$/i, '');
-  if (!by || / by /i.test(title) || x.role === 'temporal') return title;
+  if (!by || / (by|par) /i.test(title) || x.role === 'temporal') return title;
   return `${title} ${t('ui.chat.card.by', {label: by.toLowerCase()})}`;
 }
 
@@ -3352,6 +3354,45 @@ function _toggleAnswerExpanded(div, btn, chartEl, chartId) {
 
 // The chart (or, with no chart, the rows) inside the answer, with a switch to
 // the table, the shapes it can be drawn as, and Expand in place.
+// A series with a one-off (core2/answer/facts.py sets it apart): the chart can be seen without it, with what
+// the period adds up to and its average then. The answer's figures are not changed: the chart and the line only.
+function _oneOffs(msg) {
+  const chart = msg.chart || {};
+  const offs = ((msg.reading || {}).one_offs || []).filter(o => o && o.period);
+  const rows = Array.isArray(chart.rows) ? chart.rows : [];
+  if (!offs.length || !chart.x_key || !(chart.y_keys || []).length || chart.compare || chart.grouped_by) return [];
+  return offs.filter(o => rows.some(r => String(r[chart.x_key] ?? '').slice(0, 10) === String(o.period).slice(0, 10)));
+}
+function _oneOffToggleHtml(msg) {
+  if (!_oneOffs(msg).length) return '';
+  return `<div class="answer-one-off"><button type="button" class="btn btn-xs" data-one-offs="hide" aria-pressed="false">`
+    + `${escHtml(t('ui.chat.card.without_one_offs'))}</button><span class="answer-one-off-said" hidden></span></div>`;
+}
+function _withoutOneOffs(msg, payload, hide) {
+  const offs = _oneOffs(msg).map(o => String(o.period).slice(0, 10));
+  const x = payload.x_key, y = (payload.y_keys || [])[0];
+  const rows = (payload.rows || []).map(r => (hide && offs.includes(String(r[x] ?? '').slice(0, 10)))
+    ? Object.assign({}, r, {[y]: null}) : r);
+  const kept = rows.filter(r => r[y] != null && r[y] !== '').map(r => Number(r[y])).filter(v => Number.isFinite(v));
+  const fmt = (payload.column_formats || {})[y] || 'number';
+  const said = kept.length
+    ? t('ui.chat.card.without_said', {periods: _oneOffs(msg).map(o => _inLang(o, 'label')).join(', '),
+        total: _shortFigure(kept.reduce((a, b) => a + b, 0), fmt),
+        average: _shortFigure(kept.reduce((a, b) => a + b, 0) / kept.length, fmt)})
+    : '';
+  return {payload: Object.assign({}, payload, {rows}), said};
+}
+// A figure said in a sentence, short as the note says it ("$1.99M", "$180.5K"); a small one as it is.
+function _shortFigure(value, fmt) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  if (Math.abs(n) >= 1e6) return _shortAmount(n, fmt);
+  if (Math.abs(n) >= 1e4 && ['currency', 'number', 'integer'].includes(fmt)) {
+    const body = window.qbNum(Math.abs(n) / 1e3, {min: 0, max: 1}) + t('ui.num.compact.thousand');
+    return (n < 0 ? '-' : '') + (fmt === 'currency' ? _qbMoney(body, _QB_CURRENCY_SYMBOL.USD || '$') : body);
+  }
+  return _formatDisplayValue(n, fmt);
+}
 function _answerVisualHtml(msg, ids) {
   const chart = msg.chart;
   const data = msg.data || {};
@@ -3375,11 +3416,12 @@ function _answerVisualHtml(msg, ids) {
   return `<section class="answer-visual">
       <header class="answer-visual-head">
         <div class="answer-visual-copy"><div class="answer-visual-title">${escHtml(title)}</div>`
-        + (period ? `<div class="answer-visual-sub">${escHtml(period.text)}</div>` : '') + `</div>
+        + (period ? `<div class="answer-visual-sub">${escHtml(_inLang(period, 'text'))}</div>` : '') + `</div>
         ${typeSwitch}${switcher}
         <button type="button" class="btn btn-ghost btn-icon btn-sm" data-expand aria-pressed="false" aria-label="${escHtml(t('ui.chat.card.expand'))}" title="${escHtml(t('ui.chat.card.expand'))}">${qbIcon('expand', 16)}</button>
       </header>
       ${chart ? `<div class="answer-chart" id="${ids.chartId}" style="height:${_answerChartHeight(chart)}px"></div>${renderChartWarnings(chart)}` : ''}
+      ${_oneOffToggleHtml(msg)}
       <div class="answer-table"${chart ? ' hidden' : ''}>${chart ? '' : renderDataTable(data, {question: msg.question || '', trace_id: msg.trace_id || ''})}</div>
     </section>`;
 }
@@ -3813,6 +3855,22 @@ function appendAssistantResponse(msg, opts = {}){
   if (chartEl && msg.chart) {
     window._chartPayloads[chartId] = Object.assign({}, msg.chart);
     renderChartInto(chartEl, msg.chart);
+  }
+  const oneOffBtn = div.querySelector('[data-one-offs]');
+  if (oneOffBtn && chartEl && msg.chart) {
+    const whole = Object.assign({}, msg.chart);
+    oneOffBtn.addEventListener('click', () => {
+      const hide = oneOffBtn.getAttribute('aria-pressed') !== 'true';
+      const typed = window._chartPayloads[chartId] || whole;
+      const base = Object.assign({}, typed, {rows: whole.rows});
+      const out = _withoutOneOffs(msg, base, hide);
+      window._chartPayloads[chartId] = out.payload;
+      renderChartInto(chartEl, out.payload);
+      oneOffBtn.setAttribute('aria-pressed', hide ? 'true' : 'false');
+      oneOffBtn.textContent = t(hide ? 'ui.chat.card.with_one_offs' : 'ui.chat.card.without_one_offs');
+      const said = div.querySelector('.answer-one-off-said');
+      if (said) { said.textContent = hide ? out.said : ''; said.hidden = !hide; }
+    });
   }
   const tableEl = div.querySelector('.answer-table');
   const _mountTable = () => tableEl?.querySelectorAll('.data-table-wrap').forEach(w => _mountDataTableControls(w, msg.question || ''));
@@ -4413,10 +4471,16 @@ function sendMessage(tableHint){
 //
 // Plain strings are still accepted -- older payloads and the LLM tier send
 // them, and for those the label and the question are the same text.
+// The words of a chip, a badge or a menu item in the reader's language: the server sends a French twin
+// ("label_fr", "text_fr") where it has one, and a French click sends the French question.
+function _inLang(entry, key) {
+  const fr = typeof window !== 'undefined' && window.QB_LANG === 'fr';
+  return (fr && entry && entry[key + '_fr']) || (entry ? entry[key] : '');
+}
 function _followUpChip(entry) {
   if (entry && typeof entry === 'object') {
-    const question = String(entry.question || entry.label || '');
-    const chip = {question, label: String(entry.label || question)};
+    const question = String(_inLang(entry, 'question') || _inLang(entry, 'label') || '');
+    const chip = {question, label: String(_inLang(entry, 'label') || question)};
     if (entry.kind === 'setting') chip.setting = true;    // a chip that changes one setting of the answer
     return chip;
   }

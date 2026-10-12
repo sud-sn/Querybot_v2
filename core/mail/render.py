@@ -128,19 +128,41 @@ def _heading(tile) -> str:
     return f'<div style="margin:18px 0 8px;font-size:15px;font-weight:700;color:{INK}">{esc(tile.title)}{note}</div>'
 
 
+def _reading_html(tile) -> str:
+    """The analyst's line under a chart or a table: what is typical, the one-off, the leader."""
+    if not getattr(tile, "reading", ""):
+        return ""
+    return f'<p style="margin:8px 0 0;font-size:13px;line-height:1.5;color:{MUTED}">{esc(tile.reading)}</p>'
+
+
+def _summary_html(snapshot, lang: str) -> str:
+    """What the dashboard shows, in the strongest few of its tiles' lines, as on the dashboard itself."""
+    from core.i18n import t
+
+    lines = getattr(snapshot, "reading", None) or []
+    if not lines:
+        return ""
+    items = "".join(f'<div style="margin-top:4px;font-size:14px;line-height:1.5;color:{INK}">'
+                    f'<b>{esc(r.get("title", ""))}:</b> {esc(r.get("line", ""))}</div>' for r in lines)
+    return (f'<div style="margin:0 0 16px;padding:12px 14px;border-left:3px solid {PRIMARY};background:{PAPER};'
+            f'border-radius:4px"><div style="font-size:12px;color:{MUTED};font-weight:600">'
+            f'{esc(t("ui.dash.reading_title", lang=lang))}</div>{items}</div>')
+
+
 def _chart_html(tile, link: str, lang: str) -> str:
     from core.i18n import t
 
     if not tile.image:
         return (_heading(tile) + f'<p style="margin:0 0 8px;font-size:14px;color:{MUTED}">'
                 f'{esc(t("email.schedule.chart_on_dashboard", lang=lang))} '
-                f'<a href="{esc(link)}" style="color:{PRIMARY}">{esc(t("email.open_dashboard", lang=lang))}</a></p>')
+                f'<a href="{esc(link)}" style="color:{PRIMARY}">{esc(t("email.open_dashboard", lang=lang))}</a></p>'
+                + _reading_html(tile))
     width = min(int(tile.width or WIDTH), WIDTH)
     height = int(round((tile.height or 0) * width / max(int(tile.width or width), 1))) if tile.height else 0
     size = f' width="{width}"' + (f' height="{height}"' if height else "")
     return (_heading(tile) +
             f'<img src="cid:{esc(tile_cid(tile))}" alt="{esc(tile.title)}"{size} style="display:block;width:100%;'
-            f'max-width:{width}px;height:auto;border:1px solid {LINE};border-radius:10px">')
+            f'max-width:{width}px;height:auto;border:1px solid {LINE};border-radius:10px">' + _reading_html(tile))
 
 
 def _table_html(tile, lang: str) -> str:
@@ -208,6 +230,7 @@ def dashboard(snapshot, *, link: str, title: str, note: str = "", note_from: str
                      f'border-radius:4px"><div style="font-size:12px;color:{MUTED};margin-bottom:4px">'
                      f'{esc(t("email.schedule.note_from", lang=lang, name=note_from))}</div>'
                      f'<div style="font-size:14px;line-height:1.5;color:{INK};white-space:pre-line">{esc(note)}</div></div>')
+    parts.append(_summary_html(snapshot, lang))
     many = len(snapshot.tabs) > 1
     for tab in snapshot.tabs:
         if many:
@@ -226,7 +249,7 @@ def dashboard(snapshot, *, link: str, title: str, note: str = "", note_from: str
             if tile.kind == "chart":
                 parts.append(_chart_html(tile, link, lang))
             elif tile.kind == "table":
-                parts.append(_table_html(tile, lang))
+                parts.append(_table_html(tile, lang) + _reading_html(tile))
             elif tile.kind == "changed":
                 parts.append(_changed_html(tile, lang))
             elif tile.kind == "error":
@@ -277,6 +300,9 @@ def dashboard_text(snapshot, *, link: str, note: str = "", note_from: str = "", 
     lines += [" · ".join(p for p in (snapshot.drawn, snapshot.filters) if p), ""]
     if note:
         lines += [t("email.schedule.note_from", lang=lang, name=note_from), note, ""]
+    if getattr(snapshot, "reading", None):
+        lines += [t("ui.dash.reading_title", lang=lang)]
+        lines += [f"- {r.get('title', '')}: {r.get('line', '')}" for r in snapshot.reading] + [""]
     for tab in snapshot.tabs:
         if len(snapshot.tabs) > 1:
             lines += [f"## {tab.name}", ""]
@@ -293,6 +319,8 @@ def dashboard_text(snapshot, *, link: str, note: str = "", note_from: str = "", 
                 lines.append("")
             elif tile.kind == "chart":
                 lines.append(f"{tile.title}: {t('email.schedule.chart_in_html', lang=lang)}")
+                if tile.reading:
+                    lines.append(f"  {tile.reading}")
             elif tile.kind == "changed":
                 changed = tile.changed or {}
                 lines += ["", tile.title] + ([changed["summary"]] if changed.get("summary") else [])
