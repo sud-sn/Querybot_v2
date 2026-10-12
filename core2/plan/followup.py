@@ -36,7 +36,7 @@ _CARRY = re.compile(r"\b(?:only|instead|too|alongside|as well|next to it|with it
 _POINTING = re.compile(
     r"\b(?:it|its|that|those|them|these|this one|that one|the same|above|the first one|the second one|the third one|"
     r"the last one|the lowest one|the highest one|the top one|the bottom one|of those|of these|of them|the largest one|"
-    r"the smallest one|the biggest one)\b", re.IGNORECASE)
+    r"the smallest one|the biggest one|the \w+ ones)\b", re.IGNORECASE)
 # A turn that opens by pointing ("the first one, how did it do each month?") follows the answer, however long.
 _POINTS_FIRST = re.compile(
     r"^\s*(?:the\s+(?:first|second|third|fourth|fifth|last|lowest|highest|largest|smallest|biggest|top|bottom)"
@@ -54,6 +54,13 @@ _DISPLAY = re.compile(
     r"stacked(?: bars?)?|(?:as|on) a map|as a share|share of (?:the )?total|"
     r"as a percent(?:age)? of (?:the )?total|chart it|plot it|graph it|just the table)\b", re.IGNORECASE)
 _WHY = re.compile(r"^\s*(?:why|what\s+(?:drove|caused|explains|is behind)|how come|what changed)\b", re.IGNORECASE)
+# "Why did they cancel?", "why do customers leave?": the reasons people had, not why the figure on screen moved.
+# Answered from data that holds reasons, or said to be none -- never the members that moved the figure.
+_WHY_REASON = re.compile(
+    r"^\s*why\s+(?:did|do|does|would|are|were|is|was)\s+(?:they|customers|clients|people|users|members|"
+    r"subscribers|employees|staff|patients|buyers|he|she)\b(?![^?]*\b(?:drop|dropped|fall|fell|rise|rose|grow|grew|"
+    r"increase|increased|decrease|decreased|change|changed|go up|go down|went up|went down|spend|spent|buy|bought|"
+    r"order|ordered|pay|paid|use|used)\b)", re.IGNORECASE)
 # "Which items explain the change?", "what is behind this drop": about the change the answer on screen shows.
 _BEHIND = re.compile(r"\b(?:explain|explains|explained|drove|drive|drives|caused|cause|causes|behind|account\s+for|"
                      r"accounts\s+for)\s+(?:the|this|that)\s+(?:change|increase|decrease|drop|rise|fall|growth|"
@@ -66,7 +73,7 @@ _SUPERLATIVE = re.compile(r"\b(?:most|least|highest|lowest|biggest|smallest|larg
                           r"dearest|furthest|fastest|slowest|first|last)\b", re.IGNORECASE)
 _WHEN = re.compile(
     r"\b(?:today|yesterday|tomorrow|this|last|next|previous|past|latest|current|ytd|mtd|qtd|so far|since|until|"
-    r"between|(?:19|20)\d{2}|q[1-4]|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
+    r"between|(?:19|20)\d{2}|q[1-4]|t[1-4]\s+(?:19|20)\d{2}|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
     r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|week|weekly|month|monthly|quarter|"
     r"quarterly|year|yearly|annual|daily|right now|currently|at the end of)\b", re.IGNORECASE)
 _GROUPED = re.compile(r"\b(?:by|per|each|every|for each|across)\s+\w+", re.IGNORECASE)
@@ -161,7 +168,7 @@ _THAT_PERIOD = re.compile(r"\b(?:that|the\s+same|same)\s+(?:day|week|month|quart
                           r"time|date|season)\b", re.IGNORECASE)
 # A period named outright: a year, a quarter or half, a fiscal year, a month.
 _NAMED_PERIOD = re.compile(
-    r"\b(?:(?:19|20)\d{2}|q[1-4]|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
+    r"\b(?:(?:19|20)\d{2}|q[1-4]|t[1-4]\s+(?:19|20)\d{2}|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
     r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b", re.IGNORECASE)
 # "Monthly", "by week", "over time": the question asks for a series.
 _SERIES = re.compile(r"\b(?:daily|weekly|monthly|quarterly|yearly|annually|over\s+time|trend|trends|trending|"
@@ -225,6 +232,20 @@ def _says_measure_on_screen(model: SemanticModel | None, words: str, previous: P
     return False
 
 
+# Words of a turn's head that say how to split, or when, never what is measured: "Break the first half of 2026
+# down" names no figure, where "Spend" does.
+_NO_FIGURE = re.compile(r"\b(?:break|split|cut|divide|slice|show|give|get|me|us|it|down|out|up|now|please|can|could|"
+                        r"you|the|a|an|of|for|in|on|over|during|and|then|first|second|third|fourth|half|halves|"
+                        r"full|whole|same|that|this|those|these)\b", re.IGNORECASE)
+
+
+def _names_a_figure(head: str) -> bool:
+    """Does the part of a turn before "by" hold a word for what is measured, once the words of a period and of a
+    split command are taken out?"""
+    rest = _NO_FIGURE.sub(" ", _WHEN.sub(" ", _NAMED_PERIOD.sub(" ", head)))
+    return any(len(w) >= 3 for w in re.findall(r"[^\W\d_]+", rest))
+
+
 def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | None = None,
               members: list[str] | int = 0, previous_narrowed: bool | None = None) -> Reading:
     """How this turn relates to the answer on screen (``previous``, the plan behind it), by its words alone.
@@ -243,6 +264,8 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     pointing = _POINTING.search(_RELATIVE.sub(" ", question))
     if _DISPLAY.search(question):
         return Reading("refine", "it says how to show the answer on screen")
+    if _WHY_REASON.match(question):
+        return Reading("open", "it asks the reasons people had, not why the figure moved")
     if _WHY.match(question) and (short or pointing):
         return Reading("refine", "it asks why the answer on screen is what it is")
     if _BEHIND.search(question):
@@ -288,6 +311,13 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         any(k == "measure" for k, _, _ in found) or _FIGURE.search(question))
     if not leading and len(words) >= 4 and period and (head_found or asks and grouped) and not ranks_the_figure:
         return Reading("new", "it names what it measures, how to split it and for when")
+    # "Spend by supplier country for 2025": a field of the data to split by and a period of its own make a whole
+    # question, whatever word it uses for the figure ("spend" is no measure's name): read as new, it keeps nothing
+    # of the answer on screen (the supplier it was narrowed to, its months).
+    split = re.split(r"\b(?:by|per)\b", question, maxsplit=1, flags=re.IGNORECASE)
+    if not leading and not pointing and len(words) >= 4 and period and len(split) == 2 and not ranks_the_figure \
+            and _names_a_figure(split[0]) and _found(model, split[1], ("field",)):
+        return Reading("new", "it names how to split it and for when")
     if _CONTINUE.match(question):
         return Reading("refine", "it starts by carrying on from the answer on screen")
     if not asks and not leading:

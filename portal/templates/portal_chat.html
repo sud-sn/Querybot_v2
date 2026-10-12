@@ -656,6 +656,18 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-insights { border-left: 2px solid var(--primary); padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
 .answer-insights-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
 .answer-summary { max-width: 80ch; display: flex; flex-direction: column; gap: 4px; }
+.analyst-note { max-width: 80ch; display: flex; flex-direction: column; gap: 10px; border-left: 2px solid var(--primary); padding: 2px 0 2px 14px; }
+.analyst-note .note-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.analyst-note .note-title { font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text-strong); }
+.analyst-note .note-meta { font-size: var(--font-xs); color: var(--text-muted); }
+.analyst-note .note-part { display: flex; flex-direction: column; gap: 4px; }
+.analyst-note .note-part-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); text-transform: none; }
+.analyst-note .note-part p { margin: 0; color: var(--text); line-height: 1.6; text-wrap: pretty; }
+.analyst-note .note-how summary { cursor: pointer; font-size: var(--font-xs); color: var(--text-muted); }
+.analyst-note .note-how ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.analyst-note .note-how li { font-size: var(--font-xs); color: var(--text-soft); line-height: 1.5; }
+.analyst-note .note-how-fact { display: block; color: var(--text); }
+.analyst-note .note-how-way { display: block; color: var(--text-muted); }
 .answer-summary p { margin: 0; color: var(--text); line-height: 1.6; }
 .answer-insights .answer-note { background: none; border: 0; padding: 0; color: var(--text); }
 .answer-insights .answer-note .an-icon { display: none; }
@@ -3380,8 +3392,10 @@ function _answerNotes(msg) {
     notes.push({ tier: isWarn ? 'watch' : 'note', icon: isWarn ? '!' : '-', text: String(c.message || '') });
   }
   if (msg.insight_summary) notes.push({ tier: 'note', icon: '-', text: String(msg.insight_summary) });
-  // The new core's findings, worked out from the answer's own rows: one line each.
-  for (const k of (Array.isArray(msg.key_insights) ? msg.key_insights : [])) {
+  // The new core's findings, worked out from the answer's own rows: one line each -- unless the answer has an
+  // analyst's reading, whose note says them (and more) once.
+  const hasReading = !!(msg.reading && Array.isArray(msg.reading.facts) && msg.reading.facts.length);
+  for (const k of (hasReading ? [] : (Array.isArray(msg.key_insights) ? msg.key_insights : []))) {
     if (k) notes.push({ tier: 'note', icon: '-', text: String(k) });
   }
   // Stable within a tier: the server's order carries meaning the client cannot
@@ -3396,6 +3410,59 @@ function _answerNotes(msg) {
       ? `<div class="answer-insights"><div class="answer-insights-label">${escHtml(t('ui.chat.card.key_insights'))}</div>${insights.map(row).join('')}</div>`
       : '',
   };
+}
+
+// The analyst's note (core2/answer/notes.py): what stands out, why it moved, what to watch. It shows at once
+// from the facts the answer carries, each as the sentence the code wrote; the workspace's AI's version, checked
+// figure by figure, replaces it when it arrives ('answer_note').
+function _noteFromReading(reading) {
+  const lang = window.QB_LANG === 'fr' ? 'fr' : 'en';
+  const limits = {stands_out: 4, why: 2, watch: 2};
+  const note = {stands_out: [], why: [], watch: [], how: [], by: 'facts'};
+  const facts = (reading && Array.isArray(reading.facts) ? reading.facts : []).slice()
+    .sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
+  for (const f of facts) {
+    const section = limits[f.section] ? f.section : 'stands_out';
+    const text = f[lang] || f.en;
+    if (text && note[section].length < limits[section]) note[section].push(text);
+    if (f.how) note.how.push({fact: text, how: f.how, query: f.query || ''});
+  }
+  return note;
+}
+function _analystNoteInner(note) {
+  const part = (key, label) => (Array.isArray(note[key]) && note[key].length)
+    ? `<div class="note-part"><div class="note-part-label">${escHtml(t(label))}</div>`
+      + note[key].map(s => `<p>${escHtml(String(s))}</p>`).join('') + `</div>`
+    : '';
+  const how = Array.isArray(note.how) && note.how.length
+    ? `<details class="note-how"><summary>${escHtml(t('ui.chat.note.how'))}</summary><ul>`
+      + note.how.map(h => `<li><span class="note-how-fact">${escHtml(String(h.fact || ''))}</span>`
+        + `<span class="note-how-way">${escHtml(String(h.how || ''))}</span></li>`).join('') + `</ul></details>`
+    : '';
+  return `<div class="note-head"><span class="note-title">${escHtml(t('ui.chat.note.title'))}</span>`
+    + `<span class="note-meta">${escHtml(t('ui.chat.note.checked'))}</span></div>`
+    + part('stands_out', 'ui.chat.note.stands_out') + part('why', 'ui.chat.note.why')
+    + part('watch', 'ui.chat.note.watch') + how;
+}
+function _analystNoteHtml(msg) {
+  const note = (msg.note && typeof msg.note === 'object') ? msg.note
+    : (msg.reading && Array.isArray(msg.reading.facts) && msg.reading.facts.length ? _noteFromReading(msg.reading) : null);
+  if (!note) return '';
+  return `<section class="analyst-note" aria-label="${escHtml(t('ui.chat.note.title'))}">${_analystNoteInner(note)}</section>`;
+}
+function _placeAnswerNote(questionId, note) {
+  if (!questionId || !note || typeof note !== 'object') return false;
+  const card = [...document.querySelectorAll('.msg.msg-bot')]
+    .find(el => el.dataset.questionId === questionId)?.querySelector('.answer-card');
+  if (!card) return false;
+  const holder = card.querySelector('.analyst-note');
+  const payload = card.closest('.msg-content')?._querybotPayload;
+  if (payload) payload.note = note;
+  if (holder) { holder.innerHTML = _analystNoteInner(note); return true; }
+  const after = card.querySelector('.answer-visual') || card.querySelector('.answer-headline');
+  const html = `<section class="analyst-note" aria-label="${escHtml(t('ui.chat.note.title'))}">${_analystNoteInner(note)}</section>`;
+  if (after) after.insertAdjacentHTML('afterend', html);
+  return true;
 }
 
 // What the answer means, in a few sentences by the workspace's AI from the answer
@@ -3584,7 +3651,10 @@ function answerCardHtml(msg, ids, env) {
       + (answer.comparison ? `<span class="answer-delta">${escHtml(answer.comparison)}</span>` : '') + `</div>`
       + (answer.headline ? `<p class="answer-headline">${escHtml(answer.headline)}</p>` : '');
   } else {
-    leadHtml = `<p class="answer-headline is-lead">${escHtml(answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
+    // A trend or a breakdown with an analyst's reading leads with the analyst's sentence (typical level, the one-off,
+    // the leader and how far ahead); the exact figures are in the chart, the table and the note.
+    const lead = (msg.reading && msg.reading.lead) ? (msg.reading.lead[window.QB_LANG === 'fr' ? 'fr' : 'en'] || '') : '';
+    leadHtml = `<p class="answer-headline is-lead">${escHtml(lead || answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
   }
   // What an analytical answer worked out ("Each customer's net amount in Q1 2026, then the middle value of ...").
   const definitionHtml = answer.definition ? `<p class="answer-definition">${escHtml(answer.definition)}</p>` : '';
@@ -3691,7 +3761,7 @@ function answerCardHtml(msg, ids, env) {
     + _answerBadgesHtml(msg)
     + leadHtml + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
-    + visualHtml + bodyHtml + _answerSummaryHtml(msg.summary) + insightsHtml
+    + visualHtml + bodyHtml + (_analystNoteHtml(msg) || (_answerSummaryHtml(msg.summary) + insightsHtml))
     + actionsHtml + feedbackPanelHtml
     + _answerHowHtml(msg, env)
     + rcHtml + chipsHtml
@@ -4697,6 +4767,8 @@ function connect(){
       }
     } else if (msg.type === 'answer_summary') {
       _placeAnswerSummary(String(msg.question_id || ''), String(msg.summary || ''));
+    } else if (msg.type === 'answer_note') {
+      _placeAnswerNote(String(msg.question_id || ''), msg.note || null);
     } else if (msg.type === 'assistant_response') {
       _dropDashboardLine();
       finishAnalysisAction(msg);

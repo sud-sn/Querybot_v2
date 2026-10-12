@@ -101,10 +101,12 @@ def _per_unit(m: MeasureFinding, amount: str, other: str, share: float) -> None:
 
 def check_arithmetic(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                      measures: list[MeasureFinding],
-                     links: dict[str, list[str]] | None = None) -> list[tuple[str, str, str, float]]:
+                     links: dict[str, list[str]] | None = None, *,
+                     derived: list[MeasureFinding] | None = None) -> list[tuple[str, str, str, float]]:
     """Corrects how each column measure adds up from its rows; returns the pairs of measures that hold the same
     values, as (table, column, other column, share of rows). ``links`` names, per table, the columns that point
-    at what a row is about (a product, an item): a price stays nearly the same for one of them."""
+    at what a row is about (a product, an item): a price stays nearly the same for one of them. A value no
+    column holds (a quantity times its unit cost) goes into ``derived``."""
     same: list[tuple[str, str, str, float]] = []
     by_table: dict[str, list[MeasureFinding]] = {}
     for m in measures:
@@ -119,12 +121,106 @@ def check_arithmetic(warehouse: Warehouse, inventory: Inventory, profiles: dict[
                          lambda: _rows(warehouse, inventory, table, columns, about), None)  # noqa: B023
         if not sample:
             continue
-        same += _check_table(table, found, *sample)
+        same += _check_table(table, found, *sample, derived=derived)
     return same
 
 
+# A price or cost per unit by name ("Item cost", "Unit price"), as against an amount ("Line cost", "Total price").
+_PER_UNIT_WORDS = {"cost", "cst", "price", "prc"}
+_AMOUNT_WORDS = {"amount", "amt", "total", "ttl", "tot", "ext", "extended", "value", "val", "line", "net", "gross", "grs",
+                 "sales", "revenue", "rev", "spend", "paid", "billed", "charge"}
+_COUNTED = {"qty", "quantity", "units", "pieces", "pcs"}
+_SOLD = {"order", "orders", "invoice", "invoices", "sale", "sales", "line", "lines", "detail", "details", "item",
+         "items", "receipt", "receipts", "ticket", "tickets", "booking", "bookings"}
+_ON_HAND = {"on", "hand", "hnd", "onhand", "stock", "stk", "balance", "bal", "available", "avl"}
+STEADY = 0.05       # a unit cost moves less than 5% among one item's rows...
+MOVING = 0.2        # ...while its quantities move by 20% or more
+
+
+def _value_of_units(table: str, of: dict[str, MeasureFinding], rows: dict[str, list[float | None]],
+                    groups: dict[str, list[object]], amounts: set[str]) -> MeasureFinding | None:
+    """A row with a quantity and a price or cost per unit, and no amount: the value is the two multiplied on each
+    row, then added up (stock value at cost, an order line's value at its unit price). The price is averaged,
+    never summed. It is per unit by its name (a unit price, or a cost beside its own average), by being there
+    where nothing is on hand without rising with the quantity, or by staying the same for one item while the
+    item's quantities vary. Proposed only where no column holds an amount to add up, and once per table."""
+    if amounts or any(m.agg == "sum" and m.additivity == "additive" and m.format == "currency" for m in of.values()):
+        return None     # an amount is on the row already (a line amount, quantity x price): it is the value
+    # A quantity that never varies (every line sells one track) still counts: the value is then the prices added
+    # up, which only a price named per unit ("Unit price") is taken for.
+    quantities = [c for c, m in of.items() if m.agg == "sum" and set(names.tokens(c)) & _COUNTED
+                  and not set(names.tokens(c)) & {"avg", "average", "per"}
+                  and (_varies(rows[c]) or any(v for v in rows[c] if v is not None))]
+    if not quantities:
+        return None
+    level = [c for c in quantities if of[c].additivity == "semi_additive" and set(names.tokens(c)) & _ON_HAND]
+    quantity = min(level or quantities, key=lambda c: (not _varies(rows[c]), len(names.tokens(c)), list(of).index(c)))
+    steady = not _varies(rows[quantity])
+
+    def per_unit(c: str) -> str | None:
+        words = set(names.tokens(c))
+        m = of[c]
+        if c == quantity or m.format != "currency" or words & _AMOUNT_WORDS:
+            return None
+        if m.agg == "avg" and words & (_UNIT_PRICE | _RATE) and words & _MONEY:
+            return "its name says it is per unit"
+        if not words & _PER_UNIT_WORDS or steady:
+            return None
+        if any(set(names.tokens(o)) & {"avg", "average"} and set(names.tokens(o)) - {"avg", "average"} == words
+               and of[o].agg == "avg" for o in of if o != c):
+            return "its average beside it is a cost per unit, so it is one too"
+        if not _varies(rows[c]):
+            return None
+        # An amount of the quantity is nought where the quantity is, and rises with it; a unit cost is there
+        # whatever is on hand (an item out of stock still has a cost).
+        pairs = _filled(rows[c], rows[quantity])
+        empty = [value for value, units in pairs if units == 0]
+        if len(empty) >= 20 and sum(1 for v in empty if v) >= 0.5 * len(empty) \
+                and abs(_correlation([p[0] for p in pairs], [p[1] for p in pairs])) < 0.3:
+            return "it is there where nothing is on hand, and does not rise with the quantity"
+        for keys in groups.values():
+            price, units = _spread_within(rows[c], keys), _spread_within(rows[quantity], keys)
+            if price is not None and units is not None and price <= STEADY and units >= MOVING:
+                return "it stays the same for one item while the item's quantities vary"
+        return None
+
+    priced = [(c, why) for c in of if (why := per_unit(c))]
+    if not priced:
+        return None
+    # A value from a price that is empty where the quantity is not would be empty too: only a price filled on
+    # most of the quantity's rows makes one. The cost itself comes before an average or a list price of it.
+    counted = sum(1 for v in rows[quantity] if v is not None)
+    usable = [(c, why) for c, why in priced if counted and len(_filled(rows[c], rows[quantity])) >= 0.5 * counted]
+    for c, said in priced:
+        m = of[c]
+        if m.agg != "avg":
+            m.agg, m.additivity, m.time_aggregation, m.review = "avg", "non_additive", None, None
+            m.evidence.append(Evidence(kind="per_unit", weight=1, detail=(
+                f"{m.name} is a price per unit, averaged, never summed: {said}")))
+    if not usable:
+        return None
+    price, why = min(usable, key=lambda cw: (bool(set(names.tokens(cw[0])) & {"avg", "average", "std", "standard",
+                                                                               "list", "lst"}),
+                                             list(of).index(cw[0])))
+    p, q = of[price], of[quantity]
+    stem = " ".join(w for w in q.name.split() if w.casefold() not in {"quantity", "qty", "units", "pieces"})
+    cost = bool(set(names.tokens(price)) & {"cost", "cst"})
+    # At a selling price, on a line of what was sold, it is what was sold: the sales amount.
+    sold = not cost and bool(set(names.tokens(table.rsplit(".", 1)[-1])) & _SOLD)
+    name = f"{stem} value at cost" if cost else "Sales amount" if sold else f"{stem} value at {p.name.lower()}"
+    name = name.strip()
+    name = name[:1].upper() + name[1:]
+    found = MeasureFinding(table=table, column=quantity, agg="sum", additivity=q.additivity, format="currency",
+                           name=name, time_aggregation=q.time_aggregation, times=price)
+    found.evidence.append(Evidence(kind="value_of_units", weight=1, detail=(
+        f"{q.name} times {p.name.lower()} on each row, added up: no column holds this value, and "
+        f"{p.name.lower()} is per unit ({why})")))
+    return found
+
+
 def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[float | None]],
-                 groups: dict[str, list[object]] | None = None) -> list[tuple[str, str, str, float]]:
+                 groups: dict[str, list[object]] | None = None, *,
+                 derived: list[MeasureFinding] | None = None) -> list[tuple[str, str, str, float]]:
     of = {m.column: m for m in found if m.column}
     judged: set[str] = set()
 
@@ -157,7 +253,11 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
         if x in judged or not values or _whole(values) or max(abs(v) for v in values) > 1000:
             continue
         for a, b in permutations([c for c in others if c != x], 2):
-            filled = _filled(rows[x], rows[a], rows[b])
+            # Read where X holds something: a quantity that is nought on most rows is "nought divided by
+            # anything" there, which says nothing about what X is (an allocated quantity, mostly empty).
+            filled = [row for row in _filled(rows[x], rows[a], rows[b]) if row[0]]
+            if len(filled) < 20:
+                continue
             for scale in (1.0, 100.0):
                 for shape, value in (("/", lambda va, vb: va / vb if vb else None),
                                      ("margin", lambda va, vb: (va - vb) / va if va else None)):
@@ -240,6 +340,12 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
                 _summed(m, f"it rises with {names.readable(q).lower()} on the same row (correlation {r:.2f})")
                 judged.add(column)
                 break
+
+    if derived is not None:
+        products = {c for c in judged if of[c].agg == "sum" and of[c].format == "currency"}
+        value = _value_of_units(table, of, rows, groups or {}, products)
+        if value is not None:
+            derived.append(value)
 
     # Two measures that are the same figure (counted where either holds something: two empty columns agree).
     same = []

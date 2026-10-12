@@ -23,6 +23,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Any
 
 from core2 import ids
@@ -312,6 +313,39 @@ _REFUSALS = {
 }
 
 
+# A request to change the data, not to read it: "delete the cancelled movements of 2024", "close out all the open
+# bookings", "supprime les fiches des employés partis". Solviz reads data; it never deletes, changes or adds
+# rows, and says so before any planning (a French one was answered with a count). The rows it names can be shown.
+_CHANGE = re.compile(
+    r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:"
+    # Verbs that only ever change data: whatever follows.
+    r"(?:delete|erase|purge|wipe|supprime[rz]?|efface[rz]?)\b\s+"
+    r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)*"
+    # Verbs that also read ("change in sales", "close rate", "add up"): only before what they would change.
+    r"|(?:remove|drop|update|change|modify|edit|insert|add|create|close\s+out|close|cancel|void|archive|approve|"
+    r"reject|mark|set|assign|merge|rename|reset|retire[rz]?|modifie[rz]?|mets?\s+à\s+jour|mettez\s+à\s+jour|"
+    r"ajoute[rz]?|crée[rz]?|annule[rz]?|clôture[rz]?|ferme[rz]?|archive[rz]?|valide[rz]?|renomme[rz]?)\b\s+"
+    r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)+)",
+    re.IGNORECASE)
+_SHOW = {"en": "Show ", "fr": "Montre "}
+
+
+def changes_data(question: str) -> str | None:
+    """The rows a request to change the data names, as a question that shows them; None for a question."""
+    found = _CHANGE.match(question or "")
+    if not found:
+        return None
+    rest = question[found.end():].strip().rstrip("?.!").removesuffix("for me").removesuffix("s'il te plaît")
+    rest = rest.removesuffix("please").strip(" ,")
+    if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:update|change|modify|edit|mark|set|assign|rename|"
+                r"modifie|mets|mettez|renomme)", question, re.IGNORECASE):
+        rest = re.sub(r"\s+(?:to|as|en|à|comme)\s+[\w'-]+$", "", rest)      # "... to closed": the new value goes
+    french = bool(re.match(r"\s*(?:supprim|effac|retir|modifi|mets|mettez|ajout|cré|annul|clôtur|ferm|archiv|"
+                           r"valid|renomm)", question, re.IGNORECASE))
+    lead = (_SHOW["fr"] + "les ") if french else (_SHOW["en"] + "the ")
+    return f"{lead}{rest}" if rest else ""
+
+
 def answer_question(question: str, services: Services, session: Session, *, question_id: str = "") -> dict[str, Any]:
     """The portal frame answering ``question``; the session keeps the plan for follow-ups.
 
@@ -324,6 +358,15 @@ def answer_question(question: str, services: Services, session: Session, *, ques
 
     if dashboards.asked_for(question) is not None:
         return _described(question, services)     # "build me a dashboard of ...": recognised before planning
+    shown = changes_data(question)
+    if shown is not None:
+        french = shown.startswith(_SHOW["fr"])
+        text = ("Je lis les données sans jamais les modifier : je ne peux ni supprimer, ni changer, ni ajouter de "
+                "lignes. Je peux vous montrer celles dont il s'agit." if french else
+                "I read the data and never change it: I cannot delete, change or add records. I can show you the "
+                "ones you mean.")
+        chips = [{"label": shown, "question": shown}] if shown else []
+        return _frame(question, text, kind="changes_data", follow_up_suggestions=chips)
     defined = own_metric.definition_in(question) if services.write_metric is not None else None
     made: Measure | None = None
     if defined is not None:
@@ -500,7 +543,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         return asked
 
     plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
-    plan, missing = _members_named(plan, model, services.index)
+    unknown_left_out: list[tuple[str, str]] = []
+    plan, missing = _members_named(plan, model, services.index, unknown_left_out)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
                   personal_shown=services.scrub is not None, link_repeats=_link_check(services))
@@ -534,6 +578,10 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
                         unsupported=True)
+    for thing, value in unknown_left_out[:3]:
+        payload.setdefault("coverage_caveats", []).append(
+            f'No {thing} is called "{value}" in the data, so leaving it out changed nothing. Name it as the data '
+            f'writes it, or in quotes as the reader sees it in an answer.')
     if missing is not None and _found_nothing(payload):
         # Nothing matched, and a member the plan named is not one the data had when its members were read:
         # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
@@ -611,6 +659,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
+    if logical.share:
+        _share_of_the_whole(plan, logical, payload, model, ctx, warehouse)
     if logical.people or any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"
                              for part in logical.parts for g in part.groups):
         payload["personal"] = True      # its rows name people, or count them by age: no written summary by the AI
@@ -629,6 +679,52 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]
     return payload
+
+
+def _share_of_the_whole(plan: Plan, logical: Any, payload: dict[str, Any], model: SemanticModel, ctx: Context,
+                        warehouse: Guarded) -> None:
+    """"What share of 2025 sales came in on weekends?": the part's share of everything in the period, not of
+    itself. A share is worked out over the answer's own rows, so a filter that keeps only the part made it
+    100%. Where the answer is one figure kept to one member filter (or to members of one field, the part
+    grouped by it), the whole is asked for once more without that filter, and the share is the part over it."""
+    from core2.answer.builder import fmt
+
+    named = [f for f in plan.filters if f.op not in ("is_null", "not_null")]   # weekends, a store: the period is not one
+    rows = (payload.get("data") or {}).get("rows") or []
+    if logical.unit_group or len({f.field for f in named}) != 1 or len(rows) != 1 or len(plan.measures) != 1:
+        return
+    field = named[0].field
+    if any(g != field for g in plan.group_by):
+        return
+    whole_plan = plan.model_copy(update={"filters": [f for f in plan.filters if f.field != field], "group_by": [],
+                                         "intent": "value", "sort": [], "limit": None})
+    try:
+        whole_logical = resolve(whole_plan, model, ctx)
+        if any(part.snapshot for part in whole_logical.parts):
+            whole_logical = complete_snapshots(whole_logical, model, warehouse)
+        compiled = compile_query(whole_logical, model, warehouse.dialect)
+        result = warehouse.query(compiled.sql, max_rows=2)
+    except Exception as exc:  # noqa: BLE001 - the answer stands with the share of its own rows
+        log.info("core2 could not ask for the whole a share is of: %s", exc)
+        return
+    measure = next((o for o in logical.measures if not o.hidden), None)
+    if measure is None or len(result.rows) != 1:
+        return
+    names = [c.casefold() for c in result.columns]
+    whole = result.rows[0][names.index(measure.name.casefold())] if measure.name.casefold() in names else None
+    part = rows[0].get(measure.name)
+    if not isinstance(whole, (int, float, Decimal)) or not isinstance(part, (int, float, Decimal)) or not whole:
+        return
+    share = float(part) / float(whole) * 100
+    rows[0][f"{measure.name}_share"] = round(share, 4)
+    answer = payload.setdefault("answer", {})
+    said = str(answer.get("headline") or "").rstrip(".")
+    label = measure.label[:1].lower() + measure.label[1:]
+    condition = (model.attributes[field].business_name.lower() if field in model.attributes else
+                 field.split(":")[-1].split(".")[-1].removeprefix("is_").replace("_", " "))
+    answer["headline"] = f"{said}, {share:.1f}% of all {label} in the period ({fmt(whole, measure.format)})."
+    payload.setdefault("coverage_caveats", []).append(
+        f"The share is of {fmt(whole, measure.format)}: the same {label} without the condition on {condition}.")
 
 
 def _age_limits(plan: Plan, logical: Any, services: Services, ctx: Context, warehouse: Guarded) -> None:
@@ -1001,7 +1097,8 @@ def _found_nothing(payload: dict[str, Any], *, zero: bool = False) -> bool:
     return all(all(v is None for v in row.values()) for row in rows)
 
 
-def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tuple[Plan, tuple[str, str] | None]:
+def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex,
+                   unknown_left_out: list[tuple[str, str]] | None = None) -> tuple[Plan, tuple[str, str] | None]:
     """The plan with each member it filters on spelled as stored, and the first one the index does not know.
 
     "How did those same customers do in 2025?" was planned with customers the AI
@@ -1010,7 +1107,9 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tupl
     match", as if they had bought nothing. A member the index does not know is
     returned so that an empty answer can say so; the query still runs, since a
     member added after the index was read is real. One written in another case
-    ("retail") is the stored one ("RETAIL"): the warehouse compares text exactly.
+    ("retail") is the stored one ("RETAIL"): the warehouse compares text exactly. A member left out that the
+    data does not have ("outside the United States" where countries are stored otherwise) leaves nothing out:
+    it is added to ``unknown_left_out`` so that the answer says so, never as if something had been left out.
     """
     missing: tuple[str, str] | None = None
 
@@ -1036,7 +1135,9 @@ def _members_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> tupl
         for value in f.values:
             stored = index.stored(attribute.slug, value) if isinstance(value, str) else value
             if stored is None and f.op in ("eq", "in") and missing is None:
-                missing = (thing, str(value))      # excluding a member there is none of is harmless
+                missing = (thing, str(value))
+            elif stored is None and f.op in ("ne", "not_in") and unknown_left_out is not None:
+                unknown_left_out.append((thing, str(value)))
             values.append(value if stored is None else stored)
         return f.model_copy(update={"values": values})
 
@@ -1176,6 +1277,16 @@ def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[st
             again = f'{again[:start]}"{again[start:end]}"{again[end:]}'
         names_ = ", ".join(f'"{question[s:e]}"' for s, e in spans[:3])
         chips.insert(0, {"label": f"Only {names_}", "question": again})
+    singles = [c for c in chips if c["label"].count('"') == 2]
+    if len(singles) > 1:
+        # Two names left unquoted ("Starter plans in Canada"): one click quotes them all, as the reader meant.
+        again = question
+        for _thing, value in sorted(dropped, key=lambda d: -question.lower().find(str(d[1]).lower())):
+            at = again.lower().find(str(value).lower())
+            if at >= 0 and (at == 0 or again[at - 1] != '"'):
+                again = f'{again[:at]}"{again[at:at + len(value)]}"{again[at + len(value):]}'
+        listed = " and ".join(c["label"].removeprefix("Only ") for c in singles[:3])
+        chips.insert(0, {"label": f"Only {listed}", "question": again})
     if chips:
         payload["follow_up_suggestions"] = (chips + list(payload.get("follow_up_suggestions") or []))[:4]
 
@@ -1416,6 +1527,29 @@ def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, q
     asked = scrub(question) if scrub else question
     complete = summary_writer(account_id, client, question=asked, question_id=question_id)
     return write(payload, asked, complete)
+
+
+def portal_note(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "",
+                lang: str = "en") -> dict[str, Any] | None:
+    """The analyst's note of a portal answer (core2/answer/notes.py), or None when the answer has no facts.
+
+    The workspace's AI writes it from the facts alone where it may see them: never where the rows name people,
+    and where member values are kept from it (a tenant under compliance, or value indexing off) only when the
+    facts name no member. Otherwise the note is the facts' own sentences."""
+    import store
+    from core.value_index import value_index_enabled
+    from core2.answer.notes import write
+    from core2.bootstrap.ai import summary_writer
+
+    reading = payload.get("reading")
+    if not isinstance(reading, dict) or not reading.get("facts") or payload.get("engine") != "core2":
+        return None
+    client = store.get_client(account_id) or {}
+    scrub = question_scrubber(account_id)
+    values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
+    complete = summary_writer(account_id, client, question=scrub(question) if scrub else question,
+                              question_id=question_id)
+    return write(reading, complete, lang=lang, values_allowed=values_allowed, personal=bool(payload.get("personal")))
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,

@@ -39,7 +39,7 @@ par pas pour qu que quel quelle qui sa se ses son sont sur ta te tes ton tu un u
 # A quarter, a half or a fiscal year ("in Q1 2026", "H1", "FY26") is a period. Groups coded Q1 or H2 are
 # matched only where the question names their field just before the code ("pdc group Q1"); "deliveries in
 # Q1 2026" was handed to the planner as pdc group = Q1, and every count came back empty.
-PERIOD_WORD = re.compile(r"^(?:q[1-4]|h[12]|fy\d{2}(?:\d{2})?)$")
+PERIOD_WORD = re.compile(r"^(?:q[1-4]|t[1-4]|h[12]|s[12]|fy\d{2}(?:\d{2})?)$")   # T1, S2: French quarters, halves
 _FIELD_NOUNS = frozenset({"code", "codes", "name", "names", "id", "key", "desc", "description", "label"})
 _QUOTES = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-", "`": "'"})
 _TOKEN = re.compile(r"[\w#&'./+-]+", re.UNICODE)
@@ -81,6 +81,8 @@ class MemberIndex:
     longest: int = 1
     attributes: set[str] = field(default_factory=set)     # the attributes whose members were all read
     aliases: dict[str, list[tuple[str, str]]] = field(default_factory=dict)   # names an admin gave codes
+    # Groupings whose members are places: (kind, member -> the region it is), worked out when first asked.
+    places: dict[str, tuple[str, dict[str, str]] | None] = field(default_factory=dict, repr=False, compare=False)
 
     def _entries(self, key: str) -> list[tuple[str, str]]:
         return [*self.names.get(key, []), *self.aliases.get(key, [])]
@@ -134,9 +136,27 @@ class MemberIndex:
     def stored(self, attribute: str, value: object) -> str | None:
         """The member ``value`` names, as the data stores it ("retail" -> "RETAIL"); None when there is none.
 
-        Only for an attribute whose members were read: elsewhere nothing can be said.
+        A place written another way names the member the data keeps for it: "Oregon" is the state stored as
+        "OR", "United States" the country stored as "USA" -- only in a grouping whose members are places of
+        that kind (geo.place_kind), so "Canada" is never California's "CA". Only for an attribute whose
+        members were read: elsewhere nothing can be said.
         """
-        return next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
+        found = next((v for a, v in self._entries(normalise(str(value))) if a == attribute), None)
+        return found if found is not None else self._place(attribute, str(value))
+
+    def _place(self, attribute: str, value: str) -> str | None:
+        from core2.answer import geo
+
+        if attribute not in self.places:
+            members = [v for entries in self.names.values() for a, v in entries if a == attribute]
+            kind = geo.place_kind(attribute.replace(".", " ").replace("_", " "), attribute, members)
+            self.places[attribute] = (kind, geo.regions(kind, members)) if kind and kind != "us_zip" else None
+        known = self.places[attribute]
+        if not known:
+            return None
+        kind, regions = known
+        region = geo.regions(kind, [value]).get(value)
+        return next((member for member, name in sorted(regions.items()) if name == region), None) if region else None
 
     def match(self, question: str, *, explicit: bool = False) -> list[ValueMatch]:
         """Whole member names written in the question, longest first, never overlapping.

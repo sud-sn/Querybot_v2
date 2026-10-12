@@ -500,6 +500,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Utilisation de l'espace de travail et accès aux tables",
     },
     "ui.dash.title": {"en": "Dashboards", "fr": "Tableaux de bord"},
+    "ui.dash.reading_title": {"en": "What this dashboard shows", "fr": "Ce que montre ce tableau de bord"},
     "ui.dash.subtitle": {
         "en": "Organize governed KPIs, charts, and tables for the decisions your "
               "team follows.",
@@ -5114,6 +5115,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.card.collapse": {"en": "Back to its size", "fr": "Revenir à la taille d'origine"},
     "ui.chat.card.chart_type": {"en": "Chart type", "fr": "Type de graphique"},
     "ui.chat.card.summary": {"en": "In short", "fr": "En bref"},
+    "ui.chat.note.title": {"en": "Analyst note", "fr": "Note d'analyse"},
+    "ui.chat.note.checked": {"en": "Written from the figures above · every number checked",
+                             "fr": "Rédigée à partir des chiffres ci-dessus · chaque nombre vérifié"},
+    "ui.chat.note.stands_out": {"en": "What stands out", "fr": "Ce qui ressort"},
+    "ui.chat.note.why": {"en": "Why it moved", "fr": "Pourquoi cela a bougé"},
+    "ui.chat.note.watch": {"en": "What to watch", "fr": "À surveiller"},
+    "ui.chat.note.how": {"en": "How this was worked out", "fr": "Comment cela a été calculé"},
     "ui.chat.drill.menu": {"en": "Look closer", "fr": "Voir de plus près"},
     "ui.chat.followup.ask": {"en": "Ask", "fr": "Demander"},
     "ui.chat.card.follow_up": {"en": "Follow-up", "fr": "Question de suivi"},

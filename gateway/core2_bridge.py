@@ -706,18 +706,37 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         _not_todays_result(adapter)
         from core.background_tasks import spawn
 
-        spawn(_summarize(adapter, websocket, account_id, question, payload), name="core2-summary")
+        lang = str((portal_user or {}).get("lang") or "en")
+        spawn(_summarize(adapter, websocket, account_id, question, payload, lang=lang), name="core2-summary")
     # Handled, sent or not: a frame that could not reach the reader (the socket closed) is logged by _send, and
     # today's pipeline is not run in its place -- it would query the warehouse again for nobody, and put another
     # engine's answer in the thread's history.
     return True
 
 
-async def _summarize(adapter: Any, websocket: Any, account_id: str, question: str, payload: dict[str, Any]) -> None:
-    """The answer's written summary, sent after it (the answer never waits for the AI) and kept with it."""
-    from core2.service import portal_summary
+async def _summarize(adapter: Any, websocket: Any, account_id: str, question: str, payload: dict[str, Any], *,
+                     lang: str = "en") -> None:
+    """The answer's analyst note (or, for an answer with no facts, its written summary), sent after it (the answer
+    never waits for the AI) and kept with it."""
+    from core2.service import portal_note, portal_summary
 
     question_id = str((payload.get("trust") or {}).get("question_id") or "")
+    if payload.get("reading"):
+        try:
+            note = await asyncio.wait_for(asyncio.to_thread(portal_note, account_id, question, payload,
+                                                            question_id=question_id, lang=lang), TIMEOUT_SECONDS)
+        except Exception as exc:     # noqa: BLE001 - the answer stands with its facts' own sentences
+            log.warning("core2 could not write the note of an answer for %s: %s", account_id, exc)
+            return
+        if not note:
+            return
+        await _send(adapter, websocket, {"type": "answer_note", "question_id": question_id, "note": note})
+        if payload.get("trace_id"):
+            try:
+                await asyncio.to_thread(_keep_frame_part, int(payload["trace_id"]), "note", note)
+            except Exception as exc:     # noqa: BLE001 - shown; only a reopened thread will lack it
+                log.warning("core2 could not keep the note of trace %s: %s", payload.get("trace_id"), exc)
+        return
     try:
         # Not on the new core's own threads: a summary never keeps the next question waiting.
         text = await asyncio.wait_for(asyncio.to_thread(portal_summary, account_id, question, payload,
@@ -733,6 +752,19 @@ async def _summarize(adapter: Any, websocket: Any, account_id: str, question: st
             await asyncio.to_thread(_keep_summary, int(payload["trace_id"]), text)
         except Exception as exc:     # noqa: BLE001 - shown; only a reopened thread will lack it
             log.warning("core2 could not keep the summary of trace %s: %s", payload.get("trace_id"), exc)
+
+
+def _keep_frame_part(trace_id: int, key: str, value: Any) -> None:
+    """A part that follows the answer (its note) goes into the kept answer, so a reopened thread shows it too."""
+    import store
+
+    trace = store.get_answer_trace(trace_id) or {}
+    try:
+        kept = json.loads(trace.get("answer_frame") or "null")
+    except ValueError:
+        return
+    if isinstance(kept, dict):
+        store.update_answer_trace(trace_id, answer_frame={**kept, key: value})
 
 
 def _keep_summary(trace_id: int, text: str) -> None:

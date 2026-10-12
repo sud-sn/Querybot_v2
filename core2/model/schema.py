@@ -102,6 +102,7 @@ class ColumnProfile(_Data):
     date_max: str | None = None          # placeholders (-1, 0, 19000101) left out
     whole_year_rows: int | None = None   # yyyymm keys with month 00: a row for a whole year, not a month
     placeholder_rows: int | None = None  # date columns: 1900-01-01, 9999-12-31 and the like, not dates
+    text_date: str | None = None         # text holding dates written year first: "date" or "timestamp"
     sampled: bool = False
 
     @property

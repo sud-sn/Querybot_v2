@@ -99,7 +99,7 @@ def test_without_a_named_date_two_kinds_of_event_are_asked_about(retail):
     with pytest.raises(ResolveError) as raised:
         _count(con, model, {"time": {"window": H1}})
     assert raised.value.kind == "ambiguous" and raised.value.field == "time.date"
-    assert sorted(raised.value.options) == ["Order date", "Return date"]
+    assert sorted(raised.value.options) == ["Created at", "Order date", "Return date"]
     assert "Customers in a period are counted by what they did in it" in raised.value.message
 
 
@@ -130,7 +130,7 @@ def test_the_reply_names_the_date_and_is_followed(retail):
                         today=TODAY)
     session = Session()
     asked = answer_question("how many customers in the first half of 2026?", services, session)
-    assert sorted(asked["clarify"]["options"]) == ["Order date", "Return date"]
+    assert sorted(asked["clarify"]["options"]) == ["Created at", "Order date", "Return date"]
     answered = answer_question("return date", services, session)
     assert answered["kpi"]["value"] == _bought(con, "return_date_key", "returns")
     assert "Return date" not in json.dumps(answered.get("clarify") or {})

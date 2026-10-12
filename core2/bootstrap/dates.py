@@ -129,7 +129,7 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
     t = inventory.tables[table]
     d = warehouse.dialect
     source = D.table_sql(t.database, t.schema, t.name, d)
-    c = exp.column(D.ident(column, d))
+    c = t.read(column, d)
     periods_q = exp.select(exp.Count(this=exp.Distinct(expressions=[c.copy()]))).from_(exp.to_table("__SRC__"))
     periods = int(warehouse.query(periods_q.sql(dialect=d).replace("__SRC__", source)).rows[0][0] or 0)
     if periods < 3:
@@ -188,7 +188,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             elif column.data_type == "date":
                 granularity = "day"
             elif column.data_type == "timestamp":
-                granularity = "timestamp"
+                # A datetime column at midnight on every row holds dates (a balance date kept as a datetime): a
+                # day, as a date column is, so a daily stock table reads as the snapshot it is.
+                granularity = "day" if p.time_share == 0 and p.non_null else "timestamp"
             elif p.pattern == "yyyymmdd":
                 granularity = "day"
             elif p.pattern == "yyyymm":
@@ -327,12 +329,12 @@ def _written_later(warehouse: Warehouse, inventory: Inventory, key: str, candida
         return   # a calendar key would need the calendar's date: the period or a real date column is enough
     d = warehouse.dialect
     t = inventory.tables[key]
-    a = exp.column(D.ident(anchor.column, d))
+    a = t.read(anchor.column, d)
     anchor_months = _months(a, anchor, t.type_of(anchor.column), d)
     valid = exp.GT(this=D.mod(a.copy(), 100), expression=exp.Literal.number(0)) if anchor.granularity == "month" \
         else exp.not_(exp.Is(this=a.copy(), expression=exp.Null()))
     for stamp in stamps:
-        s = exp.column(D.ident(stamp.column, d))
+        s = t.read(stamp.column, d)
         lag = D.sub(D.add(D.mul(D.date_part(s, "year", d), 12), D.date_part(s.copy(), "month", d)), anchor_months.copy())
         late = exp.Sum(this=exp.Case(ifs=[exp.If(this=exp.GTE(this=lag, expression=exp.Literal.number(2)),
                                                   true=exp.Literal.number(1))], default=exp.Literal.number(0)))
@@ -361,7 +363,7 @@ def _load_times(warehouse: Warehouse, inventory: Inventory, key: str, candidates
     for stamp in candidates:
         if stamp.granularity != "timestamp":
             continue                # an audit stamp by its name is still checked: the evidence is shown
-        s = exp.column(D.ident(stamp.column, d))
+        s = t.read(stamp.column, d)
         minute_of_day = D.add(D.mul(D.date_part(s, "hour", d), 60), D.date_part(s.copy(), "minute", d))
         query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"),
                            exp.Count(this=exp.Distinct(expressions=[minute_of_day])).as_("times")).from_(
@@ -415,7 +417,7 @@ def _made_with(warehouse: Warehouse, inventory: Inventory, key: str, candidates:
     t = inventory.tables[key]
     for stamp in stamps:
         for anchor in anchors:
-            a, s = exp.column(D.ident(anchor.column, d)), exp.column(D.ident(stamp.column, d))
+            a, s = t.read(anchor.column, d), t.read(stamp.column, d)
             close = exp.and_(exp.GTE(this=s.copy(), expression=a.copy()),
                              exp.LTE(this=D.days_between(a.copy(), s.copy(), d), expression=exp.Literal.number(1)))
             query = exp.select(exp.Count(this=exp.Literal.number(1)).as_("n"), exp.Sum(this=exp.Case(
@@ -445,7 +447,7 @@ def _first_of(warehouse: Warehouse, inventory: Inventory, key: str, candidates: 
         return "date" if c.via_calendar is None and kind in ("date", "timestamp") else f"{kind}:{c.via_calendar is None}"
 
     def precedes(a: DateCandidate, b: DateCandidate) -> bool:
-        x, y = exp.column(D.ident(a.column, d)), exp.column(D.ident(b.column, d))
+        x, y = t.read(a.column, d), t.read(b.column, d)
 
         def count(condition: exp.Expression) -> exp.Expression:
             return exp.Sum(this=exp.Case(ifs=[exp.If(this=condition, true=exp.Literal.number(1))],

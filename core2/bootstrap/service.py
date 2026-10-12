@@ -45,6 +45,34 @@ def schema_path(account_id: str, client: dict[str, Any]) -> Path:
     return Path(folder) / "_schema.json"
 
 
+# Who a table or a column is about when it may be people: their names and cities stay out of the AI's view.
+_PEOPLE = {"customer", "cust", "client", "clnt", "consumer", "buyer", "shopper", "owner", "holder", "contact",
+           "patient", "person", "employee", "member"}
+# Things, never people: a name or a city of one of these is the business's own vocabulary.
+_THINGS = {"category", "categ", "cat", "store", "region", "product", "prod", "item", "itm", "warehouse", "whs",
+           "division", "dvn", "department", "dept", "segment", "channel", "brand", "family", "group", "grp", "class",
+           "type", "status", "plan", "service", "site", "location", "branch", "market", "territory", "country",
+           "state", "province", "month", "day", "week", "quarter", "season", "holiday", "account", "ledger", "cost",
+           "centre", "center", "project", "campaign", "promotion", "event", "route", "carrier", "shipper",
+           "supplier", "vendor", "company", "partner", "genre", "album", "artist", "track", "film", "media",
+           "playlist", "language", "unit", "equipment", "device", "model", "part", "material", "zone", "area"}
+
+
+def _a_things_name(table: str, column: str, strategy: str) -> bool:
+    """Is a column the old masking rule reads as a person's name or city ("category_name", "store city") the name
+    of a thing? It is when the column names a thing, or when neither it nor its table is about people. People's
+    names stay out of the AI's view by this rule and by Learn's own reading of the values (personal.py)."""
+    from core2.bootstrap import names, personal
+
+    if strategy not in ("name", "city"):
+        return False
+    own = {names.singular(w) for w in names.tokens(column)}
+    if own & (_THINGS | personal.ORG_WORDS) and not own & (_PEOPLE | personal.PERSON_WORDS):
+        return True
+    about = own | {names.singular(w) for w in names.tokens(table)}
+    return not about & (_PEOPLE | personal.PERSON_WORDS)
+
+
 def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any]) -> Callable[[str, str], bool]:
     """May common values of this column be read and shown? The value index's own rules, and masking.
 
@@ -59,7 +87,7 @@ def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any]) ->
     sensitive: dict[str, set[str]] = {}
     for key, table in inventory.tables.items():
         found = detect_sensitive_columns([{"name": c.name, "type": c.raw_type} for c in table.columns], industry)
-        sensitive[key] = {c.casefold() for c in found}
+        sensitive[key] = {c.casefold() for c, strategy in found.items() if not _a_things_name(table.name, c, strategy)}
 
     def allowed(table_key: str, column: str) -> bool:
         table = inventory.tables.get(table_key)

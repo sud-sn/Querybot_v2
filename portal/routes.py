@@ -1356,8 +1356,13 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         if grouping and grouping["field"] not in {g["field"] for g in groupings} and len(groupings) < DASH_MEMBER_FILTERS:
             groupings.append({**grouping, "selected": view["members"].get(grouping["field"], "")})
     has_core2 = any(_pin_display_config(c).get("core2_plan") for c in charts)
+    # What the dashboard shows, in three lines: the tiles whose reading says the most, each under its name.
+    lined = [c for c in rendered_charts if c.get("note_line") and not c.get("error")]
+    dashboard_reading = [{"title": str(c.get("title") or ""), "line": c["note_line"]}
+                         for c in sorted(lined, key=lambda c: -float(c.get("note_size") or 0))[:3]]
 
     return _resp(request, "portal_dashboard.html", {
+        "dashboard_reading": dashboard_reading,
         "user":          user,
         "client":        client,
         "charts":        rendered_charts,
@@ -1835,6 +1840,13 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             result["grouping"] = {"field": groups[0], "values": members, "label": _field_word(label or groups[0])}
     rows = data.get("rows") or []
     result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
+    # The analyst's line under the tile (core2/answer/facts.py): what is typical, the one-off, the leader -- in the
+    # viewer's language; the dashboard's summary on top is made of the strongest of them.
+    reading = payload.get("reading") or {}
+    line = (reading.get("lead") or {}).get("fr" if str(user.get("lang") or "en") == "fr" else "en") or ""
+    if line:
+        result["note_line"] = line
+        result["note_size"] = max((float(f.get("size") or 0) for f in reading.get("facts") or []), default=0.0)
     # The tile says what period it counts ("April 2026 vs March 2026"), as its answer did.
     badges = (payload.get("answer") or {}).get("badges") or []
     result["subtitle"] = next((str(b.get("text") or "") for b in badges if b.get("kind") == "period"), "")

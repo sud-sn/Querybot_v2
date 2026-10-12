@@ -542,6 +542,13 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     except Exception as exc:  # noqa: BLE001 - the findings are extra; the answer stands without them
         log.warning("core2 could not work out findings for %r: %s", question, exc)
         insights = []
+    from core2.answer.facts import read as read_facts
+
+    try:
+        reading = read_facts(logical, cols, raw, units, truncated=truncated)
+    except Exception as exc:  # noqa: BLE001 - the analyst's reading is extra; the answer stands without it
+        log.warning("core2 could not read the facts of %r: %s", question, exc)
+        reading = None
     kpi = _kpi(logical, cols, raw, formats, units)
     framed = frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
                  insights=insights, badges=answer_badges(logical), title=_answer_title(logical, cols, labels, chart, kpi),
@@ -550,6 +557,10 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
                  model_version=model_version)
+    if reading is not None and reading.facts:
+        # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
+        # the one-offs set apart in the reading.
+        framed["reading"] = reading.as_dict()
     if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups):
         from core2.answer.shaped import explain
 

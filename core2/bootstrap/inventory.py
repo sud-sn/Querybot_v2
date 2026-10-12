@@ -51,6 +51,18 @@ class InvTable:
         column = self.column(name)
         return column.data_type if column else ""
 
+    def read(self, name: str, dialect: str, table: str | None = None) -> Any:
+        """The column as Learn's own queries read it: a date the database keeps as text, read as a date."""
+        from sqlglot import exp
+
+        from core2.warehouse import dialect as D
+
+        stored = exp.column(D.ident(name, dialect), table=table)
+        column = self.column(name)
+        if column is not None and column.data_type in ("date", "timestamp") and normalize_type(column.raw_type) == "text":
+            return D.text_date(stored, column.data_type, dialect)
+        return stored
+
 
 @dataclass
 class InvForeignKey:

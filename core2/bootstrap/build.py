@@ -13,6 +13,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from sqlglot import exp
+
 from core2 import ids
 from core2.bootstrap import names, personal
 from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures, name_by_difference
@@ -23,6 +25,7 @@ from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
 from core2.bootstrap.joins import JoinFinding, discover_joins, identifier_text
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
+from core2.bootstrap.ledger import ledger_measures
 from core2.bootstrap.link_score import link_score
 from core2.bootstrap.keys import TableKeys, infer_keys, series_key
 from core2.bootstrap.second_opinion import second_opinion
@@ -45,6 +48,7 @@ from core2.model.schema import (
     QualityFlag,
     ReviewItem,
     SemanticModel,
+    SqlExpr,
     Table,
     Versions,
 )
@@ -139,6 +143,15 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
             if column.data_type == "decimal" and "(" not in column.raw_type \
                     and profiles[key].columns[column.name].integer_share == 1.0:
                 column.data_type = "integer"
+            # So is a floating-point column named as a key (rental_id, ReportsTo... id) holding only whole numbers,
+            # as a load from a file or another database leaves them: a link can then point from it.
+            tokens = names.tokens(column.name)
+            if column.data_type == "float" and tokens and tokens[-1] in names.KEY_SUFFIXES \
+                    and profiles[key].columns[column.name].integer_share == 1.0:
+                column.data_type = "integer"
+            # Dates the database keeps as text (profiler.py, 1b): a date column from here on, read as one.
+            if column.data_type == "text" and profiles[key].columns[column.name].text_date:
+                column.data_type = profiles[key].columns[column.name].text_date
     journal.step("Finding each table's key")
     keys = {key: infer_keys(warehouse, table, profiles[key]) for key, table in tables}
     journal.step("Looking for calendar and period tables")
@@ -176,7 +189,8 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
     for j in sorted(joins, key=lambda j: -profiles[j.to_table].rows):     # the biggest thing first: products
         if j.trust != "rejected" and not j.to_calendar:
             pointing.setdefault(j.from_table, []).append(j.from_column)
-    same = check_arithmetic(warehouse, inventory, profiles, measures, pointing)
+    valued: list[MeasureFinding] = []
+    same = check_arithmetic(warehouse, inventory, profiles, measures, pointing, derived=valued)
     stamped = {key: c.column for key, cs in dates.items() for c in cs
                if c.is_default and c.granularity == "timestamp" and kinds.get(key) == "fact"}
     # What each reading is of: the reading series first (the counters run within it), then every link.
@@ -198,6 +212,7 @@ def learn(warehouse: Warehouse, inventory: Inventory, options: BuildOptions | No
         if doc and dated:
             documents[k] = (doc, dated)
     find_parent_figures(warehouse, inventory, profiles, documents, measures)
+    measures += valued       # a quantity times its unit cost: after the checks that read single columns
     for key, kind in list(kinds.items()):
         # A periodic table whose numbers are all amounts for the period (targets,
         # budgets) adds up over time like any fact, and its period dates events, not balances.
@@ -234,6 +249,8 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
         model.notes += label(model, options.labeler)
     # After the names: an amount less its discounts is revenue, an amount less its cost the gross profit.
     model.notes += name_by_difference(model)
+    # A ledger's lines add up to nothing: its revenue, expenses and profit, from the debits and credits by account type.
+    model.notes += ledger_measures(model)
     assign_slugs(model)
     return model
 
@@ -439,6 +456,13 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         if m.column is None:
             key_m = f"m:{m.table}.rows"
             expr = AggExpr(agg="count")
+        elif m.times:
+            # A value no column holds: the two columns multiplied on each row, then added up (as an admin's formula).
+            key_m = f"m:{m.table}.{m.column.casefold()}.times.{m.times.casefold()}"
+            parts = [ck[(m.table, m.column)], ck[(m.table, m.times)]]
+            product = exp.Mul(this=exp.column(exp.to_identifier(parts[0], quoted=True)),
+                              expression=exp.column(exp.to_identifier(parts[1], quoted=True)))
+            expr = SqlExpr(sql=exp.Sum(this=product).sql(), columns=parts)
         elif m.agg == "count_distinct":
             key_m = f"m:{m.table}.{m.column.casefold()}.distinct"
             expr = AggExpr(agg="count_distinct", column=ck[(m.table, m.column)])
@@ -457,7 +481,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             default_date=model.tables[m.table].default_date,
             kind="count" if m.agg in ("count", "count_distinct") else "column",
             evidence=m.evidence, provenance="profile", status="needs_review" if m.review else "verified",
-            confidence=0.6 if m.review else 0.9)
+            confidence=0.6 if m.review else 0.9, synonyms=_value_words(m))
         if m.review:
             level = m.additivity == "semi_additive"
             model.review.append(ReviewItem(key=f"additivity:{key_m}", object=key_m, question=m.review,
@@ -533,6 +557,20 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 choice_made="neither, until confirmed", alternatives=[inv.tables[j.to_table].name],
                 evidence=j.evidence))
     return model
+
+
+def _value_words(m: MeasureFinding) -> dict[str, list[str]]:
+    """The words people use for a value Learn worked out (a quantity times its unit cost): stock value for a level
+    at cost, the value or extended price otherwise."""
+    if not m.times:
+        return {}
+    at_cost = bool(set(names.tokens(m.times)) & {"cost", "cst"})
+    if at_cost and m.additivity == "semi_additive":
+        return {"en": ["stock value", "inventory value", "value of stock", "value"], "fr": ["valeur du stock", "valeur"]}
+    if not at_cost and m.name == "Sales amount":
+        return {"en": ["sales", "revenue", "turnover", "line amount", "extended price", "value", "gross sales"],
+                "fr": ["ventes", "chiffre d'affaires", "montant", "valeur"]}
+    return {"en": ["value", "extended cost" if at_cost else "extended price"], "fr": ["valeur"]}
 
 
 def _table_name(name: str) -> str:
@@ -653,7 +691,11 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
         for column in table.columns:
             col = model.columns[ck[(key, column.name)]]
             p = col.profile
-            if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure"):
+            # A document's number counted to count the documents ("Number of orders" counts order numbers) is
+            # also what the documents are told apart by: "the 3 biggest orders" ranks them by it.
+            counted_document = col.role == "measure" and col.data_type == "text"
+            if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure") \
+                    and not counted_document:
                 continue
             if not _attribute_worthy(column, col, kind):
                 continue
@@ -668,8 +710,19 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 slug=slug, column=col.key, entity=owner if key in entity_of else None,
                 business_name=col.business_name, members=p.distinct if p else 0, kind=how,
                 provenance="profile", status="verified", confidence=0.8)
-        # A name read from two columns (first and last) is grouped and filtered by like any other.
+        # A list with no name and no code of its own (a store known only by its number) is told apart by its key:
+        # "rentals by store" shows Store 1 and Store 2, never "Store has no name to show".
         entity = model.entities.get(owner) if key in entity_of else None
+        if entity is not None and not entity.label_column and not entity.code_column \
+                and len(entity.key_columns) == 1 \
+                and not any(a.column == entity.key_columns[0] for a in model.attributes.values()):
+            column = model.columns[entity.key_columns[0]]
+            slug = ids.unique_slug(f"{owner}.number", set(model.attributes))
+            model.attributes[slug] = Attribute(
+                slug=slug, column=column.key, entity=owner, business_name=f"{entity.business_name} number",
+                members=column.profile.distinct if column.profile else 0, kind="identifier", provenance="profile",
+                status="verified", confidence=0.7)
+        # A name read from two columns (first and last) is grouped and filtered by like any other.
         label = model.columns.get(entity.label_column or "") if entity is not None else None
         if label is not None and label.parts and not any(a.column == label.key for a in model.attributes.values()):
             slug = ids.unique_slug(f"{owner}.name", set(model.attributes))
@@ -694,7 +747,7 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
     Never a contact detail (an address, a phone number, an email), whatever it is called.
 
     Names need not be unique (two customers can both be "J. Smith"): a name-like
-    column filled on nine rows in ten with nine distinct values in ten is a name.
+    column filled on nine rows in ten with eight distinct values in ten is a name.
     Grouping by it is made safe by also grouping by the member's code or key.
     A table keeping each member once per version names ``members`` of them: its names repeat once per version.
     """
@@ -715,7 +768,9 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
         unique = name in keys.unique_columns
         named = bool(words & _NAME_WORDS)
         described = bool(words & _DESCRIPTION_WORDS) and (p.avg_len or 0) <= 60
-        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.9 * min(p.non_null, members or p.non_null)
+        # A name or a description may repeat now and then (13 descriptions for 15 item types): it still names its
+        # members better than their codes, and the code beside it keeps two that share one apart.
+        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.8 * min(p.non_null, members or p.non_null)
         own = named and ("full" in words or any(names.same_word(w, t) for w in words for t in subject))
         # The table's own name (EnglishProductName on the products) names its members though they repeat once per
         # version, when the versions' dates do not say so.

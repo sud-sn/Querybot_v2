@@ -81,7 +81,7 @@ class _Probe:
         self.w = warehouse
         self.d = warehouse.dialect
         self.source = D.table_sql(table.database, table.schema, table.name, self.d)
-        self.date = exp.column(D.ident(date_column, self.d))
+        self.date = table.read(date_column, self.d)
         self.real = exp.and_(exp.GT(this=self.date.copy(), expression=D.date_literal(_LOW, self.d)),
                              exp.LT(this=self.date.copy(), expression=D.date_literal(_HIGH, self.d)))
 

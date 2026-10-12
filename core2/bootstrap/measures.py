@@ -77,6 +77,9 @@ class MeasureFinding:
     unit_values: list[str] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
     review: str | None = None   # a question for an admin when the call rests on little
+    # A value no column holds, worked out on each row: this column times another of the same row (an on-hand
+    # quantity times its unit cost), then added up.
+    times: str | None = None
 
 
 # Code words a name in capitals glues to its noun: DEPARTMENTID, REASONCODE, DIAGNOSISREF.
@@ -233,7 +236,10 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
                      joins: list[JoinFinding], dates: dict[str, list[DateCandidate]], key: str) -> list[str]:
     table = inventory.tables[key]
     profile = profiles[key]
-    excluded = set(keys[key].primary_key) | {c for alt in keys[key].alternate_keys for c in alt}
+    # A second key that holds a quantity or an amount (an order and its line's quantity, unique by chance where
+    # an order's lines never repeat one) does not make that column a key: the table has its own.
+    excluded = set(keys[key].primary_key) | {c for alt in keys[key].alternate_keys for c in alt
+                                             if not (keys[key].primary_key and _words(c) & (_MONEY | _QUANTITY))}
     excluded |= {c for j in joins if j.from_table == key and j.trust != "rejected" for c in j.from_columns}
     excluded |= {c.column for c in dates.get(key, [])}
     out = []

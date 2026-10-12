@@ -169,6 +169,8 @@ def _key_like(table: InvTable, profile: TableProfile) -> list[str]:
             continue
         if c.data_type in ("integer", "date", "boolean") or p.pattern in ("yyyymmdd", "yyyymm"):
             out.append(c.name)
+        elif c.data_type == "timestamp" and p.time_share == 0:
+            out.append(c.name)       # a datetime at midnight on every row is a date (a balance date)
         elif c.data_type == "text" and (p.max_len or 0) <= 64:
             out.append(c.name)
         elif c.data_type == "decimal" and p.integer_share == 1.0:

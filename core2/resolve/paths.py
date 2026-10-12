@@ -211,14 +211,25 @@ def _words(text: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
+def _and_self_links(model: SemanticModel, start: str, goal: str, through: str | None = None) -> list[Path]:
+    """Every row-safe path to ``goal``, and each of them followed one step further along a link of ``goal`` to
+    itself ("Manager": an employee's manager is another employee; "Parent account"). Such a link is never a
+    way to reach a table: only a role a question names follows it."""
+    paths = all_paths(model, start, goal, through=through)
+    selves = [j for j in _edges(model).get(goal, []) if j.to_table == goal and j.role]
+    return paths + [Path([*p.joins, j]) for j in selves for p in paths
+                    if not any(step.key == j.key for step in p.joins)]
+
+
 def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through: str | None = None) -> list[Path]:
     """The paths that go through a link named ``role`` ("Bill to customer", "Home store"), best first.
 
     Spelling is forgiven ("ship-to customer"), and so is a role written without its
-    target's noun ("Ship to" for "Ship to customer") when only one role starts so.
+    target's noun ("Ship to" for "Ship to customer") when only one role starts so. A table's link to
+    itself is followed by its role ("Manager" of an employee).
     """
     wanted = _words(role)
-    paths = all_paths(model, start, goal, through=through)
+    paths = _and_self_links(model, start, goal, through=through)
     named = {r for p in paths for r in roles(p)}
     chosen = {r for r in named if _words(r) == wanted}
     if not chosen and wanted:
@@ -230,4 +241,4 @@ def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through
 
 def role_names(model: SemanticModel, start: str, goal: str) -> list[str]:
     """The named links a question can choose between to reach ``goal`` from ``start``."""
-    return sorted({r for p in all_paths(model, start, goal) for r in roles(p)})
+    return sorted({r for p in _and_self_links(model, start, goal) for r in roles(p)})

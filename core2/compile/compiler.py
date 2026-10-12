@@ -28,12 +28,14 @@ import dataclasses
 import datetime as dt
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
+from core2.bootstrap.inventory import normalize_type
 from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
 from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, Part, PartGroup,
@@ -82,12 +84,18 @@ def _double(value: exp.Expression) -> exp.Expression:
     return exp.Cast(this=value, to=exp.DataType.build("DOUBLE"))
 
 
+def text_date(column: Any) -> bool:
+    """A column the database keeps as text that Learn found holds dates: read as a date wherever it is used."""
+    return column.data_type in ("date", "timestamp") and normalize_type(column.raw_type) == "text"
+
+
 def column_sql(model: SemanticModel, key: str, table: exp.Identifier | str | None, dialect: str) -> exp.Expression:
     """A column of the model as the warehouse reads it; a name held in parts ("first" and "last") as the parts
     joined by a space, an empty part left out."""
     column = model.columns[key]
     if not column.parts:
-        return exp.column(D.ident(column.name, dialect), table=table)
+        stored = exp.column(D.ident(column.name, dialect), table=table)
+        return D.text_date(stored, column.data_type, dialect) if text_date(column) else stored
     joined: exp.Expression | None = None
     for part in column.parts:
         piece = exp.Coalesce(this=exp.column(D.ident(model.columns[part].name, dialect), table=table),
@@ -445,6 +453,11 @@ class _Compiler:
         raise CompileError("this measure is a total: it has no value on each row")
 
     def operate(self, expr: OpExpr, a: exp.Expression, b: exp.Expression) -> exp.Expression:
+        if expr.op in ("add", "subtract"):
+            # A sum over no rows is nought when added or taken away (a division with no revenue accounts still has
+            # its expenses as a loss), never an empty figure.
+            a, b = (exp.Coalesce(this=x, expressions=[_num(0)]) if isinstance(x, (exp.Sum, exp.Count)) else x
+                    for x in (a, b))
         if expr.op == "ratio":
             result: exp.Expression = D.div(_double(a), exp.Nullif(this=b, expression=_num(0)))
         elif expr.op == "subtract":

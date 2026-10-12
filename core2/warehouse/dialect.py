@@ -394,6 +394,28 @@ def day_start(value: exp.Expression, dialect: str) -> exp.Expression:
     return _fill(text, dialect, value)
 
 
+# Text that holds dates written year first ("2024-03-01", "2024-03-01 15:40:46", "2024-03-01T15:40:46"), as the
+# database keeps them after a load from a file or another database. Read as a date, a value that is not one is no
+# date (NULL), never an error that stops the question.
+_TEXT_DATE = {
+    "date": {"snowflake": "TRY_TO_DATE(LEFT(__X__, 10))", "tsql": "TRY_CONVERT(DATE, LEFT(__X__, 10))",
+             "oracle": "CASE WHEN REGEXP_LIKE(__X__, '^[0-9]{4}-[0-9]{2}-[0-9]{2}') "
+                       "THEN TO_DATE(SUBSTR(__X__, 1, 10), 'YYYY-MM-DD') END",
+             "postgres": "CASE WHEN __X__ ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN CAST(LEFT(__X__, 10) AS DATE) END",
+             "duckdb": "TRY_CAST(LEFT(__X__, 10) AS DATE)"},
+    "timestamp": {"snowflake": "TRY_TO_TIMESTAMP(__X__)", "tsql": "TRY_CONVERT(DATETIME2, __X__)",
+                  "oracle": "CASE WHEN REGEXP_LIKE(__X__, '^[0-9]{4}-[0-9]{2}-[0-9]{2}') "
+                            "THEN TO_TIMESTAMP(REPLACE(SUBSTR(__X__, 1, 19), 'T', ' '), 'YYYY-MM-DD HH24:MI:SS') END",
+                  "postgres": "CASE WHEN __X__ ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN CAST(__X__ AS TIMESTAMP) END",
+                  "duckdb": "TRY_CAST(__X__ AS TIMESTAMP)"},
+}
+
+
+def text_date(value: exp.Expression, kind: str, dialect: str) -> exp.Expression:
+    """A text column holding dates, read as a ``kind`` ("date" or "timestamp")."""
+    return _fill(_TEXT_DATE["timestamp" if kind == "timestamp" else "date"][dialect], dialect, value)
+
+
 def sample_clause(dialect: str, *, rows: int, total_rows: int) -> str:
     """Text placed after a table reference to profile a sample of about ``rows`` rows."""
     percent = max(0.01, min(100.0, 100.0 * rows / max(total_rows, 1)))

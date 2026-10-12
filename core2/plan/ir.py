@@ -79,6 +79,16 @@ class Derived(_Strict):
     scale: float = 1.0               # 100 for a percentage
 
 
+class Rate(_Strict):
+    """The share of a figure whose rows meet a condition, for each group: "cancellation rate by region" is the
+    orders with status Cancelled over all orders, in each region (never the share of all cancellations each
+    region holds)."""
+
+    name: str                        # "Cancellation rate"
+    measure: str                     # the figure: number_of_orders, net_amount
+    where: list[Filter] = Field(min_length=1)    # the condition on its rows: status eq ["CANCELLED"]
+
+
 class Duration(_Strict):
     """Days from one date of the same rows to another: "days from order to invoice"."""
 
@@ -257,6 +267,7 @@ class Plan(_Strict):
     intent: Intent | None = None
     measures: list[str] = Field(default_factory=list)
     derived: list[Derived] = Field(default_factory=list)
+    rates: list[Rate] = Field(default_factory=list)
     durations: list[Duration] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)       # attribute slugs and time:... attributes
     via: dict[str, str] = Field(default_factory=dict)       # attribute slug -> the entity it is reached through

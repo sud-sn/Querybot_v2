@@ -22,7 +22,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from core2.bootstrap import names
-from core2.model.schema import DateRole, Measure, SemanticModel
+from core2.model.schema import AggExpr, DateRole, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
@@ -51,7 +51,12 @@ How to plan:
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
    derived with a short name, the op and the two slugs (scale 100 for a percentage); a part may be an
    earlier derived's name: a margin % is the ratio of a derived difference (sales less cost) to the sales,
-   scale 100, never sales over cost. Days between two
+   scale 100, never sales over cost. A figure times a number (ARR as 12 times MRR) is a product of the slug
+   with itself and the number as scale; a change or "% increase" from one period to another is never a derived
+   of a measure with itself: it is time.compare, sorted by change or pct_change. A rate of a condition ("the
+   cancellation rate by region", "% of orders returned", "share of lines late", "reversal rate") goes in rates:
+   a short name, the measure counted (number_of_orders) and where, the condition on that measure's own rows
+   (status eq ["C"]); each group's rate is of its own whole, and the condition is no filter. Days between two
    dates of the same rows ("days from order to invoice", "how long to invoice", "delivery delay", "lead
    time") go in durations: a short name, start and end (two date slugs on one table, the earlier event as
    start) and agg (avg; max for "longest", min for "shortest", sum for "total days"). To keep only rows by
@@ -77,6 +82,8 @@ How to plan:
    named by its number ("FY2026", "fiscal year 2026", "H1 FY26", "Q3 FY26") -> kind "between" with the dates
    FISCAL YEARS gives for it. A quarter, half or year the question does not call fiscal ("Q2 2026", "in 2025")
    is the calendar's: "Q2 2026" -> 2026-04-01 to 2026-06-30.
+   In French, a quarter is a "trimestre" written T1 to T4 ("T1 2025" is Q1 2025), a half a "semestre" written
+   S1 or S2, and an "exercice" a fiscal year ("l'exercice 2026" is FY2026).
    No window when the user gave none: everything is the default. "Latest", "current", "now", "on the latest
    snapshot" for a stock, balance or other snapshot figure is no window either: the latest snapshot is the
    default.
@@ -1298,6 +1305,22 @@ def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> lis
     return problems
 
 
+def _figure_against_figure(plan: Plan, model: SemanticModel) -> list[str]:
+    """A filter that compares a figure with another figure ("stores whose sales were below target") written as
+    the other figure's name in quotes: the database compared the sales with the text 'target_amount' and refused."""
+    from core2.resolve.resolver import find_slug
+
+    out = []
+    for f in plan.filters:
+        named = [v for v in f.values if isinstance(v, str) and (found := find_slug(model, v)) is not None
+                 and found[0] == "measure"]
+        if named:
+            out.append(f"the filter on {f.field} compares it with {named[0]}, another figure, as if it were a value: "
+                       "a figure against its target is the plan's target; any other comparison of two figures is a "
+                       "derived difference (the first less the second), filtered on its name (lt 0 for below).")
+    return out
+
+
 def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
     """ "What are the most common sales reasons on internet orders?" was planned as the number of sales reasons
     by sales reason: 1 each. A count of a list's own members grouped by those members says nothing; how often
@@ -1313,8 +1336,10 @@ def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
                 *entity.key_columns, entity.code_column, entity.label_column):
             continue
         own = {entity.label_column, entity.code_column, *entity.key_columns} - {None}
-        if not any(g == entity.slug or g in model.attributes and model.attributes[g].column in own
-                   for g in plan.group_by):
+        # Grouped through a link of the list to itself ("by manager": each manager's employees), it is no
+        # longer each member counting itself.
+        if not any((g == entity.slug or g in model.attributes and model.attributes[g].column in own)
+                   and not plan.via.get(g) for g in plan.group_by):
             continue
         plural = names.plural((entity.business_name or entity.slug).lower())
         others = [x.slug for x in model.measures.values() if not x.hidden and x.table != m.table and x.slug
@@ -1410,6 +1435,9 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
     shape = _shape(plan, model, question)
     if shape:
         return shape, ""
+    compared = _figure_against_figure(plan, model)
+    if compared:
+        return compared, ""
     try:
         resolve(plan, model, Context(today=today))
     except ResolveError as exc:
@@ -1669,10 +1697,132 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                     plan = kept
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
+    ways = ways_on(tried, model) or main_figures(model, question)
     return Outcome(Plan(kind="clarify", clarify=Clarify(
-        about="other", question="I could not work out how to answer that from this data. Could you say it "
-        "another way, naming what to measure and for when?")), repaired=True, problems=problems, raw=raw,
-        masked=masked, tried=tried)
+        about="other", options=ways,
+        question=("I could not work out how to answer that as asked. These I can answer" if ways else
+                  "I could not work out how to answer that from this data. Could you say it another way, naming "
+                  "what to measure and for when?"))), repaired=True, problems=problems, raw=raw, masked=masked,
+        tried=tried)
+
+
+def _period_words(window: Window) -> str:
+    """A window as a question writes it: "in 2025", "from 1 Mar 2025 to 31 May 2025", "in the last 3 months"."""
+    if window.kind == "between" and window.start and window.end:
+        if (window.start.month, window.start.day, window.end.month, window.end.day) == (1, 1, 12, 31) \
+                and window.start.year == window.end.year:
+            return f"in {window.start.year}"
+        return f"from {window.start:%-d %b %Y} to {window.end:%-d %b %Y}"
+    if window.kind == "last" and window.unit:
+        n = window.n or 1
+        return f"in the last {n} {window.unit}s" if n > 1 else f"in the last {window.unit}"
+    if window.kind == "this" and window.unit:
+        return f"this {window.unit}"
+    return ""
+
+
+def main_figures(model: SemanticModel, question: str) -> list[str]:
+    """The main figures of the data ("show me the 2025 numbers"): the money, then the count, of its largest
+    tables of events, for the year the question names."""
+    year = re.search(r"\b(?:19|20)\d{2}\b", question or "")
+    period = f" in {year.group()}" if year else ""
+    facts = sorted((t for t in model.tables.values() if t.kind == "fact"), key=lambda t: -(t.row_count or 0))
+    out: list[str] = []
+    for table in facts[:2]:
+        own = [m for m in model.measures.values() if m.table == table.key and m.status != "rejected"]
+        # What a business reads first: the net or the revenue before the gross, a discount or a tax; the documents
+        # (orders) before their lines.
+        def first(m) -> tuple:
+            words = set(re.findall(r"[a-z]+", m.business_name.lower()))
+            return (not words & {"net", "revenue", "sales", "turnover", "income"},
+                    bool(words & {"gross", "discount", "tax", "cost", "fee", "refund", "freight", "shipping"}),
+                    m.business_name)
+
+        money = sorted((m for m in own if m.format == "currency" and m.additivity == "additive"), key=first)
+        counts = sorted((m for m in own if m.format == "count" and m.kind != "model"),
+                        key=lambda m: (not (isinstance(m.expr, AggExpr) and m.expr.agg == "count_distinct"),
+                                       m.business_name))
+        for m in (money[:1] + counts[:1]):
+            out.append(f"{m.business_name}{period}")
+    return list(dict.fromkeys(out))[:4]
+
+
+def ways_on(tried: Plan | None, model: SemanticModel) -> list[str]:
+    """Questions the data answers that are nearest the one that could not be planned: each figure the planner
+    tried, for the period it read, split as it read it -- one click each, never a dead end."""
+    if tried is None or tried.kind != "query":
+        return []
+    from core2.resolve.resolver import find_slug
+
+    period = _period_words(tried.time.window)
+    split = ""
+    for slug in tried.group_by[:1]:
+        found = find_slug(model, slug)
+        if found is not None and found[0] in ("attribute", "entity"):
+            # A field that names a list's members ("Store name") is said as the list ("by store").
+            entity = model.entities.get(getattr(found[1], "entity", None) or "") if found[0] == "attribute" else None
+            split = f" by {(entity or found[1]).business_name.lower()}"
+    out: list[str] = []
+    for slug in tried.measures[:3]:
+        found = find_slug(model, slug)
+        if found is None or found[0] != "measure":
+            continue
+        name = getattr(found[1], "business_name", "") or slug.replace("_", " ")
+        for text in (f"{name}{split} {period}".strip(), f"{name} {period}".strip()):
+            if text not in out:
+                out.append(text)
+    return out[:4]
+
+
+# What a member of a list did that its own dates record: "customers who signed up in 2025" are counted by the
+# customer's signup date, "subscriptions cancelled in 2025" by the subscription's end date -- never by what they
+# did on the invoices of that year (a customer invoiced in 2025 may have signed up in 2022).
+_STARTED = re.compile(r"\b(?:sign(?:ed|s|ing)?[\s-]*ups?|join(?:ed|s|ing)?|start(?:ed|s|ing)?|began|begin|"
+                      r"open(?:ed|s)?|creat(?:ed|es|ion)|regist(?:ered|ers|ration)|enroll?(?:ed|s|ment)?|hired?|"
+                      r"onboard(?:ed)?|inscri(?:ts?|tes?|ption)|embauch(?:é|ée|és|ées))\b", re.IGNORECASE)
+_ENDED = re.compile(r"\b(?:cancel(?:l?ed|s|l?ation)?|churn(?:ed|s)?|terminat(?:ed|es|ion)|end(?:ed|s)?|clos(?:ed|es)|"
+                    r"left|leav(?:e|es|ing)|quit|expir(?:ed|es|y|ation)|lapsed|résili(?:é|ée|és|ées|ation)|"
+                    r"annul(?:é|ée|és|ées|ation)|partis?)\b", re.IGNORECASE)
+_START_WORDS = frozenset({"start", "signup", "sign", "join", "joined", "created", "creation", "open", "opened",
+                          "registration", "registered", "hire", "hired", "enrolled", "enrollment", "begin", "onboard"})
+_END_WORDS = frozenset({"end", "ended", "cancel", "cancelled", "canceled", "cancellation", "termination", "terminated",
+                        "churn", "churned", "close", "closed", "expiry", "expiration", "leave", "left", "exit"})
+
+
+def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
+    """Does a rate's condition name a column whose rows a table leaves out by default?"""
+    from core2.resolve.resolver import find_slug
+
+    left_out = {df.column for t in model.tables.values() for df in t.default_filters}
+    for rate in plan.rates:
+        for f in rate.where:
+            found = find_slug(model, f.field)
+            if found is not None and getattr(found[1], "column", None) in left_out:
+                return True
+    return False
+
+
+def _lists_own_date(plan: Plan, model: SemanticModel, question: str) -> str | None:
+    """The date of the list a count of its members is about, by the question's words (``_STARTED``,
+    ``_ENDED``), when the list has exactly one date of that kind; else None."""
+    started, ended = bool(_STARTED.search(question or "")), bool(_ENDED.search(question or ""))
+    if started == ended or plan.kind != "query":
+        return None
+    from core2.resolve.resolver import find_slug
+
+    words = _START_WORDS if started else _END_WORDS
+    for slug in plan.measures:
+        found = find_slug(model, slug)
+        if found is None or found[0] not in ("measure", "count"):
+            continue
+        table = model.tables.get(getattr(found[1], "table", ""))
+        if table is None or table.kind != "dimension":
+            continue
+        roles = [r for r in model.date_roles_of(table.key) if r.kind != "audit"
+                 and set(re.findall(r"[a-z]+", r.name.lower())) & words]
+        if len(roles) == 1:
+            return roles[0].slug
+    return None
 
 
 # "The most", "the top 10": highest first. "The least", "the bottom 5": lowest first ("at least 5" is neither).
@@ -1741,6 +1891,12 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
             and not the_series \
             and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", question, re.IGNORECASE):
         time = time.model_copy(update={"grain": None})
+    if plan.rates and not plan.include_left_out and _rate_on_left_out(plan, model):
+        # "Cancellation rate": the rows a table leaves out by default (cancelled ones) are what it counts.
+        update["include_left_out"] = True
+    own = _lists_own_date(plan, model, question) if not time.date and time.window.kind != "all" else None
+    if own is not None:
+        time = time.model_copy(update={"date": own})
     if time != plan.time:
         update["time"] = time
     if plan.sort and plan.sort[0].by not in ("change", "pct_change", "share", "period"):
@@ -1788,10 +1944,16 @@ def _reshaped(plan: Plan, previous: Plan, question: str, model: SemanticModel | 
             measures = [m for m in plan.measures if m not in previous.measures or m in named] or plan.measures
             shown = {*measures, *(d.name for d in plan.derived)}
             sort = [s for s in plan.sort if s.by in shown or s.by in ("change", "pct_change", "share", "period")]
-            if not sort and measures:
+            if not sort and measures and not series:
                 sort = [Sort(by=measures[0], desc=True)]
+            # A series of those members ("their spend by month") runs month by month for each of them: the
+            # ranking's limit counted members, never rows of months (it showed 5 months of one supplier); the
+            # members themselves are found by name (those_members) or were named by the question.
+            limit = previous.limit if not series else None
+            if series:
+                sort = [s for s in sort if s.by == "period"]
             update.update({"group_by": [*previous.group_by, *(g for g in plan.group_by if g not in previous.group_by)],
-                           "sort": sort, "limit": previous.limit, "measures": measures})
+                           "sort": sort, "limit": limit, "measures": measures})
         else:
             measures = [*previous.measures, *(m for m in plan.measures if m not in previous.measures)]
             update.update({"group_by": list(previous.group_by), "sort": list(previous.sort), "limit": previous.limit,

@@ -22,6 +22,7 @@ import datetime as dt
 import decimal
 import hashlib
 import json
+import re
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -240,6 +241,8 @@ def _stats(column: InvColumn, dialect: str, exact: bool) -> list[tuple[str, exp.
 
 
 SHAPED = 0.8      # share of a column's values that must have a shape for the column to be read as it
+TEXT_DATES = 0.98  # share of a text column's values that must read as dates for it to be a date column
+_YEAR_FIRST = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$")
 _DIGITS = "0123456789"
 _PHONE_MARKS = "()-+. "
 # Street words, as they end a street's name or start the rest of an address: "12 Oak St", "8 Elm Road Suite 3".
@@ -293,7 +296,8 @@ def _personal_shapes(warehouse: Warehouse, table: InvTable, profiles: dict[str, 
     """Text whose values are emails, phone numbers, street addresses or national ID numbers, whatever the
     column is called: its pattern says so, and Learn treats it as personal data."""
     texts = [c for c in table.columns if c.data_type == "text" and profiles[c.name].non_null
-             and 5 <= (profiles[c.name].avg_len or 0) <= 80 and profiles[c.name].pattern is None]
+             and 5 <= (profiles[c.name].avg_len or 0) <= 80 and profiles[c.name].pattern is None
+             and not profiles[c.name].text_date]     # "2012-07-10" is a date, not a phone number
     if not texts:
         return
     # Each shape is a share of the values counted in the same query (the sample, when the table is sampled).
@@ -356,6 +360,46 @@ def _yyyymmdd(c: exp.Expression) -> exp.Expr:
 def _yyyymm(c: exp.Expression) -> exp.Expr:
     # Month 00 is allowed: period tables often hold a row for the whole year (202200).
     return exp.and_(_between(c.copy(), 190000, 210012), _between(_mod(c.copy(), 100), 0, 12))
+
+
+def _text_dates(warehouse: Warehouse, table: InvTable, profiles: dict[str, ColumnProfile], source: str,
+                dialect: str) -> None:
+    asked: list[tuple[str, str, exp.Expression]] = []
+    for column in table.columns:
+        p = profiles[column.name]
+        if column.data_type != "text" or not p.non_null or not _YEAR_FIRST.match(p.min or "") \
+                or not _YEAR_FIRST.match(p.max or ""):
+            continue
+        stored = _readable(column, dialect)
+        read = D.text_date(stored.copy(), "timestamp", dialect)
+        asked += [(column.name, "seen", exp.Count(this=stored)), (column.name, "read", exp.Count(this=read.copy())),
+                  (column.name, "timed", _count_if(exp.NEQ(this=read.copy(), expression=D.day_start(read.copy(), dialect)))),
+                  (column.name, "min", exp.Min(this=read.copy())), (column.name, "max", exp.Max(this=read.copy()))]
+    if not asked:
+        return
+    try:
+        values = _select(warehouse, asked, source, dialect, {}, table.name)
+    except Exception as error:  # noqa: BLE001 - the columns stay text: nothing else about them is lost
+        if not answers(warehouse):
+            raise
+        journal_of(warehouse).step(f"{table.name}: dates kept as text could not be read as dates ({reason(error)})")
+        return
+    got: dict[str, dict[str, Any]] = {}
+    for (name, stat, _), value in zip(asked, values):
+        if value is not _UNREAD:
+            got.setdefault(name, {})[stat] = value
+    for name, v in got.items():
+        seen, read, timed = int(v.get("seen") or 0), int(v.get("read") or 0), int(v.get("timed") or 0)
+        if not seen or read < TEXT_DATES * seen or v.get("min") is None:
+            continue
+        p = profiles[name]
+        p.text_date = "timestamp" if timed else "date"
+        p.time_share = timed / read
+        low, high = v["min"], v["max"]
+        if not timed:
+            low, high = (x.date() if isinstance(x, dt.datetime) else x for x in (low, high))
+        p.min, p.max, p.min_num, p.max_num = _text(low), _text(high), None, None
+        p.pattern = None
 
 
 def profile_table(warehouse: Warehouse, table: InvTable, options: ProfileOptions | None = None) -> TableProfile:
@@ -444,6 +488,12 @@ def _profile(warehouse: Warehouse, table: InvTable, options: ProfileOptions, row
         if column.data_type == "integer":
             profiles[column.name].integer_share = 1.0 if profiles[column.name].non_null else None
 
+    # 1b. dates kept as text ("2024-03-01", "2024-03-01 15:40:46"), as a load from a file or another database
+    # leaves them: a text column whose first and last values are dates written year first, and nearly every
+    # value of which reads as a date, is a date column. Its first and last dates and its times of day are read
+    # as a date column's are; every query then reads it as a date (core2/compile/compiler.py, ``text_date``).
+    _text_dates(warehouse, table, profiles, source, dialect)
+
     # 2. date shapes of integers
     shaped: list[tuple[str, str, exp.Expression]] = []
     for column in table.columns:
@@ -496,11 +546,13 @@ def _profile(warehouse: Warehouse, table: InvTable, options: ProfileOptions, row
     dated: list[tuple[str, str, exp.Expression]] = []
     for column in table.columns:
         p = profiles[column.name]
-        if column.data_type not in ("date", "timestamp") or not p.min or not p.max:
+        if (p.text_date or column.data_type) not in ("date", "timestamp") or not p.min or not p.max:
             continue
         if FIRST_REAL_DAY.isoformat() <= p.min[:10] and p.max[:10] < AFTER_REAL_DAY.isoformat():
             continue
         c = exp.column(D.ident(column.name, dialect))
+        if p.text_date:
+            c = D.text_date(c, p.text_date, dialect)
         real = exp.and_(exp.GTE(this=c.copy(), expression=D.date_literal(FIRST_REAL_DAY, dialect)),
                         exp.LT(this=c.copy(), expression=D.date_literal(AFTER_REAL_DAY, dialect)))
         other = exp.and_(exp.not_(exp.Is(this=c.copy(), expression=exp.Null())), exp.not_(real.copy()))
@@ -565,7 +617,7 @@ def _profile(warehouse: Warehouse, table: InvTable, options: ProfileOptions, row
 
     for column in table.columns:
         p = profiles[column.name]
-        if p.pattern is None:
+        if p.pattern is None and not p.text_date:
             p.pattern = _pattern(column, p)
     return TableProfile(rows=rows, sampled=sampled, columns=profiles, unread=unread)
 

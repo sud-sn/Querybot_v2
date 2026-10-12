@@ -36,7 +36,7 @@ from core2.model.schema import (
     value_names,
 )
 from core2.plan.catalog import left_out_note, left_out_words
-from core2.plan.ir import ALL_TIMES, CALENDAR_TIMES, HOUR, TIME_ATTRIBUTES, YES_NO_TIMES, Duration, Filter, Plan
+from core2.plan.ir import ALL_TIMES, CALENDAR_TIMES, HOUR, TIME_ATTRIBUTES, YES_NO_TIMES, Duration, Filter, Plan, Rate
 from core2.resolve import paths as P
 from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
                                 year_basis)
@@ -373,6 +373,19 @@ def find_slug(model: SemanticModel, slug: str) -> tuple[str, object] | None:
 _NO_NAME = re.compile(r"^\s*(.+?)\s+\(no name\)\s*$")
 
 
+def _own_unit(model: SemanticModel, part: "Part", column: Column) -> Column | None:
+    """The unit column of a measure this part counts, when a filter names a unit kept under the same name on a
+    table the rows reach (each row's unit of measure, beside its item's): the row's own."""
+    if column.table == part.table:
+        return None
+    for out in part.measures:
+        key = out.measure.unit_column if out.measure is not None else None
+        own = model.columns.get(key) if key else None
+        if own is not None and own.table == part.table and own.name.casefold() == column.name.casefold():
+            return own
+    return None
+
+
 def _no_name_keys(f: Filter) -> list | None:
     """The keys a filter names as members shown with no name ("1000291 (no name)"), each as a number when it is one;
     None unless every value is one."""
@@ -637,6 +650,42 @@ def _measure_expr(model: SemanticModel, measure: Measure) -> MeasureExpr:
     return inline(measure.expr)
 
 
+def _rate(model: SemanticModel, plan: Plan, rate: Rate, chosen: list, notes: list[str], ctx: Context) -> None:
+    """A rate (plan.rates): the figure on the rows that meet the condition, over the figure on all of them, as a
+    percentage -- in each group of the answer, each its own whole."""
+    found = find_slug(model, rate.measure)
+    if not found or found[0] != "measure":
+        raise ResolveError("unknown", f"no measure called {rate.measure}", _closest(rate.measure, _slugs(model, "measure")))
+    m = found[1]
+    assert isinstance(m, Measure)
+    base = _with_filters(_measure_expr(model, m), m.filters)
+    if not isinstance(base, AggExpr) or base.agg not in ("count", "count_distinct", "sum"):
+        raise ResolveError("unsupported", f"{rate.name} is a rate of a count or a total; {m.business_name} is "
+                           "neither")
+    conds: list[ColumnFilter] = []
+    said: list[str] = []
+    for f in rate.where:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the rows by called {f.field}",
+                               _closest(f.field, _slugs(model, "attribute")))
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        if column.table != m.table:
+            raise ResolveError("unsupported", f"{rate.name}: the condition is on {m.business_name}'s own rows "
+                               f"({model.tables[m.table].business_name}); {attribute.business_name} is on "
+                               f"{model.tables[column.table].business_name}")
+        column_filter, stored = _named_filter(column, f)
+        conds.append(ColumnFilter(column=column.key, op=column_filter.op, values=list(stored)))
+        said.append(f"{attribute.business_name} {_op_words(column_filter)}")
+    part = AggExpr(agg=base.agg, column=base.column, filters=[*base.filters, *conds], table=base.table)
+    chosen.append((None, OpExpr(op="ratio", args=[part, base], scale=100), m.table, rate.name, "percent"))
+    notes.append(f"{rate.name} = {m.business_name} where {' and '.join(said)}, over all {m.business_name}, as a "
+                 "percentage of each group's own.")
+
+
 def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr:
     if not filters:
         return expr
@@ -788,6 +837,16 @@ def _expr_columns(expr: object) -> list[str]:
     return [c for arg in getattr(expr, "args", []) for c in _expr_columns(arg)]
 
 
+def _measure_columns(model: SemanticModel, expr: object, depth: int = 0) -> list[str]:
+    """The columns a measure adds up, following the measures it refers to."""
+    if isinstance(expr, RefExpr):
+        ref = model.measures.get(expr.measure)
+        return _measure_columns(model, ref.expr, depth + 1) if ref is not None and depth < 5 else []
+    if isinstance(expr, (AggExpr, SqlExpr)):
+        return _expr_columns(expr)
+    return [c for arg in getattr(expr, "args", []) for c in _measure_columns(model, arg, depth + 1)]
+
+
 def _date_role_for(model: SemanticModel, plan: Plan, measure: Measure | None, table: str) -> DateRole | None:
     if plan.time.date:
         found = find_slug(model, plan.time.date)
@@ -854,9 +913,12 @@ def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> 
         return None
     facts = list(dict.fromkeys(j.from_table for j in links))
     if len(facts) > 1:
+        # What they did on each table, or the list's own dates ("Signup date": the customers who signed up then).
         dates = [model.date_roles[model.tables[f].default_date or ""] for f in facts]
+        dates += [r for r in model.date_roles_of(measure.table) if r.kind != "audit" and r not in dates]
+        own = " or by a date of their own" if any(d.table == measure.table for d in dates) else ""
         error = ResolveError("ambiguous", f"{plural(table.business_name)} in a period are counted by what they did "
-                             "in it", [d.name for d in dates])
+                             f"in it{own}", [d.name for d in dates])
         error.field = "time.date"
         raise error
     # One link from that table, or the most trusted, best-matched of several (a bill-to and a ship-to customer).
@@ -945,7 +1007,8 @@ def _via_words(model: SemanticModel, plan: Plan, slug: str) -> str:
     if not named:
         return ""
     found = find_slug(model, named)
-    return found[1].business_name if found and found[0] == "entity" and isinstance(found[1], Entity) else named
+    return found[1].business_name if found and found[0] == "entity" and isinstance(found[1], Entity) else \
+        named.removeprefix("role:").strip()
 
 
 def _plain(text: str) -> str:
@@ -990,9 +1053,19 @@ def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     return _resolve(plan, model, ctx)
 
 
+# A part of the calendar each period of a grain falls in once: by it, a series of those periods says nothing more
+# ("the busiest day of the week" planned as every day and its weekday counted each date apart).
+_ONE_PER_PERIOD = {"time:day_of_week": {"day"}, "time:is_weekend": {"day"},
+                   "time:month_of_year": {"day", "week", "month"}, "time:quarter_of_year": {"day", "week", "month",
+                                                                                            "quarter"}}
+
+
 def _resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.kind != "query":
         raise ResolveError("unsupported", f"a {plan.kind} plan is not a query")
+    grain = plan.time.grain
+    if grain and any(grain in _ONE_PER_PERIOD.get(slug, set()) for slug in plan.group_by):
+        plan = plan.model_copy(update={"time": plan.time.model_copy(update={"grain": None})})
     if plan.target is not None:
         from core2.resolve.shapes import with_target
 
@@ -1081,6 +1154,8 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             notes.append(f"{m.business_name} here is the one on {here}; " + (
                 f"{' and '.join(others)} {'has' if len(others) == 1 else 'have'} a figure of the same name"
                 if here not in others else "another figure has the same name") + ".")
+    for rate in plan.rates:
+        _rate(model, plan, rate, chosen, notes, ctx)
     # A derived measure may be made of an earlier one ("gross margin %" of a "gross profit" worked out first):
     # that one is worked out inside it, and shown on its own only when the plan sorts or filters by it.
     made: dict[str, tuple[MeasureExpr, list[Measure], str, str]] = {}    # name -> (tree, measures, format, label)
@@ -1099,6 +1174,24 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             assert isinstance(m, Measure)
             parts.append((RefExpr(measure=m.key), [m], m.format, m.business_name))
         (tree_a, of_a, fmt_a, label_a), (tree_b, of_b, fmt_b, label_b) = parts
+        if _plain(d.measures[0]) == _plain(d.measures[1]):
+            # A figure taken from or divided by itself is always 0 or 1 ("% increase" as (x - x) / x ranked every
+            # item at 0%); "ARR" as MRR x MRR x 12 squared it. A figure times a number is the figure with that
+            # number as the scale; a change is the comparison of two periods.
+            if d.op != "product" or d.scale == 1:
+                raise ResolveError("unsupported", f"{d.name} would take {label_a} with itself, which is always "
+                                   f"{'0' if d.op == 'difference' else '1' if d.op == 'ratio' else 'twice the figure'}"
+                                   ": a change from one period to another is a comparison of the two periods "
+                                   "(time.compare, sorted by pct_change), and a figure times a number is a product "
+                                   "of the figure with itself with that number as its scale")
+            fmt = fmt_a if fmt_a in ("currency", "count", "integer", "number") else "number"
+            tree = OpExpr(op="add", args=[tree_a, tree_b], scale=d.scale / 2)
+            made[_plain(d.name)] = (tree, [*of_a], fmt, d.name)
+            notes.append(f"{d.name} = {label_a} × {d.scale:g}, worked out for this question (not a saved measure "
+                         "yet).")
+            if _plain(d.name) not in inside:
+                chosen.append((None, _inlined(model, tree), of_a[0].table, d.name, fmt))
+            continue
         op = {"ratio": "ratio", "difference": "subtract", "sum": "add", "product": "multiply"}[d.op]
         fmt = "percent" if d.scale == 100 else "number"
         if d.scale == 1 and (d.op in ("difference", "sum") and fmt_a == fmt_b == "currency"
@@ -1198,7 +1291,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             compare = shift(window, c.kind)
         intent = "compare"
         if not all(semi for _, semi in by_part):
-            window, compare, cut = _like_for_like(window, compare, last, c.kind)
+            window, compare, cut = _like_for_like(window, compare, last, c.kind, today=ctx.today)
             if cut:
                 notes.append(cut)
 
@@ -1469,6 +1562,14 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if attribute.kind == "text" and f.op not in ("contains", "starts_with", "eq", "ne", "is_null", "not_null"):
                 raise ResolveError("unsupported", f"{attribute.business_name} is free text: search it with contains")
             column = model.columns[attribute.column]
+            own = _own_unit(model, part, column)
+            if own is not None:
+                # "Only the ones counted in EA": the unit each row is counted in, not its item's usual unit kept
+                # under the same name on the item list (which may not even hold the row's item).
+                part.preds.append(Pred(part.alias, own.key, f.op, list(f.values if stored is None else stored),
+                                       f"{attribute.business_name} {_op_words(f)}"))
+                took.append(part)
+                continue
             through, link_role = _via(model, plan, f.field)
             try:
                 alias = _reach(builder, column.table, f.field, through, link_role, attribute.business_name,
@@ -1775,8 +1876,9 @@ def _unit_split(plan: Plan, model: SemanticModel, ctx: Context, intent: str, cho
     for m, *_ in chosen:
         if m is None or not m.unit_column:
             continue
-        column = getattr(m.expr, "column", None)
-        if not any(f.kind == "unit_mix" and f.object == column for f in model.quality):
+        # The columns it adds up, through a formula or the measures it is made of (revenue less expenses).
+        columns = set(_measure_columns(model, m.expr))
+        if not any(f.kind == "unit_mix" and f.object in columns for f in model.quality):
             continue
         unit_column = model.columns[m.unit_column]
         attribute = next((a for a in model.attributes.values() if a.column == m.unit_column), None)
@@ -1858,18 +1960,24 @@ def _reach(builder: _PartBuilder, table: str, slug: str, through: str | None, ro
         raise
 
 
-def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: str) -> tuple[Range, Range, str]:
+def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: str, *,
+                   today: dt.date | None = None) -> tuple[Range, Range, str]:
     """A current period the data covers only in part, set against the same part of the other one.
 
     "This month vs last month" on the 10th compares the 1st to the 10th of each
     month; "this year vs last year" compares up to the same day of each year. A
-    whole period set against a part of one is a fall that never happened.
+    whole period set against a part of one is a fall that never happened. A period that has ended, whose
+    data stops only a few quiet days before its end (the last sale of 2025 on 22 December, asked in 2026), is
+    a whole one: trimmed, 2024 lost its last nine days and the change turned around.
     """
     if last is None or None in (window.start, window.end, compare.start, compare.end):
         return window, compare, ""
     assert window.start and window.end and compare.start and compare.end
     covered_to = last + dt.timedelta(days=1)
     if not window.start < covered_to < window.end:
+        return window, compare, ""
+    quiet = (window.end - covered_to).days
+    if today is not None and window.end <= today and quiet <= max(3, 0.03 * (window.end - window.start).days):
         return window, compare, ""
     if kind == "same_period_last_year":
         prior_end = year_back(covered_to)

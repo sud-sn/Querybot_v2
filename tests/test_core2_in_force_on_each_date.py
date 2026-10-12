@@ -125,3 +125,23 @@ def test_active_subscriptions_with_an_empty_end_match_the_monthly_snapshot():
     (february,), = built.con.execute("SELECT COUNT(*) FROM subscriptions WHERE start_date < DATE '2025-03-01' AND "
                                      "(end_date IS NULL OR end_date >= DATE '2025-03-01')").fetchone(),
     assert "2025-02-01" not in map(str, own) and shown["2025-02-01"] == february
+
+
+def test_with_no_period_asked_it_is_one_figure_as_of_the_datas_last_date(hr):
+    """"How many employees are active?" was a month-by-month series up to today, past the data's end, every
+    open row still counted in months nobody has data for: one figure, at the latest date the data holds."""
+    built, _ = hr
+    got = _ask(hr, {"active": {**ACTIVE, "status": "active"}, "time": {}})
+    assert len(got["export_rows"]) == 1
+    last = built.con.execute("SELECT GREATEST(MAX(hire_date), MAX(CASE WHEN termination_date < DATE '9000-01-01' "
+                             "THEN termination_date END)) FROM employees").fetchone()[0]
+    assert str(got["export_rows"][0]["period"])[:7] == str(last)[:7]
+
+
+def test_a_window_running_past_the_data_stops_where_the_data_does(hr):
+    built, _ = hr
+    got = _ask(hr, {"active": ACTIVE, "time": {"window": {"kind": "between", "start": "2025-01-01",
+                                                          "end": "2030-12-31"}, "grain": "month"}})
+    last = built.con.execute("SELECT GREATEST(MAX(hire_date), MAX(CASE WHEN termination_date < DATE '9000-01-01' "
+                             "THEN termination_date END)) FROM employees").fetchone()[0]
+    assert max(str(r["period"])[:7] for r in got["export_rows"]) <= str(min(last, TODAY))[:7]

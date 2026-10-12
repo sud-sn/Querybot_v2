@@ -280,9 +280,22 @@ def _member_of(model: SemanticModel, of: str) -> tuple[str | None, str | None, s
                 if word.startswith(lead):
                     word = word[len(lead):]
             return None, column, _singular(word)
+    # "Per booking": the thing a count measure counts ("Number of bookings"), named by itself -- the average
+    # revenue per booking is each booking's revenue, then their average.
+    counts = {}
+    for m in model.measures.values():
+        if isinstance(m.expr, AggExpr) and m.expr.agg in ("count", "count_distinct") and not m.expr.filters \
+                and not m.filters and m.table in model.tables:
+            word = m.business_name.lower()
+            for lead in ("number of ", "count of ", "no. of "):
+                word = word.removeprefix(lead)
+            counts.setdefault(_singular(word), m.slug)
+    wanted = _singular(of.replace("_", " ").replace(".", " ").strip().lower())
+    if wanted in counts and counts[wanted] != of:
+        return _member_of(model, counts[wanted])
     raise ResolveError("unknown", f"nothing to work out each figure for called {of}: name a customer, product or "
                        "other thing the data lists, or a count such as the number of orders",
-                       sorted(model.entities)[:12])
+                       [*sorted(model.entities)[:12], *sorted(counts.values())[:8]])
 
 
 def _singular(word: str) -> str:
@@ -1090,8 +1103,17 @@ def _active(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                             fiscal_start=model.settings.fiscal_year_start_month)
     if window.start is None:
         window = Range(first, window.end)
-    end_cap = min(d for d in (window.end, ctx.today + dt.timedelta(days=1)) if d is not None)
-    starts = periods(Range(window.start, end_cap), grain)
+    # Never past the data's last date: what was in force after it is not known (every open item would still
+    # count, month after month, up to today).
+    _, ended_last = _first_last(end_role)
+    data_end = max((d for d in (last, ended_last) if d is not None), default=None)
+    end_cap = min(d for d in (window.end, ctx.today + dt.timedelta(days=1),
+                              data_end + dt.timedelta(days=1) if data_end else None) if d is not None)
+    if plan.time.window.kind == "all" and plan.time.grain is None and data_end is not None:
+        # "How many subscriptions are active, by plan?": one figure, as of the latest date the data holds.
+        starts = [unit_start(data_end, grain, fiscal_start=model.settings.fiscal_year_start_month)]
+    else:
+        starts = periods(Range(window.start, end_cap), grain)
     if not starts:
         raise ResolveError("unsupported", "no period to count in: name a window that has started")
     if len(starts) > MAX_PERIODS:

@@ -265,14 +265,14 @@ def _outlier_periods(warehouse: Warehouse, inventory: Inventory, calendars: dict
         if default.via_calendar:
             cal = calendars[default.via_calendar.to_table]
             ct = inventory.tables[cal.table]
-            day: exp.Expression = exp.column(D.ident(cal.date_column, d), table="c")
+            day: exp.Expression = ct.read(cal.date_column, d, table="c")
             query = exp.select().from_(f).join(
                 exp.to_table("__CAL__").as_("c"),
                 on=exp.EQ(this=exp.column(D.ident(default.column, d), table="f"),
                           expression=exp.column(D.ident(default.via_calendar.to_column, d), table="c")))
             cal_sql = D.table_sql(ct.database, ct.schema, ct.name, d)
         else:
-            day = exp.column(D.ident(default.column, d), table="f")
+            day = table.read(default.column, d, table="f")
             if table.type_of(default.column) not in ("date", "timestamp"):
                 # A yyyymmdd key with no calendar to join: the date it holds. Compared with
                 # dates as a number it is refused (Azure SQL 206, "operand type clash").
