@@ -1,4 +1,4 @@
-"""What differs between Snowflake, Azure SQL, Oracle and DuckDB, in one place.
+"""What differs between Snowflake, Azure SQL, Oracle, PostgreSQL and DuckDB, in one place.
 
 The compiler builds sqlglot expressions and prints them per dialect. Where
 sqlglot does not print a construct faithfully for a dialect, the construct is a
@@ -21,8 +21,9 @@ import re
 import sqlglot
 from sqlglot import exp
 
-DIALECTS = ("snowflake", "tsql", "oracle", "duckdb")
-_BY_DB_TYPE = {"snowflake": "snowflake", "azure_sql": "tsql", "oracle": "oracle", "duckdb": "duckdb"}
+DIALECTS = ("snowflake", "tsql", "oracle", "postgres", "duckdb")
+_BY_DB_TYPE = {"snowflake": "snowflake", "azure_sql": "tsql", "oracle": "oracle", "postgres": "postgres",
+               "postgresql": "postgres", "duckdb": "duckdb"}
 
 
 def for_db_type(db_type: str) -> str:
@@ -32,7 +33,7 @@ def for_db_type(db_type: str) -> str:
         raise ValueError(f"no SQL dialect for database type {db_type!r}") from None
 
 
-# Words that must be quoted when used as identifiers in any of the four dialects.
+# Words that must be quoted when used as identifiers in any of the five dialects.
 # A superset is harmless (an unneeded quote changes nothing); a missing word breaks
 # a query, so the list errs long.
 RESERVED = frozenset("""
@@ -52,10 +53,13 @@ SCHEMA SELECT SESSION SESSION_USER SET SETUSER SHARE SHUTDOWN SIZE SMALLINT SOME
 SYNONYM SYSDATE SYSTEM_USER TABLE TABLESAMPLE TEXTSIZE THEN TO TOP TRAN TRANSACTION TRIGGER TRUE TRUNCATE
 TRY_CONVERT UID UNION UNIQUE UNPIVOT UPDATE UPDATETEXT USE USER USING VALIDATE VALUE VALUES VARCHAR VARCHAR2 VARYING
 VIEW WAITFOR WHEN WHENEVER WHERE WHILE WINDOW WITH WITHIN WRITETEXT YEAR MONTH DAY HOUR MINUTE SECOND
+ANALYSE ANALYZE ARRAY ASYMMETRIC BOTH COLLATION CONCURRENTLY DEFERRABLE DO FREEZE INITIALLY ISNULL LEADING
+LOCALTIME LOCALTIMESTAMP NOTNULL ONLY OVERLAPS PLACING RETURNING SIMILAR SYMMETRIC TRAILING VARIADIC VERBOSE
 """.split())
 
 _SIMPLE_UPPER = re.compile(r"[A-Z_][A-Z0-9_$#]*")
 _SIMPLE_ANY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SIMPLE_LOWER = re.compile(r"[a-z_][a-z0-9_$]*")
 
 
 def needs_quote(name: str, dialect: str) -> bool:
@@ -65,6 +69,9 @@ def needs_quote(name: str, dialect: str) -> bool:
     if dialect in ("snowflake", "oracle"):
         # Unquoted names fold to upper case: anything else was created quoted.
         return not _SIMPLE_UPPER.fullmatch(name)
+    if dialect == "postgres":
+        # Unquoted names fold to lower case: a name with a capital was created quoted.
+        return not _SIMPLE_LOWER.fullmatch(name)
     return not _SIMPLE_ANY.fullmatch(name)
 
 
@@ -138,15 +145,47 @@ def total(value: exp.Expression, data_type: str, dialect: str) -> exp.Expression
     return exp.Sum(this=value)
 
 
+class FloorDiv(exp.Expression, exp.Func):
+    """a / b rounded down to a whole number: printed per dialect (see :func:`floor_div`)."""
+
+    arg_types = {"this": True, "expression": True}
+
+
+def _floor_div_sql(self, node: FloorDiv) -> str:
+    return self.sql(exp.Floor(this=exp.Div(this=node.this, expression=node.expression, typed=True)))
+
+
+def _floor_div_postgres(self, node: FloorDiv) -> str:
+    # FLOOR returns a double precision, whose remainder PostgreSQL refuses ("operator does not exist:
+    # double precision % integer"): the whole number is cast back to one.
+    return self.sql(exp.Cast(this=exp.Floor(this=exp.Div(this=node.this, expression=node.expression, typed=True)),
+                             to=exp.DataType.build("BIGINT")))
+
+
+def _register_floor_div() -> None:
+    from sqlglot.dialects.dialect import Dialect
+    from sqlglot.generator import Generator
+
+    Generator.TRANSFORMS[FloorDiv] = _floor_div_sql
+    for name in DIALECTS:
+        Dialect.get_or_raise(name).generator_class.TRANSFORMS[FloorDiv] = (
+            _floor_div_postgres if name == "postgres" else _floor_div_sql)
+
+
+_register_floor_div()
+
+
 def floor_div(a: exp.Expression | int | float, b: exp.Expression | int | float) -> exp.Expression:
-    """a / b rounded down, in a's own exact type: a key's leading digits (20260131 -> 202601).
+    """a / b rounded down, as a whole number: a key's leading digits (20260131 -> 202601).
 
     div() is a true division, which sqlglot writes for Azure SQL as
     CAST(a AS FLOAT) / b; Azure SQL then refuses the remainder of it (error 402,
     "float and int are incompatible in the modulo operator"), so the month of a
-    yyyymmdd key could not be read there. An integer stays an integer here.
+    yyyymmdd key could not be read there. FLOOR keeps an integer an integer on the
+    others; PostgreSQL's FLOOR gives a double precision, refused there the same way,
+    and is cast back to a whole number.
     """
-    return exp.Floor(this=exp.Div(this=_wrap(_number(a)), expression=_wrap(_number(b)), typed=True))
+    return FloorDiv(this=_wrap(_number(a)), expression=_wrap(_number(b)))
 
 
 # ── fragments ──────────────────────────────────────────────────────────────
@@ -173,6 +212,13 @@ _PERIOD_START = {
         "month": "TRUNC(__X__, 'MM')",
         "quarter": "TRUNC(__X__, 'Q')",
         "year": "TRUNC(__X__, 'YYYY')",
+    },
+    "postgres": {
+        "day": "CAST(__X__ AS DATE)",
+        "week": "CAST(DATE_TRUNC('WEEK', __X__) AS DATE)",   # ISO weeks: Monday
+        "month": "CAST(DATE_TRUNC('MONTH', __X__) AS DATE)",
+        "quarter": "CAST(DATE_TRUNC('QUARTER', __X__) AS DATE)",
+        "year": "CAST(DATE_TRUNC('YEAR', __X__) AS DATE)",
     },
     "duckdb": {
         "day": "CAST(__X__ AS DATE)",
@@ -222,6 +268,10 @@ _DATE_PARTS = {
                "day": "EXTRACT(DAY FROM __X__)", "quarter": "TO_NUMBER(TO_CHAR(__X__, 'Q'))",
                "isodow": "(TRUNC(__X__) - TRUNC(__X__, 'IW')) + 1", "isoweek": "TO_NUMBER(TO_CHAR(__X__, 'IW'))",
                "hour": "TO_NUMBER(TO_CHAR(__X__, 'HH24'))", "minute": "TO_NUMBER(TO_CHAR(__X__, 'MI'))"},
+    # EXTRACT gives a numeric: a whole number here, as the others give.
+    "postgres": {part: f"CAST(EXTRACT({field} FROM __X__) AS INTEGER)" for part, field in (
+        ("year", "YEAR"), ("month", "MONTH"), ("day", "DAY"), ("quarter", "QUARTER"), ("isodow", "ISODOW"),
+        ("isoweek", "WEEK"), ("hour", "HOUR"), ("minute", "MINUTE"))},
     "duckdb": {"year": "YEAR(__X__)", "month": "MONTH(__X__)", "day": "DAY(__X__)", "quarter": "QUARTER(__X__)",
                "isodow": "ISODOW(__X__)", "isoweek": "WEEKOFYEAR(__X__)", "hour": "HOUR(__X__)",
                "minute": "MINUTE(__X__)"},
@@ -243,6 +293,22 @@ _FROM_NUMBER = {
              "yyyymm": "TRY_CONVERT(DATE, CONVERT(VARCHAR(6), CAST(__X__ AS BIGINT)) + '01', 112)"},
     "oracle": {fmt.lower(): f"CASE WHEN VALIDATE_CONVERSION(TO_CHAR(TRUNC(__X__)) AS DATE, '{fmt}') = 1 "
                             f"THEN TO_DATE(TO_CHAR(TRUNC(__X__)), '{fmt}') END" for fmt in ("YYYYMMDD", "YYYYMM")},
+    # PostgreSQL has no conversion that returns NULL, and TO_DATE stops the query on a month 00 or a
+    # 31 February: each part is checked first, the day against its month's length in a CASE of its own,
+    # so MAKE_DATE only ever sees a real date.
+    "postgres": {
+        "yyyymmdd": "CASE WHEN CAST(__X__ AS BIGINT) BETWEEN 10000101 AND 99991231 "
+                    "AND MOD(CAST(__X__ AS BIGINT) / 100, 100) BETWEEN 1 AND 12 "
+                    "THEN CASE WHEN MOD(CAST(__X__ AS BIGINT), 100) BETWEEN 1 AND EXTRACT(DAY FROM "
+                    "MAKE_DATE(CAST(CAST(__X__ AS BIGINT) / 10000 AS INT), CAST(MOD(CAST(__X__ AS BIGINT) / 100, 100) "
+                    "AS INT), 1) + INTERVAL '1 MONTH' - INTERVAL '1 DAY') "
+                    "THEN MAKE_DATE(CAST(CAST(__X__ AS BIGINT) / 10000 AS INT), CAST(MOD(CAST(__X__ AS BIGINT) / 100, "
+                    "100) AS INT), CAST(MOD(CAST(__X__ AS BIGINT), 100) AS INT)) END END",
+        "yyyymm": "CASE WHEN CAST(__X__ AS BIGINT) BETWEEN 100001 AND 999912 "
+                  "AND MOD(CAST(__X__ AS BIGINT), 100) BETWEEN 1 AND 12 "
+                  "THEN MAKE_DATE(CAST(CAST(__X__ AS BIGINT) / 100 AS INT), CAST(MOD(CAST(__X__ AS BIGINT), 100) AS INT), "
+                  "1) END",
+    },
 }
 
 
@@ -269,7 +335,8 @@ def from_number(value: exp.Expression, shape: str, dialect: str) -> exp.Expressi
 
 
 _ADD_MONTHS = {"snowflake": "DATEADD(MONTH, __N__, __X__)", "tsql": "DATEADD(MONTH, __N__, __X__)",
-               "oracle": "ADD_MONTHS(__X__, __N__)", "duckdb": "CAST(__X__ + TO_MONTHS(__N__) AS DATE)"}
+               "oracle": "ADD_MONTHS(__X__, __N__)", "postgres": "CAST(__X__ + __N__ * INTERVAL '1 MONTH' AS DATE)",
+               "duckdb": "CAST(__X__ + TO_MONTHS(__N__) AS DATE)"}
 
 
 def add_months(value: exp.Expression, months: exp.Expression | int, dialect: str) -> exp.Expression:
@@ -279,6 +346,7 @@ def add_months(value: exp.Expression, months: exp.Expression | int, dialect: str
 
 _DAYS_BETWEEN = {"snowflake": "DATEDIFF(DAY, __X__, __N__)", "tsql": "DATEDIFF(DAY, __X__, __N__)",
                  "oracle": "(TRUNC(__N__) - TRUNC(__X__))",
+                 "postgres": "(CAST(__N__ AS DATE) - CAST(__X__ AS DATE))",
                  "duckdb": "DATE_DIFF('day', CAST(__X__ AS DATE), CAST(__N__ AS DATE))"}
 
 
@@ -296,6 +364,8 @@ def date_literal(day: dt.date, dialect: str) -> exp.Expression:
 
 
 def approx_distinct(value: exp.Expression, dialect: str) -> exp.Expression:
+    if dialect == "postgres":   # no approximate count: the exact one
+        return exp.Count(this=exp.Distinct(expressions=[value]))
     return exp.Anonymous(this="APPROX_COUNT_DISTINCT", expressions=[value])
 
 
@@ -307,14 +377,14 @@ def as_text(value: exp.Expression, dialect: str) -> exp.Expression:
     """A value as text for profiling output (codes and names, never dates)."""
     if dialect == "oracle":
         return exp.Anonymous(this="TO_CHAR", expressions=[value])
-    target = {"tsql": "NVARCHAR(400)", "snowflake": "VARCHAR", "duckdb": "VARCHAR"}[dialect]
+    target = {"tsql": "NVARCHAR(400)", "snowflake": "VARCHAR", "postgres": "VARCHAR", "duckdb": "VARCHAR"}[dialect]
     return exp.Cast(this=value, to=exp.DataType.build(target, dialect=dialect))
 
 
 def day_start(value: exp.Expression, dialect: str) -> exp.Expression:
     """Midnight of a timestamp's day, in the timestamp's own type (for time-of-day tests)."""
     text = {"snowflake": "DATE_TRUNC('DAY', __X__)", "tsql": "CAST(CAST(__X__ AS DATE) AS DATETIME2)",
-            "oracle": "TRUNC(__X__)", "duckdb": "DATE_TRUNC('DAY', __X__)"}[dialect]
+            "oracle": "TRUNC(__X__)", "postgres": "DATE_TRUNC('DAY', __X__)", "duckdb": "DATE_TRUNC('DAY', __X__)"}[dialect]
     return _fill(text, dialect, value)
 
 
@@ -327,6 +397,9 @@ def sample_clause(dialect: str, *, rows: int, total_rows: int) -> str:
         return f"TABLESAMPLE ({percent:.4f} PERCENT)"
     if dialect == "oracle":
         return f"SAMPLE ({percent:.4f})"
+    if dialect == "postgres":
+        # Whole pages, as Azure SQL's: reads a fraction of a large table rather than all of it.
+        return f"TABLESAMPLE SYSTEM ({percent:.4f})"
     return f"USING SAMPLE {rows} ROWS"
 
 
@@ -368,7 +441,7 @@ def same_text(a: exp.Expression, b: exp.Expression, dialect: str, raw_types: tup
 
 
 _UNPADDED = {"snowflake": "LTRIM(TRIM(__X__), '0')", "duckdb": "LTRIM(TRIM(__X__), '0')",
-             "oracle": "LTRIM(TRIM(__X__), '0')",
+             "oracle": "LTRIM(TRIM(__X__), '0')", "postgres": "LTRIM(TRIM(__X__), '0')",
              "tsql": "SUBSTRING(LTRIM(RTRIM(__X__)), PATINDEX('%[^0]%', LTRIM(RTRIM(__X__)) + '.'), 4000)"}
 
 
@@ -377,7 +450,7 @@ def same_number(text: exp.Expression, number: exp.Expression, dialect: str) -> e
 
     Both are compared as text without leading zeros: a code that is no number then
     matches nothing, where a cast would stop the whole query, and no warehouse has a
-    safe cast that all four read alike.
+    safe cast that all of them read alike.
     """
     left, right = _fill(_UNPADDED[dialect], dialect, text), _fill(_UNPADDED[dialect], dialect, as_text(number, dialect))
     if dialect == "tsql":

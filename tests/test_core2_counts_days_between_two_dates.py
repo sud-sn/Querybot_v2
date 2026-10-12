@@ -115,7 +115,7 @@ def test_another_measure_beside_the_days_keeps_every_row():
 
 
 @pytest.mark.parametrize("dialect, spelled", [("tsql", "DATEDIFF(DAY"), ("snowflake", "DATEDIFF(DAY"),
-                                             ("oracle", "TRUNC(")])
+                                             ("oracle", "TRUNC("), ("postgres", "AS DATE) - CAST(")])
 def test_every_warehouse_spells_it(retail, dialect, spelled):
     con, model = retail
     _, compiled, _ = _run(con, model, {"intent": "breakdown", "durations": [TO_SHIP], "group_by": ["store"],

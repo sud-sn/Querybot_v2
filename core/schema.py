@@ -42,7 +42,7 @@ _MAX_DISTINCT = 30
 # Column data types treated as potentially categorical
 _CATEGORICAL_TYPES = {
     "varchar", "varchar2", "nvarchar", "char", "nchar",
-    "text", "string", "character varying",
+    "text", "string", "character varying", "character", "bpchar",
 }
 
 # ERP/M3 raw short-code columns that are categorically meaningful regardless of
@@ -333,6 +333,8 @@ def discover_and_write(
         return _discover_oracle(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     elif db_type == "azure_sql":
         return _discover_azure_sql(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
+    elif db_type == "postgres":
+        return _discover_postgres(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -458,6 +460,32 @@ def test_connection(credentials: dict, db_type: str) -> dict:
             return details
         finally:
             conn.close()
+    elif db_type == "postgres":
+        smoke_cfg = dict(credentials)
+        smoke_cfg["login_timeout"] = min(int(smoke_cfg.get("login_timeout", 15)), 15)
+        try:
+            conn = _pg_connect(smoke_cfg, max_retries=1, statement_timeout=15)
+        except Exception as e:
+            text = str(e)
+            if "timeout expired" in text or "Connection timed out" in text:
+                raise TimeoutError("Connection timed out after 15 s. Check the host, the port, and that the "
+                                   "server accepts connections from this server's address.") from None
+            if "password authentication failed" in text:
+                raise PermissionError(f"Login failed — check the username and password. ({' '.join(text.split())})") from None
+            raise
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT current_database(), current_schema(), current_user, "
+                        "current_setting('server_version')")
+            row = cur.fetchone()
+            details = {"database": str(row[0] or ""), "schema": str(row[1] or ""), "user": str(row[2] or ""),
+                       "version": f"PostgreSQL {row[3]}"}
+            write = _pg_write_permissions(cur)
+            if write:
+                details["write_permissions"] = write
+            return details
+        finally:
+            conn.close()
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -498,6 +526,8 @@ def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) ->
         fetched = _run_oracle(credentials, sql, probe)
     elif db_type == "azure_sql":
         fetched = _run_azure_sql(credentials, sql, probe)
+    elif db_type == "postgres":
+        fetched = _run_postgres(credentials, sql, probe)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -3187,6 +3217,422 @@ def _az_md(name, meta, columns, sample, schema, distinct_map: dict,
             mx = st.get("max") or ""
             lines.append(f"| `{cname}` | {null_pct} | {mn} | {mx} |")
 
+    _append_sample(lines, sample)
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PostgreSQL
+# ══════════════════════════════════════════════════════════════════════════════
+
+# A server starting up or shutting down, too many connections, or the network: worth another try.
+# Bad credentials, a missing database or a refused host are not.
+_PG_TRANSIENT_STATES = frozenset({"57P01", "57P02", "57P03", "53300", "08000", "08001", "08003", "08004", "08006"})
+_PG_TRANSIENT_WORDS = ("the database system is starting up", "the database system is shutting down",
+                       "server closed the connection unexpectedly", "too many connections",
+                       "connection refused", "timeout expired")
+
+
+def _pg_transient(error: Exception) -> bool:
+    code = str(getattr(error, "pgcode", "") or "")
+    if code in _PG_TRANSIENT_STATES:
+        return True
+    text = str(error).lower()
+    if "password authentication failed" in text or "does not exist" in text or "no pg_hba.conf entry" in text:
+        return False
+    return any(word in text for word in _PG_TRANSIENT_WORDS)
+
+
+def _pg_connect(cfg: dict, max_retries: int = 3, *, statement_timeout: int | None = None):
+    """A read-only PostgreSQL session: every transaction in it is read only, whatever the login may do.
+
+    ``statement_timeout`` (seconds) stops a statement the server runs longer than that (SQLSTATE 57014).
+    Works through a connection pooler too: the settings are made with SET once connected, not as
+    startup options, which PgBouncer refuses.
+    """
+    import psycopg2
+    import time as _time
+
+    params = {
+        "host": cfg["host"], "port": int(cfg.get("port") or 5432), "dbname": cfg["database"],
+        "user": cfg["user"], "password": cfg.get("password") or "",
+        "connect_timeout": int(cfg.get("login_timeout", 20)),
+        "sslmode": cfg.get("sslmode") or "prefer", "application_name": "QueryBot",
+        "client_encoding": "UTF8",   # names and values with accents, whatever the database's own encoding
+    }
+    waits = [0, 3, 10, 20]
+    last_err: Exception | None = None
+    for attempt in range(max(1, max_retries)):
+        try:
+            conn = psycopg2.connect(**params)
+        except psycopg2.OperationalError as e:
+            last_err = e
+            if not _pg_transient(e) or attempt == max_retries - 1:
+                raise
+            wait = waits[min(attempt + 1, len(waits) - 1)]
+            log.warning("PostgreSQL: connection failed (%s), attempt %d/%d; retrying in %ds",
+                        " ".join(str(e).split())[:200], attempt + 1, max_retries, wait)
+            _time.sleep(wait)
+            continue
+        conn.set_session(readonly=True, autocommit=True)
+        if statement_timeout:
+            cur = conn.cursor()
+            try:
+                cur.execute("SET statement_timeout = %s", (int(statement_timeout) * 1000,))
+            finally:
+                cur.close()
+        return conn
+    raise last_err or RuntimeError("PostgreSQL connection failed: no error captured")
+
+
+def _pg_ident(name: str) -> str:
+    """A PostgreSQL identifier as it was created: always quoted, so capitals and reserved words mean themselves."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _pg_table(schema: str, name: str) -> str:
+    return f"{_pg_ident(schema)}.{_pg_ident(name)}"
+
+
+def _pg_write_permissions(cur) -> list[str] | None:
+    """What the login may do beyond reading: change any table, create in the database, or everything."""
+    try:
+        cur.execute(
+            "SELECT DISTINCT privilege_type FROM information_schema.table_privileges "
+            "WHERE grantee IN (current_user, 'PUBLIC') AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')"
+            " AND table_schema NOT IN ('pg_catalog', 'information_schema')")
+        found = {str(r[0]) for r in cur.fetchall()}
+        cur.execute("SELECT has_database_privilege(current_database(), 'CREATE'), "
+                    "(SELECT rolsuper FROM pg_roles WHERE rolname = current_user)")
+        create, superuser = cur.fetchone()
+        if create:
+            found.add("CREATE")
+        if superuser:
+            found.add("SUPERUSER")
+        return sorted(found)
+    except Exception as exc:
+        log.warning("Could not read the login's permissions on the database: %s", exc)
+        return None
+
+
+def _run_postgres(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
+    conn = _pg_connect(cfg, statement_timeout=_query_timeout_seconds(cfg))
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        col_names = [d[0] for d in cur.description]
+        return [dict(zip(col_names, row)) for row in cur.fetchmany(max_rows)]
+    finally:
+        conn.close()
+
+
+def _pg_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
+    try:
+        cur.execute(f"SELECT DISTINCT {_pg_ident(col_name)} FROM {_pg_table(schema, name)} "
+                    f"WHERE {_pg_ident(col_name)} IS NOT NULL LIMIT {_MAX_DISTINCT + 1}")
+        vals = [str(r[0]) for r in cur.fetchall()]
+        return sorted(vals) if len(vals) <= _MAX_DISTINCT else []
+    except Exception:
+        return []
+
+
+def _fetch_pk_columns_postgres(cur) -> dict[str, list[str]]:
+    """Return {SCHEMA.TABLE upper: [pk_col, ...]} in key order."""
+    pk_map: dict[str, list[str]] = {}
+    try:
+        cur.execute("""
+            SELECT n.nspname, c.relname, a.attname
+            FROM   pg_index i
+            JOIN   pg_class c      ON c.oid = i.indrelid
+            JOIN   pg_namespace n  ON n.oid = c.relnamespace
+            JOIN   pg_attribute a  ON a.attrelid = c.oid AND a.attnum = ANY (i.indkey)
+            WHERE  i.indisprimary
+            ORDER  BY n.nspname, c.relname, array_position(i.indkey::int2[], a.attnum)
+        """)
+        for schema, tbl, col in cur.fetchall():
+            pk_map.setdefault(f"{schema}.{tbl}".upper(), []).append(col)
+    except Exception as exc:
+        log.debug("PostgreSQL: primary key query skipped: %s", exc)
+    return pk_map
+
+
+def _fetch_fk_constraints_postgres(cur) -> list[dict]:
+    """Declared foreign keys, one row per column pair, in the shape the Azure SQL reader gives."""
+    try:
+        cur.execute("""
+            SELECT con.conname,
+                   pn.nspname, pc.relname, pa.attname,
+                   rn.nspname, rc.relname, ra.attname,
+                   k.ord, con.convalidated
+            FROM   pg_constraint con
+            JOIN   pg_class pc      ON pc.oid = con.conrelid
+            JOIN   pg_namespace pn  ON pn.oid = pc.relnamespace
+            JOIN   pg_class rc      ON rc.oid = con.confrelid
+            JOIN   pg_namespace rn  ON rn.oid = rc.relnamespace
+            CROSS  JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS k(col, ref_col, ord)
+            JOIN   pg_attribute pa  ON pa.attrelid = con.conrelid  AND pa.attnum = k.col
+            JOIN   pg_attribute ra  ON ra.attrelid = con.confrelid AND ra.attnum = k.ref_col
+            WHERE  con.contype = 'f'
+            ORDER  BY con.conname, k.ord
+        """)
+        return [
+            {
+                "constraint_name": r[0],
+                "parent_schema": r[1], "parent_table": r[2], "parent_col": r[3],
+                "ref_schema": r[4], "ref_table": r[5], "ref_col": r[6],
+                "ordinal": int(r[7] or 0),
+                "enforced": bool(r[8]),
+                "source": "postgres",
+            }
+            for r in cur.fetchall()
+        ]
+    except Exception as exc:
+        log.debug("PostgreSQL: foreign key query skipped: %s", exc)
+        return []
+
+
+# Types whose min and max say something (a range of amounts, of dates).
+_PG_STAT_TYPES = {"smallint", "integer", "bigint", "numeric", "real", "double precision", "money", "date",
+                  "timestamp without time zone", "timestamp with time zone"}
+
+
+def _pg_base_type(formatted: str) -> str:
+    """'character varying(40)' -> 'character varying'; 'numeric(12,2)' -> 'numeric'."""
+    return re.sub(r"\(.*?\)", "", str(formatted or "")).strip().lower()
+
+
+def _discover_postgres(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
+    """Discover one PostgreSQL database and write one .md per table, view or materialized view.
+
+    PostgreSQL reads one database per connection (a query cannot name another), so the
+    database is the connection's own; every schema the login can read is discovered.
+    Names are kept exactly as created: PostgreSQL folds unquoted names to lower case, so
+    a table created as "OrderLines" is only found again quoted, and the KB says so.
+    """
+    master: dict = {}
+    conn = _pg_connect(cfg, statement_timeout=_query_timeout_seconds(cfg))
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT current_database()")
+        database = str(cur.fetchone()[0])
+        db_upper = database.upper()
+        cur.execute("""
+            SELECT n.nspname, c.relname,
+                   CASE WHEN c.relkind IN ('v', 'm') THEN 'VIEW' ELSE 'BASE TABLE' END,
+                   c.reltuples::bigint, obj_description(c.oid, 'pg_class'), c.oid
+            FROM   pg_class c
+            JOIN   pg_namespace n ON n.oid = c.relnamespace
+            WHERE  c.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND  NOT c.relispartition
+              AND  n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND  n.nspname !~ '^pg_(toast|temp)'
+              AND  has_table_privilege(c.oid, 'SELECT')
+            ORDER  BY n.nspname, c.relname
+        """)
+        # The schemas the connection was limited to, when it was ("sales, finance"): every schema otherwise.
+        only = {part.strip() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
+        selected = [r for r in cur.fetchall()
+                    if (not only or r[0] in only) and _allowed_table_match(allowed, r[1], r[0], db_upper)]
+        if not selected:
+            _write_schema_json(out, master)
+            _write_join_map(out, master)
+            return 0
+        pk_map = _fetch_pk_columns_postgres(cur)
+        name_counts: dict[str, int] = {}
+        for schema, name, *_ in selected:
+            key = _clean_identifier_part(name)
+            name_counts[key] = name_counts.get(key, 0) + 1
+
+        for schema, name, ttype, estimate, table_comment, oid in selected:
+            table_key = f"{db_upper}.{schema.upper()}.{name}"
+            file_stem = name if name_counts.get(_clean_identifier_part(name), 0) <= 1 else f"{schema}__{name}"
+            try:
+                cur.execute("""
+                    SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull,
+                           col_description(a.attrelid, a.attnum)
+                    FROM   pg_attribute a
+                    WHERE  a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped
+                    ORDER  BY a.attnum
+                """, (oid,))
+                columns = [
+                    {"COLUMN_NAME": r[0], "DATA_TYPE": _pg_base_type(r[1]), "FULL_TYPE": r[1],
+                     "IS_NULLABLE": "YES" if r[2] else "NO", "COMMENT": " ".join(str(r[3] or "").split())}
+                    for r in cur.fetchall()
+                ]
+            except Exception as e:
+                log.warning("PostgreSQL: cannot read columns for %s.%s: %s", schema, name, e)
+                continue
+
+            _fqn = f"{db_upper}.{schema}.{name}".upper()
+            _tbl_cfg = (mc or {}).get(_fqn, {})
+            _mode = _tbl_cfg.get("mode", "auto")
+            col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+            _pre_masked_fields = _resolve_masking_fields(
+                col_defs, _mode, set(_tbl_cfg.get("masked_fields", [])), industry=industry)
+
+            distinct_map: dict[str, list[str]] = {}
+            if _mode != "all":
+                for col in columns:
+                    cname = col["COLUMN_NAME"]
+                    if cname not in _pre_masked_fields and _is_categorical(cname, col["DATA_TYPE"]):
+                        vals = _pg_distinct(cur, schema, name, cname)
+                        if vals:
+                            distinct_map[cname] = vals
+
+            stat_cols = [c for c in columns
+                         if c["DATA_TYPE"] in _PG_STAT_TYPES and c["COLUMN_NAME"] not in _pre_masked_fields]
+            stats_map: dict[str, dict] = {}
+            row_count: int | None = None
+            try:
+                parts = ["COUNT(*)"]
+                for sc in stat_cols:
+                    q = _pg_ident(sc["COLUMN_NAME"])
+                    parts += [f"COUNT(*) - COUNT({q})", f"MIN({q})", f"MAX({q})"]
+                cur.execute(f"SELECT {', '.join(parts)} FROM {_pg_table(schema, name)}")
+                srow = cur.fetchone()
+                if srow:
+                    row_count = int(srow[0])
+                    _total = srow[0] or 1
+                    for i, sc in enumerate(stat_cols):
+                        nulls, mn, mx = srow[1 + 3 * i: 4 + 3 * i]
+                        stats_map[sc["COLUMN_NAME"]] = {
+                            "null_pct": round((nulls or 0) / _total * 100, 1),
+                            "min": str(mn) if mn is not None else None,
+                            "max": str(mx) if mx is not None else None,
+                        }
+            except Exception as _se:
+                # A table too large to count within the time limit: the planner's estimate stands.
+                log.debug("PostgreSQL: stats query failed for %s.%s: %s", schema, name, _se)
+                row_count = int(estimate) if estimate and estimate > 0 else None
+
+            def _pg_fetch():
+                try:
+                    cur.execute(f"SELECT * FROM {_pg_table(schema, name)} LIMIT 5")
+                    col_names = [d[0] for d in cur.description]
+                    return [dict(zip(col_names, r)) for r in cur.fetchall()]
+                except Exception:
+                    return []
+
+            sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
+                fetch_fn=_pg_fetch, col_defs=col_defs, mode=_mode,
+                explicit_fields=set(_tbl_cfg.get("masked_fields", [])), table_name=name, seed_key=seed_key,
+                allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)), industry=industry)
+            _masked_upper = {f.upper() for f in _masked_set}
+            distinct_map = {k: v for k, v in distinct_map.items() if k.upper() not in _masked_upper}
+
+            _pk_cols = pk_map.get(f"{schema}.{name}".upper(), [])
+            _comment = " ".join(str(table_comment or "").split())
+            (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
+                _pg_md(name, {"TABLE_TYPE": ttype, "COMMENT": _comment}, columns, sample, schema, distinct_map,
+                       database=database, stats_map=stats_map, row_count=row_count, pk_columns=_pk_cols),
+                encoding="utf-8")
+            master[table_key] = {
+                "columns": [{"name": c["COLUMN_NAME"], "type": c["FULL_TYPE"], "nullable": c["IS_NULLABLE"] == "YES",
+                             "comment": c.get("COMMENT") or ""} for c in columns],
+                "pk_columns": _pk_cols,
+                "row_count": row_count,
+                "comment": _comment,
+                "schema": schema,
+                "database": database,
+                "table_type": ttype,
+                "distinct_columns_sent": sorted(distinct_map),
+                "fields_sent": [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent": len(sample),
+                "masked_fields": sorted(_masked_set),
+                "mask_mode": _mode,
+                "mask_replacement_map": _replacement_map,
+                "synthetic_used": _synthetic_used,
+            }
+            log.info("PostgreSQL: discovered %s.%s.%s (%d cols, %d categorical)",
+                     database, schema, name, len(columns), len(distinct_map))
+
+        fks = _fetch_fk_constraints_postgres(cur)
+        if fks:
+            master["__db_fk_constraints__"] = fks
+            log.info("PostgreSQL: %d declared foreign key column pairs in %s", len(fks), database)
+    finally:
+        conn.close()
+
+    _write_schema_json(out, master)
+    _write_join_map(out, master)
+    return len(discovered_tables(master))
+
+
+def pg_columns_and_sample(cfg: dict, schema: str, table: str, rows: int = 3) -> tuple[list[dict], list[dict]]:
+    """A table's columns ({name, type}, names upper-cased as the admin pages key them) and its first rows.
+
+    The admin pages carry a table's name upper-cased, and PostgreSQL keeps names as created: the table is
+    found by its name in any case first, then read by the name it was created with.
+    """
+    conn = _pg_connect(cfg, max_retries=1, statement_timeout=15)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT n.nspname, c.relname, c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE upper(n.nspname) = upper(%s) AND upper(c.relname) = upper(%s) "
+                    "AND c.relkind IN ('r', 'p', 'v', 'm', 'f') ORDER BY (c.relname = %s) DESC LIMIT 1",
+                    (schema, table, table))
+        found = cur.fetchone()
+        if not found:
+            return [], []
+        cur.execute("SELECT a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+                    "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum", (found[2],))
+        columns = cur.fetchall()
+        col_defs = [{"name": str(name).upper(), "type": _pg_base_type(kind)} for name, kind in columns]
+        sample: list[dict] = []
+        if rows > 0 and columns:
+            listed = ", ".join(_pg_ident(name) for name, _ in columns)
+            cur.execute(f"SELECT {listed} FROM {_pg_table(found[0], found[1])} LIMIT {int(rows)}")
+            sample = [dict(zip([c["name"] for c in col_defs], r)) for r in cur.fetchall()]
+        return col_defs, sample
+    finally:
+        conn.close()
+
+
+def _pg_sql_name(schema: str, name: str) -> str:
+    """How generated SQL must name a table: bare where PostgreSQL would fold it to itself, quoted otherwise."""
+    from core2.warehouse.dialect import quote
+
+    return f"{quote(schema, 'postgres')}.{quote(name, 'postgres')}"
+
+
+def _pg_md(name, meta, columns, sample, schema, distinct_map: dict, database: str = "",
+           stats_map: dict | None = None, row_count: int | None = None, pk_columns: list | None = None) -> str:
+    sql_name = _pg_sql_name(schema, name)
+    lines = [f"# {database}.{schema}.{name}" if database else f"# {schema}.{name}"]
+    if meta.get("COMMENT"):
+        lines.append(f"\n{meta['COMMENT']}")
+    lines.append(f"\n**Type:** {meta.get('TABLE_TYPE', 'BASE TABLE')}  **Schema:** {schema}"
+                 + (f"  **Database:** {database}" if database else ""))
+    lines.append(f"\n**SQL table name:** `{sql_name}`  — always use this exact two-part name in generated "
+                 "SQL (PostgreSQL: double quotes keep capitals; a query cannot name another database).")
+    if row_count is not None:
+        scale = "Large" if row_count >= 1_000_000 else "Medium" if row_count >= 100_000 else "Small"
+        shown = f"{row_count / 1_000_000:.1f}M" if row_count >= 1_000_000 else f"{row_count:,}"
+        lines.append(f"\n**Row count:** {shown}  **Scale:** {scale}")
+    _pk_set = {c.upper() for c in (pk_columns or [])}
+    if _pk_set:
+        lines.append(f"\n**Primary Key:** {', '.join(f'`{c}`' for c in (pk_columns or []))}")
+    lines.append(_observed_at_note())
+    lines.append("\n## Columns\n")
+    lines.append("| Column | Type | Nullable | Notes | Distinct Values |")
+    lines.append("|--------|------|:--------:|-------|-----------------|")
+    from core2.warehouse.dialect import quote
+
+    for c in columns:
+        nullable = "Yes" if c["IS_NULLABLE"] == "YES" else "No"
+        comment = (c.get("COMMENT") or "").replace("|", "\\|")
+        cname = c["COLUMN_NAME"]
+        shown = quote(cname, "postgres")
+        dist = ", ".join(f"'{v}'" for v in distinct_map.get(cname, []))
+        label = f"`{shown}` **[PK]**" if cname.upper() in _pk_set else f"`{shown}`"
+        lines.append(f"| {label} | {c.get('FULL_TYPE') or c['DATA_TYPE']} | {nullable} | {comment} | {dist} |")
+    if stats_map:
+        lines.append("\n## Column Statistics\n")
+        lines.append("| Column | Null % | Min | Max |")
+        lines.append("|--------|-------:|-----|-----|")
+        for cname, st in stats_map.items():
+            null_pct = f"{st['null_pct']}%" if st.get("null_pct") is not None else ""
+            lines.append(f"| `{cname}` | {null_pct} | {st.get('min') or ''} | {st.get('max') or ''} |")
     _append_sample(lines, sample)
     return "\n".join(lines)
 

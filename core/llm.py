@@ -520,12 +520,56 @@ _SQL_SYNTAX: dict[str, str] = {
         "  Nth percentile: SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY metric) OVER () AS P90\n"
         "  Never use AVG() as a substitute for median.\n"
     ),
+    "postgres": (
+        "- Row limit: If the user states a number (top 10, show 5), use LIMIT N with that number. "
+        "Default to LIMIT 20. NEVER use TOP or FETCH FIRST.\n"
+        "- TABLE AND COLUMN NAMES (CRITICAL): write each table exactly as the Knowledge Base's "
+        "'SQL table name' shows it, schema.table. PostgreSQL folds an unquoted name to small letters, "
+        "so a name with capitals MUST stay in double quotes exactly as shown (\"Sales\".\"OrderLines\"); "
+        "a name in small letters needs no quotes. NEVER use [brackets] and never name a database: "
+        "a query reads only the database it is connected to.\n"
+        "- Date functions: DATE_TRUNC('month', d), EXTRACT(YEAR FROM d), CURRENT_DATE, "
+        "d - INTERVAL '1 month', AGE(). Days between two dates: (end_date::date - start_date::date). "
+        "NEVER use DATEADD, DATEDIFF, GETDATE, DATEPART, FORMAT, YEAR() or MONTH().\n"
+        "- Division: an integer divided by an integer gives an integer (7/2 = 3). For a share, an "
+        "average or a rate cast first: SUM(a)::numeric / NULLIF(SUM(b), 0).\n"
+        "- Null handling: COALESCE() (never ISNULL, NVL or IFF; use CASE WHEN for a conditional)\n"
+        "- Booleans are TRUE / FALSE. Text matching ignoring case: ILIKE.\n"
+        "- Split name concat: first_name || ' ' || last_name AS full_name\n"
+        "- CRITICAL TIME RULE: When the question uses relative time (last month, last week, "
+        "this year, yesterday, recent), NEVER use CURRENT_DATE as the reference point. "
+        "The database may be historical. Always anchor to the latest date in the data:\n"
+        "  Last month:  WHERE date_col >= (SELECT MAX(date_col) FROM schema.tbl) - INTERVAL '1 month'\n"
+        "  Last week:   WHERE date_col >= (SELECT MAX(date_col) FROM schema.tbl) - INTERVAL '7 days'\n"
+        "  This year:   WHERE EXTRACT(YEAR FROM date_col) = EXTRACT(YEAR FROM (SELECT MAX(date_col) FROM schema.tbl))\n"
+        "- DATE BUCKETING (group by time period):\n"
+        "  By month:   SELECT DATE_TRUNC('month', date_col)::date AS period, SUM(metric) AS total"
+        " FROM schema.tbl GROUP BY 1 ORDER BY 1\n"
+        "  By quarter: SELECT DATE_TRUNC('quarter', date_col)::date AS period, SUM(metric) AS total"
+        " FROM schema.tbl GROUP BY 1 ORDER BY 1\n"
+        "  By week:    SELECT DATE_TRUNC('week', date_col)::date AS period, SUM(metric) AS total"
+        " FROM schema.tbl GROUP BY 1 ORDER BY 1  (weeks start on Monday)\n"
+        "  By year:    SELECT EXTRACT(YEAR FROM date_col)::int AS period, SUM(metric) AS total"
+        " FROM schema.tbl GROUP BY 1 ORDER BY 1\n"
+        "- NAMED PERIOD FILTERS:\n"
+        "  Q1: WHERE EXTRACT(QUARTER FROM date_col) = 1  |  Q2/Q3/Q4: = 2 / 3 / 4\n"
+        "  H1: WHERE EXTRACT(MONTH FROM date_col) BETWEEN 1 AND 6\n"
+        "  H2: WHERE EXTRACT(MONTH FROM date_col) BETWEEN 7 AND 12\n"
+        "  Last N months: WHERE date_col >= (SELECT MAX(date_col) FROM schema.tbl) - INTERVAL 'N months'\n"
+        "  Specific month by name: Jan=1 ... Dec=12 → WHERE EXTRACT(MONTH FROM date_col) = N\n"
+        "- PERCENTILE/MEDIAN: PostgreSQL has NO MEDIAN() and PERCENTILE_CONT is not a window function "
+        "(never add OVER to it).\n"
+        "  Median:         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY metric) AS median_val\n"
+        "  Nth percentile: PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY metric) AS p90\n"
+        "  Never use AVG() as a substitute for median.\n"
+    ),
 }
 
 _DB_LABELS: dict[str, str] = {
     "snowflake": "Snowflake",
     "oracle":    "Oracle",
     "azure_sql": "Azure SQL",
+    "postgres":  "PostgreSQL",
 }
 
 # Operations that must never be executed — user gets a friendly message
@@ -759,6 +803,71 @@ def build_sql_system_prompt(
             ") t\n"
             "WHERE PREV_DATE IS NOT NULL\n"
             "GROUP BY group_col"
+        )
+    elif db_type == "postgres":
+        _xjoin_pattern = (
+            "Pattern: SELECT d.name_col, SUM(f.metric_col) FROM schema.fact f "
+            "JOIN schema.dim d ON f.fk = d.pk GROUP BY d.name_col ORDER BY 2 DESC LIMIT 20"
+        )
+        _mom_pattern = (
+            "WITH period_totals AS (\n"
+            "  SELECT DATE_TRUNC('month', date_col)::date AS period, <approved_formula> AS metric\n"
+            "  FROM schema.table GROUP BY 1\n"
+            "), period_comparison AS (\n"
+            "  SELECT period, metric, LAG(metric) OVER (ORDER BY period) AS prev_metric\n"
+            "  FROM period_totals\n"
+            ")\n"
+            "SELECT period, metric, prev_metric,\n"
+            "       metric - prev_metric AS diff,\n"
+            "       ROUND((metric - prev_metric)::numeric * 100 / NULLIF(prev_metric, 0), 2) AS pct_change\n"
+            "FROM period_comparison ORDER BY period"
+        )
+        _top_n_per_group_pattern = (
+            "WITH ranked AS (\n"
+            "  SELECT group_col, entity_col, metric_col,\n"
+            "         ROW_NUMBER() OVER (PARTITION BY group_col ORDER BY metric_col DESC) AS rn\n"
+            "  FROM schema.table\n"
+            ")\n"
+            "SELECT group_col, entity_col, metric_col FROM ranked WHERE rn <= N LIMIT 200"
+        )
+        _pct_total_pattern = (
+            "SELECT group_col,\n"
+            "       SUM(metric) AS total,\n"
+            "       ROUND(SUM(metric)::numeric * 100 / SUM(SUM(metric)) OVER (), 2) AS pct_of_total\n"
+            "FROM schema.table\n"
+            "GROUP BY group_col ORDER BY total DESC LIMIT 20"
+        )
+        _antijoin_pattern = (
+            "SELECT a.key_col, a.name_col\n"
+            "FROM schema.parent a\n"
+            "LEFT JOIN schema.child b ON a.key_col = b.fk_col\n"
+            "WHERE b.fk_col IS NULL\n"
+            "LIMIT 20"
+        )
+        _running_total_pattern = (
+            "SELECT date_col,\n"
+            "       SUM(metric) AS period_total,\n"
+            "       SUM(SUM(metric)) OVER (ORDER BY date_col ROWS UNBOUNDED PRECEDING) AS running_total\n"
+            "FROM schema.table\n"
+            "GROUP BY date_col ORDER BY date_col"
+        )
+        _moving_avg_pattern = (
+            "SELECT date_col, metric,\n"
+            "       AVG(metric) OVER\n"
+            "         (ORDER BY date_col ROWS BETWEEN N-1 PRECEDING AND CURRENT ROW) AS rolling_avg\n"
+            "FROM schema.table ORDER BY date_col LIMIT 200"
+        )
+        _avg_interval_pattern = (
+            "SELECT group_col,\n"
+            "       AVG(event_date::date - prev_date::date) AS avg_days_between\n"
+            "FROM (\n"
+            "    SELECT group_col, event_date,\n"
+            "           LAG(event_date) OVER (PARTITION BY group_col ORDER BY event_date) AS prev_date\n"
+            "    FROM schema.table\n"
+            "    WHERE event_date IS NOT NULL\n"
+            ") t\n"
+            "WHERE prev_date IS NOT NULL\n"
+            "GROUP BY group_col LIMIT 200"
         )
     else:  # snowflake and ANSI
         _xjoin_pattern = (
@@ -1682,6 +1791,8 @@ _KB_DIALECT_RULES: dict[str, str] = {
         "• Number formatting: TO_CHAR(value, '999,999.99')\n"
         "• Date arithmetic: column - INTERVAL '1 month'\n"
         "• Current date anchor: prefer MAX(date_col) over CURRENT_DATE\n"
+        "• Names with capitals stay in double quotes exactly as the KB shows them\n"
+        "• An integer divided by an integer is an integer: cast first (SUM(a)::numeric / NULLIF(SUM(b), 0))\n"
         "• DO NOT use TOP, CONVERT(date,...), DATEDIFF, FORMAT, or T-SQL syntax"
     ),
     "snowflake": (

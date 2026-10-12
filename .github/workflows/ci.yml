@@ -56,12 +56,24 @@ jobs:
     name: Tests + sample rehearsal
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # A real PostgreSQL for the tests of PostgreSQL as a database QueryBot answers from
+    # (tests/postgres_warehouse.py): each copies a synthetic warehouse into a schema of its own.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: querybot-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       # No test loads the embedding model (measured: zero instantiations across
       # the whole suite). Offline mode keeps it that way -- a test that starts
       # to would fail here instead of silently downloading a model on every run.
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
+      QUERYBOT_TEST_POSTGRES_URL: postgresql://postgres:querybot-ci@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

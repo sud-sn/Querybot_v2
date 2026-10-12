@@ -659,7 +659,7 @@ def test_a_row_policy_narrows_the_new_cores_answer_to_the_readers_rows(tmp_path,
     # The same rewrite in every warehouse the new core writes for.
     context = PolicyContext(account_id=account, user_id="7")
     for dialect, db_type in (("tsql", "azure_sql"), ("snowflake", "snowflake"), ("oracle", "oracle"),
-                             ("duckdb", "duckdb")):
+                             ("postgres", "postgres"), ("duckdb", "duckdb")):
         rewritten, applied = sql_guard.inject_row_policies(compile_query(logical, model, dialect).sql, db_type,
                                                            context)
         assert applied, dialect
@@ -707,7 +707,7 @@ def test_a_masked_column_stays_masked_in_the_new_cores_answer_on_every_warehouse
     logical = resolve(Plan.model_validate({"kind": "query", "intent": "breakdown", "measures": [measure],
                                            "group_by": [customer]}), model, Context(today=dt.date(2026, 6, 15)))
     for dialect, db_type, returned_as in (("snowflake", "snowflake", str.upper), ("oracle", "oracle", str.upper),
-                                          ("tsql", "azure_sql", str)):
+                                          ("tsql", "azure_sql", str), ("postgres", "postgres", str.lower)):
         compiled = compile_query(logical, model, dialect)
         analysis = analyze_sql(compiled.sql, db_type)
         source = next(s for v in analysis.lineage.values() for s in v if s.endswith(".CUSTOMER_NAME"))

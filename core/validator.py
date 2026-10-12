@@ -114,6 +114,7 @@ _DIALECT: dict[str, str] = {
     "snowflake": "snowflake",
     "oracle": "oracle",
     "azure_sql": "tsql",
+    "postgres": "postgres",
 }
 
 
@@ -214,6 +215,20 @@ _DIALECT_INCOMPATIBILITIES: dict[str, tuple[tuple[re.Pattern, str, str], ...]] =
         (re.compile(r"\bTRY_CONVERT\s*\(", re.IGNORECASE), "TRY_CONVERT", "Use TRY_CAST or TRY_TO_DATE/TRY_TO_NUMBER."),
         (re.compile(r"\bISNULL\s*\(", re.IGNORECASE), "ISNULL", "Use COALESCE or IFNULL."),
         (re.compile(r"\[[A-Za-z_][^\]]*\]", re.IGNORECASE), "[identifier]", "Use unquoted identifiers or Snowflake double quotes."),
+    ),    "postgres": (
+        (re.compile(r"\bSELECT\s+(?:DISTINCT\s+)?TOP\s*\(?\s*\d+", re.IGNORECASE), "TOP", "Use LIMIT N."),
+        (re.compile(r"\bGETDATE\s*\(", re.IGNORECASE), "GETDATE", "Use CURRENT_DATE or NOW()."),
+        (re.compile(r"\bDATEADD\s*\(", re.IGNORECASE), "DATEADD", "Add an INTERVAL: date_col + INTERVAL '1 month'."),
+        (re.compile(r"\bDATEDIFF\s*\(", re.IGNORECASE), "DATEDIFF", "Subtract dates: end_date::date - start_date::date."),
+        (re.compile(r"\bDATEPART\s*\(", re.IGNORECASE), "DATEPART", "Use EXTRACT(part FROM date_col)."),
+        (re.compile(r"\bTRY_CONVERT\s*\(", re.IGNORECASE), "TRY_CONVERT", "Use CAST after checking the value."),
+        (re.compile(r"\bISNULL\s*\(", re.IGNORECASE), "ISNULL", "Use COALESCE."),
+        (re.compile(r"\bNVL\s*\(", re.IGNORECASE), "NVL", "Use COALESCE."),
+        (re.compile(r"\bIFF\s*\(", re.IGNORECASE), "IFF", "Use CASE WHEN ... THEN ... ELSE ... END."),
+        (re.compile(r"\bQUALIFY\b", re.IGNORECASE), "QUALIFY", "Filter the window result in an outer SELECT/CTE."),
+        (re.compile(r"\bFETCH\s+FIRST\b", re.IGNORECASE), "FETCH FIRST", "Use LIMIT N."),
+        (re.compile(r"\bMEDIAN\s*\(", re.IGNORECASE), "MEDIAN", "Use PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x)."),
+        (re.compile(r"\[[A-Za-z_][^\]]*\]", re.IGNORECASE), "[identifier]", "Use double quotes for a name with capitals."),
     ),
 }
 

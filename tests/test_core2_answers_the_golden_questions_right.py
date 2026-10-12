@@ -48,3 +48,10 @@ def test_a_name_spelled_two_ways_is_caught_where_case_matters(dialect):
         check_references('SELECT "q".x FROM (SELECT 1 AS x FROM t) AS q', dialect)
     check_references("SELECT q.x FROM (SELECT 1 AS x FROM t) AS q", dialect)
     check_references('SELECT "q".x FROM (SELECT 1 AS x FROM t) AS "q"', dialect)
+
+
+def test_postgres_folds_names_to_small_letters_so_a_capital_is_another_name():
+    with pytest.raises(CompileError, match="names no table"):
+        check_references('SELECT "Q".x FROM (SELECT 1 AS x FROM t) AS q', "postgres")
+    check_references('SELECT "q".x FROM (SELECT 1 AS x FROM t) AS q', "postgres")
+    check_references('SELECT "Q".x FROM (SELECT 1 AS x FROM t) AS "Q"', "postgres")

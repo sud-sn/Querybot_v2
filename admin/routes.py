@@ -1591,6 +1591,17 @@ def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
                 "port 1433, SQL authentication, and whether a serverless database is paused. "
                 f"Raw error: {raw}"
             )
+    if db_type == "postgres":
+        if "password authentication failed" in low:
+            return f"PostgreSQL refused the user name or password. Raw error: {raw}"
+        if "no pg_hba.conf entry" in low:
+            return ("PostgreSQL does not accept connections from this server's address (pg_hba.conf), or needs "
+                    f"SSL: ask its owner to allow this server, or set SSL to Require. Raw error: {raw}")
+        if "timeout" in low or "timed out" in low or "could not connect" in low or "connection refused" in low:
+            return ("QueryBot could not reach PostgreSQL. Check the host and port, the firewall or security group, "
+                    f"and that the server listens on this network. Raw error: {raw}")
+        if "database" in low and "does not exist" in low:
+            return f"There is no database of that name on this server. Raw error: {raw}"
     return f"Connection failed: {raw}"
 
 
@@ -1598,6 +1609,9 @@ def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
 _DB_SECRET_FIELDS = frozenset({"password", "private_key", "private_key_passphrase", "token"})
 # Key material is never shown, not even masked.
 _DB_KEY_FIELDS = frozenset({"private_key"})
+
+
+_PG_SSLMODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 
 
 def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
@@ -1629,6 +1643,12 @@ def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
                  "user": g("az_user"), "password": g("az_password"),
                  "schema": g("az_schema") or "dbo",
                  "driver": g("az_driver") or "ODBC Driver 18 for SQL Server"}
+    elif db_type == "postgres":
+        port = g("pg_port") or "5432"
+        creds = {"host": g("pg_host"), "port": int(port) if port.isdigit() else 5432,
+                 "database": g("pg_database"), "user": g("pg_user"), "password": g("pg_password"),
+                 "sslmode": g("pg_sslmode") if g("pg_sslmode") in _PG_SSLMODES else "prefer",
+                 "schemas": ", ".join(p.strip() for p in g("pg_schemas").split(",") if p.strip())}
     else:
         creds = {}
     if creds:
@@ -1767,6 +1787,15 @@ async def databases_page(request: Request):
                 "dsn":    creds.get("dsn",    ""),
                 "user":   creds.get("user",   ""),
                 "schema": creds.get("schema", ""),
+            }
+        elif db_type == "postgres":
+            d["edit_creds"] = {
+                "host":     creds.get("host",     ""),
+                "port":     str(creds.get("port") or 5432),
+                "database": creds.get("database", ""),
+                "schemas":  creds.get("schemas",  ""),
+                "user":     creds.get("user",     ""),
+                "sslmode":  creds.get("sslmode",  "prefer"),
             }
         else:  # azure_sql
             d["edit_creds"] = {
@@ -10953,7 +10982,15 @@ async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
                 finally:
                     conn.close()
 
-            else:  # oracle
+            elif db_type == "postgres":
+                from core.schema import pg_columns_and_sample
+
+                col_defs, rows = pg_columns_and_sample(creds, parts[-2] if len(parts) >= 2 else "public", parts[-1])
+
+            elif db_type != "oracle":
+                raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+            else:
                 tbl   = parts[-1]
                 owner = parts[-2] if len(parts) >= 2 else creds.get("username", "").upper()
                 conn  = _ora_connect(creds)
@@ -11137,7 +11174,16 @@ async def admin_column_sensitivity(
                     finally:
                         conn.close()
 
-                else:  # oracle
+                elif db_type == "postgres":
+                    from core.schema import pg_columns_and_sample
+
+                    result.extend(pg_columns_and_sample(
+                        creds, parts[-2] if len(parts) >= 2 else "public", parts[-1], rows=0)[0])
+
+                elif db_type != "oracle":
+                    raise ValueError(f"Unsupported db_type: {db_type!r}")
+
+                else:
                     # parts: [OWNER/SCHEMA, TABLE]  (2 parts)
                     tbl   = parts[-1]
                     owner = parts[-2] if len(parts) >= 2 else creds.get("username", "").upper()

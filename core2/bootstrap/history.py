@@ -1,7 +1,8 @@
 """Links read from the warehouse's own query history: the joins its people and tools already write.
 
 Analysts, reports and loading jobs join the warehouse's tables every day, and the warehouse keeps
-their queries for a while (Snowflake's QUERY_HISTORY, Azure SQL's Query Store, Oracle's V$SQL).
+their queries for a while (Snowflake's QUERY_HISTORY, Azure SQL's Query Store, Oracle's V$SQL,
+PostgreSQL's pg_stat_statements).
 Learn reads the SELECT statements its sign-in may see and keeps only which column each one compares
 with which, table to table, and in how many queries. Nothing else of a query is kept or sent anywhere:
 not its text, its values, nor who ran it. Each pair becomes a candidate link, tested on the data like
@@ -55,6 +56,11 @@ _READS = {
     "oracle": [
         "SELECT DBMS_LOB.SUBSTR(sql_fulltext, 4000, 1) FROM v$sql WHERE command_type = 3 "
         "AND parsing_user_id <> UID AND parsing_schema_name NOT IN ('SYS', 'SYSTEM') AND ROWNUM <= 20000",
+    ],    # The pg_stat_statements extension, where it is installed; another sign-in's query text shows only to a
+    # member of pg_read_all_stats ("<insufficient privilege>" otherwise, which is left out).
+    "postgres": [
+        "SELECT query FROM pg_stat_statements WHERE userid <> (SELECT oid FROM pg_roles WHERE rolname = current_user) "
+        "AND query ~* '^\\s*(with|select)\\M' ORDER BY calls DESC LIMIT 20000",
     ],
 }
 

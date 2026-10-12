@@ -30,6 +30,7 @@ _DIALECT = {
     "azure_sql": "tsql",
     "snowflake": "snowflake",
     "oracle": "oracle",
+    "postgres": "postgres",
 }
 
 

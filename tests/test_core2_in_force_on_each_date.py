@@ -102,7 +102,7 @@ def test_two_dates_of_different_rows_are_refused(hr):
         resolve(plan, model, Context(today=TODAY))
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 @pytest.mark.parametrize("status", ["active", "all", "end_rate"])
 def test_the_sql_reads_on_every_warehouse(hr, dialect, status):
     built, model = hr

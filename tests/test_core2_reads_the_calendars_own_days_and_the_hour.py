@@ -145,7 +145,7 @@ def test_grouped_by_holiday_name_fiscal_week_and_hour(shop):
     assert float(shown["export_rows"][0][amount]) == pytest.approx(sum(float(v) for k, v in hours.items() if 9 <= k <= 12))
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 def test_every_warehouse_reads_the_calendars_own_days(shop, dialect):
     con, model = shop
     plan = Plan.model_validate({"kind": "query", "measures": [_amount(model)], "group_by": ["time:holiday_name"],

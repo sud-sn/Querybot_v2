@@ -19,7 +19,7 @@ from sqlglot import exp
 from core2.bootstrap.inventory import Inventory
 from core2.warehouse.runner import DuckDBWarehouse, QueryResult
 
-DB_TYPES = {"tsql": "azure_sql", "snowflake": "snowflake", "oracle": "oracle"}
+DB_TYPES = {"tsql": "azure_sql", "snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres"}
 _FLOATS = {"FLOAT", "DOUBLE", "REAL"}
 _WIDE = {"BIGINT", "DECIMAL", "FLOAT", "DOUBLE", "NUMERIC", "MONEY"}
 _STRINGS = {"CHAR", "VARCHAR", "NCHAR", "NVARCHAR"}

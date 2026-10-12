@@ -80,7 +80,7 @@ def test_a_ranking_of_members_with_no_name_ranks_them_by_their_key_and_says_so(u
 def test_each_warehouse_reads_the_key_as_text(unnamed):
     built, model = unnamed
     logical = resolve(Plan.model_validate(RANK), model, Context(today=TODAY, unnamed_by_key=True))
-    for dialect, reads in (("tsql", "tsql"), ("snowflake", "snowflake"), ("oracle", "oracle")):
+    for dialect, reads in (("tsql", "tsql"), ("snowflake", "snowflake"), ("oracle", "oracle"), ("postgres", "postgres")):
         sql = compile_query(logical, model, dialect).sql
         assert "(no name)" in sql
         sqlglot.parse_one(sql, read=reads)

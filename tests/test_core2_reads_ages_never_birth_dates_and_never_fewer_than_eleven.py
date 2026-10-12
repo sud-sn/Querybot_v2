@@ -165,7 +165,7 @@ def test_what_could_point_at_someone_is_refused(allowed, plan, words):
     assert words in refused.value.message
 
 
-@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "tsql", "oracle", "postgres"])
 def test_every_warehouse_counts_a_birthday_today_and_not_tomorrow(allowed, dialect):
     import duckdb
 

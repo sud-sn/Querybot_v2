@@ -30,7 +30,7 @@ def learn_timeout_seconds() -> int:
 
 @dataclass
 class QueryBotWarehouse:
-    db_type: str                     # snowflake | azure_sql | oracle
+    db_type: str                     # snowflake | azure_sql | oracle | postgres
     credentials: dict[str, Any]
     timeout_seconds: int = field(default_factory=learn_timeout_seconds)
     # Azure SQL answers 40613 while a paused database resumes (a minute or so) and during a failover:
@@ -49,7 +49,7 @@ class QueryBotWarehouse:
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             return conn
-        from core.schema import _az_connect, _ora_connect, _sf_connect
+        from core.schema import _az_connect, _ora_connect, _pg_connect, _sf_connect
 
         if self.db_type == "snowflake":
             conn = _sf_connect(self.credentials, max_retries=1)
@@ -64,6 +64,9 @@ class QueryBotWarehouse:
         elif self.db_type == "oracle":
             conn = _ora_connect(self.credentials, max_retries=1)
             conn.call_timeout = int(self.timeout_seconds) * 1000
+        elif self.db_type in ("postgres", "postgresql"):
+            conn = _pg_connect(self.credentials, max_retries=self.connect_retries,
+                               statement_timeout=int(self.timeout_seconds))
         else:
             raise ValueError(f"core2 cannot profile a {self.db_type!r} database")
         self._local.conn = conn

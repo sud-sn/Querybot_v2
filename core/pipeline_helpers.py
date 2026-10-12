@@ -737,7 +737,7 @@ def _build_row_metric_join_sql(
 
 # ── Deterministic field-plan repair ──────────────────────────────────────────
 
-_REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake"}
+_REPAIR_DIALECT = {"azure_sql": "tsql", "oracle": "oracle", "snowflake": "snowflake", "postgres": "postgres"}
 
 
 def _same_physical_table(left: object, right: object) -> bool:

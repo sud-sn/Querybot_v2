@@ -123,7 +123,7 @@ def test_a_grouping_of_the_rows_would_cut_a_sequence_and_is_refused(retail):
         resolve(plan, model, Context(today=TODAY))
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 @pytest.mark.parametrize("gap", [{}, {"summary": "median"}, {"nth": 2}, {"within_days": 30}])
 def test_the_sql_reads_on_every_warehouse(retail, dialect, gap):
     built, model = retail

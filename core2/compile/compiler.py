@@ -718,6 +718,8 @@ class _Compiler:
         """Each measure table aggregated on its own, then joined on the groupings (nulls matching nulls)."""
         names = [g.name for g in self.q.groups]
         aliases = [f"p{i + 1}" for i in range(len(selects))]
+        if self.d == "postgres" and names:
+            return self._line_up_on_keys(selects, names, aliases)
 
         def merged(name: str, upto: int) -> exp.Expression:
             """The grouping value from the first ``upto`` parts that have the row."""
@@ -746,6 +748,37 @@ class _Compiler:
             line = line.join(select.subquery(self.name(aliases[i])), on=exp.and_(*conds), join_type="full")
         return line
 
+    def _line_up_on_keys(self, selects: list[exp.Select], names: list[str], aliases: list[str]) -> exp.Select:
+        """The same rows for PostgreSQL, which runs a FULL JOIN only on plain equality ("FULL JOIN is only
+        supported with merge-joinable or hash-joinable join conditions"), so nulls cannot match there.
+
+        Each part is named once (WITH); the groupings any part has, each once (UNION counts nulls as
+        equal), are the rows; each part is joined to them, nulls matching nulls, which a LEFT JOIN may do.
+        """
+        def same(a: exp.Expression, b: exp.Expression) -> exp.Expression:
+            return exp.or_(exp.EQ(this=a, expression=b),
+                           exp.and_(exp.Is(this=a.copy(), expression=exp.Null()),
+                                    exp.Is(this=b.copy(), expression=exp.Null())))
+
+        keys: exp.Query | None = None
+        for alias in aliases:
+            part = exp.select(*[self.out(alias, n) for n in names]).from_(exp.Table(this=self.name(alias)))
+            keys = part if keys is None else exp.union(keys, part, distinct=True)
+        line = exp.select(*[self.out("k", n).as_(self.name(n)) for n in names])
+        for part, alias in zip(self.q.parts, aliases):
+            for m in part.measures:
+                line = line.select(self.out(alias, m.name).as_(self.name(m.name)))
+                if self.q.compare is not None:
+                    line = line.select(self.out(alias, f"{m.name}_prior").as_(self.name(f"{m.name}_prior")))
+        line = line.from_(keys.subquery(self.name("k")))
+        for alias in aliases:
+            line = line.join(exp.Table(this=self.name(alias)),
+                             on=exp.and_(*[same(self.out(alias, n), self.out("k", n)) for n in names]),
+                             join_type="left")
+        for select, alias in zip(selects, aliases):
+            line = line.with_(self.name(alias), as_=select)
+        return line
+
 
 def check_references(sql: str, dialect: str) -> None:
     """Every qualified column names a table or subquery of its own scope, as ``dialect`` folds names.
@@ -769,7 +802,7 @@ def check_references(sql: str, dialect: str) -> None:
 
 
 def compile_query(logical: Logical, model: SemanticModel, dialect: str) -> Compiled:
-    """SQL for ``dialect`` (snowflake | tsql | oracle | duckdb), read back by the dialect before it is returned."""
+    """SQL for ``dialect`` (snowflake | tsql | oracle | postgres | duckdb), read back by the dialect before it is returned."""
     return _Compiler(logical, model, dialect).compile()
 
 

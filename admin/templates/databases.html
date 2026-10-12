@@ -35,7 +35,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Database connections</h1>
-  <p>Configure Snowflake, Oracle, or Azure SQL credentials.</p>
+  <p>Configure Snowflake, Oracle, Azure SQL or PostgreSQL credentials.</p>
 </div>
 
 {% if saved %}<div class="alert alert-success">{{ saved }}</div>{% endif %}
@@ -55,6 +55,7 @@
             <option value="snowflake">Snowflake</option>
             <option value="oracle">Oracle</option>
             <option value="azure_sql">Azure SQL</option>
+            <option value="postgres">PostgreSQL</option>
           </select>
         </div>
         <div class="form-group">
@@ -206,6 +207,56 @@ GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
           <input type="text" name="az_driver" value="ODBC Driver 18 for SQL Server"></div>
       </div>
 
+      <!-- ══ POSTGRESQL — all fields prefixed pg_ ══ -->
+      <div id="db-postgres" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:var(--font-sm)">
+          PostgreSQL — also Amazon RDS / Aurora, Azure Database for PostgreSQL, Google Cloud SQL and Supabase.
+          Nothing to install on the server. QueryBot opens every session read only.
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Host *</label>
+            <input type="text" name="pg_host" placeholder="db.example.com"></div>
+          <div class="form-group"><label>Port</label>
+            <input type="text" name="pg_port" value="5432" placeholder="5432"></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>Database *</label>
+            <input type="text" name="pg_database" placeholder="analytics">
+            <p class="form-note">One database per connection: PostgreSQL queries cannot reach another one.</p>
+          </div>
+          <div class="form-group"><label>Schemas <span style="font-weight:var(--weight-regular);color:var(--text-muted)">(optional)</span></label>
+            <input type="text" name="pg_schemas" placeholder="public, sales">
+            <p class="form-note">Comma-separated. Leave blank to read every schema the user may read.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group"><label>User *</label>
+            <input type="text" name="pg_user" placeholder="querybot_reader"></div>
+          <div class="form-group"><label>Password *</label>
+            <input type="password" name="pg_password">
+            <p class="form-note" id="pg-pwd-note" style="display:none">Leave blank to keep the existing password.</p>
+          </div>
+        </div>
+        <div class="form-group"><label>SSL</label>
+          <select name="pg_sslmode">
+            <option value="require">Require (recommended for a cloud database)</option>
+            <option value="verify-full">Verify the certificate and host name</option>
+            <option value="prefer" selected>Use when the server offers it</option>
+            <option value="disable">Off (a server on the same private network)</option>
+          </select>
+        </div>
+        <details style="margin-top:.5rem">
+          <summary style="cursor:pointer;font-size:var(--font-sm)">A read-only user for QueryBot (run as an owner of the database)</summary>
+          <pre style="white-space:pre-wrap;font-size:var(--font-xs)">CREATE ROLE querybot_reader LOGIN PASSWORD '&lt;a long random password&gt;';
+GRANT CONNECT ON DATABASE &lt;database&gt; TO querybot_reader;
+GRANT USAGE ON SCHEMA public TO querybot_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO querybot_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO querybot_reader;
+-- Optional, lets Learn read which columns your own queries join (pg_stat_statements must be installed):
+GRANT pg_read_all_stats TO querybot_reader;</pre>
+        </details>
+      </div>
+
       <div class="alert alert-info" style="margin-top:1rem;margin-bottom:0">
         <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:var(--weight-bold);color:var(--text-soft)">
           <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
@@ -295,6 +346,8 @@ GRANT CREATE SCHEMA ON DATABASE &lt;DATABASE&gt; TO ROLE QUERYBOT_READER;</pre>
           {% endif %}
         {% elif d.db_type == "oracle" %}
           {{ d.credentials.get("dsn","—") }}
+        {% elif d.db_type == "postgres" %}
+          {{ d.credentials.get("host","—") }}:{{ d.credentials.get("port", 5432) }} / {{ d.credentials.get("database","—") }}{% if d.credentials.get("schemas") %} / {{ d.credentials.get("schemas") }}{% endif %}
         {% else %}
           {{ d.credentials.get("server","—") }} / {{ d.credentials.get("database","—") }}
         {% endif %}
@@ -446,7 +499,7 @@ showSfAuth(document.getElementById('sf_auth_method').value);
 window.addEventListener('pageshow', function(){ showSfAuth(document.getElementById('sf_auth_method').value); });
 
 function showDb(t){
-  ['snowflake','oracle','azure_sql'].forEach(x=>{
+  ['snowflake','oracle','azure_sql','postgres'].forEach(x=>{
     document.getElementById('db-'+x).style.display=x===t?'block':'none';
   });
   document.getElementById('save-btn').disabled=!t;
@@ -808,7 +861,7 @@ function editDb(id, type, name, creds, logCfg, scope) {
   showDb(type);
   setField('name', name);
 
-  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note','pg-pwd-note'].forEach(function(nid) {
     const el = document.getElementById(nid);
     if (el) el.style.display = 'none';
   });
@@ -846,6 +899,15 @@ function editDb(id, type, name, creds, logCfg, scope) {
     setField('az_driver',   creds.driver   || 'ODBC Driver 18 for SQL Server');
     setField('az_password', '');
     document.getElementById('az-pwd-note').style.display = '';
+  } else if (type === 'postgres') {
+    setField('pg_host',     creds.host     || '');
+    setField('pg_port',     creds.port     || '5432');
+    setField('pg_database', creds.database || '');
+    setField('pg_schemas',  creds.schemas  || '');
+    setField('pg_user',     creds.user     || '');
+    setField('pg_sslmode',  creds.sslmode  || 'prefer');
+    setField('pg_password', '');
+    document.getElementById('pg-pwd-note').style.display = '';
   }
 
   document.querySelector('[name="log_export_enabled"]').checked = !!logCfg.enabled;
@@ -876,7 +938,7 @@ function cancelEdit() {
   showDb('');
   showSfAuth('keypair');
   sfClearGeneratedKey();
-  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note'].forEach(function(nid) {
+  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note','pg-pwd-note'].forEach(function(nid) {
     const el = document.getElementById(nid);
     if (el) el.style.display = 'none';
   });

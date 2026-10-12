@@ -134,7 +134,7 @@ def test_ageing_on_the_last_day_of_the_window_asked_for(purchasing):
     assert {r["days_past_due"]: r["open"] for r in got["export_rows"]} == expected
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 @pytest.mark.parametrize("ageing", [False, True])
 def test_the_sql_reads_on_every_warehouse(purchasing, dialect, ageing):
     built, model = purchasing

@@ -119,7 +119,7 @@ def test_no_period_after_the_last_with_activity(retail):
     assert [str(r["period"])[:10] for r in got["export_rows"]] == [str(last)]
 
 
-@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle"])
+@pytest.mark.parametrize("dialect", ["snowflake", "tsql", "oracle", "postgres"])
 @pytest.mark.parametrize("status", ["all", "churn_rate"])
 def test_the_sql_reads_on_every_warehouse(retail, dialect, status):
     built, model = retail
