@@ -58,6 +58,7 @@ from core.log_export import (
     DEFAULT_LOG_SCHEMA,
     get_export_state,
     is_log_export_enabled,
+    log_export_supported,
     provision_external_log_store,
     sync_external_logs,
     reset_egress_and_sync,
@@ -1652,8 +1653,10 @@ def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
     else:
         creds = {}
     if creds:
+        # PostgreSQL sessions are read only: its form shows no log export, and a
+        # posted one is not kept (core.log_export.POSTGRES_NOT_SUPPORTED).
         creds.update({
-            "log_export_enabled": "1" if form.get("log_export_enabled") else "0",
+            "log_export_enabled": "1" if form.get("log_export_enabled") and log_export_supported(db_type) else "0",
             "log_schema": g("log_schema") or DEFAULT_LOG_SCHEMA,
             "log_export_time": g("log_export_time") or DEFAULT_EXPORT_TIME,
         })

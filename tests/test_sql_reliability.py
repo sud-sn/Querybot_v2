@@ -1077,14 +1077,15 @@ class IntentAndGraphReliabilityTests(unittest.TestCase):
         self.assertNotIn("CALENDAR_DATE", tokens)
 
     def test_avg_interval_rule_present_for_all_dialects(self):
-        for db_type in ("azure_sql", "oracle", "snowflake"):
+        for db_type in ("azure_sql", "oracle", "snowflake", "postgres"):
             prompt = build_sql_system_prompt(db_type, "Table FNN_FCT")
             self.assertIn(
                 "AVG INTERVAL BETWEEN EVENTS RULE", prompt, f"missing for {db_type}"
             )
+            # PostgreSQL's pattern names its columns in small letters.
             self.assertIn(
-                "LAG(EVENT_DATE) OVER (PARTITION BY group_col ORDER BY EVENT_DATE)",
-                prompt,
+                "LAG(EVENT_DATE) OVER (PARTITION BY GROUP_COL ORDER BY EVENT_DATE)",
+                prompt.upper(),
                 f"missing nested-subquery pattern for {db_type}",
             )
 

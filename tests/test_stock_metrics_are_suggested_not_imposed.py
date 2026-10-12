@@ -266,7 +266,7 @@ class TestTheyMeanWhatTheySay:
             )
             assert reads_one is (metric.name not in MOVEMENT_NAMES), metric.name
 
-    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake", "oracle"])
+    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake", "oracle", "postgres"])
     def test_every_definition_validates_in_every_dialect(self, model, db_type):
         columns = {
             table["qualified_name"]: [field["column"] for field in table["fields"]]

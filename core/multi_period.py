@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from core.i18n import t as _t
+from core.postgres_names import ident as postgres_ident, is_postgres, table as postgres_table
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -510,7 +511,11 @@ def _period_predicate(
     if alias and value_column:
         qualified = f"{alias}.{_quote_identifier(value_column, db_type)}"
     elif policy.get("table") and policy.get("column"):
-        qualified = (f"{policy['table']}."
+        table = str(policy["table"])
+        if is_postgres(db_type):
+            # schema.table as the database spells it: core/postgres_names.py.
+            table = postgres_table(table)
+        qualified = (f"{table}."
                      f"{_quote_identifier(str(policy['column']), db_type)}")
     else:
         return ""
@@ -532,6 +537,8 @@ def _quote_identifier(column: str, db_type: str) -> str:
         return f"[{name}]"
     if dialect in {"snowflake", "oracle"}:
         return f'"{name}"'
+    if is_postgres(dialect):
+        return postgres_ident(name)
     return name
 
 

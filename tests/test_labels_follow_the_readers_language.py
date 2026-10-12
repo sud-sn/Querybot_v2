@@ -250,14 +250,14 @@ ACCEPTED = {
 
 class TestTheValidator:
 
-    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake"])
+    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake", "postgres"])
     @pytest.mark.parametrize("label", sorted(REFUSED))
     def test_refused(self, policies, label, db_type):
         language, sql = REFUSED[label]
         result = _validate(sql, policies, language, db_type)
         assert (result.ok, result.code) == (False, "label_language"), result.reason
 
-    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake"])
+    @pytest.mark.parametrize("db_type", ["azure_sql", "snowflake", "postgres"])
     @pytest.mark.parametrize("label", sorted(ACCEPTED))
     def test_accepted(self, policies, label, db_type):
         language, sql = ACCEPTED[label]
@@ -267,6 +267,8 @@ class TestTheValidator:
     @pytest.mark.parametrize("db_type, required", [
         ("azure_sql", "COALESCE(NULLIF(TRIM(g.[ITM_GRP_FR_DSC]), ''), g.[ITM_GRP_DSC])"),
         ("snowflake", "COALESCE(NULLIF(TRIM(g.\"ITM_GRP_FR_DSC\"), ''), g.\"ITM_GRP_DSC\")"),
+        # PostgreSQL folds an unquoted name to small letters: the names, carried upper-cased, are written so.
+        ("postgres", "COALESCE(NULLIF(TRIM(g.itm_grp_fr_dsc), ''), g.itm_grp_dsc)"),
     ])
     def test_the_fix_is_the_french_label_where_filled(self, policies, db_type, required):
         result = _validate(REFUSED["the English label to a French reader"][1], policies, "fr", db_type)

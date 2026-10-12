@@ -40,6 +40,7 @@ from core.date_roles import (
     relationship_matches_date_role,
 )
 from core.relationship_identity import physical_relationship_signature
+from core.postgres_names import ident as postgres_ident, is_postgres, table as postgres_table
 
 log = logging.getLogger("querybot.graph_resolver")
 
@@ -58,6 +59,10 @@ def _quote_table(table: str, schema: str, db_type: str) -> str:
         if schema:
             return f'"{schema.upper()}"."{table.upper()}"'
         return f'"{table.upper()}"'
+    elif is_postgres(db_type):
+        # The graph keeps a table's name as created and its schema upper-cased:
+        # each is written as the database spells it (core/postgres_names.py).
+        return postgres_table(table, schema)
     else:  # snowflake
         if schema:
             return f'"{schema}"."{table}"'
@@ -67,6 +72,8 @@ def _quote_table(table: str, schema: str, db_type: str) -> str:
 def _quote_col(col: str, db_type: str) -> str:
     if db_type == "azure_sql":
         return f"[{col}]"
+    if is_postgres(db_type):
+        return postgres_ident(col)
     return f'"{col}"'
 
 

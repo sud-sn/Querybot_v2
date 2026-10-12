@@ -49,7 +49,7 @@ FACT_NATIVE = {
     "fact_table": "MART.INVOICE_FCT", "fact_column": "IVC_DT",
     "date_column": "IVC_DT",
 }
-DIALECTS = {"azure_sql": "tsql", "snowflake": "snowflake", "oracle": "oracle"}
+DIALECTS = {"azure_sql": "tsql", "snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres"}
 
 
 class TestEveryWarehousesOwnTimestampSpelling:
@@ -168,9 +168,10 @@ class TestTheProbeStillReadsTheRightThing:
             self, db_type):
         sql = build_anchor_probe_sql(SEMI_JOIN, db_type)
         assert "MAX(anchor_date." in sql
-        assert "DT_VAL" in sql
+        # In any case: PostgreSQL writes a name carried upper-cased in small letters.
+        assert "DT_VAL" in sql.upper()
         assert "EXISTS" in sql
-        assert "IVC_DT_KEY" in sql and "DT_KEY" in sql
+        assert "IVC_DT_KEY" in sql.upper() and "DT_KEY" in sql.upper()
 
     @pytest.mark.parametrize("db_type", list(DIALECTS))
     def test_the_fact_native_probe_needs_no_join(self, db_type):

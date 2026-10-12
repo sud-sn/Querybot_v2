@@ -332,7 +332,13 @@ def build_regrain_sql(
             if str(col.name or "").casefold() == column.casefold():
                 return "", "parent answer already reports this date"
 
-    date_ref = format_date_value_expression(alias, column, value_key_type, db_type)
+    written = column
+    if dialect == "postgres":
+        # A column created with capitals is found only quoted there (core/postgres_names.py).
+        from core.postgres_names import ident
+
+        written = ident(column)
+    date_ref = format_date_value_expression(alias, written, value_key_type, db_type)
     bucket_sql = format_period_bucket_expression(
         date_ref,
         grain,

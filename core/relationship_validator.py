@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from core import postgres_names
+
 log = logging.getLogger("querybot.relationship_validator")
 
 STATUS_UNTESTED = "untested"
@@ -90,24 +92,31 @@ def validate_relationship(
     db_cfg_id = client.get("db_config_id") if client else None
     raw_cfg = store.get_db_config(db_cfg_id) if db_cfg_id else None
     db_type = (raw_cfg or {}).get("db_type", "azure_sql")
+    # The graph keeps a PostgreSQL schema's name upper-cased: the probes write
+    # every name as the database spells it (core/postgres_names.py).
+    spellings = (
+        postgres_names.workspace_spellings(raw_cfg, store.get_client_state(account_id) or {})
+        if postgres_names.is_postgres(db_type) else None
+    )
 
-    schema_check = _validate_against_schema(account_id, rel, from_ent, to_ent, db_type=db_type)
-    if schema_check.status == STATUS_BROKEN or not execute:
-        return schema_check
+    with postgres_names.using(spellings):
+        schema_check = _validate_against_schema(account_id, rel, from_ent, to_ent, db_type=db_type)
+        if schema_check.status == STATUS_BROKEN or not execute:
+            return schema_check
 
-    try:
-        return _execute_probe(account_id, rel, from_ent, to_ent,
-                              db_type=db_type, raw_cfg=raw_cfg,
-                              timeout_seconds=timeout_seconds)
-    except Exception as exc:
-        log.warning("relationship live validation failed for %s/%s: %s", account_id, rel_id, exc)
-        return RelationshipValidationResult(
-            rel_id,
-            STATUS_WARNING,
-            f"Schema looks valid, but the live DB probe failed: {exc}",
-            checked_by="schema",
-            probe_sql=schema_check.probe_sql,
-        )
+        try:
+            return _execute_probe(account_id, rel, from_ent, to_ent,
+                                  db_type=db_type, raw_cfg=raw_cfg,
+                                  timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            log.warning("relationship live validation failed for %s/%s: %s", account_id, rel_id, exc)
+            return RelationshipValidationResult(
+                rel_id,
+                STATUS_WARNING,
+                f"Schema looks valid, but the live DB probe failed: {exc}",
+                checked_by="schema",
+                probe_sql=schema_check.probe_sql,
+            )
 
 
 _PROFILE_GIVE_UP_AFTER = 3
@@ -309,6 +318,7 @@ def build_probe_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict) -> st
 
     if db_type == "azure_sql":
         return f"SELECT COUNT_BIG(1) AS row_count FROM {left_table} l {join_type} JOIN {right_table} r ON {on_sql}"
+    # PostgreSQL's COUNT is already a bigint.
     return f"SELECT COUNT(*) AS row_count FROM {left_table} l {join_type} JOIN {right_table} r ON {on_sql}"
 
 
@@ -347,7 +357,7 @@ def build_profile_sql(
     rows = int(sample_rows or PROFILE_SAMPLE_ROWS)
     if db_type == "azure_sql":
         sample = f"SELECT TOP ({rows}) {left_keys} FROM {left_table}"
-    elif db_type == "snowflake":
+    elif db_type == "snowflake" or postgres_names.is_postgres(db_type):
         sample = f"SELECT {left_keys} FROM {left_table} LIMIT {rows}"
     else:
         sample = f"SELECT {left_keys} FROM {left_table} FETCH FIRST {rows} ROWS ONLY"
@@ -389,7 +399,7 @@ def build_match_exists_sql(db_type: str, rel: dict, from_ent: dict, to_ent: dict
     exists = f"EXISTS (SELECT 1 FROM {right_table} r WHERE {on_sql})"
     if db_type == "azure_sql":
         return f"SELECT TOP (1) 1 FROM {left_table} l WHERE {exists}"
-    if db_type == "snowflake":
+    if db_type == "snowflake" or postgres_names.is_postgres(db_type):
         return f"SELECT 1 FROM {left_table} l WHERE {exists} LIMIT 1"
     return f"SELECT 1 FROM {left_table} l WHERE {exists} FETCH FIRST 1 ROWS ONLY"
 
@@ -407,17 +417,25 @@ def run_probe(
     closed after it. A probe still running after `timeout_seconds` raises
     TimeoutError; its query may go on running in the warehouse."""
     import concurrent.futures
-    from core.schema import _az_connect, _ora_connect, _sf_connect
+    from core.schema import _az_connect, _ora_connect, _pg_connect, _sf_connect
 
     creds = raw_cfg.get("credentials", {})
 
     def _run() -> list[tuple]:
+        # Each database is named: a type with no branch here is refused, never
+        # opened as some other database (PostgreSQL used to be opened as Oracle).
         if db_type == "azure_sql":
             conn = _az_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1)
         elif db_type == "snowflake":
             conn = _sf_connect(creds, max_retries=1)
-        else:
+        elif db_type == "oracle":
             conn = _ora_connect(creds, max_retries=1)
+        elif postgres_names.is_postgres(db_type):
+            # The server stops a probe past its time as well; the wait below only stops waiting.
+            conn = _pg_connect({**creds, "login_timeout": min(timeout_seconds, 20)}, max_retries=1,
+                               statement_timeout=timeout_seconds)
+        else:
+            raise ValueError(f"No connection for database type {db_type!r}")
         try:
             cur = conn.cursor()
             cur.execute(sql)
@@ -568,6 +586,8 @@ def _quote_table(schema_name: str, table_name: str, db_type: str) -> str:
         return f"[{schema}].[{table}]" if schema else f"[{table}]"
     if db_type == "snowflake":
         return f'"{schema}"."{table}"' if schema else f'"{table}"'
+    if postgres_names.is_postgres(db_type):
+        return postgres_names.table(table, schema)
     return f'"{schema}"."{table}"' if schema else f'"{table}"'
 
 
@@ -575,4 +595,6 @@ def _quote_col(column: str, db_type: str) -> str:
     col = (column or "").strip()
     if db_type == "azure_sql":
         return f"[{col}]"
+    if postgres_names.is_postgres(db_type):
+        return postgres_names.ident(col)
     return f'"{col}"'

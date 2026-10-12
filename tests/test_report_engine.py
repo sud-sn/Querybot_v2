@@ -225,7 +225,7 @@ class ApplyLatestDateFilterTests(unittest.TestCase):
 
     def test_all_three_dialects_produce_valid_output(self):
         sql = "SELECT SUM(x) AS x FROM t"
-        for db_type in ("snowflake", "oracle", "azure_sql"):
+        for db_type in ("snowflake", "oracle", "azure_sql", "postgres"):
             result = re_engine._apply_latest_date_filter(sql, "t", "d", db_type)
             self.assertIsNotNone(result, db_type)
             self.assertIn("MAX(D)", result.upper(), db_type)

@@ -398,6 +398,12 @@ def _open_connection(credentials: dict, db_type: str):
             except Exception as e:
                 log.debug("Could not set Azure SQL lock timeout: %s", e)
             return conn
+        elif db_type in {"postgres", "postgresql"}:
+            # Read only, with the server stopping any statement past the limit.
+            from core.schema import _pg_connect
+            return _pg_connect(credentials, statement_timeout=_QUERY_TIMEOUT_SECONDS)
+        log.error("No validation connection for database type %r", db_type)
+        return None
     except Exception as e:
         log.error("Failed to open validation connection: %s", e)
         return None
@@ -434,6 +440,11 @@ def _execute_on_connection(conn, db_type: str, sql: str) -> None:
             # python-oracledb exposes parse() specifically for validating a
             # statement without executing it.
             cur.parse(statement)
+        elif db_type in {"postgres", "postgresql"}:
+            # EXPLAIN plans the statement -- every table, column, join and
+            # function resolved -- without running it.
+            cur.execute(f"EXPLAIN {statement}")
+            cur.fetchmany(1)
         else:
             # Conservative fallback for an unknown adapter.
             cur.execute(_add_row_cap(statement, db_type, n=1))
@@ -549,6 +560,11 @@ def _add_row_cap(sql: str, db_type: str, n: int = 1) -> str:
             return re.sub(r"(?i)^(\s*SELECT\s+)", f"SELECT TOP {n} ", s, count=1)
         return sql
 
+    elif db_type in {"postgres", "postgresql"}:
+        if "LIMIT" not in u and "FETCH FIRST" not in u:
+            return f"{s} LIMIT {n}"
+        return sql
+
     return sql
 
 
@@ -616,8 +632,9 @@ def _is_stale_surrogate_date_example(sql: str) -> bool:
         from core.date_roles import is_plain_surrogate_date_role_column
         tree = None
         # T-SQL first: TRY_CONVERT/CONVERT-style idioms (the exact poison
-        # pattern) don't parse under the generic dialect.
-        for dialect in ("tsql", None):
+        # pattern) don't parse under the generic dialect. PostgreSQL's own
+        # syntax is read last, by its dialect.
+        for dialect in ("tsql", None, "postgres"):
             try:
                 tree = _sqlglot.parse_one(text, read=dialect)
                 break

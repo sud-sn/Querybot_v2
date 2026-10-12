@@ -28,6 +28,7 @@ from core.query_semantics import analyze_query_intent
 from core.answer_confidence import build_answer_confidence
 from core.answer_formatter import format_zero_row_business_response
 from core.answer_rca import build_business_rca, extract_sql_tables
+from core import postgres_names
 
 log = logging.getLogger("querybot")
 
@@ -364,6 +365,11 @@ def _sql_preview(sql: str, limit: int = 1200) -> str:
 
 
 def _quote_table_for_count(table: str, db_type: str) -> str:
+    if postgres_names.is_postgres(db_type):
+        # schema.table, each as the database spells it: a PostgreSQL query cannot
+        # name another database, and names the pipeline carries upper-cased are
+        # not the names PostgreSQL keeps (core/postgres_names.py).
+        return postgres_names.table(table)
     parts = [p.strip().strip("[]").strip('"').strip("`") for p in str(table or "").split(".") if p.strip()]
     if not parts:
         return ""
@@ -1376,9 +1382,22 @@ def _date_literal(iso: object, db_type: str) -> str:
         return f"CAST('{value}' AS date)"
     if db_type == "snowflake":
         return f"TO_DATE('{value}')"
-    if db_type == "oracle":
+    if db_type == "oracle" or postgres_names.is_postgres(db_type):
         return f"DATE '{value}'"
     return ""
+
+
+# PostgreSQL moves a date by an interval, and has no 'quarter' interval unit.
+_POSTGRES_INTERVAL = {"day": (1, "day"), "week": (7, "day"), "month": (1, "month"),
+                      "quarter": (3, "month"), "year": (1, "year")}
+
+
+def _postgres_shift(expr: str, unit: str, amount: int) -> str:
+    """``expr`` moved by ``amount`` calendar units on PostgreSQL, earlier when
+    negative: DATEADD(unit, amount, expr) there."""
+    size, base = _POSTGRES_INTERVAL[unit]
+    count = int(amount) * size
+    return f"({expr} {'-' if count < 0 else '+'} INTERVAL '{abs(count)} {base}')"
 
 
 def _last_snapshot_cte(date_ref: str, from_sql: str, where_sql: str, bucket: str = "") -> tuple[str, str]:
@@ -1410,6 +1429,9 @@ def _cycle_refs(policy: dict, role_alias: str, plan: dict, db_type: str, date_re
     if not number_ref and cycle == "month_of_year":
         number_ref = (f"MONTH({date_ref})" if db_type in {"azure_sql", "sqlserver", "mssql"}
                       else f"EXTRACT(MONTH FROM {date_ref})")
+        if postgres_names.is_postgres(db_type):
+            # EXTRACT returns a numeric there: the month's number is a whole number.
+            number_ref = f"CAST(EXTRACT(MONTH FROM {date_ref}) AS INT)"
     name_column = str(attributes.get(name) or "") if name and number_ref else ""
     name_ref = (
         reader_label_expression(role_alias, str(policy.get("dimension_table") or ""), name_column, plan, db_type)
@@ -1589,6 +1611,8 @@ def _compile_governed_grouped_request_sql(
             return f"[{clean}]"
         if db_type in {"snowflake", "oracle"}:
             return f'"{clean}"'
+        if postgres_names.is_postgres(db_type):
+            return postgres_names.ident(clean)
         return clean
 
     quoted_metric_specs: list[tuple[str, str]] = []
@@ -1952,6 +1976,9 @@ def _compile_governed_grouped_request_sql(
             elif db_type == "oracle":
                 observed_limit = ""
                 observed_suffix = f"\n    FETCH FIRST {amount} ROWS ONLY"
+            elif postgres_names.is_postgres(db_type):
+                observed_limit = ""
+                observed_suffix = f"\n    LIMIT {amount}"
             else:
                 return ""
             anchor_sql = f"""WITH observed_periods AS (
@@ -1974,7 +2001,7 @@ def _compile_governed_grouped_request_sql(
                 or not dimension_ref
                 or len(unique_dimensions) > 1
                 or derived.get("semantics") != "count_distinct_business_identifier"
-                or db_type not in {"azure_sql", "snowflake"}
+                or (db_type not in {"azure_sql", "snowflake"} and not postgres_names.is_postgres(db_type))
             ):
                 return ""
             target_column = str(derived.get("target_column") or "")
@@ -1982,6 +2009,9 @@ def _compile_governed_grouped_request_sql(
                 return ""
             current_start = f"DATEADD({unit}, -{amount}, anchor.max_business_date)"
             prior_start = f"DATEADD({unit}, -{amount * 2}, anchor.max_business_date)"
+            if postgres_names.is_postgres(db_type):
+                current_start = _postgres_shift("anchor.max_business_date", unit, -amount)
+                prior_start = _postgres_shift("anchor.max_business_date", unit, -amount * 2)
             target_ref = f"fact_rows.{qcol(target_column)}"
             direction = str(recipe.get("direction") or "compare").lower()
             direction_filter = ""
@@ -2049,6 +2079,8 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
                     start = f"anchor.max_business_date - {amount * 7}"
                 else:
                     start = f"ADD_MONTHS(anchor.max_business_date, -{amount * {'month': 1, 'quarter': 3, 'year': 12}[unit]})"
+            elif postgres_names.is_postgres(db_type):
+                start = _postgres_shift("anchor.max_business_date", unit, -amount)
             else:
                 return ""
             where_parts.extend([f"{date_ref} > {start}", f"{date_ref} <= anchor.max_business_date"])
@@ -2061,6 +2093,10 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
             elif db_type == "oracle":
                 selected = "TRUNC(anchor.max_business_date)" + (" - 1" if kind == "yesterday" else "")
                 where_parts.append(f"TRUNC({date_ref}) = {selected}")
+            elif postgres_names.is_postgres(db_type):
+                # A date less a whole number is the day before, a date.
+                selected = "CAST(anchor.max_business_date AS date)" + (" - 1" if kind == "yesterday" else "")
+                where_parts.append(f"CAST({date_ref} AS date) = {selected}")
             else:
                 return ""
 
@@ -2160,7 +2196,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     if ranking and limit > 0:
         if db_type == "azure_sql":
             top_clause = f"TOP ({limit}) "
-        elif db_type not in {"snowflake", "oracle"}:
+        elif db_type not in {"snowflake", "oracle"} and not postgres_names.is_postgres(db_type):
             return ""
     cross_anchor = (
         "\nCROSS JOIN anchor"
@@ -2190,7 +2226,7 @@ ORDER BY ABSOLUTE_CHANGE {order_direction}"""
     elif is_trend:
         order_sql = f"\nORDER BY {cycle_order or 'PERIOD'}"
     limit_sql = f"\nFETCH FIRST {limit} ROWS ONLY" if ranking and limit > 0 and db_type == "oracle" else ""
-    if ranking and limit > 0 and db_type == "snowflake":
+    if ranking and limit > 0 and (db_type == "snowflake" or postgres_names.is_postgres(db_type)):
         limit_sql = f"\nLIMIT {limit}"
 
     compiled = (
@@ -2300,6 +2336,9 @@ def _period_start(dialect: str, expr: str, unit: str) -> str:
         return f"DATEADD({unit}, DATEDIFF({unit}, 0, {expr}), 0)"
     if dialect == "oracle":
         return f"TRUNC({expr}, '{_ORACLE_TRUNC_FMT[unit]}')"
+    if postgres_names.is_postgres(dialect):
+        # DATE_TRUNC returns a timestamp there; the period starts on a date.
+        return f"CAST(DATE_TRUNC('{unit}', {expr}) AS date)"
     return ""
 
 
@@ -2309,6 +2348,8 @@ def _shift_period(dialect: str, expr: str, unit: str, periods: int) -> str:
     if dialect == "oracle":
         months = periods * {"month": 1, "quarter": 3, "year": 12}[unit]
         return f"ADD_MONTHS({expr}, {months})"
+    if postgres_names.is_postgres(dialect):
+        return _postgres_shift(expr, unit, periods)
     return ""
 
 
@@ -2490,6 +2531,8 @@ def compile_governed_temporal_metric_sql(
             return f"[{clean}]"
         if db_type in {"snowflake", "oracle"}:
             return f'"{clean}"'
+        if postgres_names.is_postgres(db_type):
+            return postgres_names.ident(clean)
         return clean
 
     fact_sql = _quote_table_for_count(fact_table, db_type)
@@ -2556,6 +2599,9 @@ def compile_governed_temporal_metric_sql(
         elif dialect == "oracle":
             observed_limit = ""
             observed_suffix = f"\n    FETCH FIRST {amount} ROWS ONLY"
+        elif postgres_names.is_postgres(dialect):
+            observed_limit = ""
+            observed_suffix = f"\n    LIMIT {amount}"
         else:
             return ""
         # Deliberately NOT re-shaped for seeks. `observed_period_shape` in the
@@ -2583,6 +2629,8 @@ def compile_governed_temporal_metric_sql(
             else:
                 months = amount * {"month": 1, "quarter": 3, "year": 12}[unit]
                 start_expr = f"ADD_MONTHS(anchor.max_business_date, -{months})"
+        elif postgres_names.is_postgres(dialect):
+            start_expr = _postgres_shift("anchor.max_business_date", unit, -amount)
         else:
             return ""
         window_predicate = (
@@ -2601,6 +2649,8 @@ def compile_governed_temporal_metric_sql(
                 else:
                     _months = amount * {"month": 1, "quarter": 3, "year": 12}[unit]
                     _start_literal = f"ADD_MONTHS({_anchor_literal}, -{_months})"
+            elif postgres_names.is_postgres(dialect):
+                _start_literal = _postgres_shift(_anchor_literal, unit, -amount)
             else:
                 _start_literal = ""
             if _start_literal:
@@ -2666,13 +2716,21 @@ def compile_governed_temporal_metric_sql(
             )
             date_day = f"TRUNC({date_ref})"
             window_day = f"TRUNC({window_date_ref})"
+        elif postgres_names.is_postgres(dialect):
+            selected_day = (
+                "CAST(anchor.max_business_date AS date)"
+                if window_kind == "today"
+                else "CAST(anchor.max_business_date AS date) - 1"
+            )
+            date_day = f"CAST({date_ref} AS date)"
+            window_day = f"CAST({window_date_ref} AS date)"
         else:
             return ""
         window_predicate = f"{window_day} = {selected_day}"
         where_sql = key_filter if seekable else f"{date_day} = {selected_day}"
         if resolved_anchor.get("value"):
             _anchor_literal = f"CAST('{resolved_anchor['value']}' AS date)"
-            if dialect == "oracle":
+            if dialect == "oracle" or postgres_names.is_postgres(dialect):
                 _selected_literal = (
                     _anchor_literal if window_kind == "today"
                     else f"{_anchor_literal} - 1"
@@ -2887,6 +2945,8 @@ def attempt_governed_temporal_metric_repair(
             return f"[{clean}]"
         if db_type in {"snowflake", "oracle"}:
             return f'"{clean}"'
+        if postgres_names.is_postgres(db_type):
+            return postgres_names.ident(clean)
         return clean
 
     fact_sql = _quote_table_for_count(fact_table, db_type)
@@ -2937,6 +2997,11 @@ def attempt_governed_temporal_metric_repair(
         else:
             start_expr = f"{base_bucket} - 7"
             end_expr = f"{base_bucket} + 7"
+    elif postgres_names.is_postgres(dialect):
+        # The same first day format_period_bucket_expression groups by: ISO weeks, Monday.
+        base_bucket = f"CAST(DATE_TRUNC('{grain}', anchor.max_business_date) AS date)"
+        start_expr = _postgres_shift(base_bucket, grain, -1)
+        end_expr = _postgres_shift(base_bucket, grain, 1)
     else:
         return ""
 

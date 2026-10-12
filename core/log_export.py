@@ -28,6 +28,21 @@ DEFAULT_LOG_SCHEMA = "LOGS"
 DEFAULT_EXPORT_TIME = "02:00"
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,62}$")
 
+# QueryBot opens every PostgreSQL session read only (core.schema._pg_connect),
+# and the login it is given there is meant to read and nothing else; writing
+# its logs into that database would need a second connection that can change
+# it. The logs are stored in a Snowflake, Azure SQL or Oracle connection.
+POSTGRES_NOT_SUPPORTED = (
+    "QueryBot's logs cannot be stored in a PostgreSQL database: QueryBot opens every "
+    "PostgreSQL session read only. Store them in a Snowflake, Azure SQL or Oracle "
+    "connection instead."
+)
+
+
+def log_export_supported(db_type: str) -> bool:
+    """Whether QueryBot's logs can be stored in a database of this type."""
+    return str(db_type or "") in {"snowflake", "azure_sql", "oracle"}
+
 QUERY_COLUMNS = [
     "SOURCE_ID", "ACCOUNT_ID", "PORTAL_USER_ID", "ZOOM_USER_ID", "QUESTION",
     "SQL_GENERATED", "ROW_COUNT", "SUCCESS", "ERROR_MSG", "LLM_PROVIDER",
@@ -376,6 +391,8 @@ def _connect_for_export(db_cfg: dict):
         return _az_connect(db_creds), db_type, schema
     if db_type == "oracle":
         return _ora_connect(db_creds), db_type, schema
+    if str(db_type or "").lower() in {"postgres", "postgresql"}:
+        raise ValueError(POSTGRES_NOT_SUPPORTED)
     raise ValueError(f"Unsupported database type for log export: {db_type}")
 
 

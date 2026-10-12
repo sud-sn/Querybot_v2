@@ -209,6 +209,11 @@ def detect_unknown_members(account_id: str, *, timeout_seconds: int = 20) -> dic
     db_type = raw_cfg.get("db_type", "azure_sql")
     state = store.get_client_state(account_id) or {}
     tables_columns = _discovered_columns(state.get("schema_dir", ""))
+    # The graph keeps a PostgreSQL schema's name upper-cased: the probes write
+    # every name as the database spells it (core/postgres_names.py).
+    from core import postgres_names
+
+    spellings = postgres_names.workspace_spellings(raw_cfg, state)
 
     # One probe per table: the graph can name one table twice (a date
     # dimension is also the canonical "Date" entity), and each name gets the
@@ -233,7 +238,8 @@ def detect_unknown_members(account_id: str, *, timeout_seconds: int = 20) -> dic
             )
             break
         key_column, text_columns = probe
-        sql = build_probe_sql(db_type, entity, key_column, text_columns)
+        with postgres_names.using(spellings):
+            sql = build_probe_sql(db_type, entity, key_column, text_columns)
         try:
             rows = run_probe(db_type, raw_cfg, sql, timeout_seconds=timeout_seconds)
         except Exception as exc:
@@ -834,7 +840,9 @@ def grouped_columns(sql: str) -> set[str]:
     import sqlglot
     from sqlglot import exp
 
-    for dialect in ("tsql", None):
+    # PostgreSQL's own casts and operators are read by its dialect, last: the
+    # others are read as before.
+    for dialect in ("tsql", None, "postgres"):
         try:
             tree = sqlglot.parse_one(sql or "", read=dialect)
         except Exception:

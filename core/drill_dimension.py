@@ -68,6 +68,29 @@ def _dialect_name(db_type: str) -> str:
     }.get(value, value or "tsql")
 
 
+def _name_for(name: str, dialect: str):
+    """A column name as the dialect needs it: on PostgreSQL spelled as the
+    database spells it and quoted when it has to be (core/postgres_names.py),
+    elsewhere as given."""
+    if dialect != "postgres":
+        return name
+    from core.postgres_names import spelling
+    from core2.warehouse.dialect import ident
+
+    return ident(spelling(name), "postgres")
+
+
+def _table_for(name: str, dialect: str):
+    """A table to join, as _name_for writes a column."""
+    from sqlglot import exp
+
+    if dialect != "postgres":
+        return exp.to_table(name)
+    from core.postgres_names import table
+
+    return exp.to_table(table(name), dialect="postgres")
+
+
 def _table_parts(value: str) -> tuple[str, ...]:
     """Return comparable catalog/schema/table parts without SQL quoting."""
     return tuple(
@@ -165,11 +188,11 @@ def build_deterministic_drill_sql(
             display_alias = f"qb_dim_{suffix}"
             suffix += 1
         try:
-            display_table = exp.to_table(str(dim["display_table"])).as_(display_alias)
+            display_table = _table_for(str(dim["display_table"]), dialect).as_(display_alias)
         except Exception:
             return None
 
-    display_expr = exp.column(display_col_name, table=display_alias)
+    display_expr = exp.column(_name_for(display_col_name, dialect), table=display_alias)
     output_name = str(dim.get("name") or display_col_name).strip()
     tree.select(
         exp.alias_(display_expr.copy(), output_name, quoted=True),
@@ -186,8 +209,8 @@ def build_deterministic_drill_sql(
         tree.join(
             display_table,
             on=exp.EQ(
-                this=exp.column(str(dim["source_key_column"]).strip(), table=source_alias),
-                expression=exp.column(display_key, table=display_alias),
+                this=exp.column(_name_for(str(dim["source_key_column"]).strip(), dialect), table=source_alias),
+                expression=exp.column(_name_for(display_key, dialect), table=display_alias),
             ),
             join_type="LEFT",
             append=True,
