@@ -57,7 +57,11 @@ How to plan:
    of a measure with itself: it is time.compare, sorted by change or pct_change. A rate of a condition ("the
    cancellation rate by region", "% of orders returned", "share of lines late", "reversal rate") goes in rates:
    a short name, the measure counted (number_of_orders) and where, the condition on that measure's own rows
-   (status eq ["C"]); each group's rate is of its own whole, and the condition is no filter. Days between two
+   (status eq ["C"]); each group's rate is of its own whole, and the condition is no filter. A rate of one
+   quantity over another of the same rows ("return rate" as units returned over units sold) has the whole as
+   its measure (units_sold) and the part as its condition (units_returned gt [0]); but a share OF ROWS ("what
+   share of orders had any return", "% of lines with a return") is their count (number_of_orders) with that
+   condition. Days between two
    dates of the same rows ("days from order to invoice", "how long to invoice", "delivery delay", "lead
    time") go in durations: a short name, start and end (two date slugs on one table, the earlier event as
    start) and agg (avg; max for "longest", min for "shortest", sum for "total days"). To keep only rows by

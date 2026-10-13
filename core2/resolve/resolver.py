@@ -681,7 +681,17 @@ def _rate(model: SemanticModel, plan: Plan, rate: Rate, chosen: list, notes: lis
     for f in rate.where:
         found_f = find_slug(model, f.field)
         own = _own_figure(model, m, found_f)
-        if own is not None and base.agg == "sum" and len(rate.where) == 1:
+        itself = own is not None and base.agg == "sum" and own.column == base.column
+        if itself and f.op in ("gt", "ne") and f.values == [0]:
+            # "Scrap rate" planned as the quantity scrapped on the rows with some scrap, over all of it: 100%
+            # whatever the data. A figure as a share of another of the same rows is that other figure's rate.
+            others = [x.slug for x in model.measures.values() if x.table == m.table and x.slug != m.slug and not
+                      x.hidden and isinstance(x.expr, AggExpr) and x.expr.agg == "sum"]
+            raise ResolveError("unsupported", f"{rate.name}: {m.business_name} where it is above 0 is all of "
+                               f"{m.business_name}, so the rate would be 100% whatever the data. For "
+                               f"{m.business_name} as a share of another figure of the same rows, make that figure "
+                               f"the rate's measure and {rate.measure} its condition (gt 0)", others)
+        if own is not None and not itself and base.agg == "sum" and len(rate.where) == 1:
             # "Scrap rate", "rejection rate": the quantity scrapped over the quantity made, each a figure of the
             # same rows -- never the quantity made on the rows with some scrap.
             chosen.append((None, OpExpr(op="ratio", args=[own, base], scale=100), m.table, rate.name, "percent"))
