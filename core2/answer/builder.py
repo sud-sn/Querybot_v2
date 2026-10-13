@@ -1113,6 +1113,10 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                 summed = sum(_number(raw[i][m.name]) or 0.0 for i in named)
                 together = (f"; the {len(named)} together: {fmt(summed, m.format, unit=units.of(top))}, "
                             f"{sum(portions):.0%} of the total")
+        # One member and nothing for it to lead: "North leads with $1.18M" to a reader whose rows are the North
+        # region's alone (row access), or after a filter that leaves one. Its figure, as all there is.
+        if len(raw) == 1 and len(named) == 1 and not logical.limit and verb == "leads with":
+            return f"{lead}: {leader}, {value(top)}{also}."
         return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{together}{no_member}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:

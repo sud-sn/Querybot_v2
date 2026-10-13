@@ -99,3 +99,20 @@ def test_a_title_lists_its_names_as_the_first_is_written():
     assert _after("Net Amount", "Gross Amount") == "Gross Amount"
     assert _after("Net amount", "Gross Amount") == "gross amount"
     assert _after("Number of orders", "Net Amount") == "net amount"
+
+
+def test_one_member_and_nothing_to_lead_is_said_as_all_there_is(retail):
+    """A reader whose rows are one region's (row access), asking by region: "North leads with" its total led nothing."""
+    said = _answer(retail, {"measures": ["net_amount"], "group_by": ["region.name"],
+                            "filters": [{"field": "region.name", "op": "eq", "values": ["North"]}],
+                            "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}}
+                   )["headline"]
+    assert "leads with" not in said and re.search(r": North, \$\d", said), said
+
+
+def test_the_top_one_asked_for_still_leads(retail):
+    said = _answer(retail, {"measures": ["net_amount"], "group_by": ["region.name"], "limit": 1,
+                            "sort": [{"by": "net_amount", "desc": True}],
+                            "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}}
+                   )["headline"]
+    assert "leads with" in said or "highest" in said, said
