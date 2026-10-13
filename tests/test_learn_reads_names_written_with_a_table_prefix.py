@@ -51,6 +51,8 @@ def learned():
         CREATE TABLE lineitem AS SELECT range // 4 + 1 AS l_orderkey, range % 4 + 1 AS l_linenumber,
                (range * 11) % 300 + 1 AS l_partkey, (range * 3) % 40 + 1 AS l_suppkey, range % 50 + 1 AS l_quantity,
                round(100 + (range * 17) % 9000 + 0.5, 2) AS l_extendedprice FROM range(8000);
+        CREATE TABLE partsupp AS SELECT range % 300 + 1 AS ps_partkey, (range * 7) % 40 + 1 AS ps_suppkey,
+               range % 900 + 10 AS ps_availqty FROM range(1200);
         CREATE TABLE promotion AS SELECT range + 1 AS pr_promokey, 'Promo ' || range || repeat('!', range % 5) AS pr_name,
                (100 + range * 3)::DECIMAL(15, 2) AS pr_cost FROM range(90);
         CREATE TABLE item AS SELECT range + 1 AS i_itemkey, 'Item ' || range || repeat(' blue', range % 3) AS i_product_name,
@@ -73,6 +75,8 @@ def learned():
     ("lineitem", "l_partkey", "part", "p_partkey"),
     ("lineitem", "l_orderkey", "orders", "o_orderkey"),
     ("customer", "c_nationkey", "nation", "n_nationkey"),
+    ("partsupp", "ps_partkey", "part", "p_partkey"),          # "part" names the parts, not PARTSUPP itself
+    ("partsupp", "ps_suppkey", "supplier", "s_suppkey"),
     ("store_sales", "ss_custkey", "customer", "c_custkey"),
     ("store_sales", "ss_itemkey", "item", "i_itemkey"),
 ])
@@ -93,13 +97,15 @@ def test_an_items_manager_is_no_item(learned):
     assert learned.get(("item", "i_manager_id"), ("",))[0] != "item", learned
 
 
-@pytest.mark.parametrize("short, long_", [("cost", "customer"), ("count", "contract"), ("store", "storage")])
+@pytest.mark.parametrize("short, long_", [("cost", "customer"), ("count", "contract"), ("store", "storage"),
+                                          ("part", "partsupp"), ("count", "country")])
 def test_a_whole_word_is_no_abbreviation_of_another(short, long_):
     assert not names.same_word(short, long_)
 
 
 @pytest.mark.parametrize("short, long_", [("cust", "customer"), ("supp", "supplier"), ("dept", "department"),
-                                          ("prod", "product"), ("order", "orders")])
+                                          ("prod", "product"), ("order", "orders"), ("ship", "shipment"),
+                                          ("ship", "shipping"), ("return", "returned")])
 def test_a_cut_short_word_still_reads_as_its_word(short, long_):
     assert names.same_word(short, long_)
 
@@ -162,6 +168,7 @@ def test_a_tests_result_is_averaged(measured):
     assert (m.agg, m.additivity) == ("avg", "non_additive") and m.format != "currency", m
 
 
-@pytest.mark.parametrize("column", ["compounded_by", "verified_by"])
-def test_who_did_it_links_to_the_staff(measured, column):
-    assert measured[0].get(("batches", column)) == ("staff", "staff_id", "verified"), measured[0]
+@pytest.mark.parametrize("table, column, target, key", [("batches", "compounded_by", "staff", "staff_id"),
+                                                        ("batches", "verified_by", "staff", "staff_id")])
+def test_who_did_it_links_to_the_staff(measured, table, column, target, key):
+    assert measured[0].get((table, column)) == (target, key, "verified"), measured[0]

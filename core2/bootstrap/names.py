@@ -182,6 +182,7 @@ def _skeleton(word: str) -> str:
 
 # Whole words a reading of an abbreviation gives: a word of their own, never another word cut short to its consonants.
 _WHOLE_WORDS = {w for reading in EXPANSIONS.values() for w in reading.split()}
+_ENDINGS = {"s", "es", "d", "ed", "ing", "er", "ers", "ment", "ments", "ion", "ions", "al"}
 
 
 def same_word(a: str, b: str) -> bool:
@@ -196,8 +197,13 @@ def same_word(a: str, b: str) -> bool:
     short, long_ = (a, b) if len(a) <= len(b) else (b, a)
     if len(short) < 3:
         return False
+    rest = long_[len(short):] if long_.startswith(short) else ""
+    if len(rest) >= 3 and (rest in EXPANSIONS or rest in _WHOLE_WORDS):
+        return False        # PARTSUPP is parts and suppliers, ORDERLINE an order's line: neither PART nor ORDER
     if short in _WHOLE_WORDS:
-        return long_.startswith(short)      # COST is no customer, COUNT no country, STORE no storage
+        # COST is no customer, STORE no storage, COUNT no country: a whole word is only its own forms (ship,
+        # shipment, shipping).
+        return long_.startswith(short) and (rest in _ENDINGS or rest[:1] == short[-1:] and rest[1:] in _ENDINGS)
     # By consonants, three at least: CUST is a customer and DEPT a department, but LINE is not a
     # language, DATE not a detail and NAME not a number for sharing two.
     return long_.startswith(short) or len(_skeleton(short)) >= 3 and _skeleton(long_).startswith(_skeleton(short))

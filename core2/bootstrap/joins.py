@@ -136,6 +136,15 @@ def _a_person_step(word: str) -> bool:
         len(h) >= len(word) and names.same_word(word, h) for h in _PERSON_STEPS)
 
 
+# The tables that list the staff: the employees, the staff, the users of a system.
+_STAFF_TABLES = {"employee", "emp", "empl", "staff", "personnel", "worker", "user", "agent", "rep", "salesperson",
+                 "salesrep", "officer", "technician", "associate"}
+
+
+def _of_staff(table: InvTable) -> bool:
+    return bool({names.singular(w) for w in names.tokens(table.name)} & _STAFF_TABLES)
+
+
 def _of_people(table: InvTable) -> bool:
     """The employees, the staff, the sales reps: a table whose rows are people."""
     return personal.about_people(table) or bool(
@@ -411,7 +420,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             # item's or a department's manager is someone on the staff, never another item or department.
             to_a_person = stepping and all(_a_person_step(w) for w in column_words if _a_step_up(w)) \
                 and not names.opaque(table.name) and not _of_people(table)
-            # COMPOUNDED_BY, VERIFIED_BY, COUNTED_BY: whoever did it, one of the people a table of people lists.
+            # COMPOUNDED_BY, VERIFIED_BY, COUNTED_BY: whoever did it, one of the staff. (A SUPPORT_REP_ID or a
+            # LOAN_OFFICER_ID says a job, not which table: the AI's second opinion reads those.)
             by_whom = len(column_words) >= 2 and column_words[-1] == "by" and not stepping
             # A code that holds one value (every rate converts from USD): linked only where its name says where.
             single_valued = a.distinct < 2 and not hierarchy_key
@@ -443,8 +453,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 score, role = name_score(plain, inventory.tables[to_table].name,
                                          bare(inventory.tables[to_table], to_column))
                 if by_whom and not score and to_table != key and [to_column] == keys[to_table].primary_key \
-                        and _of_people(inventory.tables[to_table]):
-                    score, role = 0.8, column_words
+                        and _of_staff(inventory.tables[to_table]):
+                    score, role = 0.8, [w for w in column_words if w not in names.KEY_SUFFIXES]
                 if single_valued and not (is_declared or score >= 0.8):
                     continue
                 if mixed and not (is_declared or score >= 0.9):
