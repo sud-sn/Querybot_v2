@@ -34,10 +34,18 @@ def _digest(value: str, *, account_id: str, source: str) -> str:
     return hmac.new(_pseudonym_secret(), payload, hashlib.sha256).hexdigest().upper()
 
 
+# How many hex digits an alias keeps. Two people given the same alias are shown as one: their rows read alike and a
+# chart keyed by the label adds them together. A letter and 3 digits (26 x 16^3, about 10^5 aliases) gave a table of
+# a few thousand patients dozens of shared aliases; a letter and 8 digits (about 10^11) leaves a table of 10^5 people
+# an expected 0.05. Identifiers (prescription numbers, record numbers) run to millions, so they keep 12 (16^12).
+_NAME_CODE_DIGITS = 8
+_IDENTIFIER_CODE_DIGITS = 12
+
+
 def _safe_name_alias(value: str, *, account_id: str, source: str) -> str:
     digest = _digest(value, account_id=account_id, source=source)
     initial = chr(ord("A") + (int(digest[:2], 16) % 26))
-    code = digest[2:5]
+    code = digest[2:2 + _NAME_CODE_DIGITS]
     upper_source = source.upper()
     if any(token in upper_source for token in ("DOCTOR", "PHYSICIAN", "PRESCRIBER", "PROVIDER")):
         return f"Dr. {initial}-{code}"
@@ -52,7 +60,7 @@ def _safe_identifier_alias(value: str, *, account_id: str, source: str) -> str:
     prefix = "RX" if any(token in upper_source for token in ("RX", "PRESCRIPTION")) else (
         "MRN" if "MRN" in upper_source or "MEDICAL_RECORD" in upper_source else "ID"
     )
-    return f"{prefix}-{digest[:4]}"
+    return f"{prefix}-{digest[:_IDENTIFIER_CODE_DIGITS]}"
 
 
 def _mask(value: Any, strategy: str, seed: str, *, source: str = "") -> Any:

@@ -368,8 +368,8 @@ class ResultProtectionTests(unittest.TestCase):
         other = protect_rows(rows, decision, lineage, account_id="hospital-b")
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
-        self.assertRegex(first[0]["Doctor"], r"^Dr\. [A-Z]-[A-F0-9]{3}$")
-        self.assertRegex(first[0]["Prescription"], r"^RX-[A-F0-9]{4}$")
+        self.assertRegex(first[0]["Doctor"], r"^Dr\. [A-Z]-[A-F0-9]{8}$")
+        self.assertRegex(first[0]["Prescription"], r"^RX-[A-F0-9]{12}$")
         self.assertNotIn("Kavitha", str(first))
         self.assertNotIn("100234", str(first))
 

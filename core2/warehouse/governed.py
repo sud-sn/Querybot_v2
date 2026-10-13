@@ -12,7 +12,7 @@ classifications name it (Learn reads an email column called C07 by its values;
 a classification written by its name would miss it). A reader who has signed the
 confidentiality attestation sees the values as stored, and each such release is
 written to the decision log; when it cannot be written, the values stay masked.
-A name becomes a stable alias ("Patient K-3F2") and a detail a stable token, so a
+A name becomes a stable alias ("Patient K-3F2A9C1D") and a detail a stable token, so a
 grouping by them still keeps each person apart; counts and sums are never masked.
 """
 

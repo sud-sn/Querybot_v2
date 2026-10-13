@@ -3,7 +3,7 @@
 Learn reads a person's name and a person's details (an email, a phone) by names and by values. They never
 reach the AI. In a workspace under compliance, answers may show them: the governed warehouse masks what
 comes from them for a reader who has not signed the confidentiality attestation (a name becomes a stable
-alias, "Patient K-3F2", and a detail a stable token, so each person stays apart), and shows them as
+alias, "Patient K-3F2A9C1D", and a detail a stable token, so each person stays apart), and shows them as
 stored to one who has, writing each such release to the decision log; when it cannot be written, the
 values stay masked. Counts and sums are never masked, and a column the workspace's own masking covers is
 not masked twice. Learn proposes what it found on the Compliance page, as classifications to review.
