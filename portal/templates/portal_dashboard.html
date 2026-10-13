@@ -311,14 +311,17 @@
       <div class="dash-kpi">
         {# The measure, when the tile was given a name of its own ("Q2 sales" over "Net amount"). #}
         {% set _label = chart.kpi.label or '' %}
-        {# The figure's own name, only where the tile's name does not already say it ("Net amount year to date"). #}
-        {% if _label and not ((chart.title or '')|lower).startswith(_label|lower) %}<div class="dash-kpi-label">{{ _label }}</div>{% endif %}
-        <div class="dash-kpi-value" title="{{ chart.kpi_full or chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
+        {# The figure's own name, only where the tile's name does not already say it ("Year to date net amount"). #}
+        {% set _say_label = _label and (_label|lower) not in ((chart.title or '')|lower) %}
         {% set change = chart.kpi.change %}
+        {# With a change line, the figure's name opens it ("Amount ▲ 2.1% vs ..."): on a row of its own it pushed
+           the change out of the card's three rows. #}
+        {% if _say_label and not (change and change.direction) %}<div class="dash-kpi-label">{{ _label }}</div>{% endif %}
+        <div class="dash-kpi-value" title="{{ chart.kpi_full or chart.kpi_display or chart.kpi.value }}">{{ chart.kpi_display or chart.kpi.value }}</div>
         {% if change and change.direction %}
         {% set _moved = (change.change if change.direction == 'flat' else (change.pct or change.change))|replace('+', '')|replace('-', '') %}
         {% set _good = change.good if change.good is defined else change.direction == 'up' %}
-        <div class="dash-kpi-change is-{{ change.direction }}{% if change.direction != 'flat' and _good is not none %} {{ 'is-good' if _good else 'is-bad' }}{% endif %}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
+        <div class="dash-kpi-change is-{{ change.direction }}{% if change.direction != 'flat' and _good is not none %} {{ 'is-good' if _good else 'is-bad' }}{% endif %}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}">{% if _say_label %}<div class="dash-kpi-label">{{ _label }}</div>{% endif %}<span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
         {% endif %}
         {# Its trend under it, as the design has it: the periods up to its own (core2/service.py _trend). #}
         {{ kpi_spark(chart.kpi.trend, t('ui.kpi.trend', span=(chart.kpi.trend or {}).get('span') or '')) }}

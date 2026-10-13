@@ -1897,6 +1897,7 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     units stay in two panels, a total stays a number -- on today's data, as this viewer is
     allowed to see it. The reader's chosen type is kept when the shape offers it.
     """
+    from core2.resolve.resolver import ResolveError
     from core2.service import portal_replay
 
     from portal.dashboard_view import period_window
@@ -1929,7 +1930,14 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     viewed, narrowed = _view_plan(plan, view)
     dated = viewed.get("time") != plan.get("time")     # the dates picked are on this tile's own date
     try:
-        payload = portal_replay(user["account_id"], viewed, user, question=question)
+        try:
+            payload = portal_replay(user["account_id"], viewed, user, question=question)
+        except ResolveError:
+            if viewed == plan:
+                raise
+            # A figure with no date (a supplier's catalog cost) cannot be counted for the dates picked: as a filter
+            # it cannot take, below.
+            payload = {"data": None}
         if viewed != plan and payload.get("data") is None:
             # Filters this tile's data cannot take (no way to reach that field from it): drawn without them --
             # still for the dates picked, when only a member filter was what it could not take.

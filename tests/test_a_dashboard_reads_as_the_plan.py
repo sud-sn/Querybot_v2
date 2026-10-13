@@ -395,3 +395,16 @@ def test_the_chosen_period_is_shaded_from_its_first_period_to_its_last():
                  + f"\nconsole.log(JSON.stringify(tileBand({{highlight: {{start: '2027-01-01', end: '2027-04-01'}}}},"
                  f" {json.dumps(rows)}, 'month', {json.dumps(labels)}, {{}})));")
     assert none is None
+
+
+def test_a_figure_with_no_date_is_drawn_over_all_its_data_when_dates_are_picked(fresh_store, retail):  # noqa: F811
+    """Found by the sector stress test (October 2026): a distributor's dashboard had a card of the suppliers'
+    catalog cost, which has no date. Under the dashboard's "This month" it said "Chart could not refresh": the
+    period was put on a figure that cannot be counted by one. It is drawn over all its data, and says so."""
+    user = _reader(fresh_store)
+    chart = _pin(fresh_store, retail, user, {"intent": "value", "measures": ["number_of_products"]},
+                 "how many products", new_dashboard_name="Mine")[0]
+    drawn = _draw(retail, chart, user, {"period": "last_quarter", "members": {}})
+    assert not drawn.get("error"), drawn.get("error")
+    assert drawn["kpi"]["value"] == _draw(retail, chart, user)["kpi"]["value"] > 0
+    assert drawn["filter_warnings"] == ["The Period filter does not apply to this tile."]

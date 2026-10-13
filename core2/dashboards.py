@@ -441,9 +441,54 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     for tile in tiles:
         if tile.error:
             tile.layout = {}
+    for tile in tiles:
+        if not tile.error and tile.planned is None:
+            meant(model, tile, request)
     draft.tabs = lay_out([t for t in tiles if not t.error])
     draft.checks = checked(draft.tiles, model)
     return draft
+
+
+# What a figure means to the business. A designed tile's title says one only when its figure does, or the reader
+# did: a bank's "Total revenue" that adds up every transaction's amount (deposits, withdrawals and fees alike) is
+# named for that amount.
+_MEANING = re.compile(r"\b(?:(?:net|gross)\s+)?(revenues?|sales?|income|profits?|margins?|turnover|earnings|"
+                      r"chiffre d['’]affaires|ventes?|revenus?|b[ée]n[ée]fices?|marges?)\b", re.IGNORECASE)
+
+
+def _meanings(text: str) -> set[str]:
+    return {found.group(1).casefold().replace("’", "'").rstrip("s").replace("é", "e")
+            for found in _MEANING.finditer(text or "")}
+
+
+def meant(model, tile: Tile, request: str) -> None:
+    """The tile's title and tab, named for its figure where they say what the figure, its table and the reader
+    never said ("Total revenue" for a sum of every transaction's amount is "Total amount", on a tab named for the
+    transactions)."""
+    slugs = [s for s in (tile.plan or {}).get("measures") or [] if isinstance(s, str)]
+    measures = [m for m in model.measures.values() if m.slug in slugs]
+    if not measures or len(measures) != len(slugs):
+        return
+    said = _meanings(request)
+    for m in measures:
+        table = model.tables.get(m.table)
+        said |= _meanings(" ".join([m.business_name, m.slug.replace("_", " "), m.description,
+                                    *(w for words in m.synonyms.values() for w in words),
+                                    table.business_name if table is not None else ""]))
+    name = measures[0].business_name or measures[0].slug.replace("_", " ")
+
+    def named(found: re.Match) -> str:
+        if found.group(1).casefold().replace("’", "'").rstrip("s").replace("é", "e") in said:
+            return found.group(0)
+        return name if found.group(0)[:1].isupper() else name.lower()
+
+    if len(measures) == 1:
+        tile.title = _MEANING.sub(named, tile.title)
+    if tile.tab and _meanings(tile.tab) - said:
+        from core2.bootstrap.names import plural
+
+        table = model.tables.get(measures[0].table)
+        tile.tab = (plural(table.business_name) if table is not None and table.business_name else name)[:30]
 
 
 # Said of a tile left out because the data has nothing for it, in the request's language.

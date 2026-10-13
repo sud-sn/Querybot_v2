@@ -548,6 +548,10 @@
 .dash-kpi-arrow { font-size: .85em; }
 .dash-kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); overflow: hidden; text-overflow: ellipsis; }
 .dash-kpi-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The figure's name at the head of the change line, up to two fifths of it: the period compared with gives way
+   first when the line is short of room. */
+.dash-kpi-change .dash-kpi-label { flex: 0 0 auto; max-width: 40%; align-self: center; }
+.dash-kpi-change .dash-kpi-vs { flex: 1 1 auto; min-width: 0; }
 
 /* ── A dashboard drawn for an email or a PDF (core/dashboard_snapshot.py) ──
    The dashboard alone, at full height: no sidebar, menus, filters to change or edit controls. What it was drawn

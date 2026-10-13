@@ -244,3 +244,18 @@ def test_the_pin_page_keeps_a_name_of_the_readers_own(fresh_store, retail, typed
     chart = next(c for c in fresh_store.list_pinned_charts(user["id"]) if c["title"] == typed)
     assert chart["title_set"] == kept
     assert _drawn(fresh_store, retail, chart["id"], user)["title"] == "Net amount by store" if not kept else typed
+
+
+def test_a_number_tile_named_its_own_way_keeps_the_measure_on_its_change_line():
+    """ "Total Revenue" over the figure "Amount", with its change: the measure's name on a row of its own pushed the
+    change out of the card's three rows (the sector stress test's bank overview); it opens the change line."""
+    markup = _visible(_render([_chart(title="Q2 sales", chart_type="kpi", kpi=KPI, kpi_display="$185,933.03")]))
+    change = markup[markup.index('class="dash-kpi-change'):]
+    assert change.index('<div class="dash-kpi-label">Net amount</div>') < change.index('class="dash-kpi-delta"')
+    assert markup.count('class="dash-kpi-label"') == 1
+
+
+def test_a_number_tile_whose_name_holds_the_measure_does_not_say_it_twice():
+    markup = _visible(_render([_chart(title="Year to date net amount", chart_type="kpi", kpi=KPI,
+                                      kpi_display="$185,933.03")]))
+    assert 'class="dash-kpi-label"' not in markup
