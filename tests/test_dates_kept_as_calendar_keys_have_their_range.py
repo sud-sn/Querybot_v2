@@ -56,3 +56,10 @@ def test_a_date_written_with_its_tables_initials_is_named_for_the_table(model):
     stock = next(t for k, t in model.tables.items() if k.endswith(".inventory"))
     assert model.date_roles[stock.default_date].name == "Inventory date"
     assert "invoice" not in " ".join(c.business_name.lower() for c in model.columns.values() if c.table == stock.key)
+
+
+def test_only_a_shortening_read_as_another_word_is_the_tables():
+    from core2.bootstrap.names import own_words
+
+    assert own_words("inventory", "inv_date_sk") == "inventory_date_sk"
+    assert own_words("payroll", "pay_date") == "pay_date", "pay is a word of its own on the payroll"

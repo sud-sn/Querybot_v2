@@ -312,8 +312,9 @@ def read_tokens(parts: list[str]) -> str:
 
 
 def table_word(table: str, head: str) -> str | None:
-    """The table's own word ``head`` shortens, where read on its own it would be another (INV on the inventory)."""
-    if not head.isalpha() or not 2 <= len(head) <= 4 or head in _WHOLE_WORDS:
+    """The table's own word ``head`` shortens, where read on its own it would be another (INV on the inventory,
+    read anywhere else as an invoice). A word of its own (PAY on the payroll) stays itself."""
+    if not head.isalpha() or not 2 <= len(head) <= 4 or head in _WHOLE_WORDS or head not in EXPANSIONS:
         return None
     word = next((w for w in core_table(table) if len(w) > len(head) and w.startswith(head)), None)
     return None if word is None or EXPANSIONS.get(head) == word else word
