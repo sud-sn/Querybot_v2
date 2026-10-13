@@ -48,7 +48,9 @@ _STAMP_ONLY = {"written", "entered", "processed", "batch"}
 # A row written moments after the event it records: its stamp, when the name says it was made then.
 _MADE = {"created", "crt", "crtd", "inserted", "insrt", "recorded", "logged", "captured"}
 _PLANNED = {"planned", "plan", "pln", "promised", "prms", "requested", "rqs", "req", "expected", "exp", "target",
-            "scheduled", "sched", "schd", "forecast", "estimated", "est", "estm"}
+            "scheduled", "sched", "schd", "forecast", "estimated", "est", "estm", "commit", "committed", "promise"}
+# A date word a name written in one case glues to the word before it: L_COMMITDATE, shipdate, duedate.
+_GLUED_DATE = ("date", "dt", "time")
 _DUE = {"due", "deadline", "maturity", "required", "rqrd", "needed", "need"}
 # The end of a row's validity (an expiry, a beyond-use date), or either end of a contract's term.
 _VALIDITY = {"valid", "validity", "effective", "eff", "expiry", "expires", "expiration", "expire", "expr", "exprt",
@@ -258,6 +260,9 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                     c.kind = "audit"
                     c.add("one_stamp", -0.5, f"every row carries the same moment ({p.min}): when they were loaded")
             word_set = set(names.tokens(c.column))
+            # L_COMMITDATE is a commit date: the word before a glued date word is read too.
+            word_set |= {w[:-len(d)] for w in list(word_set) for d in _GLUED_DATE
+                         if w.endswith(d) and len(w) - len(d) >= 3}
             if word_set & _AUDIT and not names.opaque(c.column) and (
                     word_set & (_AUDIT - _STAMP_ONLY) or c.granularity == "timestamp"):
                 c.kind = "audit"
