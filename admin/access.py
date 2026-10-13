@@ -185,7 +185,7 @@ RULES: list[tuple[re.Pattern, str, bool]] = [(re.compile(p), role, scoped) for p
     (rf"^/clients/{_A}/model-health/(compiler/mode|versions/[^/]+/rollback)$", SUPER, True),
     (rf"^/api/clients/{_A}/compliance(/.*)?$", SUPER, True),
     # A workspace's people, groups, table access and admins: workspace admins.
-    (rf"^/clients/{_A}/(users|groups|pending-users|admins)(/.*)?$", WORKSPACE, True),
+    (rf"^/clients/{_A}/(users|groups|pending-users|admins|row-access)(/.*)?$", WORKSPACE, True),
     (rf"^/api/clients/{_A}/pending-users(/.*)?$", WORKSPACE, True),
     # A workspace's data: what QueryBot learned, metrics, dates, relationships, the knowledge base, the readers'
     # requests, the question log and the support pages about them: data stewards.

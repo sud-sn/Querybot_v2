@@ -8,6 +8,7 @@ Passwords are PBKDF2-SHA256 with a per-password salt.
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -322,6 +323,8 @@ def update_user(
     if not fields:
         return
     fields.append("updated_at=datetime('now')")
+    if group_id is not None or role is not None:
+        fields.append("access_changed_at=datetime('now')")
     params.append(user_id)
     from store.dashboard_store import forget_kept_rows
 
@@ -534,6 +537,56 @@ def set_user_language(user_id: int, lang: str) -> str:
     return stored
 
 
+# ── A reader's own values, for row rules ─────────────────────────────────────
+# "The rows of their region": a rule reads the person's value of an attribute (region, store, team) an admin set
+# on the Row access page. One value or several; a person without one sees none of the rows such a rule covers.
+ATTRIBUTE_KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+
+
+def user_attributes(user: dict | None) -> dict:
+    """The person's values: those on the record given, else read by their id; {} for no one."""
+    if not user:
+        return {}
+    raw = user.get("attributes")
+    if isinstance(raw, dict):
+        return dict(raw)
+    raw = user.get("attributes_json")
+    if raw is None and user.get("id") not in (None, "", "simulation"):
+        try:
+            with get_db() as conn:
+                row = conn.execute("SELECT attributes_json FROM portal_user WHERE id=?", (int(user["id"]),)).fetchone()
+        except (TypeError, ValueError):
+            return {}
+        raw = row["attributes_json"] if row else None
+    try:
+        found = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def set_user_attributes(user_id: int, attributes: dict) -> dict:
+    """Keep a person's values ({"region": "West", "stores": ["A", "B"]}): keys in lower case, values as text,
+    blanks dropped. Returns what was kept."""
+    kept: dict = {}
+    for key, value in (attributes or {}).items():
+        key = str(key or "").strip().lower().replace(" ", "_")
+        if not ATTRIBUTE_KEY.fullmatch(key):
+            raise ValueError(f"A value's name is a short word in lower case: {key!r} is not one.")
+        values = value if isinstance(value, list) else str(value or "").split(",")
+        values = [str(v).strip() for v in values if str(v).strip()]
+        if values:
+            kept[key] = values[0] if len(values) == 1 else values
+    from store.dashboard_store import forget_kept_rows
+
+    with get_db() as conn:
+        conn.execute("UPDATE portal_user SET attributes_json=?, updated_at=datetime('now'), "
+                     "access_changed_at=datetime('now') WHERE id=?", (json.dumps(kept, sort_keys=True), int(user_id)))
+        # Rows kept for this person's dashboards were released under their old values.
+        forget_kept_rows(conn, user_id=int(user_id))
+    return kept
+
+
 # How a reader's charts are drawn, chosen on their Settings page; the first of each is the default. A palette is
 # offered only once it passes the colour-vision checks (static/js/chart-palettes.js says which do).
 CHART_PREFS: dict[str, tuple[str, ...]] = {
@@ -743,7 +796,7 @@ def approve_pending_user(
             from store.dashboard_store import forget_kept_rows
 
             conn.execute(
-                "UPDATE portal_user SET group_id=?, updated_at=? WHERE id=?",
+                "UPDATE portal_user SET group_id=?, updated_at=?, access_changed_at=datetime('now') WHERE id=?",
                 (group_id, now, portal_user_id),
             )
             forget_kept_rows(conn, user_id=portal_user_id)

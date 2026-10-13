@@ -164,6 +164,24 @@ def create_policy_version(
 
 def activate_policy_version(account_id: str, version: int, activated_by: str = "admin") -> None:
     with get_db() as conn:
+        # The row rules of the version in force go on into the new one, unless it was given its own: saving the
+        # compliance page's rules or a pack made a new version with none, and the rules stopped applying.
+        before = conn.execute(
+            "SELECT version FROM compliance_policy_version WHERE account_id=? AND status='active'", (account_id,)
+        ).fetchone()
+        has_own = conn.execute(
+            "SELECT 1 FROM row_policy WHERE account_id=? AND policy_version=?", (account_id, version)
+        ).fetchone()
+        if before is not None and int(before["version"]) != int(version) and has_own is None:
+            # Kept with the times they were written: the same rules, so an answer given under them is not asked
+            # again (core/compliance/kept_answers.narrowed_since).
+            conn.execute(
+                "INSERT INTO row_policy (account_id, policy_version, name, subject_type, subject_id, table_fqn,"
+                " condition_json, enabled, created_at, updated_at) SELECT account_id, ?, name, subject_type,"
+                " subject_id, table_fqn, condition_json, enabled, created_at, updated_at FROM row_policy"
+                " WHERE account_id=? AND policy_version=?",
+                (version, account_id, int(before["version"])),
+            )
         conn.execute(
             "UPDATE compliance_policy_version SET status='superseded' "
             "WHERE account_id=? AND status='active'",
@@ -327,10 +345,12 @@ def replace_policy_rules(account_id: str, version: int, rules: list[dict]) -> No
 
 
 def list_row_policies(account_id: str, version: int | None = None) -> list[dict]:
+    """The row rules in force: the workspace's own (version 0, kept on the Row access page, whatever policy
+    version is active) and those of the given policy version."""
     query = "SELECT * FROM row_policy WHERE account_id=? AND enabled=1"
     params: list[Any] = [account_id]
     if version:
-        query += " AND policy_version=?"
+        query += " AND (policy_version=? OR policy_version=0)"
         params.append(version)
     with get_db() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
@@ -368,6 +388,109 @@ def replace_row_policies(account_id: str, version: int, policies: list[dict]) ->
                     json.dumps(condition, sort_keys=True),
                 ),
             )
+
+
+# ── Row access: the workspace's own rules ───────────────────────────────────
+# Kept as version 0: in force whatever compliance policy version is active, so saving the compliance page's rules
+# or a pack (each a new version) never drops them. A rule: who (everyone, a role, a group by id, a person by id),
+# the table and field it is written on, and what of that field they see: some values ("IN"), their own value of
+# one of their attributes, or every row ("ALL", which lifts the field for them).
+ROW_RULE_SUBJECTS = ("everyone", "role", "group", "user")
+ROW_RULE_OPERATORS = ("IN", "ALL")
+
+
+def _row_rule_values(rule: dict) -> tuple[str, str, str, str, dict]:
+    subject_type = str(rule.get("subject_type") or "").strip()
+    if subject_type not in ROW_RULE_SUBJECTS:
+        raise ValueError("Choose who the rule is for.")
+    subject_id = "" if subject_type == "everyone" else str(rule.get("subject_id") or "").strip()
+    if subject_type != "everyone" and not subject_id:
+        raise ValueError("Choose who the rule is for.")
+    table = str(rule.get("table_fqn") or "").strip().upper()
+    condition = dict(rule.get("condition") or {})
+    field = str(condition.get("field") or "").strip()
+    if not table or not field:
+        raise ValueError("Choose the field the rule is on.")
+    operator = str(condition.get("operator") or "IN").upper()
+    if operator not in ROW_RULE_OPERATORS:
+        raise ValueError("A rule shows some values of its field, the person's own, or every row.")
+    source = str(condition.get("value_source") or "static")
+    kept: dict[str, Any] = {"field": field, "operator": operator}
+    if operator == "IN":
+        if source.startswith("user.attributes."):
+            key = source.split(".", 2)[-1].strip()
+            if not key:
+                raise ValueError("Name the person's value the rule reads.")
+            kept["value_source"] = f"user.attributes.{key}"
+        elif source == "static":
+            values = condition.get("value")
+            values = values if isinstance(values, list) else [values]
+            values = [str(v).strip() for v in values if v is not None and str(v).strip()]
+            if not values:
+                raise ValueError("Give at least one value the rule shows.")
+            kept["value_source"], kept["value"] = "static", values
+        else:
+            raise ValueError("A rule shows some values of its field, the person's own, or every row.")
+    return subject_type, subject_id, table, str(rule.get("name") or "").strip()[:120], kept
+
+
+def list_row_rules(account_id: str) -> list[dict]:
+    """The workspace's own row rules, oldest first."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM row_policy WHERE account_id=? AND policy_version=0 ORDER BY id", (account_id,)
+        ).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["condition"] = _loads(item.pop("condition_json", "{}"), {})
+        out.append(item)
+    return out
+
+
+def save_row_rule(account_id: str, rule: dict, rule_id: int | None = None) -> int:
+    """Add a row rule, or change one of the workspace's; refuses one that does not say who, where and what."""
+    subject_type, subject_id, table, name, condition = _row_rule_values(rule)
+    enabled = 0 if rule.get("enabled") is False else 1
+    with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
+        if rule_id:
+            found = conn.execute(
+                "SELECT id FROM row_policy WHERE id=? AND account_id=? AND policy_version=0", (int(rule_id), account_id)
+            ).fetchone()
+            if not found:
+                raise ValueError("That rule is not one of this workspace's.")
+            conn.execute(
+                "UPDATE row_policy SET name=?, subject_type=?, subject_id=?, table_fqn=?, condition_json=?, enabled=?,"
+                " updated_at=datetime('now') WHERE id=?",
+                (name, subject_type, subject_id, table, json.dumps(condition, sort_keys=True), enabled, int(rule_id)),
+            )
+            return int(rule_id)
+        cur = conn.execute(
+            "INSERT INTO row_policy (account_id, policy_version, name, subject_type, subject_id, table_fqn,"
+            " condition_json, enabled) VALUES (?,0,?,?,?,?,?,?)",
+            (account_id, name, subject_type, subject_id, table, json.dumps(condition, sort_keys=True), enabled),
+        )
+        return int(cur.lastrowid)
+
+
+def delete_row_rule(account_id: str, rule_id: int) -> bool:
+    with get_db() as conn:
+        _forget_kept_rows(conn, account_id=account_id)
+        cur = conn.execute(
+            "DELETE FROM row_policy WHERE id=? AND account_id=? AND policy_version=0", (int(rule_id), account_id)
+        )
+        return bool(cur.rowcount)
+
+
+def row_rules_stamp(account_id: str) -> str:
+    """Changes whenever a row rule in force changes: a figure kept for a reader is kept under it."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS top, COALESCE(MAX(updated_at), '') AS at "
+            "FROM row_policy WHERE account_id=?", (account_id,)
+        ).fetchone()
+    return f"{row['n']}:{row['top']}:{row['at']}" if row else ""
 
 
 def list_purposes(account_id: str) -> list[dict]:

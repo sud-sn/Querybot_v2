@@ -13128,6 +13128,7 @@ from admin import core2_relationships as _core2_relationships  # noqa: E402,F401
 from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
 from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
+from admin import row_access as _row_access  # noqa: E402,F401
 from admin import email_routes as _email_routes  # noqa: E402,F401
 # Named admins: signing in, your own account, invitations, and who may open which workspace (admin/access.py).
 from admin import admin_accounts as _admin_accounts  # noqa: E402

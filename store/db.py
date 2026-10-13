@@ -1529,6 +1529,12 @@ def _run_migrations() -> None:
         # Every account made before roles keeps all it could do: creator. Which tables they see stays with
         # ``role`` and their group, as before. Declared HERE ONLY, as above.
         ("portal_user", "portal_role", "TEXT NOT NULL DEFAULT 'creator'"),
+        # A reader's own values a row rule may read ("the rows of their region"): {"region": "West"} or
+        # {"region": ["West", "North"]}, set by an admin on the Row access page. Declared HERE ONLY, as above.
+        ("portal_user", "attributes_json", "TEXT NOT NULL DEFAULT '{}'"),
+        # When what a person may see last changed (their own values, group or role): an answer kept from before
+        # is asked again, not shown or exported as kept (core/compliance/kept_answers.narrowed_since).
+        ("portal_user", "access_changed_at", "TEXT DEFAULT NULL"),
     ]
     with get_db() as conn:
         _ensure_llm_call_log_table(conn)

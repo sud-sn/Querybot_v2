@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 import store
@@ -87,6 +88,48 @@ def withheld(account_id: str, user: Any, trace: dict[str, Any]) -> bool:
         log.warning("Kept answer of trace %s could not be checked again for %s: %s", trace.get("id"), account_id, exc)
         return True
     return bool(decision.masking)
+
+
+NARROWED = ("The rows you may see have changed since this answer was given. Ask the question again to see it as "
+            "your access allows today.")
+
+
+def narrowed_since(account_id: str, user: Any, trace: dict[str, Any]) -> bool:
+    """A kept answer given before what this reader may see was narrowed: a row rule that binds them added or
+    changed since, or their own values or group changed since. Its rows were released under the rules then, and
+    may hold rows they may no longer see; it is asked again, not shown or exported as kept. A rule taken away
+    only widens what they see, and leaves the answer as it was."""
+    user = user if isinstance(user, dict) else {"id": user}
+    at = str(trace.get("created_at") or "").replace("T", " ")[:19]
+    if not at:
+        return False
+    try:
+        from core.compliance.sql_guard import _policy_subject_matches
+
+        # Who the rules name, read as the governed executor reads it (role, person, group), but not through the
+        # whole policy engine: a failure there is the export guard's to judge, not a reason to withhold every
+        # kept answer.
+        person = user
+        if user.get("id") not in (None, "") and "role" not in user:
+            person = {**(store.get_user(int(user["id"])) or {}), **user}
+        subject = SimpleNamespace(
+            role=str(person.get("role") or "system"), user_id=str(person.get("id") or ""),
+            groups=[str(person[k]) for k in ("group_id", "group_name") if person.get(k) not in (None, "")])
+        version = int(store.get_compliance_profile(account_id).get("active_policy_version") or 0)
+        changed = [str(p.get("updated_at") or p.get("created_at") or "")[:19]
+                   for p in store.list_row_policies(account_id, version or None)
+                   if _policy_subject_matches(p, subject)]
+        if user.get("id") not in (None, ""):
+            with store.get_db() as conn:
+                row = conn.execute("SELECT access_changed_at FROM portal_user WHERE id=?",
+                                   (int(user["id"]),)).fetchone()
+            if row is not None:
+                changed.append(str(row["access_changed_at"] or "")[:19])
+    except Exception as exc:  # noqa: BLE001 - an answer that cannot be checked again is not shown
+        log.warning("Kept answer of trace %s could not be checked against row rules for %s: %s",
+                    trace.get("id"), account_id, exc)
+        return True
+    return any(when and when > at for when in changed)
 
 
 def remasked(account_id: str, user: dict[str, Any], trace: dict[str, Any], rows: list[dict]) -> list[dict]:

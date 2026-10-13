@@ -3559,7 +3559,7 @@ async def portal_suggest(request: Request, q: str = "", limit: int = 6):
     if not user:
         return JSONResponse({"ok": False, "suggestions": []}, status_code=401)
     limit = max(1, min(int(limit or 6), 12))
-    suggestions = store.get_suggestions(user["account_id"], q, limit=limit)
+    suggestions = store.get_suggestions(user["account_id"], q, limit=limit, user_id=int(user["id"]))
     return JSONResponse({"ok": True, "suggestions": suggestions})
 
 
@@ -3774,6 +3774,15 @@ async def portal_query_thread(request: Request, thread_id: str):
                     "created_at": str(trace.get("created_at") or ""),
                 })
                 continue
+            if rows and kept_answers.narrowed_since(user["account_id"], user, trace):
+                # Rows released under row rules since narrowed for this reader: asked again, not shown as kept.
+                turns.append({
+                    "question": question,
+                    "payload": {"engine": "core2", "question": question, "withheld": True,
+                                "answer": {"headline": kept_answers.NARROWED}},
+                    "created_at": str(trace.get("created_at") or ""),
+                })
+                continue
             rows = kept_answers.remasked(user["account_id"], user, trace, rows)
             if new_core and _kept_answer(trace) is not None:
                 # Drawn as the new core drew it, never rebuilt by today's
@@ -3886,6 +3895,8 @@ async def portal_export_csv(request: Request, trace_id: int | None = None):
     from core.compliance import kept_answers
     if kept_answers.withheld(user["account_id"], user, trace):
         return JSONResponse({"ok": False, "error": kept_answers.WITHHELD}, status_code=403)
+    if kept_answers.narrowed_since(user["account_id"], user, trace):
+        return JSONResponse({"ok": False, "error": kept_answers.NARROWED}, status_code=403)
     rows = kept_answers.remasked(user["account_id"], user, trace, rows)
     if not rows:
         return JSONResponse({"ok": False, "error": "These rows could not be checked against your access today."},

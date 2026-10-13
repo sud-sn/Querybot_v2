@@ -767,11 +767,13 @@ def get_query_stats(account_id: Optional[str] = None, month: Optional[str] = Non
     return data
 
 
-def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
+def get_suggestions(account_id: str, q: str, limit: int = 8, *, user_id: int | None = None) -> list[dict]:
     """Return autocomplete suggestions for a partial chat query string.
 
     Sources (ranked highest → lowest):
-      1. Recent successful query_log questions  (score 120 prefix / 70 contains)
+      1. The reader's own recent successful questions (score 120 prefix / 70 contains). Only their own: another
+         reader's question can name what that reader may see and this one may not ("sales for Eastview Store",
+         offered to a reader whose row rules leave that store out). Without a reader, none.
       2. Metric names + synonyms + example_questions (score 100 prefix / 60 contains)
       3. Entity display names                   (score 90 prefix / 50 contains)
       4. Business terms + aliases               (score 80 prefix / 40 contains)
@@ -798,10 +800,10 @@ def get_suggestions(account_id: str, q: str, limit: int = 8) -> list[dict]:
         # 1 — Recent successful questions (most valuable: real questions that worked)
         rows = conn.execute(
             """SELECT DISTINCT question FROM query_log
-                WHERE account_id=? AND success=1 AND question IS NOT NULL
+                WHERE account_id=? AND portal_user_id=? AND success=1 AND question IS NOT NULL
                 ORDER BY created_at DESC LIMIT 300""",
-            (account_id,),
-        ).fetchall()
+            (account_id, int(user_id)),
+        ).fetchall() if user_id is not None else []
         for r in rows:
             text = _display_question(r["question"] or "")
             if not text:

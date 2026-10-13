@@ -295,7 +295,7 @@ STEWARD_AREAS = {"", "learned", "knowledge", "relationships", "dates", "measures
                  "semantic-feedback", "model-health", "mapping", "domains", "graph", "evals", "traces", "queries",
                  "readiness", "health-score", "schema", "schema-tree", "api", "reports", "value-index",
                  "synonym-proposals"}
-WORKSPACE_AREAS = {"users", "groups", "pending-users", "admins"}
+WORKSPACE_AREAS = {"users", "groups", "row-access", "pending-users", "admins"}
 SUPER_ONLY = {"setup", "compliance", "egress", "egress-log", "billing", "kb-tables", "toggle-chat-ui", "reset",
               "update", "advanced", "settings", "diagnostics"}
 OPEN_TO_ALL = {"/", "/clients", "/me", "/me/setup", "/me/password", "/me/name", "/ping", "/api/status",
@@ -375,7 +375,7 @@ class TestEveryRouteAgainstEachRole:
                 assert area in WORKSPACE_AREAS, path
             if area in SUPER_ONLY:
                 assert not decide(keeper, filled).allowed, path
-        for must in ("/clients/{account_id}/users", "/clients/{account_id}/groups",
+        for must in ("/clients/{account_id}/users", "/clients/{account_id}/groups", "/clients/{account_id}/row-access",
                      "/clients/{account_id}/pending-users", "/clients/{account_id}/admins"):
             assert decide(keeper, _filled(must, "mine")).allowed, must
 

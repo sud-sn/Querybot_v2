@@ -206,6 +206,11 @@ def _literal(value: Any) -> exp.Expression:
     return exp.Literal.string(str(value))
 
 
+def _never() -> exp.Expression:
+    """A condition no row meets, in every dialect (T-SQL has no FALSE)."""
+    return exp.EQ(this=exp.Literal.number(1), expression=exp.Literal.number(0))
+
+
 def _condition_expression(condition: dict, alias: str, context: PolicyContext) -> exp.Expression:
     field = str(condition.get("field") or "").strip()
     if not field:
@@ -213,14 +218,22 @@ def _condition_expression(condition: dict, alias: str, context: PolicyContext) -
     operator = str(condition.get("operator") or "=").upper()
     value = _resolve_value(condition, context)
     column = exp.column(field, table=alias or None)
+    # A reader's own values may be several ("their regions": North, East): equal to one of them.
+    if operator == "=" and isinstance(value, list):
+        operator = "IN"
     if operator in {"IN", "NOT IN"}:
-        values = value if isinstance(value, list) else [value]
+        values = [item for item in (value if isinstance(value, list) else [value]) if item is not None and item != ""]
+        if not values:
+            # One of nothing: no row (a reader with no value of their own sees nothing, never everything).
+            return _never() if operator == "IN" else exp.Not(this=_never())
         node = exp.In(this=column, expressions=[_literal(item) for item in values])
         return exp.Not(this=node) if operator == "NOT IN" else node
     if operator == "IS NULL":
         return exp.Is(this=column, expression=exp.Null())
     if operator == "IS NOT NULL":
         return exp.Not(this=exp.Is(this=column, expression=exp.Null()))
+    if value is None or value == "":
+        return _never()
     operations = {
         "=": exp.EQ,
         "!=": exp.NEQ,
@@ -239,6 +252,10 @@ def _condition_expression(condition: dict, alias: str, context: PolicyContext) -
 def _policy_subject_matches(policy: dict, context: PolicyContext) -> bool:
     """Does this row policy bind the subject making the request?"""
     subject_type = policy.get("subject_type")
+    if subject_type == "everyone":
+        # Every person: a reader in the portal, a person a schedule or an alert runs for. Not the workspace's own
+        # service work (an admin's check of a link, Learn), which runs as no one.
+        return context.role != "system"
     if subject_type == "role":
         return policy.get("subject_id") == context.role
     if subject_type == "user":
@@ -258,6 +275,101 @@ def _policy_covers_table(policy: dict, table_name: str) -> bool:
             or configured.endswith("." + table_name))
 
 
+def _sees_every_row(policy: dict) -> bool:
+    return str((policy.get("condition") or {}).get("operator") or "").upper() == "ALL"
+
+
+class _Links:
+    """The workspace's links, read once per query and only when a rule needs them."""
+
+    def __init__(self, account_id: str):
+        self.account_id, self._found = account_id, None
+
+    def __call__(self) -> list:
+        if self._found is None:
+            from core.compliance import row_links
+            self._found = row_links.links(self.account_id)
+        return self._found
+
+
+def _binding(policies: list[dict], context: PolicyContext, table_name: str, links: _Links) -> list[tuple[dict, list]]:
+    """Each rule that binds this reader and reaches `table_name`, with the way it reaches it: [] when the rule is
+    written on that table, the links from it to the rule's table otherwise.
+
+    Shared by inject_row_policies and row_policy_scope: if these two ever disagree about which rules bind a
+    reader, a value kept for one reader is served to another."""
+    from core.compliance import row_links
+
+    out = []
+    for policy in policies:
+        if not _policy_subject_matches(policy, context):
+            continue
+        configured = str(policy.get("table_fqn") or "").upper()
+        if not configured:
+            continue
+        if _policy_covers_table(policy, table_name):
+            out.append((policy, []))
+            continue
+        way = row_links.path(table_name, configured, links())
+        if way:
+            out.append((policy, way))
+    return out
+
+
+def _reached(policy: dict, way: list, alias: str, context: PolicyContext, dialect: str) -> exp.Expression:
+    """One rule as a condition on the table a query reads: on its own field when the rule is written on that
+    table, else on the column that links it, towards the rule's table:
+    ``s.store_id IN (SELECT rla1.store_id FROM stores AS rla1 WHERE rla1.region = 'West')``."""
+    condition = policy.get("condition") or {}
+    if not way:
+        return _condition_expression(condition, alias, context)
+    from core2.warehouse.dialect import ident, table_expr
+
+    def column(name: str, at: str) -> exp.Column:
+        return exp.Column(this=ident(name, dialect), table=exp.to_identifier(at))
+
+    last = len(way)
+    inner = f"rla{last}"
+    query = (exp.select(column(way[-1].to_column, inner))
+             .from_(table_expr(*way[-1].to_parts, dialect, alias=inner))
+             .where(_condition_expression(condition, inner, context)))
+    for i in range(last - 1, 0, -1):
+        here = f"rla{i}"
+        query = (exp.select(column(way[i - 1].to_column, here))
+                 .from_(table_expr(*way[i - 1].to_parts, dialect, alias=here))
+                 .where(exp.In(this=column(way[i].column, here), query=query.subquery())))
+    return exp.In(this=column(way[0].column, alias), query=query.subquery())
+
+
+def _restriction(bound: list[tuple[dict, list]], alias: str, context: PolicyContext,
+                 dialect: str) -> exp.Expression | None:
+    """What a reader may see of one table, or None when nothing narrows it.
+
+    The rules on one field of one table are ways in, any of which lets a row through ("the West team's region",
+    and Ada's own region besides): they are OR'd. The fields are each a limit of their own (a region, and a
+    category): AND'd. A rule that sees every row of a field ("managers: every region") lifts that field."""
+    fields: dict[tuple[str, str], list[tuple[dict, list]]] = {}
+    for policy, way in bound:
+        condition = policy.get("condition") or {}
+        key = (str(policy.get("table_fqn") or "").upper(), str(condition.get("field") or "").upper())
+        fields.setdefault(key, []).append((policy, way))
+    limits = []
+    for members in fields.values():
+        if any(_sees_every_row(policy) for policy, _ in members):
+            continue
+        ways_in = [_reached(policy, way, alias, context, dialect) for policy, way in members]
+        node = ways_in[0]
+        for other in ways_in[1:]:
+            node = exp.or_(node, other)
+        limits.append(exp.Paren(this=node) if len(ways_in) > 1 else node)
+    if not limits:
+        return None
+    node = limits[0]
+    for other in limits[1:]:
+        node = exp.and_(node, other)
+    return node
+
+
 def row_policy_scope(context: PolicyContext, tables: Any) -> str:
     """A fingerprint of the row restrictions this subject reads `tables` under.
 
@@ -273,7 +385,8 @@ def row_policy_scope(context: PolicyContext, tables: Any) -> str:
 
     The rendered condition is part of the fingerprint, not just the policy id,
     because a condition may interpolate the reader's own attributes -- two
-    readers under one policy can still be looking at different rows.
+    readers under one policy can still be looking at different rows. A rule on
+    another table that reaches these through their links is part of it too.
     """
     try:
         policies = store.list_row_policies(
@@ -291,22 +404,22 @@ def row_policy_scope(context: PolicyContext, tables: Any) -> str:
         for name in (tables or [])
         if str(name or "").strip()
     })
+    links = _Links(context.account_id)
     parts: list[str] = []
     for table_name in names:
-        for policy in policies:
-            if not _policy_subject_matches(policy, context):
-                continue
-            if not _policy_covers_table(policy, table_name):
-                continue
-            try:
-                rendered = _condition_expression(
-                    policy.get("condition") or {}, "t", context).sql()
-            except Exception:
-                # An unsupported operator would have raised inside the
-                # injection too. Keep it in the fingerprint rather than
-                # treating the reader as unrestricted.
-                rendered = repr(policy.get("condition") or {})
-            parts.append(f"{table_name}|{policy.get('id')}|{rendered}")
+        bound = _binding(policies, context, table_name, links)
+        if not bound:
+            continue
+        try:
+            restriction = _restriction(bound, "t", context, "snowflake")
+            rendered = restriction.sql() if restriction is not None else "every row"
+        except Exception:
+            # An unsupported operator would have raised inside the
+            # injection too. Keep it in the fingerprint rather than
+            # treating the reader as unrestricted.
+            rendered = repr([policy.get("condition") or {} for policy, _ in bound])
+        ids = ",".join(str(policy.get("id")) for policy, _ in bound)
+        parts.append(f"{table_name}|{ids}|{rendered}")
     if not parts:
         return ""
     digest = hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
@@ -330,34 +443,34 @@ def inject_row_policies(
         for cte in tree.find_all(exp.CTE)
         if cte.alias
     }
-    for table in tree.find_all(exp.Table):
+    links = _Links(context.account_id)
+    # The tables the query names, listed before any condition is added: a condition's own subquery names the
+    # rule's table, and must not be narrowed again.
+    for table in list(tree.find_all(exp.Table)):
         if table.name.upper() in cte_aliases:
             continue
         table_name = _table_name(table)
         alias = table.alias_or_name or table.name
-        for policy in policies:
-            # Shared with row_policy_scope: if these two ever disagree about
-            # which policies bind this reader, the anchor cache goes back to
-            # serving one reader's slice to the workspace.
-            if not _policy_subject_matches(policy, context):
-                continue
-            if not _policy_covers_table(policy, table_name):
-                continue
-            predicate = _condition_expression(policy.get("condition") or {}, alias, context)
-            select = table.find_ancestor(exp.Select)
-            if select is None:
-                continue
-            key = id(select)
-            if key not in predicates_by_select:
-                predicates_by_select[key] = (select, [])
-            predicates_by_select[key][1].append(predicate)
-            applied.append(
-                {
-                    "policy_id": policy["id"],
-                    "table": table_name,
-                    "condition": policy.get("condition") or {},
-                }
-            )
+        bound = _binding(policies, context, table_name, links)
+        if not bound:
+            continue
+        select = table.find_ancestor(exp.Select)
+        if select is None:
+            continue
+        predicate = _restriction(bound, alias, context, dialect)
+        for policy, way in bound:
+            applied.append({
+                "policy_id": policy["id"],
+                "table": table_name,
+                "condition": policy.get("condition") or {},
+                "via": [link.to_table for link in way],
+            })
+        if predicate is None:
+            continue
+        key = id(select)
+        if key not in predicates_by_select:
+            predicates_by_select[key] = (select, [])
+        predicates_by_select[key][1].append(predicate)
     for select, predicates in predicates_by_select.values():
         if not predicates:
             continue

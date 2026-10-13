@@ -24,7 +24,7 @@
 {% set _is_overview   = (_seg == '') %}
 {% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures', 'requests'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
-{% set _is_people     = _seg in ['users', 'groups', 'pending-users', 'admins'] %}
+{% set _is_people     = _seg in ['users', 'groups', 'row-access', 'pending-users', 'admins'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
 {# Diagnostics is for support, reached from Settings: today's pipeline's own
    editors and the developer tooling for its compiler. Nothing here is in the
@@ -51,7 +51,8 @@
 {% elif _is_questions %}
   {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
 {% elif _is_people %}
-  {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('pending-users', 'Access requests'), ('admins', 'Admins')] %}
+  {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('row-access', 'Row access'), ('pending-users', 'Access requests'),
+                  ('admins', 'Admins')] %}
 {% elif _is_compliance %}
   {% set _menu = [('compliance', 'Compliance'), ('egress', 'AI egress log')] %}
 {% elif _is_diagnostics %}

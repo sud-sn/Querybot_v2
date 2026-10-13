@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextvars
 import datetime as dt
+import json
 import logging
 import threading
 import time
@@ -198,10 +199,17 @@ def _kept_key(user: dict, model, allowed: set[str] | None, lang: str, today: dt.
         policy = int(store.get_compliance_profile(account_id).get("active_policy_version") or 0)
     except Exception:  # noqa: BLE001 - no compliance profile: one version
         policy = 0
+    # Row rules change without a new policy version, and a rule may read the reader's own values: both are part
+    # of what these figures were counted under, or a changed rule waited out the figures kept before it.
+    try:
+        rules = store.row_rules_stamp(account_id)
+    except Exception:  # noqa: BLE001 - when in doubt, a key never kept before
+        rules = dt.datetime.now().isoformat()
+    own = json.dumps(store.user_attributes(user), sort_keys=True)
     return (account_id, int(user["id"]), str(user.get("portal_role") or ""), str(user.get("role") or ""),
             int(user.get("session_version") or 0),
             int(model.version or 0), str(model.built_at or ""), tuple(sorted(allowed)) if allowed is not None else None,
-            policy, lang, today.isoformat())
+            policy, rules, own, str(user.get("group_id") or ""), lang, today.isoformat())
 
 
 def _kept_for(user: dict) -> int:

@@ -109,7 +109,8 @@ def resolve_context(
         break_glass_grant_id=break_glass_grant_id,
         role=role,
         provider=provider,
-        user_attributes=dict(user.get("attributes") or {}),
+        # The person's own values a row rule may read ("their region"), kept on their record by an admin.
+        user_attributes=store.user_attributes(user),
     )
 
 
