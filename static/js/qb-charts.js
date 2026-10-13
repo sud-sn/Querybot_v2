@@ -458,6 +458,56 @@
     });
   }
 
+  // A point's value goes on the side its own line leaves free (labelSides). Another line on the chart -- the
+  // year before, dashed -- may still run through that place: "$14.1K" struck through by it, or "$11.7K" with a
+  // dash just before it, read as a minus. Such a label takes the other side of its point where that side is
+  // clear of every line, its own included; where none is, it stays and sits on a plate of the surface, which
+  // breaks the other line where they meet. Measured in pixels from the plot's size: the label's box (about 7px
+  // a character, 16px high, 6px from its point) against each line between points. {sides, plates}.
+  function clearOfLines(placed, values, others, texts, geom) {
+    const n = values.length;
+    const {width, height, lo, hi} = geom;
+    if (!placed || !others.length || !(hi > lo) || n < 2) return {sides: placed, plates: []};
+    const unit = height / (hi - lo);
+    const slot = width / n;
+    const at = (series, x) => {
+      const i = Math.max(0, Math.min(n - 1, Math.floor(x)));
+      const a = series[i], b = series[Math.min(n - 1, i + 1)];
+      if (a == null || b == null) return a == null ? b : a;
+      return a + (b - a) * (x - i);
+    };
+    const box = (side, w) => (side === 'top' ? [-w / 2, w / 2, 5, 23] : side === 'bottom' ? [-w / 2, w / 2, -23, -5]
+      : side === 'right' ? [5, 7 + w, -1, 17] : [-7 - w, -5, -1, 17]);
+    const crosses = (series, j, side, w) => {
+      const [x0, x1, y0, y1] = box(side, w);
+      let below = null;
+      for (let k = 0; k <= 8; k++) {
+        const x = j + (x0 + (x1 - x0) * k / 8) / slot;
+        if (x < 0 || x > n - 1) continue;
+        const y = at(series, x);
+        if (y == null) continue;
+        const dy = (y - values[j]) * unit;
+        if (dy >= y0 && dy <= y1) return true;
+        const under = dy < y0;
+        if (below !== null && below !== under) return true;       // passed straight through between two looks
+        below = under;
+      }
+      return false;
+    };
+    const plates = [];
+    const sides = placed.map((side, j) => {
+      if (values[j] == null || side === 'none') return side;
+      const w = (texts[j] || 4) * 7 + 4;
+      const struck = s => others.some(series => crosses(series, j, s, w));
+      if (!struck(side)) return side;
+      const room = s => !struck(s) && !crosses(values, j, s, w) && (s !== 'bottom' || (values[j] - lo) * unit > 34);
+      const free = (side === 'bottom' ? ['top'] : side === 'top' ? ['bottom'] : ['top', 'bottom']).find(room);
+      if (!free) plates.push(j);
+      return free || side;
+    });
+    return {sides, plates};
+  }
+
   // ── On a dashboard tile ───────────────────────────────────────────────────
   // The lowest point of a single line, named ("Low $168.0K") below it -- never on a line that does not dip.
   function lowPoint(values, labels, written, c) {
@@ -1613,7 +1663,14 @@
         // label is wider than a point's, and runs over the next point's label on the side it is aligned to
         // (both sides when centred): those points keep their value for the tooltip, not a label of their own.
         const lowAt = low.length ? labels.indexOf(low[0].coord[0]) : -1;
-        const placed = pointLabels ? labelSides(values) : null;
+        const others = yKeys.filter(o => o !== k).map(o => rows.map(r => num(r && r[o])));
+        const allValues = yKeys.flatMap(o => rows.map(r => num(r && r[o]))).filter(v => v != null);
+        const cleared = pointLabels ? clearOfLines(labelSides(values), values, others,
+          values.map(v => (v == null ? 0 : String(valueFmt(v, k, true)).length)),
+          {width: Math.max(120, ((layout && layout.width) || 600) - 100), height: plotHeight,
+           lo: Math.min(0, ...allValues), hi: Math.max(0, ...allValues) * 1.1}) : null;
+        const placed = cleared ? cleared.sides : null;
+        const plated = new Set(cleared ? cleared.plates : []);
         // The low's label ("Low $18.5K") is wider than a point's: the points it runs over, on the side it is
         // aligned to (both sides when centred), keep their value for the tooltip. How many it reaches is
         // measured -- a label about 7px a character against the room between two points -- and only points
@@ -1654,8 +1711,11 @@
         ]);
         return {
           name: k, type: 'line',
-          data: placed ? values.map((v, j) => (placed[j] === 'top' || placed[j] === 'none' ? v
-            : {value: v, label: {position: placed[j]}})) : values,
+          data: placed ? values.map((v, j) => {
+            const plate = plated.has(j) ? {backgroundColor: c.surface, padding: [1, 3], borderRadius: 3} : {};
+            return (placed[j] === 'top' || placed[j] === 'none') && !plated.has(j) ? v
+              : {value: v, label: Object.assign({position: placed[j] === 'none' ? 'top' : placed[j]}, plate)};
+          }) : values,
           smooth: smooth ? 0.35 : false,
           smoothMonotone: smooth ? 'x' : undefined,
           label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
@@ -1668,7 +1728,11 @@
                                 },
                                 rich: {key: {color: c.ink, fontSize: 12, fontWeight: 600, fontFamily: c.font,
                                              textBorderColor: c.surface, textBorderWidth: 3}}} : undefined,
-          labelLayout: pointLabels ? {hideOverlap: true} : undefined,
+          // Beside a point its line runs through, the label is lifted into the corner the line leaves free (above
+          // the way down, above the way up): level with the point, the line ran under its first figure, read as a
+          // minus ("-$11.7K").
+          labelLayout: pointLabels ? (p => ({hideOverlap: true,
+            dy: placed && (placed[p.dataIndex] === 'left' || placed[p.dataIndex] === 'right') ? -9 : 0})) : undefined,
           // Dots on a single line of a couple of dozen points carry its values; on several lines they are
           // clutter, and the one under the pointer appears when the crosshair reaches it.
           showSymbol: single && rows.length <= MARKER_MAX_POINTS,
