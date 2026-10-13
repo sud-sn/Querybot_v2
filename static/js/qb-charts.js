@@ -1483,15 +1483,21 @@
         const marks = i === 0 ? annotationMarkPoints(payload, labels, values) : [];
         const low = onTile && i === 0 ? lowPoint(values, labels, v => valueFmt(v, k, true), c) : [];
         marks.push(...low);
-        // The lowest point says its value in its own label ("Low $18.5K"): never twice, one over the other.
+        // The lowest point says its value in its own label ("Low $18.5K"): never twice, one over the other. That
+        // label is wider than a point's, and runs over the next point's label on the side it is aligned to
+        // (both sides when centred): those points keep their value for the tooltip, not a label of their own.
         const lowAt = low.length ? labels.indexOf(low[0].coord[0]) : -1;
+        const lowRuns = low.length ? low[0].label.align : '';
+        const crowded = lowAt < 0 ? [] : lowRuns === 'left' ? [lowAt + 1] : lowRuns === 'right' ? [lowAt - 1]
+          : [lowAt - 1, lowAt + 1];
         return {
           name: k, type: 'line', data: values,
           smooth: smooth ? 0.35 : false,
           smoothMonotone: smooth ? 'x' : undefined,
           label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
                                 fontFamily: c.font,
-                                formatter: p => (p.dataIndex === lowAt ? '' : valueFmt(p.value, k, true))} : undefined,
+                                formatter: p => (p.dataIndex === lowAt || crowded.includes(p.dataIndex) ? ''
+                                  : valueFmt(p.value, k, true))} : undefined,
           labelLayout: pointLabels ? {hideOverlap: true} : undefined,
           showSymbol: rows.length <= MARKER_MAX_POINTS,
           symbol: 'circle', symbolSize: 8,

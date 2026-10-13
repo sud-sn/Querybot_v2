@@ -480,6 +480,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             unit=unit, unit_column=ck[m.unit_column] if m.unit_column else None,
             default_date=model.tables[m.table].default_date,
             kind="count" if m.agg in ("count", "count_distinct") else "column",
+            better=names.better(m.name),  # type: ignore[arg-type]
             evidence=m.evidence, provenance="profile", status="needs_review" if m.review else "verified",
             confidence=0.6 if m.review else 0.9, synonyms=_value_words(m))
         if m.review:
@@ -669,6 +670,7 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 business_name=f"Number of {counted}", table=key,
                 expr=AggExpr(agg="count_distinct", column=ck[(key, counted_by)]),
                 additivity="non_additive", format="count", kind="count",
+                better=names.better(counted),  # type: ignore[arg-type]
                 default_date=model.tables[key].default_date,
                 evidence=[Evidence(kind="entity_count", weight=1,
                                    detail=f"each {business.lower()} listed in {table.name}, counted once")],

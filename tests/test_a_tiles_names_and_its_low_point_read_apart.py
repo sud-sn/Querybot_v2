@@ -56,6 +56,19 @@ def test_the_lowest_point_says_its_value_once():
     labels = opt(_trend(values), "[" + ", ".join(
         f"opt.series[0].label.formatter({{value: {v}, dataIndex: {i}}})" for i, v in enumerate(values)) + "]",
         "portal_dashboard.html")
-    assert labels[1] == "" and all(labels[i] for i in range(len(values)) if i != 1)
+    # Near the start the "Low" label runs right, over the next month's label: that one is left to the tooltip.
+    assert labels[1] == labels[2] == "" and all(labels[i] for i in range(len(values)) if i not in (1, 2))
     low = opt(_trend(values), "opt.series[0].markPoint.data.map(p => p.label.formatter())", "portal_dashboard.html")
     assert low == ["Low $18.5"]
+
+
+@pytest.mark.parametrize("low_at, quiet", [(1, {1, 2}), (5, {4, 5, 6}), (10, {9, 10})])
+def test_the_low_label_never_lies_over_a_neighbours_label(low_at, quiet):
+    """"Low $157.7K" was drawn over the next month's "$167.8K": the side it runs to is left without a label (both
+    sides when it is centred, the one before near the end)."""
+    values = [30.0 + (i % 3) for i in range(12)]
+    values[low_at] = 10.0
+    labels = opt(_trend(values), "[" + ", ".join(
+        f"opt.series[0].label.formatter({{value: {v}, dataIndex: {i}}})" for i, v in enumerate(values)) + "]",
+        "portal_dashboard.html")
+    assert {i for i, label in enumerate(labels) if not label} == quiet

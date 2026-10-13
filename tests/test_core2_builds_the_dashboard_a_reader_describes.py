@@ -438,9 +438,10 @@ def test_the_admin_sets_which_way_is_good_and_the_chat_colours_the_change(retail
     built, model = retail
     model = model.model_copy(deep=True)
     cost = model.measures[next(k for k, m in model.measures.items() if m.slug == "cost_amount")]
-    assert editor_state(model, cost)["better"] == "higher"
-    assert apply_overrides(model, [{"object_key": f"measure:{cost.key}", "field": "better", "value": "lower"}]) == []
-    assert model.measures[cost.key].better == "lower" and editor_state(model, model.measures[cost.key])["better"] == "lower"
+    # Learn reads it from its name (a cost falling is good news); the admin has the last word.
+    assert editor_state(model, cost)["better"] == "lower"
+    assert apply_overrides(model, [{"object_key": f"measure:{cost.key}", "field": "better", "value": "higher"}]) == []
+    assert model.measures[cost.key].better == "higher" and editor_state(model, model.measures[cost.key])["better"] == "higher"
     pytest.importorskip("dukpy")
     from tests.chat_js import run
 

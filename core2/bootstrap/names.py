@@ -11,6 +11,7 @@ evidence at all.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # Suffix tokens that only say "this is a key".
 KEY_SUFFIXES = {"id", "key", "sk", "fk", "pk", "no", "nbr", "num", "code", "cd", "ref", "dms", "dim"}
@@ -77,6 +78,33 @@ def tokens(name: str) -> list[str]:
     spaced = re.sub(r"([A-Za-z])(\d)", r"\1 \2", spaced)
     spaced = re.sub(r"(\d)([A-Za-z])", r"\1 \2", spaced)
     return [t for t in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if t]
+
+
+# Figures where less is the better news: costs and losses, refunds and returns, churn, defects, delays,
+# complaints (in English and French). A name that also says what is gained is no such figure: "return on
+# investment", "cost savings", "revenue after returns".
+LESS_IS_BETTER = {"cost", "costs", "expense", "expenses", "loss", "losses", "refund", "refunds", "refunded", "return",
+                  "returns", "returned", "churn", "churned", "cancellation", "cancellations", "cancelled", "canceled",
+                  "defect", "defects", "scrap", "scrapped", "waste", "wastage", "downtime", "delay", "delays",
+                  "delayed", "late", "lateness", "overdue", "complaint", "complaints", "error", "errors", "incident",
+                  "incidents", "reject", "rejects", "rejected", "rejection", "rejections", "damage", "damaged",
+                  "shrink", "shrinkage", "writeoff", "writeoffs", "backorder", "backorders", "stockout", "stockouts",
+                  "absence", "absences", "attrition", "leaver", "leavers",
+                  "cout", "couts", "perte", "pertes", "remboursement", "remboursements", "retour", "retours",
+                  "annulation", "annulations", "rebut", "rebuts", "retard", "retards", "reclamation", "reclamations",
+                  "plainte", "plaintes"}
+MORE_IS_BETTER = {"revenue", "revenues", "profit", "profits", "margin", "margins", "saving", "savings", "income",
+                  "roi", "investment", "recovered", "recovery", "avoided", "prevented", "gain", "gains",
+                  "chiffre", "benefice", "benefices", "marge", "marges", "economie", "economies"}
+
+
+def better(name: str) -> str:
+    """Which way a figure named so is good news: "lower" for a cost, a refund, churn or a delay; else "higher".
+    Accents are read as their letters ("Coût" is "cout")."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", name or "") if not unicodedata.combining(c))
+    words = tokens(plain)
+    said = set(words) | {a + b for a, b in zip(words, words[1:])}      # "write off" as "writeoff"
+    return "lower" if said & LESS_IS_BETTER and not said & MORE_IS_BETTER else "higher"
 
 
 def opaque(name: str) -> bool:

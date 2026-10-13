@@ -483,8 +483,19 @@ def load_model(account_id: str, db_id: int | None, version: int | None = None) -
         return None
     model = SemanticModel.model_validate_json(row["model_json"])
     model.version = row["version"]
+    good_news(model)
     apply_overrides(model, store.list_core2_overrides(account_id, db_id))
     return model
+
+
+def good_news(model: SemanticModel) -> None:
+    """Which way each learned figure is good news, for a model learned before Learn read it from its name: a cost,
+    a refund or churn falls to be good. Before the admin's decisions, which keep theirs."""
+    from core2.bootstrap import names
+
+    for m in model.measures.values():
+        if m.provenance == "profile" and m.kind in ("column", "count") and m.better == "higher":
+            m.better = names.better(m.business_name)  # type: ignore[assignment]
 
 
 def stats(model: SemanticModel) -> dict[str, Any]:
