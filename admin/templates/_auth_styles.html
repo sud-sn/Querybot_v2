@@ -23,17 +23,24 @@
 }
 .auth-brand-tag {
   margin-left: 4px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
   vertical-align: middle;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
-  letter-spacing: .08em;
+  letter-spacing: .06em;
   text-transform: uppercase;
-  color: var(--text-muted);
 }
-.auth-card { box-shadow: var(--shadow-md); }
+/* One card on the card radius, its title in the display face, fields on the item radius and a pill to go on, as
+   the portal's sign-in has them. */
+.auth-card { border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: var(--shadow); }
+.auth-card:hover { border-color: var(--line-subtle); box-shadow: var(--shadow); }
+.auth-card .card-header { padding: 24px 28px 0; border-bottom: 0; background: none; }
+.auth-card .card-body { padding: 16px 28px 26px; }
+.auth-card .form-group input:not([type="hidden"]) { min-height: 44px; border-radius: var(--radius-item); }
+.auth-card .btn { min-height: 46px; border-radius: var(--radius-pill); font-size: var(--font-base); }
 .auth-switch { margin: 1rem 0 0; text-align: center; font-size: var(--font-sm); }
 .auth-wide { max-width: 440px; }
 .auth-lead { margin: 0 0 1rem; font-size: var(--font-sm); line-height: 1.5; color: var(--text-soft); }
@@ -41,10 +48,12 @@
 .auth-card .card-header h1 {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: var(--font-base);
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: var(--font-2xl);
   font-weight: var(--weight-bold);
-  color: var(--text-soft);
+  letter-spacing: -.02em;
+  color: var(--text-strong);
 }
 
 </style>

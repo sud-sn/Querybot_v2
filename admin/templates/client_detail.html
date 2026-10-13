@@ -11,9 +11,11 @@
 {% endblock %}
 {% block head %}
 <style>
-.overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
-.overview-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow)}
-.overview-card h2{font-size:var(--font-xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:.75rem}
+.overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem;margin-bottom:1.25rem}
+/* One column on a phone: two ran off the screen's edge. */
+@media(max-width:720px){.overview-grid{grid-template-columns:minmax(0,1fr)}}
+.overview-card{background:var(--surface-raised);border:1px solid var(--line-subtle);border-radius:var(--radius-card);padding:18px 20px}
+.overview-card h2{font-family:var(--font-display);font-size:var(--font-lg);font-weight:var(--weight-bold);letter-spacing:-.01em;color:var(--text-strong);margin-bottom:.75rem}
 .bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
 .bar-label{font-size:var(--font-sm);color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}

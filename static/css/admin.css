@@ -660,3 +660,183 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
   }
   .sidebar-out { min-width: 44px; }
 }
+
+/* ── The admin console in the approved design ────────────────────────────────
+   The console sits in the portal's window: a white window with large rounded corners on the periwinkle ground,
+   the sidebar a light panel inside it (the brand, the places as pills, the workspaces, Appearance and who is
+   signed in), the page scrolling on the window's white. A page opens with its name in the display face; a card
+   sits on the card radius without a grey head or a shadow; buttons are pills; a table's head is sentence case.
+   At 860px and below the window fills the screen and the sidebar is a drawer, as before. */
+body:has(.shell) { overflow: hidden; display: flow-root; background: var(--ground); }
+.shell {
+  width: calc(100vw - 32px);
+  max-width: 1600px;
+  height: calc(100vh - 32px);
+  min-height: 0;
+  margin: 16px auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 12px;
+  background: var(--window);
+  border-radius: var(--radius-window);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+body.page-bleed .shell { height: calc(100vh - 32px); }
+.shell > .sidebar {
+  position: relative;
+  top: auto;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 12px 12px;
+  gap: 12px;
+  border: 0;
+  border-radius: 24px;
+  background: var(--sidebar-bg);
+}
+.sidebar-brand { min-height: 40px; padding: 0 6px; border-bottom: 0; }
+.sidebar-brand-text { font-size: var(--font-xl); }
+.sidebar-brand-tag { border: 0; border-radius: var(--radius-pill); padding: 2px 8px; background: var(--primary-soft); color: var(--primary-ink);
+  letter-spacing: .06em; }
+.sidebar-section { padding: 0; }
+.sidebar-link {
+  min-height: 40px;
+  margin: 1px 0;
+  padding: 9px 12px;
+  gap: 11px;
+  border-radius: var(--radius-item);
+  color: var(--sidebar-muted);
+  font-size: var(--font-base);
+  font-weight: var(--weight-medium);
+}
+.sidebar-link:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
+.sidebar-link.active { background: var(--sidebar-active); color: var(--sidebar-text); font-weight: var(--weight-semibold); box-shadow: var(--shadow); }
+.sidebar-link.active::before { content: none; }
+.sidebar-link.active .sidebar-link-icon { color: var(--sidebar-accent); }
+.sidebar .sidebar-group-label { padding-inline: 12px; text-transform: none; letter-spacing: 0; font-size: var(--font-sm);
+  font-weight: var(--weight-medium); color: var(--sidebar-muted); }
+.sidebar-workspaces { margin: 0; }
+.sidebar-workspace { padding: 8px 12px; border-radius: var(--radius-item); color: var(--sidebar-muted); font-size: var(--font-base); }
+.sidebar-workspace.active { box-shadow: var(--shadow); }
+/* Appearance, as the portal has it. */
+.sidebar-theme {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
+}
+.sidebar-theme button {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--sidebar-muted);
+  font: inherit;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.sidebar-theme button:hover { color: var(--sidebar-text); }
+.sidebar-theme button[aria-pressed="true"] { background: var(--surface-raised); color: var(--sidebar-text); font-weight: var(--weight-semibold);
+  box-shadow: var(--shadow); }
+.sidebar-foot { padding: 6px; border: 1px solid var(--sidebar-border); border-radius: var(--radius-pill); }
+.sidebar-avatar { width: 34px; height: 34px; background: var(--brand-gradient); color: var(--on-primary); }
+.shell-main {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  border-radius: 18px;
+  background: transparent;
+}
+/* The main column scrolls inside the window: what sits above the page keeps its height (the area's menu was
+   squeezed to a sliver under a long page), and the page grows; a full-bleed page still takes what is left. */
+.shell-main > :not(.page) { flex-shrink: 0; }
+body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
+.admin-emergency-banner { border-radius: var(--radius-item); border: 1px solid var(--danger-line); margin: 0 0 4px; }
+.ws-head { background: transparent; border-bottom: 1px solid var(--line-subtle); }
+.ws-name { font-family: var(--font-display); font-size: clamp(24px, 2.4vw, 30px); letter-spacing: -.02em; }
+.client-workspace-secondary { background: transparent; border-bottom: 1px solid var(--line-subtle); }
+
+/* A page opens with its name in the display face. */
+.shell .page-header h1,
+.shell .page-header-body h1 {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 2.6vw, 34px);
+  font-weight: var(--weight-bold);
+  line-height: 1.12;
+  letter-spacing: -.02em;
+  color: var(--text-strong);
+}
+.shell .page-header p,
+.shell .page-header-body p { color: var(--text-secondary); font-size: var(--font-base); }
+
+/* A card: the card radius, no grey head, no shadow; its name in the display face, in sentence case. */
+.shell .card { border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: none; }
+.shell .card:hover { border-color: var(--line-subtle); box-shadow: none; }
+.shell .card-header { padding: 16px 20px; background: none; border-bottom-color: var(--line-subtle); }
+.shell .card-header h2,
+.shell .card-header h3 {
+  font-family: var(--font-display);
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: -.01em;
+  text-transform: none;
+  color: var(--text-strong);
+}
+.shell .card-body { padding: 18px 20px; }
+.shell .danger-zone { border-radius: var(--radius-card); box-shadow: none; }
+
+/* A number: the card radius, its name in words and its value in the display face, as Home's figures. */
+.shell .metric { padding: 16px 18px; border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised);
+  box-shadow: none; }
+.shell .metric:hover { box-shadow: none; }
+.shell .metric-label { text-transform: none; letter-spacing: 0; font-size: var(--font-sm); font-weight: var(--weight-medium);
+  color: var(--text-secondary); }
+.shell .metric-value { font-family: var(--font-display); font-size: var(--font-3xl); line-height: 1.1; }
+
+/* Buttons are pills; fields take the item radius. */
+.shell .btn { border-radius: var(--radius-pill); }
+.shell .btn-sm { padding-inline: 12px; }
+.shell :is(.form-input, .form-group input, .form-group select, .form-group textarea):not([type="checkbox"], [type="radio"]) {
+  border-radius: var(--radius-item);
+}
+.shell .form-input.form-input-sm { border-radius: var(--radius-pill); }
+
+/* A table's head reads as words, not a label: sentence case, the muted ink. */
+.shell table th { text-transform: none; letter-spacing: 0; }
+
+@media (max-width: 860px) {
+  body:has(.shell) { background: var(--window); overflow: auto; }
+  .shell {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  body.page-bleed .shell { height: 100vh; }
+  .shell > .sidebar {
+    position: fixed;
+    left: -280px;
+    width: 268px;
+    height: 100%;
+    border-radius: 0 24px 24px 0;
+  }
+  .shell > .sidebar.open { left: 0; box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 34%, transparent); }
+  .shell-main { height: 100vh; border-radius: 0; }
+  .admin-emergency-banner { border-radius: 0; margin: 0; }
+}

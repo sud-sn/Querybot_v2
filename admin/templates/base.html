@@ -12,6 +12,18 @@
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('css/fonts.css') }}">
 <link rel="stylesheet" href="{{ asset('css/tokens.css') }}">
+<link rel="stylesheet" href="{{ asset('css/tokens-dark.css') }}">
+<link rel="preload" href="/static/fonts/bricolage-grotesque-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+{# The theme chosen on this device (the portal's too): Light (the default), Dark, or Auto (the system's), set before the
+   first paint so a dark page never flashes white. #}
+<script>
+(function () {
+  var theme = 'light';
+  try { theme = localStorage.getItem('qb.theme') || 'light'; } catch (e) {}
+  if (['light', 'dark', 'auto'].indexOf(theme) < 0) theme = 'light';
+  document.documentElement.dataset.theme = theme;
+})();
+</script>
 <link rel="stylesheet" href="{{ asset('css/base.css') }}">
 <link rel="stylesheet" href="{{ asset('css/admin.css') }}">
 <script src="{{ asset('js/qb-icons.js') }}" data-sprite="{{ asset('icons/qb-icons.svg') }}"></script>
@@ -84,6 +96,12 @@
       {% endif %}
     </nav>
 
+    {# Appearance: Light, Dark, or Auto, which follows the system. Kept on this device. #}
+    <div class="sidebar-theme" role="group" aria-label="Appearance" title="Light, dark, or as the system is set">
+      <button type="button" data-theme-choice="light" aria-pressed="false">{{ ic("sun", 14) }}<span>Light</span></button>
+      <button type="button" data-theme-choice="dark" aria-pressed="false">{{ ic("moon", 14) }}<span>Dark</span></button>
+      <button type="button" data-theme-choice="auto" aria-pressed="false"><span>Auto</span></button>
+    </div>
     <div class="sidebar-foot">
       {% set _who = (_me.label if _me else 'Administrator') %}
       {% set _initials = ('!' if (_me and _me.emergency) else ((_who.split() | map('first') | join)[:2] | upper or 'AD')) %}
@@ -137,6 +155,24 @@
 
 {# ── Mobile sidebar JS ── #}
 <script>
+// Appearance: the choice is kept on this device; a chart already drawn is drawn again in the new colours.
+(function () {
+  var buttons = document.querySelectorAll('.sidebar-theme [data-theme-choice]');
+  function show(theme) {
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-theme-choice') === theme ? 'true' : 'false'); });
+  }
+  show(document.documentElement.dataset.theme || 'light');
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var theme = b.getAttribute('data-theme-choice');
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem('qb.theme', theme); } catch (_) {}
+      show(theme);
+      window.dispatchEvent(new CustomEvent('qb-theme-change', {detail: {theme: theme}}));
+      window.dispatchEvent(new Event('resize'));
+    });
+  });
+})();
 function openSidebar(){
   document.getElementById('sidebar').classList.add('open');
   document.getElementById('sidebarOverlay').classList.add('show');
