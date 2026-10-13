@@ -92,3 +92,16 @@ def test_the_share_of_a_figure_from_its_big_rows_is_still_a_rate(shop):
     want = con.execute("SELECT 100.0 * SUM(order_quantity) FILTER (WHERE order_quantity > 80) / SUM(order_quantity) "
                        "FROM work_orders").fetchone()[0]
     assert _value(shop, rate) == pytest.approx(float(want))
+
+
+def test_two_figures_side_by_side_are_never_one_against_a_target_of_the_other(shop):
+    """ "Total qty ordered vs scrapped on those" was planned as the quantity ordered against a target of scrapped
+    quantity: "Order Quantity was 34770% of scrapped quantity". A target is a figure named a target, budget, quota,
+    plan or goal; any other is sent back to the planner, to be shown side by side."""
+    from core2.plan.planner import check
+
+    con, model = shop
+    ordered, scrapped = _slug(model, "order_quantity"), _slug(model, "scrapped_quantity")
+    plan = Plan.model_validate({"kind": "query", "target": {"actual": ordered, "target": scrapped}})
+    problems, _ = check(plan, model, dt.date(2026, 1, 1))
+    assert problems and "no target" in problems[0], problems

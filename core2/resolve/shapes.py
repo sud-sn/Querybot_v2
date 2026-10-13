@@ -1718,6 +1718,17 @@ def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
     actual, target = measures
     if actual.slug == target.slug:
         raise ResolveError("unsupported", "a figure against its target needs two figures")
+    from core2.bootstrap import names
+    from core2.plan.analyses import TARGET_WORDS
+
+    said = {names.singular(w) for text in (target.business_name, target.slug, model.tables[target.table].business_name
+                                           if target.table in model.tables else "") for w in names.tokens(text)}
+    if not said & (TARGET_WORDS | {"plan", "expected", "objective"}):
+        # "Total qty ordered vs scrapped": two figures side by side, not the quantity ordered against a target of
+        # scrapped quantity ("Order quantity was 34770% of scrapped quantity").
+        raise ResolveError("unsupported", f"{target.business_name} is no target, budget or quota. For "
+                           f"{actual.business_name} and {target.business_name} side by side, put both in measures; "
+                           "for one as a share of the other, a derived ratio")
     derived = [Derived(name=TARGET_DIFFERENCE, op="difference", measures=[actual.slug, target.slug]),
                Derived(name=TARGET_SHARE, op="ratio", measures=[actual.slug, target.slug], scale=100.0)]
     plan = _by_period(plan, model, (actual.table, target.table))
