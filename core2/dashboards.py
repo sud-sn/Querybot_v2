@@ -16,6 +16,10 @@ a proper name every time ("Sales executive dashboard"), each tile's plan written
 a subject (one tile for "a revenue dashboard") is asked for again, once. A dashboard of several areas, or of more
 tiles than one page holds, is on named tabs: "Overview" first, then a tab per area ("Revenue", "Fills").
 
+What the data cannot give is said, never drawn as an empty tile: a recipe's tile whose figure, grouping or list
+the data has not is left out and named ("not in this data: targets"); a tile that finds nothing in its period is
+drawn over all the data instead, and said; one that finds nothing at all is left out, and named with why.
+
 Once built, each headline number is checked against the trend of the same figure over the same period, where
 there is one: a total that adds up is the sum of its months, a level (a headcount, a balance) its last month's.
 The chat says the totals were checked, or which did not match.
@@ -179,6 +183,7 @@ class Tile:
     layout: dict = field(default_factory=dict)   # grid_x, grid_y, grid_w, grid_h, tab (its place in the tabs)
     tab: str = ""                   # the tab the design put it on ("Overview", "Revenue")
     planned: dict | None = None     # a recipe's tile: the plan written for it, run as it is (no AI)
+    widened: bool = False           # nothing in its period: drawn over all the data instead (and said so)
 
 
 @dataclass
@@ -188,6 +193,8 @@ class Draft:
     tiles: list[Tile]
     tabs: list[str] = field(default_factory=list)        # the tabs' names, in order; a tile's layout tab is a place here
     checks: list[dict[str, Any]] = field(default_factory=list)   # each headline number against its trend
+    missing: list[str] = field(default_factory=list)     # what its recipe wanted and the data has not, as said
+    instead: list[str] = field(default_factory=list)     # the recipe's tiles drawn in the place of those
 
 
 @dataclass
@@ -321,12 +328,14 @@ def executive(model, request: str, *, today: dt.date, allowed: set[str] | None =
     return name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in tiles]
 
 
-def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None = None
-              ) -> tuple[str, list[Tile]] | None:
+def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None = None,
+              missing: list[str] | None = None, instead: list[str] | None = None) -> tuple[str, list[Tile]] | None:
     """The dashboard of the catalogue's recipe the request names (core2/recipe_book.py: "a dashboard for the sales
     team", "customer retention dashboard", "a CFO dashboard"), when the data gives it, at least in part: its name
-    and its tiles. The catalogue is never shown: the reader asks in their own words. None when the request names
-    no recipe the data gives: the whole business's recipe, or the AI's design."""
+    and its tiles; what the recipe wanted and the data has not ("targets") is added to ``missing``, and the tiles
+    drawn in its place ("net amount by store against the year before") to ``instead``. The catalogue
+    is never shown: the reader asks in their own words. None when the request names no recipe the data gives: the
+    whole business's recipe, or the AI's design."""
     from core2 import recipe_book
 
     about = asked_for(request)
@@ -338,6 +347,10 @@ def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None =
     if not built:
         return None
     first = built[0]
+    if missing is not None:
+        missing.extend(m for m in first.missing if m not in missing)
+    if instead is not None:
+        instead.extend(t for t in first.instead if t not in instead)
     return first.name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan)
                         for t in first.tiles]
 
@@ -394,15 +407,18 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     others are built. ``progress(draft)`` is told the draft once it is designed and again as each tile lands,
     from the thread that built it, one call at a time."""
     day = today or dt.date.today()
+    lang = language(request)
+    lacking: list[str] = []
+    replaced: list[str] = []
     if shown is not None:
         name, tiles = around(model, shown, complete, today=day, lang=language(request), allowed=allowed, scrub=scrub,
                              personal_shown=personal_shown)
     else:
-        made = from_book(model, request, today=day, allowed=allowed) or executive(model, request, today=day,
-                                                                                    allowed=allowed)
+        made = from_book(model, request, today=day, allowed=allowed, missing=lacking, instead=replaced) \
+            or executive(model, request, today=day, allowed=allowed)
         name, tiles = made if made is not None else design(model, request, complete, scrub=scrub,
                                                            personal_shown=personal_shown)
-    draft = Draft(name=name, request=request, tiles=tiles)
+    draft = Draft(name=name, request=request, tiles=tiles, missing=lacking, instead=replaced)
     draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
 
@@ -416,7 +432,7 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
                 log.warning("core2 could not show a dashboard's progress: %s", exc)
 
     def one(tile: Tile) -> None:
-        answered(tile, answer)
+        answered(tile, answer, lang=lang)
         tell()
 
     tell()
@@ -430,10 +446,37 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     return draft
 
 
-def answered(tile: Tile, answer: Callable[..., dict]) -> Tile:
+# Said of a tile left out because the data has nothing for it, in the request's language.
+NOTHING = {"en": "The data has nothing for it, in any period.",
+           "fr": "Les données n’ont rien pour cette tuile, quelle que soit la période."}
+
+
+def _empty(payload: dict[str, Any]) -> bool:
+    """No rows, or rows with no value at all (a total over nothing). A count of nothing, 0, is a value."""
+    rows = (payload.get("data") or {}).get("rows") or []
+    return all(all(v is None for v in row.values()) for row in rows)
+
+
+def _ever(plan: dict[str, Any]) -> dict[str, Any] | None:
+    """The plan over all the data: its period, and the period before it is compared with, let go. None when it
+    already covers all the data."""
+    time = dict(plan.get("time") or {})
+    window = time.get("window") or {}
+    if not window or window.get("kind", "all") == "all":
+        return None
+    time["window"] = {"kind": "all"}
+    time.pop("compare", None)
+    return {**plan, "time": time}
+
+
+def answered(tile: Tile, answer: Callable[..., dict], *, lang: str = "en") -> Tile:
     """The tile with its answer, or why it could not be built: when the data has nothing that measures it (the
     planner found none, or asked what was meant), the reader is offered to define it. A recipe's tile is its
-    plan, run as it is: one that fails is left out, never offered to be defined."""
+    plan, run as it is: one that fails is left out, never offered to be defined.
+
+    A tile that finds nothing in its period ("refunds over the last 12 months", none since the spring) is never
+    kept empty: it is drawn over all the data instead (``widened``, which the chat says), or, finding nothing at
+    all, left out with why."""
     try:
         payload = answer(tile.question) if tile.planned is None else answer(tile.question, tile.planned)
     except Exception as exc:  # noqa: BLE001 - one tile failing never takes the dashboard with it
@@ -445,6 +488,17 @@ def answered(tile: Tile, answer: Callable[..., dict]) -> Tile:
                          or "This tile could not be built.")
         tile.definable = tile.planned is None and bool(payload.get("unsupported") or payload.get("clarify"))
         return tile
+    if _empty(payload):
+        ever = _ever(payload["plan"])
+        try:
+            again = answer(tile.question, ever) if ever is not None else None
+        except Exception as exc:  # noqa: BLE001 - the tile is left out, said, as one that found nothing
+            log.warning("core2 could not draw the tile %r over all the data: %s", tile.title, exc)
+            again = None
+        if again is None or again.get("data") is None or not again.get("plan") or _empty(again):
+            tile.error = NOTHING.get(lang, NOTHING["en"])
+            return tile
+        payload, tile.widened = again, True
     tile.plan, tile.payload = payload["plan"], payload
     return tile
 
@@ -563,6 +617,17 @@ def status(draft: Draft) -> dict[str, Any]:
             "built": sum(1 for t in draft.tiles if t.payload is not None and not t.error),
             "failed": sum(1 for t in draft.tiles if t.error),
             "pending": sum(1 for t in draft.tiles if t.payload is None and not t.error)}
+
+
+def in_place(draft: Draft) -> list[str]:
+    """The recipe's tiles drawn in the place of one the data could not give, that were built: the chat names them."""
+    built = {t.title for t in draft.tiles if not t.error}
+    return [t for t in draft.instead if t in built]
+
+
+def widened(draft: Draft) -> list[str]:
+    """The tiles that found nothing in their period and are drawn over all the data instead: the chat names them."""
+    return [t.title for t in draft.tiles if t.widened and not t.error]
 
 
 def not_built(draft: Draft) -> list[dict[str, Any]]:

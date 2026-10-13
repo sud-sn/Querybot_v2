@@ -109,7 +109,7 @@ def _language_context(lang=None) -> dict:
 
 
 def _render(charts=None, *, can_edit=True, dashboards=True, lang=None,
-            artifact=None, library=None, audience=0) -> str:
+            artifact=None, library=None, audience=0, **extra) -> str:
     from jinja2 import ChainableUndefined
 
     import portal.routes as pr
@@ -145,6 +145,7 @@ def _render(charts=None, *, can_edit=True, dashboards=True, lang=None,
                           "remaining": 1, "remaining_label": "900K",
                           "total_tokens": 1, "unlimited": False, "used_label": "100K"},
             **_language_context(lang),
+            **extra,
         )
     finally:
         env.undefined = previous

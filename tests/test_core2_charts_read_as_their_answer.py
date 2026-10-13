@@ -317,6 +317,23 @@ def _pin(fresh_store, retail, plan: dict, title: str) -> dict:  # noqa: F811
 BY_STORE = {"intent": "breakdown", "measures": ["net_amount"], "group_by": ["store"], "time": {"window": APRIL}}
 
 
+def test_a_tile_with_nothing_in_its_period_says_so_in_words(fresh_store, retail):  # noqa: F811
+    """A tile whose period has no rows (or none for the dashboard's filters) was drawn as an empty chart, or a
+    number with no value: it says so instead, and how to see it all when the filters emptied it."""
+    long_ago = {"kind": "between", "start": "2001-01-01", "end": "2001-12-31"}
+    tile = _pin(fresh_store, retail, {**BY_STORE, "time": {"window": long_ago}}, "Store sales in 2001")
+    assert tile.get("nothing") is True and not tile.get("chart_json") and not tile.get("error")
+    def said(**extra) -> str:     # the tile's own words: the page also carries the whole catalogue
+        markup = _render([_tile(title="Store sales in 2001", nothing=True)], **extra)
+        return re.search(r'<div class="chart-nothing" role="status">(.*?)</div>', markup, re.S).group(1)
+
+    plain = said()
+    assert "<p>Nothing for this tile in its period.</p>" in plain and "chart-nothing-hint" not in plain
+    assert "Nothing for the filters chosen: clear them above to see it all." in said(dash_filtered=True)
+    # A tile with rows is drawn as it always was.
+    assert not _pin(fresh_store, retail, BY_STORE, "Store sales").get("nothing")
+
+
 def test_a_tile_pinned_under_its_measure_alone_reads_as_its_answer(fresh_store, retail):  # noqa: F811
     assert _pin(fresh_store, retail, BY_STORE, "Net amount")["title"] == "Net amount by store"
 

@@ -9,8 +9,9 @@ A recipe finds what it shows by the words things are named with: its figures (ne
 hand), the groupings it splits them by (regions, channels, categories), the lists it ranks (stores, products,
 suppliers), and the analyses Learn found the data gives (a customer's orders, a due and a done date, a start and
 an end, a target). Every tile's plan is checked by the resolver before it is kept: a tile the data cannot give is
-left out, and the recipe says what was missing ("no targets in this data"). A recipe whose main figure the data
-does not have is not for this data, and says what it needs.
+left out, and the recipe says what was missing ("no targets in this data"). A figure the recipe measures against a
+target the data does not have is measured against the year before in its place, and said. A recipe whose main
+figure the data does not have is not for this data, and says what it needs.
 
 Readers never see the catalogue: they ask in their own words, and the recipe the words name is built. ``catalogue``
 says, for a workspace and a reader's tables, which recipes are ready, which only in part, and which are not for
@@ -91,7 +92,7 @@ _SAY: dict[str, dict[str, str]] = {
         "overview": "Overview", "when": "over the last 12 months", "last_month": "last month",
         "ytd": "{f} year to date", "this_month": "{f} last month", "quarter": "{f} over the last 3 months",
         "by_month": "{f} by month", "against_ly": "{f} by month against the year before",
-        "by": "{f} by {g}", "heat": "{f} by {g} and month", "series": "{f} by {g}, month by month",
+        "by": "{f} by {g}", "by_ly": "{f} by {g} against the year before", "heat": "{f} by {g} and month", "series": "{f} by {g}, month by month",
         "top": "Top 10 {e} by {f}", "ranked": "{E} ranked by {f}, with change", "risers": "Biggest risers: {e}",
         "fallers": "Biggest fallers: {e}", "lowest": "Lowest {e} by {f}",
         "target": "{a} against {t} by month", "target_by": "{a} against {t} by {g}",
@@ -115,7 +116,8 @@ _SAY: dict[str, dict[str, str]] = {
         "ytd": "{f} depuis le début de l'année", "this_month": "{f} le mois dernier",
         "quarter": "{f} sur les 3 derniers mois",
         "by_month": "{f} par mois", "against_ly": "{f} par mois par rapport à l'année précédente",
-        "by": "{f} par {g}", "heat": "{f} par {g} et par mois", "series": "{f} par {g}, mois par mois",
+        "by": "{f} par {g}", "by_ly": "{f} par {g} par rapport à l'année précédente",
+        "heat": "{f} par {g} et par mois", "series": "{f} par {g}, mois par mois",
         "top": "Top 10 des {e} par {f}", "ranked": "Classement des {e} par {f}, avec l'évolution",
         "risers": "Plus fortes hausses : {e}", "fallers": "Plus fortes baisses : {e}",
         "lowest": "{E} les plus bas en {f}",
@@ -300,6 +302,7 @@ class Kit:
         self.rows = {m.table: model.tables[m.table].row_count or 0 for m in self.figures}
         self.made: list[Made] = []
         self.left_out: list[str] = []          # pieces a tile wanted and the data did not have
+        self.instead: list[str] = []           # tiles drawn in the place of one the data could not give
         self.used: list[str] = []              # tables the tiles read
         self.tab = self.say["overview"]
         self._answers: dict[str, bool] = {}
@@ -422,7 +425,7 @@ class Kit:
         return True
 
     def lack(self, piece: str) -> bool:
-        if piece not in self.left_out:
+        if piece and piece not in self.left_out:
             self.left_out.append(piece)
         return False
 
@@ -535,7 +538,8 @@ class Kit:
         grouping."""
         pair = analyses.target_pair(self.model, self.may)
         if pair is None or of is not None and pair[0].slug not in of.measures:
-            return self.lack("targets")
+            self.lack("targets")
+            return self._against_last_year(of, words=words, groups=groups, behind=behind)
         actual, target = pair
         a, t = actual.business_name, low(target.business_name)
         part = {"intent": "trend" if words is None and groups is None else "breakdown",
@@ -561,6 +565,31 @@ class Kit:
                         when=self.t("this year to date", "depuis le début de l'année")):
                 return True
         return False
+
+    def _against_last_year(self, of: Fig | None, *, words: set[str] | None, groups: list[str] | None,
+                           behind: bool) -> bool:
+        """No target to measure ``of`` against: the year before is, in the same view (by month; each store ranked
+        with its change; the biggest fallers in the place of those furthest behind; a grouping against the year
+        before). The tile drawn in its place is noted in ``instead``; nothing when it is on the dashboard
+        already."""
+        if of is None:
+            return False
+        made = len(self.made)
+        if words is None and groups is None:
+            # Against the year before only: a plain "by month" is no stand-in for a target, and is often there.
+            self.add(self.say["against_ly"].format(f=of.name), "trend",
+                     {"intent": "trend", **of.part(), "time": {"grain": "month", "window": YEAR,
+                                                               "compare": {"kind": "same_period_last_year"}}})
+        elif words is not None and behind:
+            self.movers(of, words, "", rising=False)
+        elif words is not None:
+            self.ranked(of, words, "")
+        else:
+            self.by(of, groups or [], "", compare="same_period_last_year", title=self.say["by_ly"])
+        if len(self.made) == made:
+            return False
+        self.instead.append(self.made[-1].title)
+        return True
 
     # ── analyses Learn found ────────────────────────────────────────────────
 
@@ -1496,6 +1525,7 @@ class Built:
     tiles: list[Made]
     state: str                         # ready | partly | no
     missing: list[str] = field(default_factory=list)   # what was left out, in the reader's words
+    instead: list[str] = field(default_factory=list)   # the tiles drawn in the place of those left out
     uses: list[str] = field(default_factory=list)      # the tables its tiles read
 
 
@@ -1515,7 +1545,8 @@ def build(model: SemanticModel, key: str, *, today: dt.date, lang: str = "en",
     tiles = _ordered(k.made)
     missing = [k.piece(p) for p in k.left_out]
     uses = [(model.tables[t].business_name or model.tables[t].name).lower() for t in k.used if t in model.tables]
-    return Built(book, name, tiles, "partly" if missing else "ready", missing, uses)
+    instead = [t for t in k.instead if any(m.title == t for m in tiles)]
+    return Built(book, name, tiles, "partly" if missing else "ready", missing=missing, uses=uses, instead=instead)
 
 
 def kind_of(plan: dict[str, Any]) -> str:

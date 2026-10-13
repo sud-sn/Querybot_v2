@@ -260,6 +260,9 @@
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>
+      {% elif chart.nothing %}
+      {# Nothing in its period, or for the filters chosen (portal/routes.py _refresh_core2_tile): said plainly. #}
+      <div class="chart-nothing" role="status">{{ ic("calendar", 20) }}<p>{{ t('ui.dash.nothing') }}</p>{% if dash_filtered %}<p class="chart-nothing-hint">{{ t('ui.dash.nothing_filtered') }}</p>{% endif %}</div>
       {% elif chart.what_changed %}
       {# What changed (core/what_changed.py): each number against the period before, the members that moved it most,
          and, when the workspace lets the figures reach its AI, a few sentences written from them alone. #}

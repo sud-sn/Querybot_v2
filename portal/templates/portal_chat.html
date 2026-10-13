@@ -3117,11 +3117,20 @@ function dashboardMadeHtml(msg) {
     + failed.map(tile => `<li><span class="dash-made-title">${escHtml(tile.title)}</span> <span class="dash-made-error">${escHtml(tile.error)}</span>`
       + (tile.definable ? ` <button type="button" class="btn btn-ghost btn-sm" data-dash-define="${escHtml(tile.title)}">${qbIcon('plus', 14)}${escHtml(t('ui.chat.dashmade.define'))}</button>` : '')
       + `</li>`).join('') + `</ul></div>` : '';
+  // What the data could not give: what its recipe wanted and the data has not (and what is drawn in its place),
+  // and the tiles whose period had nothing and are shown over all the data instead.
+  const missing = (Array.isArray(msg.missing) ? msg.missing : []).filter(Boolean);
+  const instead = (Array.isArray(msg.instead) ? msg.instead : []).filter(Boolean);
+  const widened = (Array.isArray(msg.widened) ? msg.widened : []).filter(Boolean);
+  const quoted = titles => titles.map(w => `“${w}”`).join(', ');
+  const gaps = (missing.length ? `<p class="answer-definition dash-made-gap">${qbIcon('info', 14)}${escHtml(t('ui.chat.dashmade.missing', {items: missing.join(', ')}))}`
+      + (instead.length ? ` ${escHtml(t('ui.chat.dashmade.instead', {titles: quoted(instead)}))}` : '') + `</p>` : '')
+    + (widened.length ? `<p class="answer-definition dash-made-gap">${qbIcon('calendar', 14)}${escHtml(t('ui.chat.dashmade.widened', {titles: quoted(widened)}))}</p>` : '');
   return `<article class="answer-card dash-made" aria-label="${escHtml(t('ui.chat.dashmade.kicker'))}">`
     + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashmade.kicker'))}</span>`
     + `<p class="answer-headline is-lead">${escHtml(t('ui.chat.dashmade.headline', {name: board.name || ''}))}</p>`
     + `<p class="answer-definition">${escHtml(summary)}</p>`
-    + checked + tabList + notBuilt
+    + checked + gaps + tabList + notBuilt
     + `<div class="answer-actions"><a class="btn btn-primary btn-sm" href="${escHtml(board.url || '/portal/dashboard')}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashmade.open'))}</a></div>`
     + `</article>`;
 }

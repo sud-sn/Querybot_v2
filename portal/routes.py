@@ -1937,6 +1937,11 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     if fresh and pinned and not chart.get("title_set") and (by_question or (not narrowed and fresh.startswith(
             tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))))):
         result["title"] = fresh
+    if all(all(v is None for v in row.values()) for row in rows):
+        # Nothing in its period, or for the members the dashboard's filters chose: said on the tile in so many
+        # words, never drawn as an empty chart or a number with no value.
+        result["nothing"] = True
+        return result
     if kind == "kpi" or (not shape and payload.get("kpi") and kind != "table"):
         from core.response_builder import _format_number
 

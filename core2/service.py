@@ -453,7 +453,9 @@ def _described(question: str, services: Services, session: Session | None = None
             sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
     return {"type": "dashboard_built", "engine": "core2", "question": question, "name": draft.name,
             "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
-            "not_built": dashboards.not_built(draft), "checks": list(draft.checks)}
+            "not_built": dashboards.not_built(draft), "checks": list(draft.checks),
+            "missing": list(draft.missing), "instead": dashboards.in_place(draft),
+            "widened": dashboards.widened(draft)}
 
 
 def shown_answer(session: Session | None) -> Any:

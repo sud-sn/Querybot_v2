@@ -458,6 +458,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.expand_title": {"en": "Expand chart", "fr": "Agrandir le graphique"},
     "ui.dash.remove": {"en": "Remove", "fr": "Retirer"},
     "ui.dash.chart_failed": {"en": "Chart could not refresh", "fr": "Le graphique n'a pas pu être actualisé"},
+    # A tile with nothing in its period, or for the dashboard's filters (portal_dashboard.html).
+    "ui.dash.nothing": {"en": "Nothing for this tile in its period.", "fr": "Rien pour cette tuile sur sa période."},
+    "ui.dash.nothing_filtered": {"en": "Nothing for the filters chosen: clear them above to see it all.",
+                                 "fr": "Rien pour les filtres choisis : effacez-les ci-dessus pour tout voir."},
     "ui.dash.no_data": {"en": "No data returned for this query.", "fr": "Aucune donnée renvoyée pour cette requête."},
     "ui.dash.empty_title": {
         "en": "No visuals in this dashboard yet",
@@ -5611,6 +5615,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.dashmade.mismatch": {"en": "“{number}” is {total}, but “{trend}” comes to {of_trend}.",
                                   "fr": "« {number} » vaut {total}, mais « {trend} » donne {of_trend}."},
     "ui.chat.dashmade.not_built": {"en": "{count} could not be built:", "fr": "{count} n’ont pas pu être construites :"},
+    # What a dashboard's recipe wanted and the data has not ("targets"), and the tiles drawn over all the data
+    # because their period had nothing (core2/dashboards.py).
+    "ui.chat.dashmade.missing": {"en": "Not in this data, so not on it: {items}.",
+                                 "fr": "Absent de ces données, donc pas affiché : {items}."},
+    "ui.chat.dashmade.instead": {"en": "In their place: {titles}.", "fr": "À leur place : {titles}."},
+    "ui.chat.dashmade.widened": {"en": "Nothing in their period, so shown over all the data: {titles}.",
+                                 "fr": "Rien sur leur période, donc affichées sur toutes les données : {titles}."},
     "ui.chat.dashmade.define": {"en": "Define it", "fr": "Le définir"},
     "ui.dash.new": {"en": "New dashboard", "fr": "Nouveau tableau de bord"},
     "ui.dash.describe": {"en": "Describe a dashboard", "fr": "Décrire un tableau de bord"},
