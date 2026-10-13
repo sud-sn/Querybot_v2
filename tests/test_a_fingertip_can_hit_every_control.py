@@ -42,7 +42,19 @@ def test_the_larger_view_is_a_sheet_from_the_bottom_on_a_phone():
     page = (ROOT / "portal/templates/portal_chat.html").read_text(encoding="utf-8")
     phone = re.search(r"@media\(max-width:520px\)\{(.*?)\}\}", page, re.S).group(1)
     assert "inset:auto 0 0 0" in phone and "translateY(100%)" in phone
-    assert ".chat-workspace.artifact-open .artifact-pane{transform:translateY(0)}" in phone
+    assert ".chat-workspace.artifact-open .artifact-pane{transform:translateY(0)" in phone
+
+
+def test_the_closed_sheet_casts_no_shadow_on_the_page():
+    """Closed, the larger view sits just below the screen; its shadow rose into the page, a grey band across
+    the foot of every phone screen."""
+    page = (ROOT / "portal/templates/portal_chat.html").read_text(encoding="utf-8")
+    phone = re.search(r"@media\(max-width:520px\)\{(.*?)\}\}", page, re.S).group(1)
+    closed = phone[phone.index(".artifact-pane{"):]
+    closed = closed[:closed.index("}")]
+    assert "translateY(100%)" in closed and "box-shadow:none" in closed
+    opened = phone[phone.index(".chat-workspace.artifact-open .artifact-pane{"):]
+    assert "box-shadow:0 -18px" in opened[:opened.index("}")]
 
 
 def test_the_closed_menu_casts_no_shadow_on_the_page():

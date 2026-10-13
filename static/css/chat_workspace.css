@@ -261,11 +261,19 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 .hp-state-dot { width: 8px; height: 8px; border: 2px solid color-mix(in srgb, var(--sidebar-muted) 28%, transparent); border-top-color: var(--sidebar-accent); border-radius: 50%; animation: hp-spin .75s linear infinite; }
 @keyframes hp-spin { to { transform: rotate(360deg); } }
 
-.chat-page { background: var(--bg); }
-.chat-workspace { display: flex; width: 100%; height: 100%; background: var(--bg); }
-.chat-workspace-main { width: 100%; background: var(--bg); }
-.chat-workspace-main .chat-shell { width: 100%; height: 100%; background: var(--bg); }
-.chat-workspace-main .chat-shell-header { min-height: 58px; padding: 9px clamp(14px, 2vw, 24px); }
+/* The conversation sits on the window's own white, as the approved design has it: no second ground. */
+.chat-page { background: var(--window); }
+.chat-workspace { display: flex; width: 100%; height: 100%; background: var(--window); }
+.chat-workspace-main { width: 100%; background: var(--window); }
+.chat-workspace-main .chat-shell { width: 100%; height: 100%; background: var(--window); }
+.chat-workspace-main .chat-inner,
+.chat-workspace-main .chat-wrap { background: transparent; }
+.chat-workspace-main .chat-shell-header {
+  min-height: 58px;
+  padding: 9px clamp(14px, 2vw, 24px);
+  border-bottom: 1px solid var(--line-subtle);
+  background: transparent;
+}
 .chat-workspace-main .chat-shell-title h2 { font-size: var(--font-base); }
 .chat-workspace-main .chat-shell-title p { font-size: var(--font-xs); }
 .chat-workspace-main .schema-control-row,
@@ -331,20 +339,39 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   border: 0;
   background: transparent;
 }
-.chat-workspace-main .chat-composer { padding: 12px clamp(16px, 3vw, 44px) 14px; background: var(--surface); }
+/* The composer floats under the conversation: a pill with the sparkle the design gives asking, and a round
+   send button. */
+.chat-workspace-main .chat-composer { padding: 10px clamp(16px, 3vw, 44px) 14px; border-top: 0; background: var(--window); }
 .chat-workspace-main .chat-input-bar {
   width: var(--chat-column);
   min-height: 58px;
   margin-inline: auto;
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  background: var(--surface);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-tint) 8%, transparent);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 7px 7px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
 }
-.chat-workspace-main .chat-input { min-height: 44px; max-height: 168px; padding-top: 11px; padding-bottom: 11px; }
-.send-btn { border-radius: 7px; background: var(--primary-fill); box-shadow: none; }
+.chat-workspace-main .chat-input-bar:focus-within { border-color: var(--primary); }
+.chat-input-icon { flex: 0 0 auto; color: var(--primary); }
+.chat-workspace-main .chat-input { min-height: 40px; max-height: 168px; padding-top: 9px; padding-bottom: 9px; }
+/* One line of hint, cut short on a narrow screen rather than wrapped under the box's edge. */
+.chat-workspace-main .chat-input::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-btn { width: 42px; height: 42px; border-radius: var(--radius-pill); background: var(--primary-fill); box-shadow: none; }
 .send-btn:hover { background: var(--primary-fill-hover); box-shadow: none; }
-.chat-workspace-main .composer-footer { width: var(--chat-column); margin-inline: auto; }
+.chat-workspace-main .composer-footer { width: var(--chat-column); margin-inline: auto; justify-content: center; }
+.chat-workspace-main .composer-hint { color: var(--text-muted); text-align: center; }
+
+/* The answer's lead sentence in the display face, as the design sets a headline. */
+.chat-workspace-main .answer-headline.is-lead {
+  font-family: var(--font-display);
+  font-size: var(--font-2xl);
+  letter-spacing: -.01em;
+  line-height: 1.3;
+  color: var(--text-strong);
+}
 
 /* Conversational message state and recovery controls. */
 .user-message-footer {
