@@ -337,8 +337,6 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
    so the intended tint actually renders, and one column because exactly three
    suggestions in a two-column grid leaves a ragged half-empty cell. */
 .chat-inner .follow-up-chips{grid-template-columns:1fr;gap:.5rem}
-.dash-made-others{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.75rem}
-.dash-made-others p{margin:0;flex-basis:100%;color:var(--text-soft);font-size:var(--font-sm)}
 .chat-inner .follow-up-chip{border-color:color-mix(in srgb,var(--primary) 26%,var(--border));background:color-mix(in srgb,var(--primary) 4%,var(--surface))}
 .chat-inner .follow-up-chip:hover{background:color-mix(in srgb,var(--primary) 10%,var(--surface));border-color:var(--primary)}
 .chat-inner .follow-up-chip .suggestion-card-copy small{color:var(--primary)}
@@ -1015,11 +1013,8 @@ const _threadFromUrl = new URLSearchParams(location.search).get('thread') || '';
 const _requestedNewThread = new URLSearchParams(location.search).get('new') === '1';
 // A question to try, from the Data guide: put in the box, for the reader to send.
 const _questionFromUrl = (new URLSearchParams(location.search).get('ask') || '').slice(0, 500);
-// A recipe's "Build" on the dashboards page: sent once the chat is connected, only when that page set it (same
-// origin, this tab) -- a link from anywhere else only fills the box.
-let _autoSend = '';
-try { _autoSend = sessionStorage.getItem('qb.autoSend') || ''; sessionStorage.removeItem('qb.autoSend'); } catch (_) {}
-if (_autoSend !== _questionFromUrl) _autoSend = '';
+// "New dashboard" on the dashboards page: the box asks the reader to describe the dashboard they want.
+const _composeDashboard = new URLSearchParams(location.search).get('compose') === 'dashboard';
 const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
 const THREAD_ID = _requestedNewThread
   ? _createThreadId()
@@ -3115,16 +3110,11 @@ function dashboardMadeHtml(msg) {
     + failed.map(tile => `<li><span class="dash-made-title">${escHtml(tile.title)}</span> <span class="dash-made-error">${escHtml(tile.error)}</span>`
       + (tile.definable ? ` <button type="button" class="btn btn-ghost btn-sm" data-dash-define="${escHtml(tile.title)}">${qbIcon('plus', 14)}${escHtml(t('ui.chat.dashmade.define'))}</button>` : '')
       + `</li>`).join('') + `</ul></div>` : '';
-  // Other recipes the request also named that this data gives: one click builds that one instead.
-  const others = (Array.isArray(msg.other_recipes) ? msg.other_recipes : []).filter(o => o && o.question && o.label);
-  const otherHtml = others.length ? `<div class="dash-made-others"><p>${escHtml(t('ui.chat.dashmade.others'))}</p>`
-    + others.map(o => `<button type="button" class="btn btn-secondary btn-sm" data-dash-recipe="${escHtml(o.question)}">${qbIcon('layout-grid', 14)}${escHtml(o.label)}</button>`).join('')
-    + `</div>` : '';
   return `<article class="answer-card dash-made" aria-label="${escHtml(t('ui.chat.dashmade.kicker'))}">`
     + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashmade.kicker'))}</span>`
     + `<p class="answer-headline is-lead">${escHtml(t('ui.chat.dashmade.headline', {name: board.name || ''}))}</p>`
     + `<p class="answer-definition">${escHtml(summary)}</p>`
-    + checked + tabList + notBuilt + otherHtml
+    + checked + tabList + notBuilt
     + `<div class="answer-actions"><a class="btn btn-primary btn-sm" href="${escHtml(board.url || '/portal/dashboard')}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashmade.open'))}</a></div>`
     + `</article>`;
 }
@@ -3168,8 +3158,6 @@ function appendDashboardMade(msg, opts = {}) {
     holder._wired = true;
     holder.addEventListener('click', e => {
       if (e.target.closest('[data-dash-undo]')) { sendChartDrill(t('ui.chat.dashchanged.undo_words')); return; }
-      const recipe = e.target.closest('[data-dash-recipe]');
-      if (recipe) { sendChartDrill(recipe.getAttribute('data-dash-recipe')); return; }
       // A tile nothing measures: through the chat's own metric request, "<name> = how it is counted".
       const define = e.target.closest('[data-dash-define]');
       if (!define) return;
@@ -3773,7 +3761,9 @@ function answerCardHtml(msg, ids, env) {
                     + iconBtn('data-feedback="down"', 'thumbs-down', t('ui.chat.feedback.not_helpful')) : '')
     + (ids.rcId ? iconBtn(`data-rc-toggle="${ids.rcId}" aria-expanded="false" data-icon-only`, 'chat', t('ui.chat.followup.open')) : '')
     + `<span class="answer-grow"></span>`
-    + `<button type="button" class="btn btn-link btn-sm" data-open-how aria-expanded="false">${escHtml(t('ui.chat.trust.how_counted'))}${qbIcon('chevron-right', 14)}</button></div>`;
+    // A reply about a dashboard, or a request to change the data, counted nothing: no "How it was counted".
+    + (['dashboard_talk', 'dashboard_refused', 'changes_data'].includes(msg.kind) ? '' : `<button type="button" class="btn btn-link btn-sm" data-open-how aria-expanded="false">${escHtml(t('ui.chat.trust.how_counted'))}${qbIcon('chevron-right', 14)}</button>`)
+    + `</div>`;
   const feedbackPanelHtml = feedbackOn
     ? `<span class="feedback-done" role="status" style="display:none"></span><div class="feedback-panel">
          <select class="feedback-reason" aria-label="${escHtml(t('ui.chat.feedback.down'))}">${
@@ -4735,11 +4725,6 @@ function connect(){
       try { ws.send(JSON.stringify({ type:'history_sync', history:_pendingThreadHistory })); } catch (_) {}
       _pendingThreadHistory = [];
     }
-    if (_autoSend) {
-      const asked = _autoSend;
-      _autoSend = '';
-      setTimeout(() => { if (draftInput && draftInput.value.trim() === asked) sendMessage(); }, 0);
-    }
   };
   ws.onmessage = (evt) => {
     const msg = safeJsonParse(evt.data); if (!msg) return;
@@ -5393,6 +5378,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (_questionFromUrl) {
     const box = document.getElementById('input');
     if (box) { box.value = _questionFromUrl; box.focus(); }
+  } else if (_composeDashboard) {
+    const box = document.getElementById('input');
+    if (box) { box.placeholder = t('ui.chat.compose_dashboard'); box.focus(); }
   }
   const requestedNewThread = _requestedNewThread;
   if (requestedNewThread) {

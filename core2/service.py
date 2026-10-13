@@ -369,7 +369,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     from core2.plan import own_metric
 
     if dashboards.asked_for(question) is not None:
-        return _described(question, services)     # "build me a dashboard of ...": recognised before planning
+        return _described(question, services, session)     # "build me a dashboard of ...": before planning
     shown = changes_data(question)
     if shown is not None:
         french = shown.startswith(_SHOW["fr"])
@@ -409,15 +409,29 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     return payload
 
 
-def _described(question: str, services: Services) -> dict[str, Any]:
-    """A dashboard the reader asked for: designed by one AI call over the workspace's names (it reads the whole
-    request: "create a revenue dashboard" names a subject, where "revenue" alone reads as one tile), each tile then
-    answered as a question of its own (a new conversation each), several at once. The built tiles, with their
+def _described(question: str, services: Services, session: Session | None = None) -> dict[str, Any]:
+    """A dashboard the reader asked for: the recipe the request names, or designed by one AI call over the
+    workspace's names (it reads the whole request: "create a revenue dashboard" names a subject, where "revenue"
+    alone reads as one tile); "create a dashboard using this" is built around the answer on screen. Each tile is
+    then answered as a question of its own (a new conversation each), several at once. The built tiles, with their
     plans, are for the server to save as the reader's (``dashboard_tiles``); the chat is told how far it is while
     they are built, never what they show."""
     from core2 import dashboards
 
     told = services.progress
+    shown = None
+    if dashboards.on_screen(dashboards.asked_for(question)):
+        last = shown_answer(session)
+        if last is None:
+            return _frame(question, "There is no answer on screen to build a dashboard from. Ask a question first, "
+                                    "then say \u201ccreate a dashboard using this\u201d; or say what the dashboard "
+                                    "should show (\u201ca dashboard of net sales by store and month\u201d).",
+                          kind="dashboard_refused")
+        if session is not None and set(last.plan.get("measures") or []) & {m.slug for m in session.own.values()}:
+            return _frame(question, "This answer uses a metric you defined in this chat, which a dashboard cannot "
+                                    "draw again: ask your admin to save it for everyone first.",
+                          kind="dashboard_refused")
+        shown = last
 
     def answer(asked: str, planned: dict[str, Any] | None = None) -> dict[str, Any]:
         return _answer_question(asked, services, Session(),
@@ -429,7 +443,7 @@ def _described(question: str, services: Services) -> dict[str, Any]:
                                  progress=None if told is None else lambda d: told(
                                      {"type": "dashboard_building", "engine": "core2", "question": question,
                                       "building": dashboards.status(d)}),
-                                 today=services.today, allowed=services.allowed_tables)
+                                 today=services.today, allowed=services.allowed_tables, shown=shown)
     except dashboards.DesignError as exc:
         return _frame(question, f"I could not design that dashboard: {exc}. Try naming what it should show, "
                                 "as \"a dashboard of net sales by store and month\".", kind="dashboard_refused")
@@ -437,15 +451,27 @@ def _described(question: str, services: Services) -> dict[str, Any]:
     if not built:
         return _frame(question, "I could not build any tile of that dashboard: " + "; ".join(
             sorted({t.error for t in draft.tiles})[:3]), kind="dashboard_refused")
-    from core2 import recipe_book
-
-    lang = dashboards.language(question)
-    # The other recipes the request named that the data gives: the reader may have meant one of them.
-    others = [{"label": recipe_book.BY_KEY[key].name[1 if lang == "fr" else 0],
-               "question": recipe_book.request_for(key, lang)} for key in draft.others]
     return {"type": "dashboard_built", "engine": "core2", "question": question, "name": draft.name,
             "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
-            "not_built": dashboards.not_built(draft), "checks": list(draft.checks), "other_recipes": others}
+            "not_built": dashboards.not_built(draft), "checks": list(draft.checks)}
+
+
+def shown_answer(session: Session | None) -> Any:
+    """The answer on screen ("this" in "add this to my dashboard"): the last answer of the conversation that drew
+    rows, with its question, plan and title; None when there is none."""
+    from core2.dashboards import Shown
+
+    last = next((t for t in reversed(session.turns) if t.title and t.plan is not None), None) if session else None
+    if last is None:
+        return None
+    return Shown(last.question, last.plan.model_dump(mode="json", exclude_defaults=True), last.title)
+
+
+def portal_shown(session_key: str) -> Any:
+    """The answer on screen in a portal conversation, for "add this to my dashboard" (gateway/core2_bridge.py)."""
+    with _LOCK:
+        session = _SESSIONS.get(session_key)
+    return shown_answer(session)
 
 
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
@@ -646,9 +672,18 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     if following and plan.follow_up == "refine" and last is not None:
         # Said on the answer: what it changed, and the same question asked on its own, one click away.
         payload["following"] = {"question": last.question, "ask_new": f"New question: {question}"}
-    session.turns.append(Turn(question, plan, outcome.masked, shown, periods))
+    session.turns.append(Turn(question, plan, outcome.masked, shown, periods, _shown_title(payload)))
     del session.turns[:-HISTORY]
     return payload
+
+
+def _shown_title(payload: dict[str, Any]) -> str:
+    """What an answer that drew rows shows, as its dashboard tile is called ("Net amount by region"); "" when it
+    drew none (a refusal, a question back), so "this" never means it."""
+    if payload.get("data") is None or not payload.get("plan"):
+        return ""
+    return str((payload.get("chart") or {}).get("title") or (payload.get("kpi") or {}).get("title")
+               or payload.get("title") or (payload.get("answer") or {}).get("headline") or "")[:120]
 
 
 def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, question_id: str,
@@ -1772,21 +1807,6 @@ def forget_own_metric(token: str, account_id: str, user_id: str) -> bool:
             session.own.pop(found["measure"].key, None)
         _OWN_TOKENS.pop(token, None)
     return True
-
-
-def portal_recipes(account_id: str, portal_user: dict[str, Any] | None, *, lang: str = "en") -> dict[str, Any]:
-    """The catalogue of dashboard recipes as this reader's tables give them (core2/recipe_book.py): each ready,
-    partly (and what is missing), or not for this data (and what it needs). Only the model is read: no query."""
-    import store
-    from core2 import recipe_book
-    from core2.bootstrap.service import answering_model
-
-    client = store.get_client(account_id) or {}
-    model = answering_model(account_id, client)
-    if model is None:
-        return {"ok": False, "recipes": [], "reason": "not_learned"}
-    allowed = _allowed_model_tables(model, store.get_allowed_tables(portal_user) if portal_user else None)
-    return {"ok": True, "recipes": recipe_book.catalogue(model, today=dt.date.today(), lang=lang, allowed=allowed)}
 
 
 def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[str, Any] | None, *,

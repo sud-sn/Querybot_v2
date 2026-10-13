@@ -158,6 +158,7 @@ class Turn:
     masked: Masked | None = None        # what the AI was shown, when member values are withheld
     shown: list[tuple] = field(default_factory=list)   # the answer's members in order: (attribute, value, number)
     periods: list[str] = field(default_factory=list)   # the answer's periods in order, by their first day (ISO)
+    title: str = ""                     # what the answer shows ("Net amount by region"): "this" in "add this ..."
 
 
 @dataclass

@@ -12,8 +12,10 @@ an end, a target). Every tile's plan is checked by the resolver before it is kep
 left out, and the recipe says what was missing ("no targets in this data"). A recipe whose main figure the data
 does not have is not for this data, and says what it needs.
 
-``catalogue`` says, for a workspace and a reader's tables, which recipes are ready, which only in part, and which
-are not for this data; ``find`` the recipes a request names; ``build`` one recipe's name and tiles.
+Readers never see the catalogue: they ask in their own words, and the recipe the words name is built. ``catalogue``
+says, for a workspace and a reader's tables, which recipes are ready, which only in part, and which are not for
+this data; ``find`` the recipes a request names; ``build`` one recipe's name and tiles; ``around`` a dashboard
+around the answer on screen ("create a dashboard using this").
 """
 
 from __future__ import annotations
@@ -1516,6 +1518,100 @@ def build(model: SemanticModel, key: str, *, today: dt.date, lang: str = "en",
     return Built(book, name, tiles, "partly" if missing else "ready", missing, uses)
 
 
+def kind_of(plan: dict[str, Any]) -> str:
+    """What a plan draws as a dashboard tile: a trend over time, a ranking, a breakdown, or one number."""
+    if (plan.get("time") or {}).get("grain") and not plan.get("group_by"):
+        return "trend"
+    if plan.get("group_by"):
+        return "table" if plan.get("limit") else "breakdown"
+    return "number"
+
+
+_SHORT = {"day", "week"}
+
+
+def _short(window: dict[str, Any]) -> bool:
+    """Is the period too short for a trend by month to say anything (a month, a week, a few days)?"""
+    kind, unit = window.get("kind"), window.get("unit")
+    if kind == "between" and window.get("start") and window.get("end"):
+        try:
+            return (dt.date.fromisoformat(str(window["end"])) - dt.date.fromisoformat(str(window["start"]))).days < 80
+        except ValueError:
+            return False
+    if kind in ("last", "this", "previous", "to_date"):
+        return unit in _SHORT or unit == "month" and int(window.get("n") or 1) < 3
+    return False
+
+
+MOST_BREAKDOWNS = 3
+MOST_TOPS = 2
+
+
+def around(model: SemanticModel, plan: dict[str, Any], title: str, question: str, *, today: dt.date,
+           lang: str = "en", allowed: set[str] | None = None) -> tuple[str, list[Made]] | None:
+    """A dashboard around the answer the reader has on screen ("create a dashboard using this"): the answer itself,
+    with its figure's headline number, its trend (against the year before where the data has it), its breakdowns by
+    the groupings it may be split by, and its top lists, each over the answer's period, by the answer's date and
+    under the answer's filters. A tile the answer already is, or a breakdown by a grouping the answer keeps to one
+    member, is left out. None when the answer's figure is no measure of the model (a metric of the reader's own,
+    a shape with no figure): the request is then designed from the answer's name."""
+    k = Kit(model, today=today, lang=lang, allowed=allowed)
+    by_slug = {m.slug: m for m in model.measures.values()}
+    m = next((by_slug[s] for s in plan.get("measures") or [] if isinstance(s, str) and s in by_slug), None)
+    if m is None or not k.may(m.table):
+        return None
+    fig = k.fig(m)
+    time = plan.get("time") or {}
+    window = dict(time.get("window") or {"kind": "all"})
+    filters = [f for f in plan.get("filters") or [] if isinstance(f, dict)]
+    kept_to_one = {f.get("field") for f in filters if f.get("op") in ("eq", "in") and len(f.get("values") or []) == 1}
+    k._shown.add(title.casefold())
+    k.number(fig, window)
+    k.trend(fig, last_year=True, window=YEAR if _short(window) else window)
+    breakdowns = 0
+    for a in recipes.groupings(model, m, recipes.GENERIC, k.may):
+        if breakdowns >= MOST_BREAKDOWNS:
+            break
+        if a.slug in kept_to_one or [a.slug] == plan.get("group_by"):
+            continue
+        g = low(recipes._named_by(model, a))
+        if k.add(k.say["by"].format(f=fig.name, g=g, G=g.capitalize()), "breakdown",
+                 {"intent": "breakdown", **fig.part(), "group_by": [a.slug], "sort": [{"by": fig.sort, "desc": True}],
+                  "time": {"window": window}}):
+            breakdowns += 1
+    tops = 0
+    for e in recipes.tops(model, m, recipes.GENERIC, k.may):
+        if tops >= MOST_TOPS:
+            break
+        if e.slug in kept_to_one or [e.slug] == plan.get("group_by"):
+            continue
+        many = k._many(e)
+        if k.add(k.say["top"].format(e=many, E=many.capitalize(), f=low(fig.name) if k.lang == "en" else fig.name),
+                 "table", {"intent": "rank", **fig.part(), "group_by": [e.slug], "limit": 10,
+                           "sort": [{"by": fig.sort, "desc": True}], "time": {"window": window}}):
+            tops += 1
+    shape = (kind_of(plan), tuple(plan.get("group_by") or ()), time.get("grain"))
+    tiles = [Made(title, kind_of(plan), question, plan, k.tab)]
+    for made in k.made:
+        under = dict(made.plan)
+        if filters:
+            under["filters"] = [*filters, *(under.get("filters") or [])]
+        if time.get("date"):
+            under["time"] = {**under.get("time", {}), "date": time["date"]}
+        if plan.get("include_left_out"):
+            under["include_left_out"] = True
+        if (made.kind, tuple(under.get("group_by") or ()), (under.get("time") or {}).get("grain")) == shape:
+            continue
+        if not k.answers(under):
+            continue
+        tiles.append(Made(made.title, made.kind, made.question, under, made.tab))
+    if len(tiles) < 2:
+        return None
+    named = [str(v) for f in filters if f.get("op") in ("eq", "in") for v in f.get("values") or []][:3]
+    name = k.t(f"{fig.name} overview", f"Vue d'ensemble : {fig.name}")
+    return (f"{name} — {', '.join(named)}" if named else name), _ordered(tiles)
+
+
 _ORDER = {"number": 0, "trend": 1, "breakdown": 2, "table": 3}
 
 
@@ -1527,8 +1623,9 @@ def _ordered(made: list[Made]) -> list[Made]:
 
 def catalogue(model: SemanticModel, *, today: dt.date, lang: str = "en",
               allowed: set[str] | None = None) -> list[dict[str, Any]]:
-    """Every recipe, as the picker shows it for this workspace: ready, partly (and what is missing), or not for
-    this data (and what it needs)."""
+    """Every recipe as this workspace's data gives it: ready, partly (and what is missing), or not for this data
+    (and what it needs). For checking the catalogue against a workspace: readers never see it, they ask in their
+    own words."""
     out = []
     for book in BOOKS:
         built = build(model, book.key, today=today, lang=lang, allowed=allowed)
@@ -1536,15 +1633,8 @@ def catalogue(model: SemanticModel, *, today: dt.date, lang: str = "en",
                     "reader": _text(book.reader, lang), "state": built.state, "tiles": len(built.tiles),
                     "tabs": list(dict.fromkeys(t.tab for t in built.tiles)), "missing": built.missing,
                     "uses": built.uses,
-                    "needs": Kit(model, today=today, lang=lang, allowed=allowed).piece(book.needs),
-                    "request": request_for(book.key, lang)})
+                    "needs": Kit(model, today=today, lang=lang, allowed=allowed).piece(book.needs)})
     return out
-
-
-def request_for(key: str, lang: str = "en") -> str:
-    """The request a picker's button sends: the recipe asked for by name."""
-    name = _text(BY_KEY[key].name, lang)
-    return f"Crée-moi un tableau de bord {name}" if lang == "fr" else f"Create a {name} dashboard"
 
 
 def find(about: str, *, lists: bool = False) -> list[str]:

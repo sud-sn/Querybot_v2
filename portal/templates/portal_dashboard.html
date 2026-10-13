@@ -108,7 +108,7 @@
   </div>
   {# As the approved design has it: Edit, Share, and everything else under ⋯. #}
   <div class="dash-header-actions">
-    {% if _creates %}<button type="button" class="btn btn-ghost" data-open-recipes aria-haspopup="dialog" aria-controls="recipeDialog">{{ ic("plus", 15) }}<span>{{ t('ui.dash.new') }}</span></button>{% endif %}
+    {% if _creates %}<a class="btn btn-ghost" href="/portal/chat?new=1&amp;compose=dashboard">{{ ic("plus", 15) }}<span>{{ t('ui.dash.new') }}</span></a>{% endif %}
     {% if _arrange and charts %}
     {# View is the default: no handles, no remove buttons, no type switches.
        Edit shows them and lets the tiles move. #}
@@ -330,7 +330,7 @@
   </div>{% endif %}
 </div>
 {% elif not dashboards %}
-<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions">{% if _creates %}<button type="button" class="btn btn-primary" data-open-recipes aria-haspopup="dialog" aria-controls="recipeDialog">{{ t('ui.dash.recipes.title') }}</button>{% endif %}<a href="/portal/chat" class="btn {% if _creates %}btn-secondary{% else %}btn-primary{% endif %}">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions">{% if _creates %}<a class="btn btn-primary" href="/portal/chat?new=1&amp;compose=dashboard">{{ t('ui.dash.describe') }}</a>{% endif %}<a href="/portal/chat" class="btn {% if _creates %}btn-secondary{% else %}btn-primary{% endif %}">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
 {% endif %}
 {# Provenance is a footnote to the charts, not a two-column block above
    them: it used to be the third thing on the page while the charts were
@@ -532,7 +532,7 @@
 <div class="page-header page-header-actions">
   <div><h1>{{ t('ui.dash.title') }}</h1>
   <p>{{ t('ui.dash.subtitle') }}</p></div>
-  {% if _creates %}<button type="button" class="btn btn-primary" data-open-recipes aria-haspopup="dialog" aria-controls="recipeDialog">{{ ic("plus", 15) }}<span>{{ t('ui.dash.new') }}</span></button>{% endif %}
+  {% if _creates %}<a class="btn btn-primary" href="/portal/chat?new=1&amp;compose=dashboard">{{ ic("plus", 15) }}<span>{{ t('ui.dash.new') }}</span></a>{% endif %}
 </div>
 
 {% if not dashboard_artifact and dashboards %}
@@ -548,7 +548,7 @@
 <div class="dashboard-library">{% for item in _shared %}{{ library_item(item) }}{% endfor %}</div>
 {% endif %}
 {% else %}
-<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions">{% if _creates %}<button type="button" class="btn btn-primary" data-open-recipes aria-haspopup="dialog" aria-controls="recipeDialog">{{ t('ui.dash.recipes.title') }}</button>{% endif %}<a href="/portal/chat" class="btn {% if _creates %}btn-secondary{% else %}btn-primary{% endif %}">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
+<div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions">{% if _creates %}<a class="btn btn-primary" href="/portal/chat?new=1&amp;compose=dashboard">{{ t('ui.dash.describe') }}</a>{% endif %}<a href="/portal/chat" class="btn {% if _creates %}btn-secondary{% else %}btn-primary{% endif %}">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>
 {% endif %}
 
 <details class="artifact-detail" style="margin:1rem 0"><summary>{{ t('ui.dash.workspace_drawer') }}</summary><div style="margin-top:.9rem">
@@ -559,18 +559,8 @@
 
 {% endif %}
 
-{# "New dashboard": the catalogue of recipes, checked against the tables this reader may see (core2/recipe_book.py);
-   one is built by asking for it in the chat, where it is planned in code and saved as the reader's. #}
-{% if _creates %}
-<dialog class="dash-dialog dash-dialog-wide" id="recipeDialog" aria-labelledby="recipeTitle">
-  <div class="dash-dialog-head">
-    <div><h2 id="recipeTitle">{{ t('ui.dash.recipes.title') }}</h2><p class="recipe-intro">{{ t('ui.dash.recipes.intro') }}</p></div>
-    <button type="button" class="btn btn-ghost btn-icon btn-sm" aria-label="{{ t('ui.pin.close') }}" onclick="this.closest('dialog').close()">{{ ic("x", 16) }}</button>
-  </div>
-  <div class="recipe-list" id="recipeList" aria-live="polite"><p class="recipe-status">{{ t('ui.dash.recipes.loading') }}</p></div>
-  <div class="dash-dialog-foot"><a class="btn btn-secondary" href="/portal/chat?new=1">{{ ic("chat", 15) }}<span>{{ t('ui.dash.recipes.own') }}</span></a></div>
-</dialog>
-{% endif %}
+{# "New dashboard" opens the chat, where the reader says what they need ("a dashboard for the sales team", "net
+   sales by store and month"): the request is built by the recipe it names, or designed, and saved as theirs. #}
 
 
 </div>
@@ -598,53 +588,6 @@ function escHtmlDash(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g,
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-// "New dashboard": the recipes as this reader's tables give them, asked for once, built through the chat. The
-// chat sends the request on its own only when this page set it (a link from elsewhere only fills the box).
-(function wireRecipes(){
-  const dialog = document.getElementById('recipeDialog');
-  if (!dialog) return;
-  const list = document.getElementById('recipeList');
-  let loaded = false;
-  const STATES = ['ready', 'partly', 'no'];
-  function row(r){
-    const detail = r.state === 'no' ? t('ui.dash.recipes.needs', {needs: r.needs})
-      : r.state === 'partly' ? t('ui.dash.recipes.missing', {missing: (r.missing || []).join(', ')})
-      : t('ui.dash.recipes.tiles', {count: String(r.tiles), uses: (r.uses || []).join(', ')});
-    const build = r.state === 'no' ? '' : `<button type="button" class="btn btn-sm ${r.state === 'ready' ? 'btn-primary' : 'btn-secondary'}" data-build-recipe="${escHtmlDash(r.request)}">${escHtmlDash(t('ui.dash.recipes.build'))}</button>`;
-    return `<li class="recipe-row is-${r.state}"><span class="recipe-state">${escHtmlDash(t('ui.dash.recipes.' + r.state))}</span>`
-      + `<div class="recipe-copy"><strong>${escHtmlDash(r.name)}</strong> <span class="recipe-reader">${escHtmlDash(r.reader)}</span>`
-      + `<small>${escHtmlDash(detail)}</small></div>${build}</li>`;
-  }
-  function render(recipes){
-    const ordered = [...recipes].sort((a, b) => STATES.indexOf(a.state) - STATES.indexOf(b.state));
-    const usable = ordered.filter(r => r.state !== 'no');
-    const not = ordered.filter(r => r.state === 'no');
-    list.innerHTML = (usable.length ? `<ul class="recipe-rows">${usable.map(row).join('')}</ul>` : `<p class="recipe-status">${escHtmlDash(t('ui.dash.recipes.none'))}</p>`)
-      + (not.length ? `<details class="recipe-more"><summary>${escHtmlDash(t('ui.dash.recipes.more', {count: String(not.length)}))}</summary><ul class="recipe-rows">${not.map(row).join('')}</ul></details>` : '');
-  }
-  async function load(){
-    if (loaded) return;
-    try {
-      const res = await fetch('/portal/api/dashboard-recipes', {credentials: 'same-origin'});
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || res.status);
-      render(data.recipes || []);
-      loaded = true;
-    } catch (_) {
-      list.innerHTML = `<p class="recipe-status">${escHtmlDash(t('ui.dash.recipes.failed'))}</p>`;
-    }
-  }
-  document.querySelectorAll('[data-open-recipes]').forEach(button => button.addEventListener('click', () => {
-    dialog.showModal(); load();
-  }));
-  list.addEventListener('click', e => {
-    const build = e.target.closest('[data-build-recipe]');
-    if (!build) return;
-    const request = build.getAttribute('data-build-recipe');
-    try { sessionStorage.setItem('qb.autoSend', request); } catch (_) {}
-    location.href = '/portal/chat?new=1&ask=' + encodeURIComponent(request);
-  });
-})();
 const CAN_EDIT_DASHBOARD = {{ (_arranges and (dashboard_artifact.can_edit if dashboard_artifact else true))|tojson }};
 const ACTIVE_DASHBOARD_ID = {{ (dashboard_artifact.id if dashboard_artifact else 0)|tojson }};
 function sortDashboardTable(button, columnIndex){

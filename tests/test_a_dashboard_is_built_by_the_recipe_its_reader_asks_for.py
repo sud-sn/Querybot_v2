@@ -216,15 +216,14 @@ def test_a_recipe_the_data_cannot_give_leaves_the_request_to_the_design(learned)
     assert asked and asked[0].startswith("REQUEST:")
 
 
-def test_the_catalogue_says_for_each_recipe_what_the_picker_shows(learned):
+def test_the_catalogue_says_for_each_recipe_what_the_data_gives(learned):
     _, model = learned("retail")
     catalogue = recipe_book.catalogue(model, today=TODAY)
     assert len(catalogue) == 24 == len({c["key"] for c in catalogue})
     performance = next(c for c in catalogue if c["key"] == "sales_performance")
     assert performance["group"] == "Sales and customers" and performance["reader"] == "Head of sales"
     assert performance["state"] == "ready" and performance["tiles"] >= 9 and "order line" in performance["uses"]
-    assert performance["request"] == "Create a Sales performance dashboard"
-    assert recipe_book.find(performance["request"])[0] == "sales_performance"
+    assert recipe_book.find("Create a Sales performance dashboard")[0] == "sales_performance"
     workforce = next(c for c in catalogue if c["key"] == "workforce_overview")
     assert workforce["state"] == "no" and workforce["needs"] == "employees with start and end dates"
 
@@ -261,52 +260,3 @@ def test_a_target_answer_is_read_by_its_own_headline_not_as_a_breakdown(learned)
     payload = _answer_question("q", services, Session(), planned=Plan.model_validate(plan))
     assert "reached their target amount" in payload["answer"]["headline"]
     assert not (payload.get("reading") or {}).get("facts")
-
-
-@pytest.fixture()
-def picker_readers():
-    import uuid
-
-    import store
-
-    store.init_db()
-    account = f"recipes-{uuid.uuid4().hex[:10]}"
-    store.upsert_client(account, "portal")
-    creator = store.create_user(account, "Cora Creator", f"{uuid.uuid4().hex[:8]}@test.com",
-                                password="a-password-they-chose")[0]
-    asker = store.create_user(account, "Ash Asker", f"{uuid.uuid4().hex[:8]}@test.com",
-                              password="a-password-they-chose", portal_role="asker")[0]
-    yield account, creator, asker
-    with store.get_db() as conn:
-        for table in ("portal_user", "client"):
-            conn.execute(f"DELETE FROM {table} WHERE account_id=?", (account,))
-
-
-def _portal(user_id: int | None):
-    from fastapi import FastAPI
-    from starlette.testclient import TestClient
-
-    import portal.routes as pr
-
-    app = FastAPI()
-    app.include_router(pr.router)
-    client = TestClient(app)
-    if user_id is not None:
-        client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
-    return client
-
-
-def test_the_picker_lists_the_recipes_as_the_readers_own_tables_give_them(picker_readers, learned, monkeypatch):
-    account, creator, asker = picker_readers
-    _, model = learned("retail")
-    monkeypatch.setattr("core2.bootstrap.service.answering_model", lambda account_id, client: model)
-    # The reader sees every table but the returns: the returns recipe is not for them.
-    monkeypatch.setattr("store.get_allowed_tables",
-                        lambda user: {t.name for t in model.tables.values() if t.name != "returns"})
-    assert _portal(None).get("/portal/api/dashboard-recipes").status_code == 401
-    assert _portal(asker).get("/portal/api/dashboard-recipes").status_code == 403
-    reply = _portal(creator).get("/portal/api/dashboard-recipes")
-    assert reply.status_code == 200 and reply.json()["ok"]
-    states = {r["key"]: r["state"] for r in reply.json()["recipes"]}
-    assert states["sales_performance"] == "ready" and states["returns_and_quality"] == "no"
-    assert states["workforce_overview"] == "no"

@@ -19,6 +19,11 @@ What can be changed:
   "show the trends by week").
 * every tile's period ("show the dashboard for 2025", "set the period to this year").
 * a tile added ("add net amount by region to the Orders tab"): asked as a new question, its answer added.
+* the answer on screen added ("add this chart to my dashboard", "pin this", "save that to Board pack", "put it on
+  the Sales tab", "add this to a new dashboard"): read by ``this_answer``, added by the server.
+
+A dashboard of the reader's may be named in the words ("add net amount by region to the Board pack dashboard",
+"rename the Board pack dashboard to Q3 pack"): ``naming`` finds it, and the change is read against it.
 
 Each change is one version of the dashboard, saying what it was ("Removed the Shipping tab"); its history lists
 them, and undo puts the one before back. Words that point at several tiles ("the trend", with three) ask which,
@@ -81,6 +86,17 @@ class Which:
 
 
 @dataclass
+class ThisAnswer:
+    """The answer on screen, to be added to a dashboard: a new one (``new``, named ``board`` or after the answer),
+    the one named (``board``), or, with neither, the one the conversation is on, else the reader's only one, else
+    which (a button each). ``tab``: the tab named, kept or made."""
+    new: bool = False
+    board: str = ""
+    tab: str = ""
+    words: str = ""                              # what followed "to": a dashboard's name, or a tab's
+
+
+@dataclass
 class Refused:
     """A change of something the dashboard does not have, or cannot be made: said, with what it has."""
     text: str
@@ -93,7 +109,7 @@ _ABOUT = re.compile(r"\b(?:dashboard|tab|tabs|tile|tiles|tableau de bord|onglet|
                     re.IGNORECASE)
 _POLITE = re.compile(r"^\s*(?:(?:please|ok(?:ay)?|now|and|then|also|can you|could you|would you|pls)[\s,]+)+",
                      re.IGNORECASE)
-_END = re.compile(r"[\s.!?]*(?:\bplease\b|\bthanks?\b|\bthank you\b)?[\s.!?]*$", re.IGNORECASE)
+_END = re.compile(r"[\s.!?,]*(?:\bplease\b|\bthanks?\b|\bthank you\b)?[\s.!?]*$", re.IGNORECASE)
 
 _UNDO = re.compile(r"^(?:undo|revert|roll ?back|go back|put (?:it|that) back|annule[rz]?|défais)"
                    r"(?:\s+(?:that|it|this|the last change|the last one|the change|my last change|cela|ça|"
@@ -133,6 +149,8 @@ _PERIOD = re.compile(r"^(?:show|make|change|set|switch|put|count|have)\s+(?:the\
 _ADD = re.compile(r"^(?:add|put|include)\s+(?:a\s+tile\s+(?:of|for|with|showing)\s+|a\s+chart\s+(?:of|for|showing)\s+)?"
                   r"(?P<what>.+?)(?:\s+(?:to|on|onto|in)\s+(?:the\s+)?[\"“']?(?P<tab>[^\"”']+?)[\"”']?\s+tab)?"
                   r"(?:\s+(?:to|on|onto)\s+(?:the|this|my)\s+dashboard)?$", re.IGNORECASE)
+# "Add a chart of returns by courier": a tile, said so, right after a dashboard was made or changed.
+_A_TILE = re.compile(r"^add\s+(?:a|an)\s+(?:tile|chart|graph|kpi|number|table|card)\b", re.IGNORECASE)
 _NEW_TAB = re.compile(r"^(?:add|create|make|open)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:tab|onglet)\s+(?:called\s+|named\s+|for\s+)?"
                       r"[\"“']?(?P<name>.+?)[\"”']?(?:\s+(?:to|on)\s+(?:the|this|my)\s+dashboard)?$", re.IGNORECASE)
 _TYPES = {"bars": "bar", "column": "bar", "doughnut": "donut"}
@@ -144,6 +162,81 @@ _ALL = re.compile(r"^(?:all(?:\s+of)?\s+(?:the\s+)?|every\s+|each\s+)", re.IGNOR
 _YEAR = re.compile(r"^(?:(?:the\s+)?year\s+)?((?:19|20)\d\d)$")
 _UNITS = {"day": "day", "days": "day", "week": "week", "weeks": "week", "month": "month", "months": "month",
           "quarter": "quarter", "quarters": "quarter", "year": "year", "years": "year"}
+
+
+# "Add this to my dashboard", "pin this", "save that chart to Board pack", "put it on the Sales tab", "ajoute ça au
+# tableau de bord". Never "include those" or "keep these": those are about the rows of the answer.
+_THIS_WORDS = (r"(?:this|that|it|the (?:chart|answer|graph|table|number|figure|result) above|ceci|cela|ça|ca|"
+               r"ce graphique|cette réponse|ce résultat)")
+_PIN_THIS = re.compile(
+    r"^(?P<verb>add|pin|save|put|place|stick|ajoute[rz]?|épingle[rz]?|epingle[rz]?|mets|mettez|enregistre[rz]?)\s+"
+    rf"{_THIS_WORDS}(?:\s+(?:chart|graph|answer|table|number|figure|kpi|tile|result|one|graphique|réponse))?"
+    r"(?:\s+(?:to|on|onto|in|into|à|au|sur|dans)\s+(?P<where>.+?))?$", re.IGNORECASE)
+_ALONE = {"add", "pin", "save", "ajoute", "ajouter", "ajoutez", "épingle", "épingler", "épinglez", "epingle", "epingler",
+          "epinglez", "enregistre", "enregistrer", "enregistrez"}
+_NEW_BOARD = re.compile(r"^(?:(?:a|an)\s+)?new\s+(?:dashboard|one)(?:\s+(?:called|named)\s+(?P<name>.+))?$|"
+                        r"^un\s+nouveau\s+tableau de bord(?:\s+(?:appelé|nommé)\s+(?P<nom>.+))?$", re.IGNORECASE)
+_THE_BOARD = re.compile(r"^(?:(?:the|my|this|our|a)\s+)?dashboard$|^(?:le|mon|ce)\s+tableau de bord$|^tableau de bord$",
+                        re.IGNORECASE)
+_ON_TAB = re.compile(r"^(?:the\s+|my\s+)?[\"“']?(?P<tab>.+?)[\"”']?\s+tab(?:\s+(?:of|on|in)\s+(?P<board>.+))?$|"
+                     r"^(?:l'|l’)?onglet\s+[\"“«]?(?P<onglet>.+?)[\"”»]?(?:\s+(?:du|de)\s+(?P<tableau>.+))?$",
+                     re.IGNORECASE)
+_NAMED_BOARD = re.compile(r"^(?:(?:the|my)\s+)?[\"“']?(?P<name>.+?)[\"”']?\s+dashboard$|"
+                          r"^(?:le\s+)?tableau de bord\s+[\"“«]?(?P<nom>.+?)[\"”»]?$", re.IGNORECASE)
+
+
+def this_answer(text: str) -> ThisAnswer | None:
+    """The words add the answer on screen to a dashboard ("add this chart to my dashboard"): where; None when they
+    do not."""
+    words = _END.sub("", _POLITE.sub("", (text or "").strip()))
+    found = _PIN_THIS.match(words)
+    if found is None:
+        return None
+    where = _clean(found["where"] or "")
+    if not where:
+        return ThisAnswer() if found["verb"].casefold() in _ALONE else None
+    new = _NEW_BOARD.match(where)
+    if new:
+        return ThisAnswer(new=True, board=_clean(new["name"] or new["nom"] or ""))
+    if _THE_BOARD.match(where):
+        return ThisAnswer()
+    tab = _ON_TAB.match(where)
+    if tab:
+        board = _clean(tab["board"] or tab["tableau"] or "")
+        board = _clean(re.sub(r"^(?:the|my|le|mon)\s+|\s+(?:dashboard|tableau de bord)$", "", board, flags=re.IGNORECASE))
+        return ThisAnswer(board=board, tab=_clean(tab["tab"] or tab["onglet"] or ""), words=where)
+    named = _NAMED_BOARD.match(where)
+    if named:
+        return ThisAnswer(board=_clean(named["name"] or named["nom"] or ""), words=where)
+    return ThisAnswer(board=_clean(re.sub(r"^(?:the|my)\s+", "", where, flags=re.IGNORECASE)), words=where)
+
+
+def board_named(name: str, boards: list[str]) -> str | None:
+    """The reader's dashboard a name means: its own name (any case), else the one name that holds every word."""
+    wanted = _plain(name)
+    if not wanted:
+        return None
+    exact = [b for b in boards if _plain(b) == wanted]
+    if exact:
+        return exact[0]
+    inside = [b for b in boards if set(wanted.split()) <= set(_plain(b).split())]
+    return inside[0] if len(inside) == 1 else None
+
+
+def naming(text: str, boards: list[str]) -> tuple[str, str] | None:
+    """A dashboard of the reader's the words name ("to the Board pack dashboard", "rename the "Board pack"
+    dashboard to ..."), and the words with it said as "the dashboard"; None when they name none."""
+    for name in sorted(boards, key=len, reverse=True):
+        if not name.strip():
+            continue
+        quoted = re.escape(name)
+        for pattern in (rf"(?:\b(?:the|my)\s+)?[\"“']?{quoted}[\"”']?\s+dashboard\b",
+                        rf"(?:\b(?:the|my)\s+)?[\"“']{quoted}[\"”']",
+                        *([rf"(?:\b(?:the|my)\s+)?\b{quoted}\b"] if name.casefold().endswith("dashboard") else [])):
+            found = re.search(pattern, text, re.IGNORECASE)
+            if found:
+                return name, text[:found.start()] + "the dashboard" + text[found.end():]
+    return None
 
 
 def about_a_dashboard(text: str) -> bool:
@@ -242,7 +335,7 @@ def read(text: str, board: Board, *, on_it: bool) -> Reading | None:
             return Refused(f"{board.name} already has a {_tab(new, board)} tab.")
         return Change(f"Added a {new} tab", tabs=[*board.tabs, new])
     found = _ADD.match(words)
-    if found and found["what"] and explicit:
+    if found and found["what"] and (explicit or _A_TILE.match(words)):
         tab = _tab(found["tab"], board) if found["tab"] else None
         new_tab = _clean(found["tab"]) if found["tab"] and tab is None else ""
         what = _clean(found["what"])

@@ -394,8 +394,7 @@ def _created(account_id: str, portal_user: dict | None, payload: dict[str, Any],
             "dashboard": {"id": saved["id"], "name": saved["name"], "url": url},
             "tiles": len(tiles),
             "tabs": [{"name": tab, "tiles": on.get(tab, 0), "url": f"{url}&tab={quote(tab)}"} for tab in tabs],
-            "not_built": list(payload.get("not_built") or []), "checks": list(payload.get("checks") or []),
-            "other_recipes": list(payload.get("other_recipes") or [])}
+            "not_built": list(payload.get("not_built") or []), "checks": list(payload.get("checks") or [])}
 
 
 # ── Changes to a dashboard asked for in the chat (core2/dashboard_talk.py) ──
@@ -446,12 +445,23 @@ def _talk_read(account_id: str, portal_user: dict, adapter: Any, question: str, 
     """What the words ask of the dashboard the conversation is on (None: they ask nothing of one), and it."""
     from core2 import dashboard_talk as talk
 
+    import store
+
     explicit = talk.about_a_dashboard(question)
     on = _dashboard_on(key)
     if not explicit and not on and not getattr(adapter, "selected_dashboard_id", 0):
         return None, None
     user_id = int(portal_user["id"])
-    row, charts = _talk_board(account_id, user_id, adapter, key)
+    named = None
+    if explicit:
+        # "Add net amount by region to the Board pack dashboard": that dashboard of theirs, whichever is open.
+        mine = store.list_editable_dashboards(account_id, user_id)
+        named = talk.naming(question, [str(d["name"]) for d in mine])
+    if named is not None:
+        row = next(d for d in mine if str(d["name"]) == named[0])
+        question, charts = named[1], store.list_dashboard_charts(int(row["id"]), user_id)
+    else:
+        row, charts = _talk_board(account_id, user_id, adapter, key)
     tiles = []
     for chart in charts:
         try:
@@ -463,7 +473,7 @@ def _talk_read(account_id: str, portal_user: dict, adapter: Any, question: str, 
                                    config.get("core2_plan"), dict) else None))
     board = talk.Board(int(row["id"]), str(row["name"]), json.loads(row.get("tabs_json") or '["Overview"]')
                        or ["Overview"], tiles) if row else talk.Board(0, "", [], [])
-    reading = talk.read(question, board, on_it=bool(row) and (on == board.id or int(
+    reading = talk.read(question, board, on_it=bool(row) and (named is not None or on == board.id or int(
         getattr(adapter, "selected_dashboard_id", 0) or 0) == board.id))
     return reading, row
 
@@ -580,6 +590,104 @@ async def _talked(adapter: Any, websocket: Any, account_id: str, question: str, 
     return True
 
 
+def _pin_this(account_id: str, portal_user: dict, adapter: Any, question: str, question_id: str, key: str,
+              reading: Any, shown: Any) -> dict[str, Any]:
+    """The answer on screen added as a tile ("add this chart to my dashboard"): to a new dashboard, to the one
+    named, to the one the conversation is on, or to the reader's only one; with several and none named, which (a
+    button each). Its plan is run again, as a pinned answer is drawn, and kept with its title."""
+    import store
+    from core2 import dashboard_talk as talk
+    from core2 import dashboards
+    from core2.recipe_book import kind_of
+    from core2.service import portal_replay
+
+    user_id = int(portal_user["id"])
+    mine = store.list_editable_dashboards(account_id, user_id)
+    names = [str(d["name"]) for d in mine]
+    board, tab = None, reading.tab
+    if not reading.new and reading.board:
+        hit = talk.board_named(reading.board, names) or talk.board_named(reading.words, names)
+        board = next((d for d in mine if str(d["name"]) == hit), None) if hit else None
+        if board is None:
+            listed = talk._listed([f"\u201c{n}\u201d" for n in names[:6]]) if names else ""
+            return _say(question, question_id, f"You have no dashboard called \u201c{reading.board}\u201d"
+                        + (f": yours are {listed}." if listed else "."), follow_up_suggestions=[
+                            *({"label": f"Add this to {n}", "question": f"Add this to {n}"} for n in names[:4]),
+                            {"label": "Add this to a new dashboard", "question": "Add this to a new dashboard"}])
+    elif not reading.new:
+        here, _ = _talk_board(account_id, user_id, adapter, key)
+        if here is not None and int(here["user_id"]) == user_id:
+            board = here
+        elif len(mine) == 1:
+            board = mine[0]
+        elif mine:
+            return _say(question, question_id, f"Which dashboard should \u201c{shown.title}\u201d go on?",
+                        follow_up_suggestions=[
+                            *({"label": f"Add this to {n}", "question": f"Add this to {n}"} for n in names[:5]),
+                            {"label": "Add this to a new dashboard", "question": "Add this to a new dashboard"}])
+    tabs = json.loads(board.get("tabs_json") or '["Overview"]') or ["Overview"] if board is not None else []
+    if tab:
+        tab = next((t for t in tabs if t.casefold() == tab.casefold()), tab)
+    else:
+        tab = tabs[0] if tabs else ("Vue d'ensemble" if str(portal_user.get("lang") or "") == "fr" else "Overview")
+    # Drawn as its tile will be, from the plan it was answered with (a replay says no plan of its own).
+    payload = {**portal_replay(account_id, shown.plan, portal_user, question=shown.question), "plan": shown.plan}
+    tile = dashboards.answered(dashboards.Tile(title=shown.title, kind=kind_of(shown.plan), question=shown.question,
+                                               tab=tab), lambda *_: payload)
+    if tile.error:
+        return _say(question, question_id, f"I could not add \u201c{shown.title}\u201d: {tile.error}")
+    dashboards.lay_out([tile])
+    client = store.get_client(account_id) or {}
+    db_config_id = int(client.get("db_config_id") or 0) or None
+    if board is None:
+        saved = store.save_built_dashboard(account_id, user_id, name=reading.board or shown.title,
+                                           tiles=[dashboards.kept(tile)], db_config_id=db_config_id,
+                                           thread_id=str(getattr(adapter, "thread_id", "") or "default"),
+                                           tab_names=[tab], summary=f"Added {shown.title}")
+        url = f"/portal/dashboard?dashboard_id={saved['id']}"
+        return {"type": "dashboard_created", "engine": "core2", "question": question, "question_id": question_id,
+                "dashboard": {"id": saved["id"], "name": saved["name"], "url": url}, "tiles": 1,
+                "tabs": [{"name": tab, "tiles": 1, "url": url}], "not_built": [], "checks": []}
+    saved = store.save_built_dashboard(account_id, user_id, name=str(board["name"]), tiles=[dashboards.kept(tile)],
+                                       db_config_id=db_config_id, dashboard_id=int(board["id"]), tab_names=[tab],
+                                       summary=f"Added {shown.title}")
+    if saved is None:
+        return _say(question, question_id, "That tile could not be added: the dashboard is not yours to change.")
+    return _changed(question, question_id, saved, f"Added \u201c{shown.title}\u201d to the {tile.tab} tab")
+
+
+async def _pinned(adapter: Any, websocket: Any, account_id: str, question: str, portal_user: dict | None,
+                  question_id: str, key: str, start: float) -> bool:
+    """The answer on screen added to a dashboard, said; False when the words ask nothing of the kind."""
+    from core.portal_roles import can, refusal
+    from core2 import dashboard_talk as talk
+    from core2.service import portal_shown
+
+    reading = talk.this_answer(question)
+    if reading is None or not portal_user or not portal_user.get("id"):
+        return False
+    shown = portal_shown(key)
+    if not can(portal_user, "save_answer"):
+        frame = _say(question, question_id, refusal("save_answer", str(portal_user.get("lang") or "en")))
+    elif shown is None:
+        frame = _say(question, question_id, "There is no answer on screen to add. Ask a question first, then say "
+                                            "\u201cadd this to my dashboard\u201d.")
+    else:
+        try:
+            frame = await asyncio.to_thread(_pin_this, account_id, portal_user, adapter, question, question_id, key,
+                                            reading, shown)
+        except Exception as exc:     # noqa: BLE001 - said, never raised to the socket
+            log.warning("core2 could not add the answer on screen to a dashboard for %s: %s", account_id, exc)
+            frame = _say(question, question_id, "That answer could not be added. Try again, or use Add to "
+                                                "dashboard under it.")
+    if frame.get("type") in ("dashboard_changed", "dashboard_created"):
+        _on_dashboard(key, int(frame["dashboard"]["id"]))
+        await _keep_card(adapter, account_id, portal_user, question, question_id, frame,
+                         f"Added to {frame['dashboard']['name']}", start)
+    await _send(adapter, websocket, frame)
+    return True
+
+
 async def _keep_card(adapter: Any, account_id: str, portal_user: dict | None, question: str, question_id: str,
                      frame: dict[str, Any], headline: str, start: float) -> None:
     """A dashboard's card kept in the thread like an answer: a reopened thread shows it again."""
@@ -666,8 +774,9 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
         await _send(adapter, websocket, _say(question, question_id, refusal(
             "create_dashboard", str((portal_user or {}).get("lang") or "en"))))
         return True
-    if asked_for(question) is None and await _talked(adapter, websocket, account_id, question, portal_user,
-                                                     question_id, key, start):
+    if asked_for(question) is None and (
+            await _pinned(adapter, websocket, account_id, question, portal_user, question_id, key, start)
+            or await _talked(adapter, websocket, account_id, question, portal_user, question_id, key, start)):
         return True
     progress, limit = None, TIMEOUT_SECONDS
     if asked_for(question) is not None:

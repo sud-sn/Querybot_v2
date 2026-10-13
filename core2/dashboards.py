@@ -48,15 +48,37 @@ HEIGHT = {"number": 3, "trend": 10, "breakdown": 10, "table": 10}
 
 _ASKS = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:build|make|create|design|set up|give me|"
                    r"prepare|generate|produce|draft|put together|show me|get me|"
-                   r"i(?: want| need| would like|'d like|’d like))\s+(?:me\s+|us\s+)?(?:(?:a|an)\s+)?(?:new\s+)?"
+                   r"(?:can|could|may) (?:i|we) (?:get|have|see)|help me (?:build|make|create|design|set up)|"
+                   r"let'?s (?:build|make|create|design|set up)|let us (?:build|make|create|design|set up)|"
+                   r"(?:i|we)(?: want| need| would like|'d like|’d like| would love|'d love|’d love))\s+"
+                   r"(?:me\s+|us\s+)?(?:(?:a|an)\s+)?(?:new\s+)?"
                    r"(?P<before>(?:[\w&'-]+\s+){0,4}?)dashboards?\b(?P<about>.*)$", re.IGNORECASE)
 _DEMANDE = re.compile(r"^\s*(?:(?:peux|pourrais)-tu\s+|(?:pouvez|pourriez)-vous\s+)?(?:cr[ée]e[rz]?|construi(?:s|re|sez)|"
                       r"fai(?:s|re|tes)|pr[ée]pare[rz]?|je veux|j'aimerais|il me faut)(?:-moi|\s+moi)?\s+un\s+"
                       r"(?:nouveau\s+)?tableau de bord\b(?P<about>.*)$", re.IGNORECASE)
+# A request with no verb: "Sales team dashboard", "a dashboard for my store managers", "tableau de bord des ventes".
+_BARE = re.compile(r"^\s*(?:(?:a|an)\s+)?(?:new\s+)?(?P<before>(?:[\w&'-]+\s+){0,4}?)dashboards?\b(?P<about>.*)$",
+                   re.IGNORECASE)
+_NU = re.compile(r"^\s*(?:un\s+)?(?:nouveau\s+)?tableau de bord\b(?P<about>\s+(?:des|de|du|sur|pour)\b.*)$",
+                 re.IGNORECASE)
+# Words before "dashboard" that make the words a question or a command about dashboards, never a request for one:
+# "how many dashboards", "open sales dashboard", "is the dashboard live".
+_NOT_BARE = {"how", "many", "much", "what", "what's", "whats", "which", "who", "why", "when", "where", "is", "are",
+             "was", "were", "do", "does", "did", "can", "could", "should", "will", "would", "open", "go", "show",
+             "list", "delete", "remove", "rename", "share", "edit", "update", "refresh", "see", "view", "find", "any",
+             "no", "all", "every", "each", "some", "pin", "add", "save", "send", "email", "export", "print",
+             "subscribe", "unsubscribe", "close", "hide", "copy", "duplicate"}
+# Turning the answer on screen into a dashboard: "turn this into a dashboard", "make this a dashboard".
+_INTO = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:turn|make|convert|put)\s+"
+                   r"(?:this|that|it|these)(?:\s+(?:chart|graph|answer|table|one|number))?\s+(?:into\s+|in\s+)?"
+                   r"(?:a\s+|an\s+)?(?:new\s+|whole\s+|full\s+)?dashboard$|"
+                   r"^\s*(?:transforme|fais|mets)[rz]?\s+(?:ça|ca|ceci|cela|ce graphique|cette réponse)\s+en\s+"
+                   r"(?:un\s+)?tableau de bord$", re.IGNORECASE)
 # What follows "dashboard" in a request for a new one: nothing, or what it is about. "the dashboard chart",
 # "my dashboard to refresh" or "a new tab on the dashboard" are about a dashboard the reader has, never a new one.
 _ABOUT = re.compile(r"^\s*(?:$|[.?!,:;]|(?:for|of|on|about|with|showing|covering|that shows|which shows|to show|by|"
-                    r"across|from|des|de|du|sur|pour|avec|montrant|par)\b)", re.IGNORECASE)
+                    r"across|from|using|around|based on|out of|des|de|du|sur|pour|avec|montrant|par|"
+                    r"à partir de|a partir de)\b)", re.IGNORECASE)
 _CONNECTOR = re.compile(r"^\s*(?:for|of|on|about|with|showing|covering|that shows|which shows|to show|des|de|du|"
                         r"sur|pour|avec|montrant)?\s*", re.IGNORECASE)
 _NOT_ABOUT = {"on", "in", "of", "to", "the", "my", "your", "our", "his", "her", "their", "this", "that", "for", "at",
@@ -64,6 +86,12 @@ _NOT_ABOUT = {"on", "in", "of", "to", "the", "my", "your", "our", "his", "her", 
               "same", "shared", "old"}
 _POLITE = re.compile(r"[\s.?!]*(?:\b(?:please|thanks|thank you|merci|s'il (?:te|vous) pla[iî]t))?[\s.?!]*$",
                      re.IGNORECASE)
+# What a request is about when it is the answer on screen: "using this", "from that chart", "around this answer".
+_THIS = re.compile(r"^(?:(?:using|from|with|of|around|based on|out of|for|à partir de|a partir de|avec|de)\s+)?"
+                   r"(?:this|that|it|these|those|the (?:chart|answer|graph|table|figure|number) above|"
+                   r"what'?s on (?:the )?screen|ceci|cela|ça|ca|ce graphique|cette réponse|ce résultat)"
+                   r"(?:\s+(?:chart|graph|answer|table|one|data|figure|number|result|graphique|réponse))?$",
+                   re.IGNORECASE)
 
 RULES = """You design a dashboard for Solviz from a reader's request. You never write SQL.
 Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"title": "...", "kind": "number|trend|breakdown|table", "question": "...", "tab": "..."}]}.
@@ -106,16 +134,37 @@ Answer with exactly one JSON object: {"name": "<a short name>", "tiles": [{"titl
 
 
 def asked_for(question: str) -> str | None:
-    """What a request for a new dashboard is about ("" when it names nothing), or None when it asks for none."""
+    """What a request for a new dashboard is about ("" when it names nothing, "this" for the answer on screen), or
+    None when it asks for none."""
     asked = _POLITE.sub("", question or "")
+    if _INTO.match(asked):
+        return "this"
     found = _ASKS.match(asked) or _DEMANDE.match(asked)
-    if found is None or not _ABOUT.match(found.group("about")):
+    bare = None
+    if found is None:
+        # No verb: the words are a request only when they are nothing but a dashboard's name and what it is about.
+        bare = _BARE.match(asked) or _NU.match(asked)
+        if bare is None:
+            return None
+        if not ((bare.groupdict().get("before") or "").strip() or bare.group("about").strip()):
+            # "A new dashboard", "dashboard": the whole business. "Dashboards" alone asks where they are.
+            return "" if re.fullmatch(r"\s*(?:(?:a|an)\s+)?(?:new\s+)?dashboard\s*", asked, re.IGNORECASE) else None
+        if any(w.casefold() in _NOT_BARE for w in (bare.groupdict().get("before") or "").split()):
+            return None
+        found = bare
+    if not _ABOUT.match(found.group("about")):
         return None
     before = found.groupdict().get("before") or ""          # "a sales dashboard": about sales
     if any(w.casefold() in _NOT_ABOUT for w in before.split()):
         return None
     about = _CONNECTOR.sub("", found.group("about"), count=1).strip(" .?!,:;")
-    return " ".join(w for w in (before.strip(), about) if w)
+    about = " ".join(w for w in (before.strip(), about) if w)
+    return "this" if _THIS.match(about) else about
+
+
+def on_screen(about: str | None) -> bool:
+    """Is the dashboard asked for about the answer on screen ("create a dashboard using this")?"""
+    return about == "this"
 
 
 @dataclass
@@ -139,7 +188,14 @@ class Draft:
     tiles: list[Tile]
     tabs: list[str] = field(default_factory=list)        # the tabs' names, in order; a tile's layout tab is a place here
     checks: list[dict[str, Any]] = field(default_factory=list)   # each headline number against its trend
-    others: list[str] = field(default_factory=list)      # other recipes the request named that the data gives
+
+
+@dataclass
+class Shown:
+    """The answer on screen a dashboard is made around ("create a dashboard using this")."""
+    question: str
+    plan: dict[str, Any]
+    title: str
 
 
 def design(model, request: str, complete: Callable[[str, str], str], *, scrub: Callable[[str], str] | None = None,
@@ -242,7 +298,9 @@ class DesignError(ValueError):
 
 def language(request: str) -> str:
     """The language a request for a dashboard is written in: "fr" for "Crée-moi un tableau de bord ...", else "en"."""
-    return "fr" if _DEMANDE.match(_POLITE.sub("", request or "")) else "en"
+    asked = _POLITE.sub("", request or "")
+    return "fr" if _DEMANDE.match(asked) or _NU.match(asked) or re.search(r"tableau de bord", asked, re.IGNORECASE) \
+        else "en"
 
 
 def executive(model, request: str, *, today: dt.date, allowed: set[str] | None = None) -> tuple[str, list[Tile]] | None:
@@ -264,15 +322,15 @@ def executive(model, request: str, *, today: dt.date, allowed: set[str] | None =
 
 
 def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None = None
-              ) -> tuple[str, list[Tile], list[str]] | None:
+              ) -> tuple[str, list[Tile]] | None:
     """The dashboard of the catalogue's recipe the request names (core2/recipe_book.py: "a dashboard for the sales
-    team", "customer retention dashboard", "a CFO dashboard"), when the data gives it, at least in part: its
-    name, its tiles, and the other recipes the request also names that the data gives (the reader may want one of
-    them instead). None when it names none the data gives: the whole business's recipe, or the AI's design."""
+    team", "customer retention dashboard", "a CFO dashboard"), when the data gives it, at least in part: its name
+    and its tiles. The catalogue is never shown: the reader asks in their own words. None when the request names
+    no recipe the data gives: the whole business's recipe, or the AI's design."""
     from core2 import recipe_book
 
     about = asked_for(request)
-    if about is None:
+    if about is None or on_screen(about):
         return None
     lang = language(request)
     built = [b for b in (recipe_book.build(model, key, today=today, lang=lang, allowed=allowed)
@@ -280,31 +338,71 @@ def from_book(model, request: str, *, today: dt.date, allowed: set[str] | None =
     if not built:
         return None
     first = built[0]
-    tiles = [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in first.tiles]
-    return first.name, tiles, [b.book.key for b in built[1:3]]
+    return first.name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan)
+                        for t in first.tiles]
+
+
+def around(model, shown: Shown, complete: Callable[[str, str], str], *, today: dt.date, lang: str = "en",
+           allowed: set[str] | None = None, scrub: Callable[[str], str] | None = None,
+           personal_shown: bool = False) -> tuple[str, list[Tile]]:
+    """The dashboard of the answer on screen: its figure's numbers, trend, breakdowns and top lists over the
+    answer's period and filters, written in code (core2/recipe_book.py); the answer itself is one of its tiles.
+    An answer whose figure the catalogue cannot build around (a reader's own metric, a shape with no figure) has
+    its dashboard designed from its name, the answer kept as its first tile."""
+    from core2 import recipe_book
+
+    made = recipe_book.around(model, shown.plan, shown.title, shown.question, today=today, lang=lang,
+                              allowed=allowed)
+    if made is not None:
+        name, tiles = made
+        return name, [Tile(title=t.title, kind=t.kind, question=t.question, tab=t.tab, planned=t.plan) for t in tiles]
+    # The AI is told what the answer measures and splits by, in the model's names: never its title, which may name
+    # the members it was kept to ("for region North").
+    about = _plan_words(model, shown.plan)
+    name, tiles = design(model, f"a dashboard about {about}" if about else "a dashboard", complete, scrub=scrub,
+                         personal_shown=personal_shown)
+    first = Tile(title=shown.title, kind=recipe_book.kind_of(shown.plan), question=shown.question,
+                 planned=shown.plan, tab=tiles[0].tab if tiles else "")
+    return name, [first, *(t for t in tiles if t.title.casefold() != shown.title.casefold())][:MOST_ALL]
+
+
+def _plan_words(model, plan: dict[str, Any]) -> str:
+    """What a plan measures and splits by, in the model's names ("net amount by store"); never a value."""
+    names = {m.slug: m.business_name for m in model.measures.values()}
+    measured = [names[s].lower() for s in plan.get("measures") or [] if isinstance(s, str) and s in names]
+    split = []
+    for slug in plan.get("group_by") or []:
+        a = model.attributes.get(slug) if isinstance(slug, str) else None
+        e = model.entities.get(slug) if isinstance(slug, str) and a is None else None
+        named = (a.business_name if a is not None else e.business_name if e is not None else "") or ""
+        if named:
+            split.append(named.lower())
+    words = " and ".join(measured)
+    return f"{words} by {' and '.join(split)}" if words and split else words
 
 
 def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[..., dict], *,
           scrub: Callable[[str], str] | None = None, personal_shown: bool = False,
           progress: Callable[[Draft], None] | None = None, today: dt.date | None = None,
-          allowed: set[str] | None = None) -> Draft:
-    """The dashboard: the recipe of the business's kind, or designed by one AI call; each tile answered on its
-    own (several at once), laid out, and its headline numbers checked against their trends.
+          allowed: set[str] | None = None, shown: Shown | None = None) -> Draft:
+    """The dashboard: around the answer on screen (``shown``, for "create a dashboard using this"), the recipe the
+    request names, the recipe of the business's kind, or designed by one AI call; each tile answered on its own
+    (several at once), laid out, and its headline numbers checked against their trends.
 
     ``answer(question)`` answers a question as a new conversation would (its own planner call, its own query);
     ``answer(question, plan)`` runs a recipe tile's plan as it is. A tile that cannot be built says why; the
     others are built. ``progress(draft)`` is told the draft once it is designed and again as each tile lands,
     from the thread that built it, one call at a time."""
     day = today or dt.date.today()
-    book = from_book(model, request, today=day, allowed=allowed)
-    recipe = executive(model, request, today=day, allowed=allowed) if book is None else None
-    if book is not None:
-        name, tiles, others = book
+    if shown is not None:
+        name, tiles = around(model, shown, complete, today=day, lang=language(request), allowed=allowed, scrub=scrub,
+                             personal_shown=personal_shown)
     else:
-        others = []
-        name, tiles = recipe if recipe is not None else design(model, request, complete, scrub=scrub,
-                                                               personal_shown=personal_shown)
-    draft = Draft(name=name, request=request, tiles=tiles, others=others)
+        made = from_book(model, request, today=day, allowed=allowed) or executive(model, request, today=day,
+                                                                                    allowed=allowed)
+        name, tiles = made if made is not None else design(model, request, complete, scrub=scrub,
+                                                           personal_shown=personal_shown)
+    draft = Draft(name=name, request=request, tiles=tiles)
     draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
 
