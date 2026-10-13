@@ -194,6 +194,14 @@ class _Compiler:
         if op in ("eq", "in", "ne", "not_in"):
             if not vals:
                 raise CompileError(f"a {op} filter needs a value")
+            stored = self.model.columns.get(column_key or "")
+            if stored is not None and stored.data_type == "text" and not stored.values_allowed \
+                    and all(isinstance(v, str) for v in values):
+                # A name on a column whose members are never read (a product's description, a country the old
+                # masking rule keeps): the stored spelling is not known to put it in, so "Regency Cakestand 3 Tier"
+                # finds REGENCY CAKESTAND 3 TIER, in either case.
+                column = exp.Upper(this=column)
+                vals = [exp.Literal.string(str(v).upper()) for v in values]
             inner = exp.EQ(this=column, expression=vals[0]) if len(vals) == 1 else exp.In(this=column, expressions=vals)
             if op in ("eq", "in"):
                 return inner
