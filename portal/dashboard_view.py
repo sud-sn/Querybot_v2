@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import re
 from typing import Any, Iterable
 
 DEFAULT_PERIOD = "this_month"
@@ -30,6 +31,13 @@ MEMBER_VALUES = 50               # members chosen of one field
 # A chart over time shows the span picked when it makes a line of at least this many points ("This year" on a
 # monthly trend); a shorter one is shaded on the chart's own range ("This month" on the same trend: one point).
 TREND_POINTS = 4
+DRILL_DEPTH = 3                  # members a tile is drilled through, one a level
+# A plan that is a measure counted for each member of one field: it can be drilled into, a member at a time. Not one
+# worked out per member, in bands, over a funnel ... (core2/plan/ir.Plan.shaped), nor a list.
+DRILLABLE_INTENTS = ("breakdown", "rank", "share", "compare")
+_SHAPES = ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active", "on_time", "pareto",
+           "funnel", "together", "target", "drivers")
+_FIELD = re.compile(r"^[A-Za-z0-9_.]{1,120}$")
 
 # Each a window as a plan writes one, resolved by the new core from where the data ends (core2/resolve/time.py):
 # "last quarter" on data that ends in June is January to March.
@@ -223,6 +231,58 @@ def view_plan(plan: dict, view: dict | None) -> tuple[dict, list[str]]:
     return out, applied
 
 
+# ── Drilling into a tile ─────────────────────────────────────────────────────
+
+def drillable(plan: dict | None) -> bool:
+    """Can a tile drawn from ``plan`` be drilled into: a measure counted for each member of one field."""
+    plan = plan or {}
+    groups = [str(g) for g in plan.get("group_by") or [] if not str(g).startswith("time:")]
+    return (plan.get("intent") in DRILLABLE_INTENTS and len(groups) == 1 and len(plan.get("group_by") or []) == 1
+            and not (plan.get("time") or {}).get("grain") and not any(plan.get(k) for k in _SHAPES))
+
+
+def read_drills(params: Any) -> dict[int, dict]:
+    """The tiles drilled into, from the address: ``d.<tile>=<field>:<member>`` once a level, in order, and
+    ``by.<tile>=<field>``, what the deepest level is broken down by. {tile: {"path": [{field, member}], "by"}}."""
+    pairs = params.multi_items() if hasattr(params, "multi_items") else list(params.items())
+    paths: dict[int, list[dict]] = {}
+    for key, value in pairs:
+        key = str(key)
+        if not key.startswith("d.") or not key[2:].isdigit():
+            continue
+        field, sep, member = str(value).partition(":")
+        member = member.strip()[:200]
+        path = paths.setdefault(int(key[2:]), [])
+        if sep and _FIELD.match(field) and member and len(path) < DRILL_DEPTH:
+            path.append({"field": field, "member": member})
+    out = {}
+    for tile, path in paths.items():
+        by = str(params.get(f"by.{tile}") or "")
+        if path and _FIELD.match(by):
+            out[tile] = {"path": path, "by": by}
+    return out
+
+
+def drill_address(drills: dict | None) -> list[tuple[str, str]]:
+    """The address parameters of the tiles drilled into."""
+    out = []
+    for tile, drill in sorted((drills or {}).items()):
+        out += [(f"d.{tile}", f"{step['field']}:{step['member']}") for step in drill.get("path") or []]
+        out.append((f"by.{tile}", str(drill.get("by") or "")))
+    return out
+
+
+def drill_plan(plan: dict, drill: dict) -> dict:
+    """A tile's plan drilled into: each member of the path a filter, broken down by the field chosen last (its
+    measure, period, comparison, order and how many it shows kept)."""
+    out = copy.deepcopy(plan)
+    out["group_by"] = [drill["by"]]
+    out["filters"] = [*(out.get("filters") or []),
+                      *({"field": step["field"], "op": "in", "values": [step["member"]]} for step in drill["path"])]
+    out.pop("chart", None)       # the shape chosen for the top level: the level below draws as its rows read
+    return out
+
+
 _ITS_ROWS = object()
 
 
@@ -258,6 +318,13 @@ def field_word(field: str) -> str:
         words.pop()
     text = " ".join(words)
     return text[:1].upper() + text[1:]
+
+
+def drill_word(field: str) -> str:
+    """A field on a drilled tile's path as its menu offered it: the attribute without its table ("Status code" for
+    order_line.status_code, "Segment" for customer.segment), a member by its own name ("Region" for region.name)."""
+    owner, _, own = str(field or "").rpartition(".")
+    return field_word(own if owner and own.lower() not in (*_NAMING_WORDS, "code", "id", "key") else owner or own)
 
 
 def span_label(first: dt.date, last: dt.date, lang: str) -> str:

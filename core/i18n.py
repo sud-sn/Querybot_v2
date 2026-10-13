@@ -5044,6 +5044,13 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.pick_hint": {"en": "Click to filter the dashboard to {name} · Ctrl-click to add or remove it",
                            "fr": "Cliquez pour filtrer le tableau de bord sur {name} · Ctrl-clic pour l'ajouter ou le retirer"},
     "ui.chart.pick_clear": {"en": "Click to clear this filter", "fr": "Cliquez pour retirer ce filtre"},
+    "ui.chart.break_hint": {"en": "Right-click to break {name} down", "fr": "Clic droit pour détailler {name}"},
+    # A dashboard tile drilled into: the menu a right-click on a member opens, and the way back up above it.
+    "ui.dash.drill.filter": {"en": "Filter the dashboard to {name}", "fr": "Filtrer le tableau de bord sur {name}"},
+    "ui.dash.drill.break": {"en": "Break {name} down by", "fr": "Détailler {name} par"},
+    "ui.dash.drill.path": {"en": "Drilled into", "fr": "Détail"},
+    "ui.dash.drill.up": {"en": "Back to every {field}", "fr": "Revenir à tous ({field})"},
+    "ui.dash.drill.by": {"en": "by {field}", "fr": "par {field}"},
     "ui.chart.change": {"en": "Change", "fr": "Variation"},
 
     # The artifact pane's own copy.

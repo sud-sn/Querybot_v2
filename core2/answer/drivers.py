@@ -194,7 +194,8 @@ def _a_flag(column) -> bool:
     return bool(top) and all(str(t.value).strip().lower() in _FLAG_VALUES for t in top if t.value is not None)
 
 
-def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, skip: set[str]) -> list[str]:
+def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, skip: set[str],
+               limit: int = MAX_GROUPINGS) -> list[str]:
     """Groupings worth checking, most telling first: direct dimensions, their parents, then small categories."""
     scored: list[tuple[tuple, str]] = []
     names_or_keys = {c for e in model.entities.values()
@@ -233,7 +234,7 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         if n is None or n > 1:
             continue
         scored.append(((2, members, a.slug), a.slug))
-    return [slug for _, slug in sorted(scored)][:MAX_GROUPINGS]
+    return [slug for _, slug in sorted(scored)][:limit]
 
 
 # ── the numbers ────────────────────────────────────────────────────────────

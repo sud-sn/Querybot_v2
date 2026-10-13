@@ -34,7 +34,7 @@ from core2.answer.drivers import answer_drivers
 from core2.answer.extra import extra_facts
 from core2.answer.forecast import answer_forecast
 from core2.answer.snapshots import complete_snapshots
-from core2.answer.suggestions import drills, follow_ups
+from core2.answer.suggestions import breakdowns, drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query, repeats_sql
 from core2.compile.shapes import fill_edges
 from core2.plan.chips import french as chip_french, offered
@@ -737,6 +737,10 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
         if chart and not (chart.get("other") or {}).get("ranges") and not logical.people else None
     if drill:
         payload["chart"]["drill"] = drill
+    # And as fields, for a dashboard tile drilled into in place (portal/routes.py).
+    broken = breakdowns(plan, logical, model, services.allowed_tables) if chart and not logical.people else []
+    if broken:
+        payload["chart"]["breakdowns"] = broken
     context = _against_before(question, plan, services, ctx, warehouse, logical, payload)
     if context:
         payload["key_insights"] = [context, *payload.get("key_insights", [])]

@@ -1414,6 +1414,8 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
     fiscal_start = _fiscal_start(user["account_id"], client) if has_core2 else None
     view = (dashboard_view.read_view(request.query_params, fiscal_start=fiscal_start) if has_core2
             else {"period": dashboard_view.OWN, "start": "", "end": "", "members": {}})
+    # Tiles drilled into (a region's tile showing North by store), in the address too: d.<tile>, by.<tile>.
+    drills = dashboard_view.read_drills(request.query_params) if has_core2 else {}
     lang = _request_language(request)
 
     # Refresh all pinned charts — re-execute SQL against live DB
@@ -1428,7 +1430,7 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
             for index, item in enumerate(dashboard_filters)
             if isinstance(item, dict)
         },
-        view={**view, "fiscal_start": fiscal_start},
+        view={**view, "fiscal_start": fiscal_start, "drills": drills},
     )
 
     # The member filters on offer: each field a tile is grouped by alone, with that tile's members (the first
@@ -1490,6 +1492,8 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         "can_edit": can_filter,
         "most_filters": dashboard_view.CREATOR_FILTERS,
         "owner_filters": len(creator_filters),
+        # The tiles drilled into, as drawn: {tile: {"path": [{field, member}], "by"}}.
+        "drills": {str(c["id"]): c["drill"]["state"] for c in rendered_charts if (c.get("drill") or {}).get("state")},
     } if has_core2 and requested_dashboard else None
     # What the dashboard shows, in three lines: the tiles whose reading says the most, each under its name.
     lined = [c for c in rendered_charts if c.get("note_line") and not c.get("error")]
@@ -1869,6 +1873,21 @@ def _kpi_compact(value: Any, fmt: str | None) -> str:
 from portal.dashboard_view import field_word as _field_word  # noqa: E402
 
 
+def _without_path(title: str, path: list[dict]) -> str:
+    """A drilled tile's title without the members drilled through ("Net Amount by product, for store Eastview
+    Store" -> "Net Amount by product"): each from the comma before it to its end, a closing quote with it."""
+    for step in path:
+        member = str(step.get("member") or "")
+        at = title.find(member) if member else -1
+        start = title.rfind(", ", 0, at) if at > 0 else -1
+        if start < 0:
+            continue
+        end = at + len(member)
+        end += 1 if title[end:end + 1] in ('"', "\u201d", "\u00bb", "'") else 0
+        title = title[:start] + title[end:]
+    return title
+
+
 def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
                         filters: list[dict] | None = None, view: dict | None = None) -> dict:
     """A pinned new-core answer, drawn by running its plan again (core2.service.portal_replay).
@@ -1882,6 +1901,24 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     from portal.dashboard_view import period_window
 
     question = str(chart.get("question") or "")
+    from portal import dashboard_view
+
+    # Drilled into ("North by store"): the members drilled through are the tile's own filters -- the dashboard's
+    # filters on those fields give way to them -- and the tile is broken down by the field chosen last. Its path
+    # back up is drawn above it.
+    drill = ((view or {}).get("drills") or {}).get(int(chart.get("id") or 0))
+    if drill and dashboard_view.drillable(plan):
+        top = next(str(g) for g in plan.get("group_by") or [])
+        plan = dashboard_view.drill_plan(plan, drill)
+        through = {step["field"] for step in drill["path"]}
+        view = {**(view or {}), "members": {k: v for k, v in ((view or {}).get("members") or {}).items()
+                                            if k not in through}}
+        word = dashboard_view.drill_word
+        result["drill"] = {"state": drill, "top": word(top), "by": word(drill["by"]).lower(),
+                           "path": [{"member": step["member"], "field": word(step["field"])}
+                                    for step in drill["path"]]}
+    else:
+        drill = None
     viewed, narrowed = _view_plan(plan, view)
     dated = viewed.get("time") != plan.get("time")     # the dates picked are on this tile's own date
     try:
@@ -1920,7 +1957,7 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     # What the dashboard's member filters can offer: the members of the field this tile is grouped by alone.
     groups = [str(g) for g in plan.get("group_by") or [] if not str(g).startswith("time:")]
     shape_x = (payload.get("chart") or {}).get("x_key")
-    if len(groups) == 1 and shape_x and ((payload.get("chart") or {}).get("chart_spec") or {}).get(
+    if not drill and len(groups) == 1 and shape_x and ((payload.get("chart") or {}).get("chart_spec") or {}).get(
             "x", {}).get("role") != "temporal":
         members = sorted({str(r.get(shape_x)) for r in data.get("rows") or []
                           if r.get(shape_x) not in (None, "", "Unknown")})[:100]
@@ -1928,6 +1965,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         if len(members) >= 2 or (members and narrowed):
             label = str((data.get("header_labels") or {}).get(shape_x) or "")
             result["grouping"] = {"field": groups[0], "values": members, "label": _field_word(label or groups[0])}
+    elif drill:
+        # A tile drilled into still offers the dashboard its own field, as at its top: the bar is the dashboard's,
+        # never one tile's level. Its members are read when the reader opens it.
+        result["grouping"] = {"field": top, "values": None, "label": dashboard_view.drill_word(top)}
     rows = data.get("rows") or []
     result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
     # The analyst's line under the tile (core2/answer/facts.py): what is typical, the one-off, the leader -- in the
@@ -1964,6 +2005,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     if fresh and pinned and not chart.get("title_set") and (by_question or (not narrowed and fresh.startswith(
             tuple(pinned + tail for tail in (" by ", ", ", " with ", " ("))))):
         result["title"] = fresh
+    if drill and fresh:
+        # The path is drawn above the tile: its title says what is drawn, not again where it is.
+        result["title"] = _without_path(fresh, drill["path"])
     if all(all(v is None for v in row.values()) for row in rows):
         # Nothing in its period, or for the members the dashboard's filters chose: said on the tile in so many
         # words, never drawn as an empty chart or a number with no value.
@@ -1998,6 +2042,7 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         result["table_shown"] = len(result["table_rows"])
     else:
         drawn = dict(shape)
+        breakdowns = drawn.pop("breakdowns", None) or []
         if kind in (drawn.get("renderable_types") or []):
             drawn["chart_type"] = kind
         drawn["color_palette"] = chart.get("color_palette") or "default"
@@ -2019,6 +2064,13 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             drawn["pick"] = {"field": groups[0],
                              "label": (result.get("grouping") or {}).get("label") or _field_word(groups[0]),
                              "selected": [chosen] if isinstance(chosen, str) else [str(v) for v in chosen]}
+            # And what one of its members can be broken down by, a level further (three at most): a right-click
+            # on it asks (static/js/qb-charts.js). The fields the path went through are not offered again.
+            depth = len((drill or {}).get("path") or [])
+            done = {step["field"] for step in (drill or {}).get("path") or []} | {groups[0]}
+            offers = [b for b in breakdowns if b.get("field") not in done]
+            if dashboard_view.drillable(plan) and depth < dashboard_view.DRILL_DEPTH and offers:
+                drawn["drill_down"] = {"offers": offers, "depth": depth, "path": (drill or {}).get("path") or []}
         # "Top 10 of 34" beside the period, when the rest were folded into one bar.
         other = drawn.get("other") or {}
         if other.get("count") and not other.get("ranges"):
@@ -3117,6 +3169,19 @@ def _filter_values(user: dict, field: str, search: str) -> dict:
     return {"ok": True, "values": values, "more": len(rows) >= FILTER_VALUES_LISTED}
 
 
+def _tiles_grouped_by(dashboard_id: int, user: dict) -> set[str]:
+    """The fields the dashboard's new-core tiles are grouped by alone, as pinned."""
+    from portal import dashboard_view
+
+    fields = set()
+    for chart in store.list_dashboard_charts_for_view(dashboard_id, user["id"], user["account_id"]):
+        plan = _pin_display_config(chart).get("core2_plan") or {}
+        groups = [str(g) for g in plan.get("group_by") or [] if not str(g).startswith("time:")]
+        if len(groups) == 1 and dashboard_view.drillable(plan):
+            fields.add(groups[0])
+    return fields
+
+
 @router.get("/api/dashboard/{dashboard_id}/filter-values")
 async def dashboard_filter_values_api(request: Request, dashboard_id: int, field: str = "", q: str = ""):
     """The members a reader may pick for one of the filters the dashboard's owner added: the first 200 by name,
@@ -3127,7 +3192,10 @@ async def dashboard_filter_values_api(request: Request, dashboard_id: int, field
     dashboard = store.get_dashboard_for_view(dashboard_id, user["id"], user["account_id"])
     if not dashboard:
         return JSONResponse({"ok": False, "error": "Dashboard not found."}, status_code=404)
-    if field not in {str(f.get("field")) for f in _owner_filters(dashboard) if f.get("kind") == "member"}:
+    # The owner's filters, and the field a tile is grouped by alone (a tile drilled into offers it, its own rows
+    # being a level down): only a field this dashboard already shows.
+    offered = {str(f.get("field")) for f in _owner_filters(dashboard) if f.get("kind") == "member"}
+    if field not in offered and field not in _tiles_grouped_by(dashboard_id, user):
         return JSONResponse({"ok": False, "error": "That filter is not on this dashboard."}, status_code=404)
     wait = _FILTER_VALUES.wait(user["id"])
     if wait:

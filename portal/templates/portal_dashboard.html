@@ -267,6 +267,18 @@
         {% endif %}
       </div>
     </div>
+    {% if chart.drill %}
+    {# Drilled into (a right-click on a member, "Break North down by store"): the way back up, a level at a time.
+       The bar's script (frontend/src/dashboard) answers these; the address holds the path (d.<tile>, by.<tile>). #}
+    <nav class="tile-drill" aria-label="{{ t('ui.dash.drill.path') }}">
+      <button type="button" class="tile-drill-step" data-drill-tile="{{ chart.id }}" data-drill-keep="0"
+              title="{{ t('ui.dash.drill.up', field=chart.drill.top) }}">{{ ic("chevron-left", 13) }}<span>{{ chart.drill.top }}</span></button>
+      {% for step in chart.drill.path %}<span class="tile-drill-sep" aria-hidden="true">›</span>
+      {% if not loop.last %}<button type="button" class="tile-drill-step" data-drill-tile="{{ chart.id }}" data-drill-keep="{{ loop.index }}">{{ step.member }}</button>
+      {% else %}<span class="tile-drill-end"><span class="tile-drill-here" aria-current="true">{{ step.member }}</span>
+        <span class="tile-drill-by">{{ t('ui.dash.drill.by', field=chart.drill.by) }}</span></span>{% endif %}{% endfor %}
+    </nav>
+    {% endif %}
     <div class="chart-card-body">
       {% if chart.error %}
       <div class="chart-error">{{ ic("alert-triangle", 24, "text-warning qb-icon-block") }}<div style="font-weight:var(--weight-semibold);margin-bottom:4px">{{ t('ui.dash.chart_failed') }}</div><div style="font-size:var(--font-xs)">{{ chart.error }}</div>{% if chart.error_next_step %}<div style="font-size:var(--font-xs);margin-top:.35rem;color:var(--text-muted)">{{ chart.error_next_step }}</div>{% endif %}</div>

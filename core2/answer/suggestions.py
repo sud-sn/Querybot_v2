@@ -16,6 +16,7 @@ from core2.answer.builder import condition_words, span_words
 from core2.answer.drivers import Grouping, candidates
 from core2.model.schema import SemanticModel, value_names
 from core2.plan.ir import Plan
+from core2.resolve import paths as P
 from core2.resolve.resolver import Logical, adds_up, measure_dates
 from core2.resolve.time import label as period_label
 
@@ -99,7 +100,8 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
 
     if len(out) < 3 and not grouped and logical.parts:
         skip = {f.field for f in plan.filters}
-        slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip)
+        slugs = _apart(model, logical.parts[0].table, _one_member(plan),
+                       candidates(model, logical.parts[0].table, allowed=allowed, skip=skip, limit=20))
         word = _word(model, slugs[0]) if slugs else ""
         if word:
             out.append(("by", f"{words.m} by {word} {words.span}".strip() + words.tail,
@@ -142,6 +144,66 @@ class _Words:
         self.span = " ".join(w for w in (span_words(logical.window, lang), by) if w)
 
 
+def _table_of(model: SemanticModel, slug: str) -> str | None:
+    if slug in model.entities:
+        return model.entities[slug].table
+    attribute = model.attributes.get(slug)
+    return model.columns[attribute.column].table if attribute and attribute.column in model.columns else None
+
+
+def _apart(model: SemanticModel, table: str, fixed: list[str | None], slugs: list[str]) -> list[str]:
+    """The groupings a member of each ``fixed`` field splits into more than one part. Not a field of the member's
+    own row, nor one the answer's rows reach through it: a store's region, a product's category, a customer's
+    segment are one value each, a single bar. A customer's purchases by store stay, the sales row naming its own
+    store. Only a member (a store, by its name or code) is so; a customer's city holds customers of every segment.
+    ``fixed``: the field grouped by, and each field the answer keeps to one member of (North, drilled into)."""
+    owners = set()
+    for slug in fixed:
+        entity = model.entities.get(slug or "")
+        if entity is None and slug in model.attributes:
+            column = model.attributes[slug].column
+            entity = next((e for e in model.entities.values()
+                           if column in (e.label_column, e.code_column, *e.key_columns)), None)
+        if entity is not None:
+            owners.add(entity.table)
+    if not owners:
+        return slugs
+    kept = []
+    for slug in slugs:
+        target = _table_of(model, slug)
+        try:
+            path = P.best_path(model, table, target) if target else None
+        except P.Ambiguous:
+            path = None
+        if target in owners or path is not None and owners & set(path.tables[1:]):
+            continue
+        kept.append(slug)
+    return kept
+
+
+def _one_member(plan: Plan) -> list[str]:
+    """The fields the answer keeps to one member of: "for store Eastview Store", a tile drilled into North."""
+    return [f.field for f in plan.filters if f.op in ("in", "eq") and len(f.values) == 1]
+
+
+def breakdowns(plan: Plan, logical: Logical, model: SemanticModel, allowed: set[str] | None) -> list[dict[str, str]]:
+    """What a member of this answer can be broken down by, most telling first, as fields: a dashboard tile's
+    drill-down (portal/routes.py) opens "North by store" from the region tile. The same groupings a click's "{member}
+    by store" question names in the chat (``drills``), five at most. None for an answer over time, a shaped one (per
+    member, bands, a funnel ...), a list, or one grouped by more than one field."""
+    if not logical.measures or logical.intent == "list" or not logical.parts or plan.shaped():
+        return []
+    grouped = [g for g in logical.groups if g.kind == "attribute" and g.name != logical.unit_group]
+    if len(grouped) != 1 or any(g.kind == "period" for g in logical.groups):
+        return []
+    shown = {g.attribute for g in logical.groups if g.attribute} | set(plan.group_by)
+    skip = {f.field for f in plan.filters} | shown | {s.split(".", 1)[0] for s in shown}
+    table = logical.parts[0].table
+    slugs = _apart(model, table, [grouped[0].attribute, *_one_member(plan)],
+                   candidates(model, table, allowed=allowed, skip=skip, limit=20))
+    return [{"field": slug, "label": _word(model, slug)} for slug in slugs[:5] if _word(model, slug)]
+
+
 def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: SemanticModel,
            allowed: set[str] | None) -> dict[str, Any] | None:
     """What a click on the chart opens next: a few questions with the clicked member or period in place.
@@ -164,7 +226,10 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
     # Not the grouping on screen again, by any of its names ("store", "store.name").
     shown = {g.attribute for g in logical.groups if g.attribute} | set(plan.group_by)
     skip = {f.field for f in plan.filters} | shown | {s.split(".", 1)[0] for s in shown}
-    slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip) if logical.parts else []
+    slugs = candidates(model, logical.parts[0].table, allowed=allowed, skip=skip, limit=20) if logical.parts else []
+    if logical.parts:
+        slugs = _apart(model, logical.parts[0].table, [grouped[0].attribute if grouped else None, *_one_member(plan)],
+                       slugs)
     word = _word(model, slugs[0]) if slugs else ""
     items: list[dict[str, str]] = []
 

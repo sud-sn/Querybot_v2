@@ -734,9 +734,13 @@
     const restName = payload && payload.other && payload.other.label ? String(payload.other.label) : '';
     const quiet = name => Boolean(chosen) && !chosen.has(String(name));
     const only = name => Boolean(chosen) && chosen.size === 1 && chosen.has(String(name));
+    // Where a member can be broken down a level further (payload.drill_down, set by the dashboard), a right-click opens
+    // the tile's menu, and the tooltip says that too.
+    const breaks = Boolean(payload && payload.drill_down && (payload.drill_down.offers || []).length);
     const pickHint = name => (pick && name != null && String(name) !== restName
       ? `<div style="color:${c.muted};font-size:12px;margin-top:6px">${escHtml(t(
-        only(name) ? 'ui.chart.pick_clear' : 'ui.chart.pick_hint', {name: String(name)}))}</div>`
+        only(name) ? 'ui.chart.pick_clear' : 'ui.chart.pick_hint', {name: String(name)}))}`
+        + (breaks ? `<br>${escHtml(t('ui.chart.break_hint', {name: String(name)}))}` : '') + '</div>'
       : '');
     const dim = item => Object.assign({}, item, {itemStyle: Object.assign({}, item.itemStyle, {opacity: 0.3}),
                                                  label: Object.assign({}, item.label, {opacity: 0.5})});
@@ -1851,6 +1855,20 @@
       if (asked && typeof global.CustomEvent === 'function') {
         global.dispatchEvent(new global.CustomEvent('qb-pick', {detail: asked}));
       }
+    });
+    // A right-click on a member a level further can be opened from: the tile's menu (the dashboard's bar draws
+    // it, frontend/src/dashboard/TileMenu.vue) -- filter the dashboard to it, or break it down by another field.
+    chart.on('contextmenu', params => {
+      const payload = el._qbDrawn && el._qbDrawn.payload;
+      const asked = pickOf(params, payload);
+      const offers = (payload && payload.drill_down && payload.drill_down.offers) || [];
+      const e = params && params.event && params.event.event;
+      if (!asked || !offers.length || typeof global.CustomEvent !== 'function') return;
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      chart.dispatchAction({type: 'hideTip'});      // the menu opens where the tooltip was; never under it
+      global.dispatchEvent(new global.CustomEvent('qb-menu', {detail: Object.assign({}, asked, {
+        offers: offers.map(o => ({field: String(o.field), label: String(o.label || o.field)})),
+        x: e ? e.clientX : 0, y: e ? e.clientY : 0})}));
     });
   }
 

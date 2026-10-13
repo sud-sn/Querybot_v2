@@ -11,7 +11,24 @@ export function address(state) {
   for (const filter of state.filters) {
     for (const value of filter.selected || []) params.append(`f.${filter.field}`, value)
   }
+  // The tiles drilled into: each member drilled through, in order, and what the deepest level is broken down by.
+  for (const [tile, drill] of Object.entries(state.drills || {}).sort(([a], [b]) => Number(a) - Number(b))) {
+    for (const step of drill.path || []) params.append(`d.${tile}`, `${step.field}:${step.member}`)
+    params.set(`by.${tile}`, drill.by)
+  }
   return `/portal/dashboard?${params}`
+}
+
+// A tile's drill after a member of it was broken down by a field: one level further. And after a step of its path
+// back up was chosen: the levels to keep (none: the tile as pinned), the next level's field what it is broken
+// down by.
+export function drilledInto(drill, step, by) {
+  return { path: [...((drill && drill.path) || []), { field: step.field, member: step.member }], by }
+}
+export function drilledUp(drill, keep) {
+  if (!drill || keep <= 0) return null
+  const path = drill.path.slice(0, keep)
+  return { path, by: drill.path[keep] ? drill.path[keep].field : drill.by }
 }
 
 // A copy of the state to change and ask for.

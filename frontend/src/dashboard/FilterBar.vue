@@ -1,13 +1,14 @@
 <script setup>
 // The dashboard's filter bar: the dates for every tile, a filter for each field its tiles are grouped by or its
 // owner added, and Clear. A choice draws the dashboard again in place (refresh.js); the address follows it.
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { t } from '../components/i18n.js'
 import AddFilter from './AddFilter.vue'
 import DatePicker from './DatePicker.vue'
 import MemberFilter from './MemberFilter.vue'
+import TileMenu from './TileMenu.vue'
 import { refreshPage } from './refresh.js'
-import { address, copy, picked, steady } from './view.js'
+import { address, copy, drilledInto, drilledUp, picked, steady } from './view.js'
 
 const props = defineProps({ store: { type: Object, required: true } })
 const state = computed(() => props.store.state)
@@ -70,6 +71,34 @@ function pick(event) {
   })
 }
 
+// A member right-clicked on a tile (static/js/qb-charts.js sends 'qb-menu'): its menu, here. Filtering is as a click
+// on it; breaking it down draws that tile a level further, the dashboard's other tiles as they were.
+const menu = ref(null)
+const openMenu = (event) => { menu.value = props.store.busy ? null : event.detail || null }
+function menuFilter(ask) {
+  menu.value = null
+  pick({ detail: { ...ask, add: false } })
+}
+function menuDrill(ask, offer) {
+  menu.value = null
+  change((s) => {
+    s.drills = { ...(s.drills || {}), [ask.chart]: drilledInto((s.drills || {})[ask.chart], ask, offer.field) }
+  })
+}
+// The way back up a drilled tile (its path above it, portal_dashboard.html): a step chosen keeps the levels before it.
+function drillUp(event) {
+  const step = event.target.closest('[data-drill-keep]')
+  if (!step || props.store.busy) return
+  const tile = step.dataset.drillTile
+  change((s) => {
+    const drills = { ...(s.drills || {}) }
+    const up = drilledUp(drills[tile], Number(step.dataset.drillKeep))
+    if (up) drills[tile] = up
+    else delete drills[tile]
+    s.drills = drills
+  })
+}
+
 // Back and Forward go through the views chosen here.
 const back = () => {
   props.store.busy = true
@@ -80,10 +109,14 @@ const back = () => {
 onMounted(() => {
   window.addEventListener('popstate', back)
   window.addEventListener('qb-pick', pick)
+  window.addEventListener('qb-menu', openMenu)
+  document.addEventListener('click', drillUp)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', back)
   window.removeEventListener('qb-pick', pick)
+  window.removeEventListener('qb-menu', openMenu)
+  document.removeEventListener('click', drillUp)
 })
 </script>
 
@@ -95,5 +128,6 @@ onBeforeUnmount(() => {
     <AddFilter v-if="state.can_edit && state.owner_filters < state.most_filters" :dashboard-id="state.dashboard_id" @added="added" />
     <button v-if="changed" type="button" class="dash-filters-clear" @click="clearAll">{{ t('ui.dash.clear') }}</button>
     <span class="dash-filters-busy" :class="{ 'is-on': store.busy }" role="status" aria-live="polite">{{ store.busy ? t('ui.dash.f.updating') : '' }}</span>
+    <TileMenu :ask="menu" @filter="menuFilter" @drill="menuDrill" @close="menu = null" />
   </div>
 </template>
