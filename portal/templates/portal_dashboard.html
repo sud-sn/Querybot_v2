@@ -1,6 +1,7 @@
 {% extends "portal_base.html" %}
 {% from "icons.html" import ic %}
 {% from "macros.html" import breadcrumb, alert %}
+{% from "graphics.html" import miniature, kpi_spark %}
 {% block title %}{{ t('ui.shell.dashboard') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
 {{ breadcrumb([{"label": t('ui.shell.dashboard'), "href": ""}]) }}
@@ -201,7 +202,7 @@
 {% if dashboard_reading %}
 {# What the dashboard shows: the analyst's line of the tiles that say the most, each under its tile's name. #}
 <section class="dash-reading" aria-label="{{ t('ui.dash.reading_title') }}">
-  <div class="dash-reading-title">{{ t('ui.dash.reading_title') }}</div>
+  <div class="dash-reading-title">{{ ic("sparkles", 14) }}<span>{{ t('ui.dash.reading_title') }}</span></div>
   <ul>{% for item in dashboard_reading %}<li><span class="dash-reading-tile">{{ item.title }}</span> {{ item.line }}</li>{% endfor %}</ul>
 </section>
 {% endif %}
@@ -288,6 +289,8 @@
         {% set _good = change.good if change.good is defined else change.direction == 'up' %}
         <div class="dash-kpi-change is-{{ change.direction }}{% if change.direction != 'flat' and _good is not none %} {{ 'is-good' if _good else 'is-bad' }}{% endif %}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span class="dash-kpi-delta"><span class="dash-kpi-arrow" aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span> <span class="dash-kpi-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span></div>
         {% endif %}
+        {# Its trend under it, as the design has it: the periods up to its own (core2/service.py _trend). #}
+        {{ kpi_spark(chart.kpi.trend, t('ui.kpi.trend', span=(chart.kpi.trend or {}).get('span') or '')) }}
       </div>
       {% elif chart.table_rows %}
       {% set numeric = chart.table_numeric or [] %}
@@ -529,7 +532,7 @@
 </div></details>
 </dialog>
 {% else %}
-<div class="page-header page-header-actions">
+<div class="page-header page-header-actions dash-library-head">
   <div><h1>{{ t('ui.dash.title') }}</h1>
   <p>{{ t('ui.dash.subtitle') }}</p></div>
   {% if _creates %}<a class="btn btn-primary" href="/portal/chat?new=1&amp;compose=dashboard">{{ ic("plus", 15) }}<span>{{ t('ui.dash.new') }}</span></a>{% endif %}
@@ -537,15 +540,15 @@
 
 {% if not dashboard_artifact and dashboards %}
 {# Your own dashboards, then the ones shared with you, each naming its owner. #}
-{% set _mine = dashboards|selectattr('can_edit')|list %}{% set _shared = dashboards|rejectattr('can_edit')|list %}
-{% macro library_item(item) %}<a class="dashboard-library-item" href="/portal/dashboard?dashboard_id={{ item.id }}"><div style="font-size:var(--font-base);font-weight:var(--weight-bold)">{{ item.name }}</div><div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.35rem">{% if not item.can_edit %}{{ t('ui.dash.shared_by', owner=item.owner_name or '') }}{% elif item.visibility == 'team' %}{{ t('ui.dash.shared_with_workspace') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</div></a>{% endmacro %}
+{% set _drawn = board_layouts if board_layouts is defined and board_layouts else {} %}{% set _mine = dashboards|selectattr('can_edit')|list %}{% set _shared = dashboards|rejectattr('can_edit')|list %}
+{% macro library_item(item, layout) %}<a class="dashboard-library-item board-card" href="/portal/dashboard?dashboard_id={{ item.id }}"><span class="board-preview">{{ miniature(layout or []) }}</span><strong class="board-name">{{ item.name }}</strong><small class="board-meta">{% if not item.can_edit %}{{ t('ui.dash.shared_by', owner=item.owner_name or '') }}{% elif item.visibility == 'team' %}{{ t('ui.dash.shared_with_workspace') }}{% else %}{{ enum_label('visibility', item.visibility) }}{% endif %} · {{ plural('ui.dash.visuals', item.chart_count) }}</small></a>{% endmacro %}
 {% if _mine %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.library_title') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=_mine|length) }}</span></div>
-<div class="dashboard-library">{% for item in _mine %}{{ library_item(item) }}{% endfor %}</div>
+<div class="dash-library-section"><h2>{{ t('ui.dash.library_title') }}</h2><span>{{ t('ui.dash.library_count', count=_mine|length) }}</span></div>
+<div class="dashboard-library">{% for item in _mine %}{{ library_item(item, _drawn.get(item.id)) }}{% endfor %}</div>
 {% endif %}
 {% if _shared %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin:1.25rem 0 .7rem"><h2 style="font-size:var(--font-md);font-weight:var(--weight-bold)">{{ t('ui.dash.shared_with_you') }}</h2><span style="font-size:var(--font-sm);color:var(--text-muted)">{{ t('ui.dash.library_count', count=_shared|length) }}</span></div>
-<div class="dashboard-library">{% for item in _shared %}{{ library_item(item) }}{% endfor %}</div>
+<div class="dash-library-section"><h2>{{ t('ui.dash.shared_with_you') }}</h2><span>{{ t('ui.dash.library_count', count=_shared|length) }}</span></div>
+<div class="dashboard-library">{% for item in _shared %}{{ library_item(item, _drawn.get(item.id)) }}{% endfor %}</div>
 {% endif %}
 {% else %}
 <div class="empty-state"><h2 class="empty-state-title">{{ t('ui.dash.no_dashboards_title') }}</h2>{% if _asks %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_body') }}</p><div class="empty-state-actions">{% if _creates %}<a class="btn btn-primary" href="/portal/chat?new=1&amp;compose=dashboard">{{ t('ui.dash.describe') }}</a>{% endif %}<a href="/portal/chat" class="btn {% if _creates %}btn-secondary{% else %}btn-primary{% endif %}">{{ t('ui.dash.open_chat') }}</a></div>{% else %}<p class="empty-state-body">{{ t('ui.dash.no_dashboards_viewer') }}</p>{% endif %}</div>

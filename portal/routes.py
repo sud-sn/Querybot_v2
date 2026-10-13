@@ -1426,7 +1426,13 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
     dashboard_reading = [{"title": str(c.get("title") or ""), "line": c["note_line"]}
                          for c in sorted(lined, key=lambda c: -float(c.get("note_size") or 0))[:3]]
 
+    # The dashboards page draws each card's first tab in miniature, as Home does.
+    from portal import home
+
+    board_layouts = home.layouts(dashboards, user) if not requested_dashboard else {}
+
     return _resp(request, "portal_dashboard.html", {
+        "board_layouts": board_layouts,
         "dashboard_reading": dashboard_reading,
         "user":          user,
         "client":        client,

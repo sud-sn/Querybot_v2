@@ -1,0 +1,37 @@
+{# Small drawings more than one page shows: a dashboard in miniature (Home, the dashboards page) and a number's
+   trend (Home's figures, a dashboard's number tiles). Drawn from what the server gives; no data is read here. #}
+
+{# A dashboard's first tab in miniature: each tile a box where the grid puts it (12 columns, rows half as tall),
+   marked by its kind. No data is read, so the card never shows a figure the dashboard would not. #}
+{% macro miniature(layout) -%}
+{% set bottom = namespace(v=6) %}
+{% for b in layout %}{% if b.y + b.h > bottom.v %}{% set bottom.v = b.y + b.h %}{% endif %}{% endfor %}
+<svg class="qb-graphic board-mini" viewBox="0 0 120 {{ [bottom.v * 5, 48] | max }}" preserveAspectRatio="xMidYMin slice" aria-hidden="true" focusable="false">
+  {% for b in layout %}
+  {% set x = b.x * 10 + 1 %}{% set y = b.y * 5 + 1 %}{% set w = b.w * 10 - 2 %}{% set h = b.h * 5 - 2 %}
+  <rect class="mini-box" x="{{ x }}" y="{{ y }}" width="{{ w }}" height="{{ h }}" rx="2"/>
+  {% if b.kind == 'number' %}
+  <rect class="mini-ink" x="{{ x + 3 }}" y="{{ y + h / 2 - 1.5 }}" width="{{ [w * 0.45, 3] | max }}" height="3" rx="1"/>
+  {% elif b.kind == 'line' %}
+  <polyline class="mini-line" points="{{ x + 3 }},{{ y + h * 0.7 }} {{ x + w * 0.3 }},{{ y + h * 0.5 }} {{ x + w * 0.55 }},{{ y + h * 0.62 }} {{ x + w * 0.8 }},{{ y + h * 0.3 }} {{ x + w - 3 }},{{ y + h * 0.38 }}"/>
+  {% elif b.kind == 'table' %}
+  {% for i in range(3) %}<rect class="mini-rule" x="{{ x + 3 }}" y="{{ y + 3 + i * (h - 6) / 3 }}" width="{{ w - 6 }}" height="1"/>{% endfor %}
+  {% else %}
+  {% for i in range(3) %}<rect class="mini-bar" x="{{ x + 3 + i * (w - 6) / 3 }}" y="{{ y + h - 3 - (h - 6) * (0.9 - i * 0.25) }}" width="{{ (w - 6) / 3 - 2 }}" height="{{ (h - 6) * (0.9 - i * 0.25) }}" rx="1"/>{% endfor %}
+  {% endif %}
+  {% endfor %}
+</svg>
+{%- endmacro %}
+
+{# A number's trend under it: the periods the answer drew (core2/service.py _trend), the last one dashed when the
+   data stops inside it. `label` says what it spans, for a reader who cannot see it. #}
+{% macro kpi_spark(trend, label) -%}
+{% if trend and trend.path %}
+<svg class="qb-graphic kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ label }}">
+  <title>{{ label }}</title>
+  {% if trend.area %}<path class="kpi-spark-area" d="{{ trend.area }}"/>{% endif %}
+  <path d="{{ trend.path }}"/>
+  {% if trend.tail %}<path class="kpi-spark-tail" d="{{ trend.tail }}"/>{% endif %}
+</svg>
+{% endif %}
+{%- endmacro %}

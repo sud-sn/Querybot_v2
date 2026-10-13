@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 MOST_FIGURES = 4
 MOST_BOARDS = 6
+MOST_DRAWN = 60       # cards on the dashboards page drawn in miniature; any more are their name alone
 MOST_QUESTIONS = 3
 FIGURES_KEPT = 300          # seconds a reader's figures are kept, at most
 
@@ -164,6 +165,11 @@ def _layout(dashboard_id: int, user: dict) -> list[dict[str, Any]]:
         boxes.append({"x": int(c.get("grid_x") or 0), "y": int(c.get("grid_y") or 0),
                       "w": max(1, int(c.get("grid_w") or 4)), "h": max(1, int(c.get("grid_h") or 3)), "kind": shape})
     return boxes[:24]
+
+
+def layouts(found: list[dict], user: dict, *, most: int = MOST_DRAWN) -> dict[int, list[dict[str, Any]]]:
+    """The first tab of each of these dashboards in miniature (_layout), by id, for the first `most` of them."""
+    return {int(board["id"]): _layout(int(board["id"]), user) for board in found[:most]}
 
 
 def boards(user: dict) -> list[dict[str, Any]]:

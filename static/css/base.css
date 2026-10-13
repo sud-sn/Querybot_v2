@@ -1237,8 +1237,7 @@ body { background: var(--bg); letter-spacing: 0; }
 }
 .card-header,
 .metric-card-header,
-.metric-editor-card > .card-header,
-.chart-card-header { background: var(--surface); }
+.metric-editor-card > .card-header { background: var(--surface); }
 .alert { border-radius: var(--radius); box-shadow: none; }
 .ui-chip { letter-spacing: 0; }
 .qb-table-wrap { box-shadow: none; }

@@ -618,10 +618,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .kpi-change.is-bad { color: var(--danger); }
 .kpi-arrow { font-size: .8em; margin-right: 4px; }
 .kpi-vs { color: var(--text-muted); font-weight: var(--weight-regular); }
-.kpi-spark { display: block; width: 100%; height: 32px; margin: 8px 0 2px; overflow: visible; }
-.kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.kpi-spark .kpi-spark-tail { stroke-dasharray: 3 3; }
-.kpi-spark .kpi-spark-area { fill: color-mix(in srgb, var(--primary) 10%, transparent); stroke: none; }
+.kpi-spark { height: 32px; margin: 8px 0 2px; }
 /* A metric the reader made in this chat: how it is counted, and that it is theirs until their admin keeps it. */
 .own-metric { border: 1px dashed color-mix(in srgb, var(--primary) 45%, var(--line)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--primary) 4%, var(--surface)); padding: 12px 14px; display: grid; gap: 6px; }
 .own-metric-title { font-size: var(--font-xs); font-weight: var(--weight-bold); color: var(--primary); display: flex; align-items: center; gap: 6px; }

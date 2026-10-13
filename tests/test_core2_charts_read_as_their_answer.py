@@ -327,7 +327,7 @@ def test_a_title_the_reader_wrote_stays(fresh_store, retail):  # noqa: F811
 
 def test_a_kpi_tile_shows_its_change_as_the_design_has_it(fresh_store, retail):  # noqa: F811
     """The number, and its change against the period before -- the arrow and the change coloured, "vs March
-    2026" beside it. Its trend line stays on the answer in the chat: the dashboard's cards are the design's."""
+    2026" beside it -- and its trend under it, as the approved design draws a dashboard's numbers."""
     tile = _pin(fresh_store, retail, {"intent": "value", "measures": ["net_amount"], "time": {"window": APRIL}},
                 "Net amount")
     assert tile["kpi"]["change"]["vs"] == "March 2026"
@@ -335,7 +335,7 @@ def test_a_kpi_tile_shows_its_change_as_the_design_has_it(fresh_store, retail): 
     direction = tile["kpi"]["change"]["direction"]
     assert f"dash-kpi-change is-{direction}" in markup and "vs March 2026" in markup
     assert ("▼" if direction == "down" else "▲") in markup
-    assert "dash-kpi-spark" not in markup
+    assert tile["kpi"].get("trend") and 'class="qb-graphic kpi-spark"' in markup
 
 
 def test_several_numbers_are_a_tile_each(fresh_store, retail):  # noqa: F811

@@ -174,7 +174,9 @@ def test_a_number_tile_is_its_number_and_its_change():
     assert 'class="dash-kpi-value" title="$185,933.03">$185.9K<' in markup
     assert "dash-kpi-change is-down" in markup and 'class="dash-kpi-delta"' in markup
     assert "4.6%" in markup and "-4.6%" not in markup, "the arrow says which way: the change is written plain"
-    assert "vs March 2026" in markup and "dash-kpi-spark" not in markup
+    assert "vs March 2026" in markup
+    # Its trend under it, as the approved design draws a dashboard's numbers (Home's figures draw the same line).
+    assert 'class="qb-graphic kpi-spark"' in markup and "Dec 2025 – Apr 2026" in markup
     assert 'class="dash-kpi-label"' not in markup, "the tile's name is the number's name"
     assert "Single-value result" not in markup
 

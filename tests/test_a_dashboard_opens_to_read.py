@@ -93,7 +93,7 @@ def test_the_dashboards_page_lists_the_dashboards_first():
                                             "chart_count": 4}])
     body = _markup(html)
     assert body.index("Sales overview") < body.index("Workspace usage")
-    item = re.search(r'<a class="dashboard-library-item".*?</a>', body, re.S).group(0)
+    item = re.search(r'<a class="dashboard-library-item[^"]*".*?</a>', body, re.S).group(0)
     assert "v2" not in item and "Draft" not in item, "a personal dashboard needs no version or status"
 
 

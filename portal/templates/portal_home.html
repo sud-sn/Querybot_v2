@@ -1,32 +1,11 @@
 {% extends "portal_base.html" %}
 {% from "icons.html" import ic %}
+{% from "graphics.html" import miniature %}
 {% block title %}{{ t('ui.title.home') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ asset('css/home.css') }}">
 {% endblock %}
 
-{# A dashboard's first tab in miniature: each tile a box where the grid puts it (12 columns, rows half as tall),
-   marked by its kind. No data is read, so the card never shows a figure the dashboard would not. #}
-{% macro miniature(layout) -%}
-{% set rows = (layout | map(attribute='y') | list | max if layout else 0) %}
-{% set bottom = namespace(v=6) %}
-{% for b in layout %}{% if b.y + b.h > bottom.v %}{% set bottom.v = b.y + b.h %}{% endif %}{% endfor %}
-<svg class="qb-graphic home-board-mini" viewBox="0 0 120 {{ [bottom.v * 5, 48] | max }}" preserveAspectRatio="xMidYMin slice" aria-hidden="true" focusable="false">
-  {% for b in layout %}
-  {% set x = b.x * 10 + 1 %}{% set y = b.y * 5 + 1 %}{% set w = b.w * 10 - 2 %}{% set h = b.h * 5 - 2 %}
-  <rect class="home-mini-box" x="{{ x }}" y="{{ y }}" width="{{ w }}" height="{{ h }}" rx="2"/>
-  {% if b.kind == 'number' %}
-  <rect class="home-mini-ink" x="{{ x + 3 }}" y="{{ y + h / 2 - 1.5 }}" width="{{ [w * 0.45, 3] | max }}" height="3" rx="1"/>
-  {% elif b.kind == 'line' %}
-  <polyline class="home-mini-line" points="{{ x + 3 }},{{ y + h * 0.7 }} {{ x + w * 0.3 }},{{ y + h * 0.5 }} {{ x + w * 0.55 }},{{ y + h * 0.62 }} {{ x + w * 0.8 }},{{ y + h * 0.3 }} {{ x + w - 3 }},{{ y + h * 0.38 }}"/>
-  {% elif b.kind == 'table' %}
-  {% for i in range(3) %}<rect class="home-mini-rule" x="{{ x + 3 }}" y="{{ y + 3 + i * (h - 6) / 3 }}" width="{{ w - 6 }}" height="1"/>{% endfor %}
-  {% else %}
-  {% for i in range(3) %}<rect class="home-mini-bar" x="{{ x + 3 + i * (w - 6) / 3 }}" y="{{ y + h - 3 - (h - 6) * (0.9 - i * 0.25) }}" width="{{ (w - 6) / 3 - 2 }}" height="{{ (h - 6) * (0.9 - i * 0.25) }}" rx="1"/>{% endfor %}
-  {% endif %}
-  {% endfor %}
-</svg>
-{%- endmacro %}
 
 {% block content %}
 <div class="home">
@@ -92,10 +71,10 @@
     {% if boards %}
     <div class="home-board-grid">
       {% for b in boards %}
-      <a class="home-board" href="/portal/dashboard?dashboard_id={{ b.id }}">
-        <span class="home-board-preview">{{ miniature(b.layout) }}</span>
-        <strong class="home-board-name">{{ b.name }}</strong>
-        <small class="home-board-meta">{{ plural('ui.home.board.tiles', b.tiles) }} · {% if b.mine %}{% if b.shared %}{{ t('ui.home.board.team') }}{% else %}{{ t('ui.home.board.yours') }}{% endif %}{% elif b.owner %}{{ t('ui.home.board.from', name=b.owner) }}{% else %}{{ t('ui.home.board.team') }}{% endif %}</small>
+      <a class="board-card" href="/portal/dashboard?dashboard_id={{ b.id }}">
+        <span class="board-preview">{{ miniature(b.layout) }}</span>
+        <strong class="board-name">{{ b.name }}</strong>
+        <small class="board-meta">{{ plural('ui.home.board.tiles', b.tiles) }} · {% if b.mine %}{% if b.shared %}{{ t('ui.home.board.team') }}{% else %}{{ t('ui.home.board.yours') }}{% endif %}{% elif b.owner %}{{ t('ui.home.board.from', name=b.owner) }}{% else %}{{ t('ui.home.board.team') }}{% endif %}</small>
       </a>
       {% endfor %}
     </div>
