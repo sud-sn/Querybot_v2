@@ -69,7 +69,9 @@ How to plan:
 3. group_by: attribute or entity slugs for "by X", "per X", "each X", "which X"; an entity slug groups by
    its name. A time: attribute for "by weekday", "by month of the year", "weekends". When the catalog lists
    roles for an entity and the question names one ("by ship-to customer", "the customer's home store"),
-   put it in via: {"<the group_by slug>": "<role>"}; with no role named, leave via empty.
+   put it in via: {"<the group_by slug>": "<role>"}; with no role named, leave via empty. When it lists
+   routes ("through (name one in via): customer, supplier") and the question says whose ("French
+   customers", "by supplier nation"), put that entity's slug in via for the field it reaches.
 4. time.grain makes a series: "monthly", "by month", "weekly", "per quarter", "trend", "over time" (month
    when unsaid). No grain for one total.
 5. time.window, written as the user said it; never compute relative dates yourself:
@@ -1350,6 +1352,31 @@ _ABOUT_THE_DATA = re.compile(r"\b(?:data|dataset|database|tables?|fields?|column
                              r"donn(?:é|e)es|tables?|champs?|demander|signifie|couvre)\b", re.I)
 
 
+def route_named(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """"The 5 best French customers", "revenue by supplier nation": a field the rows reach by two routes (an order
+    line's nation is its customer's or its supplier's) is reached through the one the question names (the sector
+    stress test: the shorter route, the supplier's, was taken for the customers' nation)."""
+    from core2.resolve.resolver import find_slug
+
+    if plan.kind != "query":
+        return plan
+    said = {names.singular(w) for w in re.findall(r"[a-z]+", question.casefold())}
+    tables = {m.table for m in model.measures.values() if m.slug in plan.measures}
+    via = dict(plan.via)
+    for slug in [*plan.group_by, *(f.field for f in plan.filters)]:
+        found = find_slug(model, slug)
+        if slug in via or not found or found[0] not in ("attribute", "entity"):
+            continue
+        goal = model.columns[found[1].column].table if found[0] == "attribute" else found[1].table
+        routes = {r for t in tables for r in P.through_entities(model, t, goal)}
+        named = [e for e in model.entities.values() if e.table in routes and any(
+            {names.singular(w) for w in re.findall(r"[a-z]+", word.casefold())} <= said
+            for word in [e.business_name, *(w for ws in e.synonyms.values() for w in ws)] if word)]
+        if len(named) == 1:
+            via[slug] = named[0].slug
+    return plan if via == plan.via else plan.model_copy(update={"via": via})
+
+
 def all_time_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """"How many loans have we charged off so far, and for how much?" was answered for this year alone (the sector
     stress test): with no period named, "so far", "to date" and "ever" are everything up to now."""
@@ -1938,7 +1965,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (all_time_asked, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+        for rule in (route_named, all_time_asked, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which

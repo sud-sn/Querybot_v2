@@ -239,6 +239,18 @@ def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through
     return [p for p in paths if chosen & set(roles(p))]
 
 
+def through_entities(model: SemanticModel, start: str, goal: str) -> list[str]:
+    """The tables of the things ``start``'s rows reach ``goal`` through by different routes, each the table that
+    links to ``goal`` (an order line's nation is its customer's or its supplier's): [] for one route or none."""
+    entities = {e.table for e in model.entities.values()}
+    found: list[str] = []
+    for p in all_paths(model, start, goal):
+        last = p.tables[-2] if len(p.joins) > 1 else None
+        if last in entities and last not in found:
+            found.append(last)
+    return found if len(found) > 1 else []
+
+
 def role_names(model: SemanticModel, start: str, goal: str) -> list[str]:
     """The named links a question can choose between to reach ``goal`` from ``start``."""
     return sorted({r for p in _and_self_links(model, start, goal) for r in roles(p)})

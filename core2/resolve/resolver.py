@@ -679,6 +679,20 @@ def _rate(model: SemanticModel, plan: Plan, rate: Rate, chosen: list, notes: lis
     said: list[str] = []
     for f in rate.where:
         found_f = find_slug(model, f.field)
+        own = _own_figure(model, m, found_f)
+        if own is not None and base.agg == "sum" and len(rate.where) == 1:
+            # "Scrap rate", "rejection rate": the quantity scrapped over the quantity made, each a figure of the
+            # same rows -- never the quantity made on the rows with some scrap.
+            chosen.append((None, OpExpr(op="ratio", args=[own, base], scale=100), m.table, rate.name, "percent"))
+            notes.append(f"{rate.name} = {found_f[1].business_name} over {m.business_name}, as a percentage of each "
+                         "group's own.")
+            return
+        if own is not None and f.op in ("gt", "gte", "lt", "lte", "eq", "ne", "between") and f.values \
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in f.values):
+            # "The share of work orders with any scrap": the rows whose own figure meets the condition.
+            conds.append(ColumnFilter(column=own.column, op=f.op, values=list(f.values)))
+            said.append(f"{found_f[1].business_name} {_op_words(f)}")
+            continue
         if not found_f or found_f[0] not in ("attribute", "entity"):
             raise ResolveError("unknown", f"nothing to narrow the rows by called {f.field}",
                                _closest(f.field, _slugs(model, "attribute")))
@@ -697,6 +711,15 @@ def _rate(model: SemanticModel, plan: Plan, rate: Rate, chosen: list, notes: lis
     chosen.append((None, OpExpr(op="ratio", args=[part, base], scale=100), m.table, rate.name, "percent"))
     notes.append(f"{rate.name} = {m.business_name} where {' and '.join(said)}, over all {m.business_name}, as a "
                  "percentage of each group's own.")
+
+
+def _own_figure(model: SemanticModel, measure: Measure, found: tuple | None) -> AggExpr | None:
+    """The condition of a rate on ``measure`` when it names a total of the same rows (scrapped quantity on the work
+    orders): that total, or None."""
+    if not found or found[0] != "measure" or found[1].table != measure.table:
+        return None
+    expr = _with_filters(_measure_expr(model, found[1]), found[1].filters)
+    return expr if isinstance(expr, AggExpr) and expr.agg == "sum" and expr.column else None
 
 
 def _with_filters(expr: MeasureExpr, filters: list[ColumnFilter]) -> MeasureExpr:
@@ -1437,6 +1460,15 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 part.groups.append(PartGroup(code_name, alias, code_column, "attribute"))
             path = builder.paths_used.get(column.table)
             hop = path.joins[0] if path is not None and path.joins else None
+            routes = P.through_entities(model, part.table, column.table) if through is None and link_role is None \
+                else []
+            if path is not None and len(path.joins) > 1 and path.tables[-2] in routes:
+                # An order line's nation is its supplier's here; its customer's is another answer, and said so.
+                owner = {e.table: e.business_name.lower() for e in model.entities.values()}
+                other = next((owner[r] for r in routes if r != path.tables[-2] and r in owner), None)
+                if other and path.tables[-2] in owner:
+                    notes.append(f"{attribute.business_name} is the {owner[path.tables[-2]]}'s; ask \"by {other} "
+                                 f"{attribute.business_name.lower()}\" for the {other}'s.")
             # Only a field that names the member the rows link to (its name or code), never another of its
             # fields: a product with no category is no category "12 (no name)", its key being the product's.
             names_member = any(e.table == column.table and column.key in (e.label_column, e.code_column)
