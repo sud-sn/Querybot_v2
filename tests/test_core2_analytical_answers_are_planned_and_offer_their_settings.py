@@ -231,7 +231,12 @@ def test_the_period_filter_narrows_what_a_moving_figure_shows_and_it_still_reads
     assert "2025-11-01" in payload["trust"]["sql"]                    # and January's average still reads Nov, Dec
     assert all(r["net_amount_moving_average"] is not None for r in payload["export_rows"])
     plain = {**tile, "rolling": None}
-    assert _view_plan(plain, {"period": "this_year"})[0]["time"] == plain["time"]   # a plain trend keeps its range
+    # A plain trend shows the dates picked when they make a line of four points or more; a shorter span keeps its
+    # own range, the span shaded on it (portal/dashboard_view.py TREND_POINTS).
+    june = dt.date(2026, 6, 15)
+    assert _view_plan(plain, {"period": "this_year", "today": june})[0]["time"]["window"] == {"kind": "to_date",
+                                                                                           "unit": "year"}
+    assert _view_plan(plain, {"period": "last_quarter", "today": june})[0]["time"] == plain["time"]
 
 
 def test_a_list_of_who_had_none_keeps_its_own_window_under_the_period_filter():

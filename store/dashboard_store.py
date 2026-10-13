@@ -1450,7 +1450,10 @@ def update_dashboard_controls(
             if not isinstance(item, dict):
                 continue
             field = re.sub(r"[^A-Za-z0-9_. -]", "", str(item.get("field") or "")).strip()[:120]
-            if field:
+            if field and item.get("kind") == "member":
+                # A field its owner added to the filter bar of a new-core dashboard (portal/dashboard_view.py).
+                safe_filters.append({"kind": "member", "field": field, "label": str(item.get("label") or field)[:60]})
+            elif field:
                 operator = str(item.get("operator") or "equals").lower()
                 if operator not in {"equals", "contains", "gte", "lte"}:
                     operator = "equals"

@@ -87,11 +87,10 @@ class Snapshot:
 def _request(dashboard_id: int, tab: str, view: dict, lang: str):
     from starlette.requests import Request
 
-    params = [("dashboard_id", str(int(dashboard_id))), ("tab", tab)]
-    if view.get("period"):
-        params.append(("period", str(view["period"])))
-    for name, value in (view.get("members") or {}).items():
-        params.append((f"f.{name}", str(value)))
+    from portal.dashboard_view import address
+
+    # As kept with the schedule: one saved before the dates had a default draws each tile in its own window.
+    params = [("dashboard_id", str(int(dashboard_id))), ("tab", tab), *address(view)]
     return Request({
         "type": "http", "http_version": "1.1", "method": "GET", "scheme": "http",
         "server": (HOST, 80), "client": ("127.0.0.1", 0), "root_path": "",
@@ -173,16 +172,8 @@ def _tiles(charts: list[dict]) -> list[Tile]:
 
 
 def _filters_line(context: dict, lang: str) -> str:
-    from core.i18n import t
-
-    view = context.get("dash_view") or {}
-    parts = []
-    if view.get("period"):
-        parts.append(f"{t('ui.dash.period', lang=lang)}: {t('ui.dash.period.' + view['period'], lang=lang)}")
-    for grouping in context.get("dash_groupings") or []:
-        if grouping.get("selected"):
-            parts.append(f"{grouping.get('label')}: {grouping['selected']}")
-    return " · ".join(parts)
+    """"Period: This month · Region: North, South", as the page drew it (in the reader's language)."""
+    return str(context.get("dash_filters_line") or "")
 
 
 # ── The headless browser ─────────────────────────────────────────────────────

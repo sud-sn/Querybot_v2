@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Request, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -1306,6 +1306,21 @@ async def portal_dashboard(request: Request):
         deactivate_language(_lang_token)
 
 
+def _fiscal_start(account_id: str, client: dict) -> int | None:
+    """The month the workspace's fiscal year starts in, as the new core counts fiscal periods (its settings,
+    where Learn puts a calendar table's); None when it is not known."""
+    try:
+        from core2.bootstrap.service import answering_model
+
+        model = answering_model(account_id, client)
+    except Exception as exc:  # noqa: BLE001 - the picker offers the calendar's periods alone
+        log.warning("The fiscal year of %s could not be read: %s", account_id, exc)
+        return None
+    if model is None:
+        return None
+    return model.settings.fiscal_year_start_month
+
+
 def _tile_alert_marks(dashboard: dict | None, user: dict) -> dict:
     if not dashboard:
         return {}
@@ -1387,16 +1402,19 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         else _compact_number(token_status.get("remaining"))
     )
 
-    # The dashboard's own filters (the bar under its header): a period, and members of the fields its tiles
-    # are grouped by. In the address, so a filtered dashboard can be shared as it is seen.
-    period = str(request.query_params.get("period") or "")
-    chosen = [(key[2:200], str(value)[:200]) for key, value in request.query_params.items()
-              if key.startswith("f.") and str(value).strip()]
-    view = {
-        "period": period if period in DASH_PERIODS else "",
-        # Four at most, as the bar offers: each one is a filter on every tile.
-        "members": dict(chosen[:DASH_MEMBER_FILTERS]),
-    }
+    # The dashboard's own filters (the bar under its header, portal/dashboard_view.py): the dates picked (this
+    # month unless the address says otherwise), and members of the fields its tiles are grouped by or its owner
+    # added. In the address, so a filtered dashboard can be shared as it is seen. A dashboard of new-core tiles
+    # only: the old ones are drawn from their own SQL.
+    from portal import dashboard_view
+
+    creator_filters = [f for f in dashboard_filters if isinstance(f, dict) and f.get("kind") == "member"]
+    dashboard_filters = [f for f in dashboard_filters if not (isinstance(f, dict) and f.get("kind") == "member")]
+    has_core2 = any(_pin_display_config(c).get("core2_plan") for c in charts)
+    fiscal_start = _fiscal_start(user["account_id"], client) if has_core2 else None
+    view = (dashboard_view.read_view(request.query_params, fiscal_start=fiscal_start) if has_core2
+            else {"period": dashboard_view.OWN, "start": "", "end": "", "members": {}})
+    lang = _request_language(request)
 
     # Refresh all pinned charts — re-execute SQL against live DB
     db_cfg = None
@@ -1410,17 +1428,69 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
             for index, item in enumerate(dashboard_filters)
             if isinstance(item, dict)
         },
-        view=view,
+        view={**view, "fiscal_start": fiscal_start},
     )
 
     # The member filters on offer: each field a tile is grouped by alone, with that tile's members (the first
-    # tile for a field wins), at most four of them.
+    # tile for a field wins), at most four of them; then the fields the owner added, their members read when
+    # the reader opens one; then any other field the address filters on, so whatever narrows the tiles shows.
     groupings: list[dict] = []
     for chart_data in rendered_charts:
         grouping = chart_data.get("grouping")
         if grouping and grouping["field"] not in {g["field"] for g in groupings} and len(groupings) < DASH_MEMBER_FILTERS:
-            groupings.append({**grouping, "selected": view["members"].get(grouping["field"], "")})
-    has_core2 = any(_pin_display_config(c).get("core2_plan") for c in charts)
+            groupings.append({**grouping, "source": "tile", "selected": view["members"].get(grouping["field"], [])})
+    for item in creator_filters:
+        field = str(item.get("field") or "")
+        label = str(item.get("label") or "") or dashboard_view.field_word(field)
+        known = next((g for g in groupings if g["field"] == field), None)
+        if known:
+            known.update(label=label, source="owner")
+        elif field:
+            groupings.append({"field": field, "label": label, "values": None, "source": "owner",
+                              "selected": view["members"].get(field, [])})
+    for field, values in view["members"].items():
+        if field not in {g["field"] for g in groupings}:
+            groupings.append({"field": field, "label": dashboard_view.field_word(field), "values": list(values),
+                              "source": "address", "selected": values})
+    # Where the tiles count by more than one date, each says which beside its period.
+    dates = collections.Counter(str(c.get("date_badge") or "") for c in rendered_charts if c.get("date_badge"))
+    if len(dates) > 1:
+        for chart_data in rendered_charts:
+            if chart_data.get("date_badge"):
+                chart_data["subtitle"] = " · ".join(x for x in (chart_data.get("subtitle"), chart_data["date_badge"]) if x)
+    filter_parts = dashboard_view.filter_parts(view, {g["field"]: g["label"] for g in groupings}, lang)
+    # Where the tiles' data ended long ago, "this month" was counted back from its last day (core2/resolve/time.py):
+    # the picker counts its dates the same way (from the day most of them ended on), and so does the band on a
+    # chart over time that keeps its own range -- not from that chart's own last point (a trend of last year
+    # would shade last year's "last quarter").
+    windows = [w for c in rendered_charts if isinstance(w := c.get("window"), dict)]
+    ended = collections.Counter(str(w.get("data_end")) for w in windows if w.get("data_end"))
+    if windows:
+        last_data = dashboard_view._day(ended.most_common(1)[0][0]) if ended else None
+        for chart_data in rendered_charts:
+            if chart_data.get("window") or not chart_data.get("chart_json"):
+                continue
+            shape = json.loads(chart_data["chart_json"])
+            if "highlight" in shape:
+                band = dashboard_view.shaded_period({**view, "fiscal_start": fiscal_start}, shape, last_data=last_data)
+                shape.pop("highlight")
+                if band:
+                    shape["highlight"] = band
+                chart_data["chart_json"] = json.dumps(shape)
+    can_filter = bool(requested_dashboard and requested_dashboard.get("can_edit") and has_core2
+                      and can_do(user, "own_dashboards"))
+    filter_state = {
+        "dashboard_id": int(requested_dashboard["id"]) if requested_dashboard else 0,
+        "tab": selected_tab,
+        "picker": dashboard_view.picker(view, fiscal_start=fiscal_start, lang=lang,
+                                        data_end=ended.most_common(1)[0][0] if ended else None),
+        "filters": [{key: g.get(key) for key in ("field", "label", "values", "source", "selected")} for g in groupings],
+        # Each date the tiles count by, and on how many: the picker says its dates go on each one.
+        "dates": [{"label": label, "tiles": count} for label, count in dates.most_common()],
+        "can_edit": can_filter,
+        "most_filters": dashboard_view.CREATOR_FILTERS,
+        "owner_filters": len(creator_filters),
+    } if has_core2 and requested_dashboard else None
     # What the dashboard shows, in three lines: the tiles whose reading says the most, each under its name.
     lined = [c for c in rendered_charts if c.get("note_line") and not c.get("error")]
     dashboard_reading = [{"title": str(c.get("title") or ""), "line": c["note_line"]}
@@ -1456,7 +1526,14 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         "dash_view":     view,
         "dash_periods":  list(DASH_PERIODS) if has_core2 else [],
         "dash_groupings": groupings,
-        "dash_filtered": bool(view["period"] or view["members"]),
+        "dash_filtered": has_core2 and not dashboard_view.is_default(view),
+        # What it is drawn for, as words: an email's and a PDF's top line, and what a schedule keeps.
+        "dash_filter_parts": filter_parts,
+        "dash_filters_line": dashboard_view.filters_line(filter_parts),
+        "dash_filter_state": filter_state,
+        # The dates and filters carried to the dashboard's other tabs.
+        "dash_view_query": "" if not has_core2 or dashboard_view.is_default(view) else
+        urlencode(dashboard_view.address(view)),
         "welcome":       request.query_params.get("welcome") == "1",
         "snapshot":      snapshot,
         # The bell on each number tile: on for an alert that tells this reader, red while it is crossed for them.
@@ -1760,70 +1837,10 @@ def _numeric_columns(rows: list[dict], columns: list[str], formats: dict[str, An
     return out
 
 
-# The dashboard's member filters: the fields its tiles are grouped by, four at most.
-DASH_MEMBER_FILTERS = 4
-
-# The dashboard's Period filter: each a window as a plan writes one, resolved by the new core from where the
-# data ends (core2/resolve/time.py): "last quarter" on data that ends in June is January to March.
-DASH_PERIODS: dict[str, dict] = {
-    "this_month": {"kind": "this", "unit": "month"},
-    "last_month": {"kind": "previous", "unit": "month"},
-    "this_quarter": {"kind": "this", "unit": "quarter"},
-    "last_quarter": {"kind": "previous", "unit": "quarter"},
-    "this_year": {"kind": "to_date", "unit": "year"},
-    "last_year": {"kind": "previous", "unit": "year"},
-    "last_12_months": {"kind": "last", "unit": "month", "n": 12, "include_current": True},
-}
-
-
-def _view_plan(plan: dict, view: dict | None) -> tuple[dict, list[str]]:
-    """A tile's plan under the dashboard's filters, and the member filters applied to it.
-
-    The period replaces the window of a tile that counts one span (a number, a breakdown, a ranking); a tile
-    over time keeps its own range and shows the period shaded. A running or moving figure is shown over the
-    period, and still reads the periods before it that its first points need (core2/resolve/shapes.py). A list
-    of who had none keeps its own window: the window is what it is about ("no order in the last 90 days"). A
-    member filter ("Region: North") narrows every tile but one grouped by that field, which keeps all its
-    members (it is where the filter's choices come from)."""
-    import copy
-
-    view = view or {}
-    out = copy.deepcopy(plan)
-    period = DASH_PERIODS.get(str(view.get("period") or ""))
-    if period and not out.get("absent"):
-        time_spec = out.setdefault("time", {}) if out.get("time") is None else out["time"]
-        if isinstance(time_spec, dict) and (not time_spec.get("grain") or out.get("rolling")):
-            time_spec["window"] = dict(period)
-    applied: list[str] = []
-    groups = {str(g) for g in out.get("group_by") or []}
-    for field, value in (view.get("members") or {}).items():
-        if field in groups or not value:
-            continue
-        out.setdefault("filters", []).append({"field": field, "op": "in", "values": [value]})
-        applied.append(field)
-    return out, applied
-
-
-def _shaded_period(view: dict | None, shape: dict | None) -> dict | None:
-    """The span the Period filter chose, on a chart over time: shaded on it, its own range kept."""
-    period = DASH_PERIODS.get(str((view or {}).get("period") or ""))
-    if not period or not shape or ((shape.get("chart_spec") or {}).get("x") or {}).get("role") != "temporal":
-        return None
-    from core2.plan.ir import Window
-    from core2.resolve.time import resolve_window
-
-    stamps = sorted(str(r.get(shape.get("x_key")) or "")[:10] for r in shape.get("rows") or [])
-    try:
-        last = _dt.date.fromisoformat(stamps[-1]) if stamps else None
-    except ValueError:
-        last = None
-    try:
-        span = resolve_window(Window(**period), today=_dt.date.today(), last_data=last)
-    except Exception:  # noqa: BLE001 - a band is extra: the chart stands without it
-        return None
-    if span.start is None or span.end is None:
-        return None
-    return {"start": span.start.isoformat(), "end": span.end.isoformat()}
+# The dashboard's dates and filters (portal/dashboard_view.py), under the names this module always gave them.
+from portal.dashboard_view import (  # noqa: E402
+    DASH_MEMBER_FILTERS, DASH_PERIODS, shaded_period as _shaded_period, view_plan as _view_plan,
+)
 
 
 def _kpi_compact(value: Any, fmt: str | None) -> str:
@@ -1849,16 +1866,7 @@ def _kpi_compact(value: Any, fmt: str | None) -> str:
     return _format_number(num, fmt)
 
 
-_NAMING_WORDS = ("name", "description", "desc")   # never "code" or "title": "Postal code", "Job title"
-
-
-def _field_word(field: str) -> str:
-    """A field as the reader thinks of it: "Region", not "Region name" or "region.name"."""
-    words = str(field or "").replace(".", " ").replace("_", " ").split()
-    while len(words) > 1 and words[-1].lower() in _NAMING_WORDS:
-        words.pop()
-    text = " ".join(words)
-    return text[:1].upper() + text[1:]
+from portal.dashboard_view import field_word as _field_word  # noqa: E402
 
 
 def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
@@ -1871,16 +1879,26 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     """
     from core2.service import portal_replay
 
+    from portal.dashboard_view import period_window
+
     question = str(chart.get("question") or "")
     viewed, narrowed = _view_plan(plan, view)
+    dated = viewed.get("time") != plan.get("time")     # the dates picked are on this tile's own date
     try:
         payload = portal_replay(user["account_id"], viewed, user, question=question)
         if viewed != plan and payload.get("data") is None:
-            # Filters this tile's data cannot take (no way to reach that field from it): drawn without them.
-            payload = portal_replay(user["account_id"], plan, user, question=question)
-            names = ([_field_word(f) for f in narrowed]
-                     + (["Period"] if viewed.get("time") != plan.get("time") else []))
-            result["filter_warnings"] = [f"The {name} filter does not apply to this tile." for name in names]
+            # Filters this tile's data cannot take (no way to reach that field from it): drawn without them --
+            # still for the dates picked, when only a member filter was what it could not take.
+            unreached = narrowed
+            if narrowed and dated:
+                viewed = _view_plan(plan, {**(view or {}), "members": {}})[0]
+                payload = portal_replay(user["account_id"], viewed, user, question=question)
+            if payload.get("data") is None:
+                payload = portal_replay(user["account_id"], plan, user, question=question)
+                unreached = narrowed + (["Period"] if dated else [])
+                dated = False
+            result["filter_warnings"] = [f"The {_field_word(name) if name != 'Period' else name} filter does not "
+                                         "apply to this tile." for name in unreached]
             narrowed = []
     except Exception as exc:  # noqa: BLE001 - one tile failing must not take the dashboard with it
         log.warning("Pinned new-core answer %s could not be drawn: %s", chart.get("id"), exc, exc_info=True)
@@ -1895,7 +1913,7 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     if filters:
         result["filter_warnings"] = ["Dashboard filters do not apply to this tile yet: it is drawn from its "
                                      "answer's own question."]
-    if plan.get("absent") and DASH_PERIODS.get(str((view or {}).get("period") or "")):
+    if plan.get("absent") and period_window(view):
         result["filter_warnings"] = [*result.get("filter_warnings", []), "The Period filter does not apply to "
                                      "this tile: it lists who had none in its own window."]
     data = payload.get("data") or {}
@@ -1906,7 +1924,8 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             "x", {}).get("role") != "temporal":
         members = sorted({str(r.get(shape_x)) for r in data.get("rows") or []
                           if r.get(shape_x) not in (None, "", "Unknown")})[:100]
-        if len(members) >= 2:
+        # One member is a choice too while other filters narrow it: the filter stays in the bar.
+        if len(members) >= 2 or (members and narrowed):
             label = str((data.get("header_labels") or {}).get(shape_x) or "")
             result["grouping"] = {"field": groups[0], "values": members, "label": _field_word(label or groups[0])}
     rows = data.get("rows") or []
@@ -1923,6 +1942,14 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     french = str(user.get("lang") or "en") == "fr"
     result["subtitle"] = next((str((french and b.get("text_fr")) or b.get("text") or "") for b in badges
                                if b.get("kind") == "period"), "")
+    # The days it counted for the dates picked: counted back from where its data ends when that is long ago, so
+    # the picker shows them rather than today's.
+    if dated and not plan.get("rolling"):
+        result["window"] = (payload.get("trust") or {}).get("window")
+    # And the date it counted by ("by ship date"): the dates picked go on each tile's own date, so where the tiles
+    # count by different ones each says which (the page decides, from them all).
+    result["date_badge"] = next((str((french and b.get("text_fr")) or b.get("text") or "") for b in badges
+                                 if b.get("kind") == "date"), "")
     kind = str(chart.get("chart_type") or "")
     shape = payload.get("chart")
     # A tile pinned while its title was only the measure ("Net amount") reads as its answer now does ("Net amount
@@ -1978,7 +2005,8 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         # On a tile: a single line has a light wash and its low point named (static/js/qb-charts.js), and the
         # dashboard's period is shaded on a chart over time.
         drawn["tile"] = True
-        band = _shaded_period(view, drawn)
+        # (A chart over time the dates picked were put on shows them: nothing to shade.)
+        band = None if dated else _shaded_period(view, drawn)
         if band:
             drawn["highlight"] = band
         # "Top 10 of 34" beside the period, when the rest were folded into one bar.
@@ -2937,6 +2965,172 @@ class _Paced:
 
 
 _PEOPLE_SEARCH = _Paced(most=30, seconds=10.0)
+
+
+# ── A dashboard's own filters (portal/dashboard_view.py) ──────────────────────
+# Its owner adds a field to filter by, from those they may read; whoever opens it picks members of it, read as
+# they are allowed to see them.
+
+_FILTER_VALUES = _Paced(most=40, seconds=10.0)
+FILTER_VALUES_LISTED = 200
+
+
+def _owner_filters(dashboard: dict) -> list[dict]:
+    try:
+        kept = json.loads(dashboard.get("filters_json") or "[]")
+    except (TypeError, ValueError):
+        kept = []
+    return [f for f in kept if isinstance(f, dict)]
+
+
+def _filterable_fields(user: dict, charts: list[dict]) -> list[dict] | None:
+    """The fields ``user`` may filter a dashboard by: the new core's fields whose members may be listed, on the
+    tables they may read; those its tiles already use first. None: the workspace has no new core."""
+    from core2.bootstrap.service import answering_model
+    from core2.plan.values import listable
+    from core2.service import _allowed_model_tables
+
+    model = answering_model(user["account_id"], store.get_client(user["account_id"]) or {})
+    if model is None:
+        return None
+    allowed = _allowed_model_tables(model, store.get_allowed_tables(user))
+    used: set[str] = set()
+    for chart in charts:
+        plan = _pin_display_config(chart).get("core2_plan") or {}
+        used.update(str(g) for g in plan.get("group_by") or [])
+        used.update(str(f.get("field")) for f in plan.get("filters") or [] if isinstance(f, dict))
+    out = []
+    for slug in listable(model):
+        attribute = model.attributes[slug]
+        table = model.columns[attribute.column].table
+        if allowed is not None and table not in allowed:
+            continue
+        out.append({"field": slug, "label": _field_word(attribute.business_name),
+                    "table": model.tables[table].business_name, "used": slug in used})
+    return sorted(out, key=lambda f: (not f["used"], f["table"].lower(), f["label"].lower()))
+
+
+@router.get("/api/dashboard/{dashboard_id}/filter-fields")
+async def dashboard_filter_fields_api(request: Request, dashboard_id: int):
+    """What the owner may add to the dashboard's filter bar: [{field, label, table, used}]."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+    if not dashboard:
+        return JSONResponse({"ok": False, "error": "Only the dashboard's owner can add filters to it."},
+                            status_code=404)
+    charts = store.list_dashboard_charts_for_view(dashboard_id, user["id"], user["account_id"])
+    fields = await asyncio.get_running_loop().run_in_executor(
+        _TILE_POOL, functools.partial(contextvars.copy_context().run, _filterable_fields, user, charts))
+    if fields is None:
+        return JSONResponse({"ok": False, "error": "This workspace has no fields to filter by yet."},
+                            status_code=409)
+    added = {str(f.get("field")) for f in _owner_filters(dashboard) if f.get("kind") == "member"}
+    return JSONResponse({"ok": True, "fields": [f for f in fields if f["field"] not in added]})
+
+
+@router.post("/api/dashboard/{dashboard_id}/filters")
+async def dashboard_filters_api(request: Request, dashboard_id: int):
+    """Add a field to the dashboard's filter bar ({"action": "add", "field", "label"}), name it again
+    ("rename"), or take it off ("remove"). Its owner alone; a version is kept, as for any change."""
+    from portal.dashboard_view import CREATOR_FILTERS
+
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard(dashboard_id, user["id"], user["account_id"])
+    if not dashboard:
+        return JSONResponse({"ok": False, "error": "Only the dashboard's owner can change its filters."},
+                            status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    action = str(payload.get("action") or "")
+    field = str(payload.get("field") or "")[:200]
+    label = " ".join(str(payload.get("label") or "").split())[:60]
+    kept = _owner_filters(dashboard)
+    owned = [f for f in kept if f.get("kind") == "member"]
+    present = next((f for f in owned if f.get("field") == field), None)
+    if action == "add":
+        if present:
+            return JSONResponse({"ok": True, "filters": owned})
+        if len(owned) >= CREATOR_FILTERS:
+            return JSONResponse({"ok": False, "error": f"A dashboard holds {CREATOR_FILTERS} filters at most."},
+                                status_code=400)
+        charts = store.list_dashboard_charts_for_view(dashboard_id, user["id"], user["account_id"])
+        fields = await asyncio.get_running_loop().run_in_executor(
+            _TILE_POOL, functools.partial(contextvars.copy_context().run, _filterable_fields, user, charts))
+        found = next((f for f in fields or [] if f["field"] == field), None)
+        if not found:
+            return JSONResponse({"ok": False, "error": "That field cannot filter this dashboard."}, status_code=400)
+        kept.append({"kind": "member", "field": field, "label": label or found["label"]})
+        summary = f"Filter added: {label or found['label']}"
+    elif action in ("remove", "rename") and present:
+        if action == "remove":
+            kept = [f for f in kept if f is not present]
+            summary = f"Filter removed: {present.get('label') or field}"
+        else:
+            if not label:
+                return JSONResponse({"ok": False, "error": "Give the filter a name."}, status_code=400)
+            present["label"] = label
+            summary = f"Filter renamed: {label}"
+    else:
+        return JSONResponse({"ok": False, "error": "Add, rename or remove a filter of this dashboard."},
+                            status_code=400)
+    updated = store.update_dashboard_controls(dashboard_id, user["id"], user["account_id"], filters=kept,
+                                              change_summary=summary)
+    if not updated:
+        return JSONResponse({"ok": False, "error": "The dashboard's filters were not changed."}, status_code=403)
+    return JSONResponse({"ok": True, "filters": [f for f in _owner_filters(updated) if f.get("kind") == "member"]})
+
+
+def _filter_values(user: dict, field: str, search: str) -> dict:
+    """The members of ``field``, as ``user`` may see them (a list as the new core answers one, governed); those
+    holding ``search`` when given."""
+    from core2.service import portal_replay
+
+    plan: dict = {"intent": "list", "group_by": [field], "limit": FILTER_VALUES_LISTED}
+    if search:
+        plan["filters"] = [{"field": field, "op": "contains", "values": [search]}]
+    payload = portal_replay(user["account_id"], plan, user, question="")
+    data = payload.get("data")
+    if data is None:
+        answer = payload.get("answer") or {}
+        return {"ok": False, "error": str(answer.get("headline") or payload.get("text")
+                                          or "The values of this filter could not be read.")}
+    rows = data.get("rows") or []
+    first = (data.get("headers") or [None])[0]
+    values = list(dict.fromkeys(str(r.get(first)) for r in rows if r.get(first) not in (None, "")))
+    return {"ok": True, "values": values, "more": len(rows) >= FILTER_VALUES_LISTED}
+
+
+@router.get("/api/dashboard/{dashboard_id}/filter-values")
+async def dashboard_filter_values_api(request: Request, dashboard_id: int, field: str = "", q: str = ""):
+    """The members a reader may pick for one of the filters the dashboard's owner added: the first 200 by name,
+    or those holding ``q``. Whoever may open the dashboard; read as they may see them."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard_for_view(dashboard_id, user["id"], user["account_id"])
+    if not dashboard:
+        return JSONResponse({"ok": False, "error": "Dashboard not found."}, status_code=404)
+    if field not in {str(f.get("field")) for f in _owner_filters(dashboard) if f.get("kind") == "member"}:
+        return JSONResponse({"ok": False, "error": "That filter is not on this dashboard."}, status_code=404)
+    wait = _FILTER_VALUES.wait(user["id"])
+    if wait:
+        return JSONResponse({"ok": False, "error": "Too many searches; try again in a moment."}, status_code=429,
+                            headers={"Retry-After": str(max(1, int(wait + 0.999)))})
+    try:
+        found = await asyncio.get_running_loop().run_in_executor(
+            _TILE_POOL, functools.partial(contextvars.copy_context().run, _filter_values, user, field,
+                                          " ".join(q.split())[:80]))
+    except Exception as exc:  # noqa: BLE001 - the filter says it could not list them; the dashboard stands
+        log.warning("Filter values of %s on dashboard %s could not be read: %s", field, dashboard_id, exc)
+        found = {"ok": False, "error": "The values of this filter could not be read."}
+    return JSONResponse(found, status_code=200 if found.get("ok") else 422)
 
 
 @router.get("/api/people")

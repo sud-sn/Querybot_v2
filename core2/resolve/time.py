@@ -23,6 +23,8 @@ class Range:
     start: dt.date | None           # inclusive; None = from the beginning of the data
     end: dt.date | None             # exclusive; None = to the end of the data
     notes: list[str] = field(default_factory=list)
+    # The data's last day, when a relative window ("this month") was counted back from it rather than from today.
+    data_end: dt.date | None = field(default=None, compare=False)
 
     def contains(self, day: dt.date) -> bool:
         return (self.start is None or day >= self.start) and (self.end is None or day < self.end)
@@ -95,6 +97,7 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
     base, note = anchor(today, last_data)
     current = unit_start(base, unit, fiscal_start=fs)
     notes = [note] if note else []
+    ended = base - DAY if base != today else None
     # Counted back from where the data ends, "this month" is the month holding its last day. The day after it
     # can start a new month, quarter or fiscal year: "this month" was then that next one, ending where it
     # began -- "from Jul 2026 to Jun 2026", and no rows.
@@ -102,12 +105,12 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
     if kind == "last":
         n = window.n or 1
         if window.include_current:
-            return Range(add_units(holding, unit, -(n - 1)), base + DAY if base == today else base, notes)
-        return Range(add_units(current, unit, -n), current, notes)
+            return Range(add_units(holding, unit, -(n - 1)), base + DAY if base == today else base, notes, ended)
+        return Range(add_units(current, unit, -n), current, notes, ended)
     if kind in ("this", "to_date"):
-        return Range(holding, (base + DAY) if base == today else base, notes)
+        return Range(holding, (base + DAY) if base == today else base, notes, ended)
     if kind == "previous":
-        return Range(add_units(current, unit, -1), current, notes)
+        return Range(add_units(current, unit, -1), current, notes, ended)
     raise ValueError(f"no such window: {kind}")
 
 

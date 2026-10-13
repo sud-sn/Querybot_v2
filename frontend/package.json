@@ -1,0 +1,18 @@
+{
+  "name": "solviz-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Solviz's Vue components, built into static/dist. The built files are committed: a server never needs Node.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build && node scripts/stamp.mjs",
+    "watch": "vite build --watch"
+  },
+  "dependencies": {
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "vite": "8.3.0"
+  }
+}

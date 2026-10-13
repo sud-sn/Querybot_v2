@@ -153,14 +153,9 @@ def read_form(payload: dict, dashboard: dict, owner: dict) -> dict | str:
     except (TypeError, ValueError):
         own_tabs = ["Overview"]
     tabs = [str(t) for t in (payload.get("tabs") or []) if str(t) in own_tabs]
-    view = payload.get("view") if isinstance(payload.get("view"), dict) else {}
-    from portal.routes import DASH_MEMBER_FILTERS, DASH_PERIODS
+    from portal.dashboard_view import clean_view
 
-    period = str(view.get("period") or "")
-    members = view.get("members") if isinstance(view.get("members"), dict) else {}
-    view = {"period": period if period in DASH_PERIODS else "",
-            "members": {str(k)[:200]: str(v)[:200] for k, v in list(members.items())[:DASH_MEMBER_FILTERS]
-                        if str(v).strip()}}
+    view = clean_view(payload.get("view"))
     recipients = []
     for item in payload.get("recipients") or []:
         if not isinstance(item, dict):
@@ -355,12 +350,9 @@ def _skip_reason(reason: str) -> str:
 
 
 def dashboard_link(base: str, schedule: dict) -> str:
-    view = schedule.get("view") or {}
-    params = [("dashboard_id", str(int(schedule["dashboard_id"])))]
-    if view.get("period"):
-        params.append(("period", view["period"]))
-    for name, value in (view.get("members") or {}).items():
-        params.append((f"f.{name}", value))
+    from portal.dashboard_view import address
+
+    params = [("dashboard_id", str(int(schedule["dashboard_id"]))), *address(schedule.get("view"))]
     return f"{base}/portal/dashboard?{urlencode(params)}"
 
 

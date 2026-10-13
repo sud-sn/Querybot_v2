@@ -13,6 +13,10 @@
 <link rel="stylesheet" href="{{ asset('vendor/gridstack.min.css') }}">
 <script src="{{ asset('vendor/gridstack-all.js') }}"></script>
 <link rel="stylesheet" href="{{ asset('css/dashboard.css') }}">
+{% if dash_filter_state is defined and dash_filter_state and not (snapshot is defined and snapshot) %}
+{# The filter bar and the page drawn again in place under it (frontend/src/dashboard). #}
+<script type="module" src="{{ asset('dist/dashboard.js') }}"></script>
+{% endif %}
 {% endblock %}
 {% block content %}
 {% macro workspace_usage(user, charts, monthly_count, query_status,
@@ -104,7 +108,7 @@
     </div>
     {# Drawn for an email or a PDF: when and for whom, and what it was drawn under, in place of the controls. #}
     {% if snapshot is defined and snapshot %}
-    <div class="dash-snapshot-meta">{{ snapshot.drawn }}{% if dashboard_tabs|length > 1 %} · <strong>{{ selected_tab }}</strong>{% endif %}{% if dash_view.period %} · {{ t('ui.dash.period') }}: <strong>{{ t('ui.dash.period.' ~ dash_view.period) }}</strong>{% endif %}{% for grouping in dash_groupings if grouping.selected %} · {{ grouping.label }}: <strong>{{ grouping.selected }}</strong>{% endfor %}</div>
+    <div class="dash-snapshot-meta">{{ snapshot.drawn }}{% if dashboard_tabs|length > 1 %} · <strong>{{ selected_tab }}</strong>{% endif %}{% for part in dash_filter_parts or [] %} · {{ part.name }}: <strong>{{ part.value }}</strong>{% endfor %}</div>
     {% endif %}
   </div>
   {# As the approved design has it: Edit, Share, and everything else under ⋯. #}
@@ -162,30 +166,36 @@
   </div>
 </header>
 
-{% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="{{ t('ui.dash.tabs_label') }}">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
+{% if dashboard_tabs|length > 1 %}<nav class="dashboard-tabs" aria-label="{{ t('ui.dash.tabs_label') }}">{% for tab in dashboard_tabs %}<a class="dashboard-tab{% if tab == selected_tab %} active{% endif %}" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ tab|urlencode }}{% if dash_view_query %}&{{ dash_view_query }}{% endif %}">{{ tab }}</a>{% endfor %}</nav>{% endif %}
 
-{# The dashboard's own filters, as the approved design has them: a period, and the members of the fields its
-   tiles are grouped by. Every new-core tile is drawn again under them (portal/routes.py _view_plan). #}
-{% if dash_periods %}
+{# The dashboard's own filters (portal/dashboard_view.py): the dates picked, put on each tile's own date, and the
+   members of the fields its tiles are grouped by or its owner added. The bar is drawn by the page's script
+   (frontend/src/dashboard, built into static/dist); this form is what shows without it. #}
+{% if dash_filter_state %}
+<script type="application/json" id="dashFilterState">{{ dash_filter_state|tojson }}</script>
+<div class="dash-filters-app" id="dashFilterApp">
 <form class="dash-filters" method="get" action="/portal/dashboard" id="dashFilters" aria-label="{{ t('ui.dash.filters_label') }}">
   <input type="hidden" name="dashboard_id" value="{{ dashboard_artifact.id }}"><input type="hidden" name="tab" value="{{ selected_tab }}">
-  <label class="dash-picker{% if dash_view.period %} is-set{% endif %}">{{ ic("calendar", 15) }}<span class="dash-picker-name">{{ t('ui.dash.period') }}</span>
+  <label class="dash-picker is-set">{{ ic("calendar", 15) }}<span class="dash-picker-name">{{ t('ui.dash.period') }}</span>
     <select name="period" class="form-input form-input-sm" onchange="this.form.submit()">
-      <option value="">{{ t('ui.dash.period.own') }}</option>
-      {% for key in dash_periods %}<option value="{{ key }}"{% if dash_view.period == key %} selected{% endif %}>{{ t('ui.dash.period.' ~ key) }}</option>{% endfor %}
+      {% for group in dash_filter_state.picker.groups %}<optgroup label="{{ group.label }}">{% for p in group.presets %}<option value="{{ p.key }}"{% if dash_view.period == p.key %} selected{% endif %}>{{ p.label }}</option>{% endfor %}</optgroup>{% endfor %}
+      {% if dash_view.period == 'custom' %}<option value="custom" selected>{{ dash_filter_state.picker.label }}</option>{% endif %}
+      <option value="own"{% if dash_view.period == 'own' %} selected{% endif %}>{{ t('ui.dash.period.own') }}</option>
     </select>
   </label>
-  {% for grouping in dash_groupings %}
+  {% if dash_view.period == 'custom' %}<input type="hidden" name="from" value="{{ dash_view.start }}"><input type="hidden" name="to" value="{{ dash_view.end }}">{% endif %}
+  {% for grouping in dash_groupings if grouping['values'] %}
   <label class="dash-picker{% if grouping.selected %} is-set{% endif %}"><span class="dash-picker-name">{{ grouping.label }}</span>
     <select name="f.{{ grouping.field }}" class="form-input form-input-sm" onchange="this.form.submit()">
       <option value="">{{ t('ui.dash.all') }}</option>
-      {% for value in grouping['values'] %}<option value="{{ value }}"{% if grouping.selected == value %} selected{% endif %}>{{ value }}</option>{% endfor %}
+      {% for value in grouping['values'] %}<option value="{{ value }}"{% if value in grouping.selected %} selected{% endif %}>{{ value }}</option>{% endfor %}
     </select>
   </label>
   {% endfor %}
   {% if dash_filtered %}<a class="dash-filters-clear" href="/portal/dashboard?dashboard_id={{ dashboard_artifact.id }}&tab={{ selected_tab|urlencode }}">{{ t('ui.dash.clear') }}</a>{% endif %}
   <noscript><button class="btn btn-secondary btn-sm" type="submit">{{ t('ui.dash.apply_filters') }}</button></noscript>
 </form>
+</div>
 {% endif %}
 
 {% if dashboard_filters %}
@@ -384,9 +394,6 @@
 {# Emailed on a schedule: the dashboard in the email itself, drawn for each person as they may see it, with a PDF.
    The list of this dashboard's schedules, and one form to add or change one. Only its owner, a Creator. #}
 {% if dashboard_artifact.can_edit and reader_can(user, 'reports') %}
-{% set _filters_now = [] %}
-{% if dash_view.period %}{% set _ = _filters_now.append(t('ui.dash.period') ~ ': ' ~ t('ui.dash.period.' ~ dash_view.period)) %}{% endif %}
-{% for grouping in dash_groupings if grouping.selected %}{% set _ = _filters_now.append(grouping.label ~ ': ' ~ grouping.selected) %}{% endfor %}
 <dialog class="dash-dialog dash-dialog-wide" id="dashScheduleDialog" aria-labelledby="dashScheduleTitle"
         data-dashboard-id="{{ dashboard_artifact.id }}" data-view="{{ (dash_view if dash_view is defined else {})|tojson|forceescape }}"
         data-zone="{{ my_timezone if my_timezone is defined else '' }}">
@@ -441,7 +448,7 @@
     {% endif %}
     <div class="dash-sched-block">
       <span class="form-label">{{ t('ui.sched.filters') }}</span>
-      <p class="dash-sched-filters">{% if _filters_now %}{{ t('ui.sched.filters_now', filters=_filters_now|join(' · ')) }}{% else %}{{ t('ui.sched.filters_none') }}{% endif %}</p>
+      <p class="dash-sched-filters" id="dashSchedFilters">{% if dash_filters_line %}{{ t('ui.sched.filters_now', filters=dash_filters_line) }}{% else %}{{ t('ui.sched.filters_none') }}{% endif %}</p>
       <label class="dash-sched-check"><input type="checkbox" name="attach_pdf" checked> {{ t('ui.sched.pdf') }}</label>
     </div>
     <div class="dash-sched-block">
@@ -1012,8 +1019,8 @@ function initScheduleDialog() {
   const dialog = document.getElementById('dashScheduleDialog');
   if (!dialog) return;
   const base = `/portal/api/dashboard/${encodeURIComponent(dialog.dataset.dashboardId)}/schedules`;
-  let view = {};
-  try { view = JSON.parse(dialog.dataset.view || '{}') || {}; } catch (_) { view = {}; }
+  // The dates and filters on screen when it is saved (the filter bar changes them without a new page).
+  const currentView = () => { try { return JSON.parse(dialog.dataset.view || '{}') || {}; } catch (_) { return {}; } };
   const form = document.getElementById('dashSchedForm');
   const items = document.getElementById('dashSchedItems');
   const empty = document.getElementById('dashSchedEmpty');
@@ -1198,7 +1205,7 @@ function initScheduleDialog() {
       ? Array.from(form.querySelectorAll('[name="tab"]:checked')).map(b => b.value) : [];
     const body = {
       cadence: form.cadence.value, weekday: Number(form.weekday.value), month_day: Number(form.month_day.value),
-      send_time: form.send_time.value, timezone: form.timezone.value, tabs, view,
+      send_time: form.send_time.value, timezone: form.timezone.value, tabs, view: currentView(),
       recipients: chosen.map(c => ({type: c.type, id: c.id})), include_owner: form.include_owner.checked,
       attach_pdf: form.attach_pdf.checked, subject: form.subject.value, message: form.message.value,
     };
@@ -1386,7 +1393,10 @@ function initAlertDialog() {
   document.getElementById('dashAlertCancel').addEventListener('click', () => { form.hidden = true; closeList(); });
   dialog.addEventListener('close', () => { closeList(); if (changed) window.location.reload(); });
 
-  document.querySelectorAll('[data-alert-tile]').forEach(button => button.addEventListener('click', async () => {
+  // On the page, not on each bell: a tile drawn again under new dates or filters has a new one.
+  document.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-alert-tile]');
+    if (!button) return;
     tile = button;
     base = `/portal/api/dashboard/${encodeURIComponent(dashboardId)}/tiles/${encodeURIComponent(button.dataset.alertTile)}/alerts`;
     document.getElementById('dashAlertTitle').textContent = t('ui.alert.title', {tile: button.dataset.alertTitle || ''});
@@ -1394,7 +1404,7 @@ function initAlertDialog() {
     form.hidden = true; changed = false;
     dialog.showModal();
     render(await send('GET', base));
-  }));
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

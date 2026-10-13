@@ -33,3 +33,6 @@ ui-check/
 # What the server scripts in deploy/ write: QueryBot's logs and the database copies taken before an update.
 logs/
 data/*.bak-*
+
+# The portal's Vue sources' packages (frontend/): npm ci puts them back. What they build, static/dist, is kept.
+frontend/node_modules/

@@ -73,6 +73,119 @@
 .dash-picker-name { white-space: nowrap; }
 .dash-filters-clear { margin-left: 4px; font-size: var(--font-sm); font-weight: var(--weight-medium); color: var(--primary-ink); text-decoration: none; }
 .dash-filters-clear:hover { text-decoration: underline; }
+.dash-filters-clear { padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
+.dash-filters-busy { font-size: var(--font-xs); color: var(--text-muted); }
+
+/* The bar as the page's script draws it (frontend/src/dashboard): a chip for the dates and one for each filter,
+   each opening its panel under it. A chosen one wears the selected colour. */
+.dash-pick { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-pill); background: var(--surface-raised); color: var(--text-secondary); font: inherit;
+  font-size: var(--font-sm); font-weight: var(--weight-medium); white-space: nowrap; cursor: pointer;
+  transition: background-color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast); }
+.dash-pick:hover { background: var(--hover-on-surface); }
+.dash-pick:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.dash-pick-name { color: var(--text-muted); }
+.dash-pick-value { max-width: 220px; overflow: hidden; text-overflow: ellipsis; font-weight: var(--weight-semibold); color: var(--text); }
+.dash-pick-note { font-weight: var(--weight-regular); color: var(--text-muted); }
+.dash-pick-icon, .dash-pick-caret { display: inline-flex; color: var(--text-muted); }
+.dash-pick-caret { transition: transform var(--t-fast); }
+.is-open > .dash-pick .dash-pick-caret { transform: rotate(180deg); }
+.dash-pick.is-set { border-color: var(--state-selected-line); background: var(--state-selected); color: var(--primary-ink); }
+.dash-pick.is-set .dash-pick-name, .dash-pick.is-set .dash-pick-note { color: var(--primary-ink); }
+.dash-pick.is-set .dash-pick-value, .dash-pick.is-set .dash-pick-icon, .dash-pick.is-set .dash-pick-caret { color: var(--primary-ink); }
+.dash-pick-add { border-style: dashed; color: var(--primary-ink); }
+.dash-pick-add .dash-pick-value, .dash-pick-add .dash-pick-icon { color: var(--primary-ink); }
+
+.dp, .mf { position: relative; }
+.dash-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 310; background: var(--surface-raised);
+  border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  animation: dash-pop-in .16s ease-out; }
+.dash-pop.is-end { left: auto; right: 0; }
+@keyframes dash-pop-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* The dates: presets by kind on the left, two months of calendar on the right. */
+.dp-panel { display: grid; grid-template-columns: 200px auto; width: max-content; max-width: calc(100vw - 32px); overflow: hidden; }
+.dp-presets { max-height: 470px; overflow-y: auto; padding: 10px 8px; border-right: 1px solid var(--line-subtle); background: var(--surface-2); }
+.dp-group + .dp-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-subtle); }
+.dp-group-name { padding: 4px 10px 2px; font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.dp-preset { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 6px 10px; border: 0;
+  border-radius: var(--radius-item); background: transparent; color: var(--text); font: inherit; font-size: var(--font-sm); text-align: left;
+  cursor: pointer; }
+.dp-preset:hover, .dp-preset:focus-visible { background: var(--surface-3); outline: none; }
+.dp-preset.is-on { background: var(--state-selected); color: var(--primary-ink); font-weight: var(--weight-semibold); }
+.dp-check { display: inline-flex; }
+.dp-custom { min-width: 0; padding: 14px 16px 12px; }
+.dp-custom-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.dp-custom-title { font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text); }
+.dp-nav { display: inline-flex; gap: 2px; }
+.dp-months { display: grid; grid-template-columns: repeat(2, auto); gap: 20px; }
+.dp-month-title { margin-bottom: 4px; text-align: center; font-size: var(--font-sm); font-weight: var(--weight-semibold); color: var(--text); }
+.dp-month-title::first-letter { text-transform: uppercase; }
+.dp-grid { border-collapse: separate; border-spacing: 0 2px; }
+.dp-grid th { width: 34px; height: 24px; font-size: var(--font-xs); font-weight: var(--weight-medium); color: var(--text-muted); text-align: center; }
+.dp-grid td { padding: 0; text-align: center; }
+.dp-grid td.in-span { background: var(--state-selected); }
+.dp-grid td.is-start { border-radius: 999px 0 0 999px; }
+.dp-grid td.is-end { border-radius: 0 999px 999px 0; }
+.dp-grid td.is-start.is-end { border-radius: 999px; }
+.dp-day { width: 34px; height: 32px; border: 0; border-radius: 999px; background: transparent; color: var(--text); font: inherit;
+  font-size: var(--font-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+.dp-day:hover { background: var(--surface-3); }
+.dp-day:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.dp-day.is-today { font-weight: var(--weight-bold); color: var(--primary-ink); text-decoration: underline; text-underline-offset: 3px; }
+.dp-day.is-edge, .dp-day.is-edge:hover { background: var(--primary-fill); color: var(--on-primary); }
+.dp-range { display: flex; align-items: flex-end; gap: 8px; margin-top: 10px; }
+.dp-field { display: grid; gap: 2px; font-size: var(--font-xs); color: var(--text-muted); }
+.dp-field input { width: 156px; }
+.dp-dash { padding-bottom: 8px; color: var(--text-muted); }
+.dp-dates { display: flex; align-items: flex-start; gap: 6px; max-width: 540px; margin: 10px 0 0; font-size: var(--font-xs); line-height: 1.45;
+  color: var(--text-secondary); }
+.dp-dates-icon { display: inline-flex; margin-top: 1px; color: var(--text-muted); }
+.dp-date { font-weight: var(--weight-semibold); color: var(--text); }
+.dp-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-subtle); }
+.dp-status { flex: 1; font-size: var(--font-sm); color: var(--text-secondary); }
+
+/* A field's members to tick. */
+.mf-panel { width: 300px; max-width: calc(100vw - 32px); padding: 8px; }
+.mf-search, .af-search { position: relative; display: block; }
+.mf-search-icon, .af-search-icon { position: absolute; left: 12px; top: 50%; display: inline-flex; transform: translateY(-50%);
+  color: var(--text-muted); pointer-events: none; }
+.mf-search .form-input, .af-search .form-input { padding-left: 36px; }
+.mf-list { max-height: 280px; overflow-y: auto; margin: 6px 0; }
+.mf-option { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-item); font-size: var(--font-sm);
+  color: var(--text); cursor: pointer; }
+.mf-option:hover { background: var(--surface-3); }
+.mf-option input { flex: none; width: 16px; height: 16px; margin: 0; }
+.mf-option span { overflow-wrap: anywhere; }
+.mf-note, .af-note { margin: 6px 10px; font-size: var(--font-sm); color: var(--text-muted); }
+.mf-note.is-problem, .af-note.is-problem { color: var(--danger-strong); }
+.mf-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 4px 2px; border-top: 1px solid var(--line-subtle); }
+.mf-count { flex: 1; font-size: var(--font-xs); color: var(--text-muted); }
+.mf-remove { flex-basis: 100%; justify-content: flex-start; padding-left: 6px; color: var(--danger); }
+
+/* The owner's Add filter: the fields, then the name it shows by. */
+.af-dialog { width: min(560px, calc(100vw - 32px)); }
+.af-intro { margin: 0 24px 12px; font-size: var(--font-sm); color: var(--text-secondary); }
+.af-search { margin: 0 24px; }
+.af-list { max-height: 50vh; overflow-y: auto; margin-top: 10px; padding: 0 16px 18px; }
+.af-group h3 { margin: 12px 8px 4px; font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
+.af-field { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; border: 0;
+  border-radius: var(--radius-item); background: transparent; color: var(--text); font: inherit; font-size: var(--font-base); text-align: left;
+  cursor: pointer; }
+.af-field:hover, .af-field:focus-visible { background: var(--surface-3); outline: none; }
+.af-field-table { flex: none; font-size: var(--font-xs); color: var(--text-muted); }
+.af-name { padding: 0 24px; }
+.af-label { display: grid; gap: 6px; font-size: var(--font-sm); font-weight: var(--weight-medium); color: var(--text-secondary); }
+.af-chosen { margin: 8px 0 0; font-size: var(--font-sm); color: var(--text-muted); }
+.af-name .dash-dialog-foot { margin: 12px -24px 0; }
+
+/* While the tiles are drawn again under new choices (the page is busy): quieter, until each takes its new content. */
+.chart-card-content { transition: opacity .25s; }
+.dashboard-page[aria-busy="true"] .chart-card-content { opacity: .55; }
+@media (prefers-reduced-motion: reduce) {
+  .dash-pop { animation: none; }
+  .chart-card-content, .dash-pick, .dash-pick-caret { transition: none; }
+}
 .dash-edit-hint { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
 
 /* Share, and About this dashboard: the shared native dialog's shape. */
@@ -281,7 +394,18 @@
     clip: rect(0 0 0 0); white-space: nowrap; }
   .dash-filters { flex-wrap: nowrap; overflow-x: auto; margin-inline: -4px; padding: 2px 4px 4px; scrollbar-width: none; }
   .dash-filters::-webkit-scrollbar { display: none; }
-  .dash-picker { flex: none; }
+  .dash-picker, .dp, .mf, .dash-pick { flex: none; }
+  /* The bar scrolls sideways on a phone, so a panel opens over the foot of the screen rather than under its chip. */
+  .dash-pop { position: fixed; left: 12px; right: 12px; top: auto; bottom: 12px; max-height: 78vh; overflow-y: auto; }
+  .dp-panel { grid-template-columns: 1fr; width: auto; }
+  .dp-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; max-height: none; border-right: 0;
+    border-bottom: 1px solid var(--line-subtle); }
+  .dp-group + .dp-group { margin-top: 0; }
+  .dp-months { grid-template-columns: 1fr; justify-items: center; }
+  .dp-month + .dp-month { display: none; }
+  .dp-range { flex-wrap: wrap; }
+  .dp-field input { width: 100%; }
+  .mf-panel { width: auto; }
 }
 
 /* Drag-to-reorder is not supported on touch-only devices. GridStack 10.3.1
@@ -369,7 +493,7 @@
 .is-snapshot .main { overflow: visible; padding: 28px 32px 32px; }
 .is-snapshot .portal-sidebar, .is-snapshot .portal-mobile-bar, .is-snapshot .portal-drawer-backdrop,
 .is-snapshot .portal-lang-switch, .is-snapshot .breadcrumb, .is-snapshot .welcome-banner,
-.is-snapshot .dash-header-actions, .is-snapshot .dashboard-tabs, .is-snapshot .dash-filters,
+.is-snapshot .dash-header-actions, .is-snapshot .dashboard-tabs, .is-snapshot .dash-filters, .is-snapshot .dash-filters-app,
 .is-snapshot .dashboard-controls, .is-snapshot .dash-edit-hint, .is-snapshot .dash-tile-action,
 .is-snapshot .chart-drag-handle, .is-snapshot .dash-ctrl-row, .is-snapshot .dash-dialog,
 .is-snapshot .dash-header-meta { display: none !important; }

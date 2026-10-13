@@ -40,6 +40,9 @@ def _sources():
         yield from (ROOT / folder / "templates").rglob("*.html")
     yield from (ROOT / "static" / "js").rglob("*.js")
     yield from (ROOT / "static").rglob("*.svg")
+    # The Vue pieces' own sources (frontend/src, built into static/dist).
+    for kind in ("*.vue", "*.js"):
+        yield from (ROOT / "frontend" / "src").rglob(kind)
     for here, dirs, files in os.walk(ROOT):
         dirs[:] = [d for d in dirs if not (d.startswith((".", "_")) or "venv" in d or d in ("tests", "node_modules", "site-packages"))]
         yield from (Path(here) / name for name in files if name.endswith(".py"))

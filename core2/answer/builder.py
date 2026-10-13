@@ -673,7 +673,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
-                 model_version=model_version)
+                 model_version=model_version, window=counted_days(logical))
     if reading is not None and reading.facts:
         # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
         # the one-offs set apart in the reading.
@@ -709,13 +709,24 @@ def _answer_title(logical: Logical, cols: _Columns, labels: dict[str, str], char
     return ""
 
 
+def counted_days(logical: Logical) -> dict | None:
+    """The days an answer counted, both included, and the data's last day when they were counted back from it
+    rather than from today: a dashboard's date picker shows what its tiles counted (portal/dashboard_view.py)."""
+    window = logical.window
+    if window.start is None or window.end is None:
+        return None
+    return {"start": window.start.isoformat(), "end": (window.end - dt.timedelta(days=1)).isoformat(),
+            "data_end": window.data_end.isoformat() if window.data_end else ""}
+
+
 def frame(question: str, *, headline: str, short_value: str = "", comparison: str = "", caveats: list[str],
           insights: list[str] | None = None, badges: list[dict[str, str]] | None = None, title: str = "",
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
-          model_version: int) -> dict[str, Any]:
-    """The frame the web portal renders (the same shape today's pipeline sends)."""
+          model_version: int, window: dict | None = None) -> dict[str, Any]:
+    """The frame the web portal renders (the same shape today's pipeline sends). ``window``: the days counted
+    (``counted_days``)."""
     return {
         "type": "assistant_response",
         "engine": "core2",
@@ -752,6 +763,7 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
             "confidence": {},
             "question_id": question_id,
             "date_context": notes,
+            "window": window,
             "engine": "core2",
             "model_version": model_version,
         },
