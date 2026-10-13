@@ -96,3 +96,24 @@ def test_a_line_total_already_after_its_discount_is_not_discounted_again():
     """)
     assert not [m for m in model.measures.values() if ".less." in m.key], \
         [m.business_name for m in model.measures.values()]
+
+
+def test_a_sales_line_of_quantity_unit_price_and_discount_has_net_sales():
+    """AdventureWorks's sales order detail without its line total: a quantity, a unit price and a discount rate."""
+    con, model = _model("""
+        CREATE TABLE product AS SELECT range + 1 AS productid, 'Product ' || range || repeat('x', range % 3) AS name
+        FROM range(300);
+        CREATE TABLE salesorderheader AS SELECT range + 1 AS salesorderid,
+               DATE '2024-01-01' + (range % 700)::INTEGER AS orderdate FROM range(3000);
+        CREATE TABLE salesorderdetail AS SELECT range // 3 + 1 AS salesorderid, range + 1 AS salesorderdetailid,
+               (range * 7) % 300 + 1 AS productid, range % 12 + 1 AS order_qty,
+               round(5 + ((range * 7) % 300) * 1.5 + 0.99, 2) AS unit_price,
+               [0.0, 0.0, 0.0, 0.02, 0.05, 0.1][range % 6 + 1] AS unit_price_discount,
+               DATE '2024-01-01' + (range // 3 % 700)::INTEGER AS modifieddate FROM range(9000);
+    """)
+    net = _named(model, "Net sales")
+    want = con.execute("SELECT SUM(order_qty * unit_price * (1 - unit_price_discount)) FROM salesorderdetail"
+                       ).fetchone()[0]
+    assert _figure(con, model, net) == pytest.approx(float(want), rel=1e-9)
+    gross = [m for m in model.measures.values() if ".times." in m.key and ".less." not in m.key]
+    assert gross and all("revenue" not in m.synonyms.get("en", []) for m in gross)

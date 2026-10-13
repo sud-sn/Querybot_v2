@@ -499,6 +499,15 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                                            alternatives=["added up over time" if level else "added up"],
                                            evidence=m.evidence))
 
+    # Where what was sold is worked out after its discounts, the amount before them is no longer "revenue".
+    netted = {m.table for m in model.measures.values() if m.business_name == "Net sales" and ".less." in m.key}
+    for m in model.measures.values():
+        if m.table in netted and m.business_name != "Net sales":
+            for lang, words in list(m.synonyms.items()):
+                m.synonyms[lang] = [w for w in words if w.casefold() not in _SALES_WORDS]
+            if m.business_name == "Sales amount":
+                m.business_name = "Gross sales"
+
     _entities_and_attributes(model, f, ck, taken, people)
     # A person's birth date, on the table that lists them: proposed to the admin as usable through age only.
     listed = {e.table for e in model.entities.values() if len(e.key_columns) == 1}
@@ -569,13 +578,16 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     return model
 
 
+_SALES_WORDS = {"sales", "revenue", "turnover", "net revenue", "ventes", "chiffre d'affaires"}
+
+
 def _value_words(m: MeasureFinding) -> dict[str, list[str]]:
     """The words people use for a value Learn worked out (a quantity times its unit cost): stock value for a level
     at cost, the value or extended price otherwise."""
+    if m.after and m.name == "Net sales":
+        return {"en": ["revenue", "net revenue", "sales", "net sales amount", "turnover"],
+                "fr": ["chiffre d'affaires", "ventes nettes", "ventes"]}
     if m.after and not m.times:
-        if m.name == "Net sales":
-            return {"en": ["revenue", "net revenue", "sales", "net sales amount", "turnover"],
-                    "fr": ["chiffre d'affaires", "ventes nettes", "ventes"]}
         return {"en": ["net amount"], "fr": ["montant net"]}
     if m.times and any(e.kind == "value_of_rate" for e in m.evidence):
         if set(names.tokens(m.times)) & {"tax", "vat", "gst", "hst"}:
@@ -866,6 +878,10 @@ _ORDINAL = {"line", "lin", "ln", "seq", "sequence", "position", "pos"}
 _FEW_NUMBERS = 50      # a number with more values than this on a fact row is a figure the measures add up
 
 
+_THRESHOLD = {"point", "threshold", "limit", "minimum", "maximum", "capacity", "quota", "reorder", "ceiling", "floor"}
+_STOCK = {"stock", "safety", "inventory", "reorder", "min", "max"}
+
+
 def _attribute_kind(column: InvColumn, col: Column, kind: str) -> str | None:
     """How a question reads ``col`` (see :class:`Attribute`), or None when it is not one to read.
 
@@ -895,7 +911,9 @@ def _attribute_kind(column: InvColumn, col: Column, kind: str) -> str | None:
         if whole and words & _IDENTIFYING and (p.min_num or 0) >= 100:
             return "identifier"
         if kind == "dimension":
-            return "group" if few else "number"
+            # A line a member's figures are held against (a reorder point, a safety stock level, a credit limit) is
+            # a number to compare with, however few its values.
+            return "group" if few and not (words & _THRESHOLD or "level" in words and words & _STOCK) else "number"
         if words & _ORDINAL or not 1 < p.distinct <= _FEW_NUMBERS:
             return None
         return "number"

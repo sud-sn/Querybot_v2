@@ -206,7 +206,7 @@ def _value_of_units(table: str, of: dict[str, MeasureFinding], rows: dict[str, l
     stem = " ".join(w for w in q.name.split() if w.casefold() not in {"quantity", "qty", "units", "pieces"})
     cost = bool(set(names.tokens(price)) & {"cost", "cst"})
     # At a selling price, on a line of what was sold, it is what was sold: the sales amount.
-    sold = not cost and bool(set(names.tokens(table.rsplit(".", 1)[-1])) & _SOLD)
+    sold = not cost and _sold(table)
     name = f"{stem} value at cost" if cost else "Sales amount" if sold else f"{stem} value at {p.name.lower()}"
     name = name.strip()
     name = name[:1].upper() + name[1:]
@@ -218,20 +218,27 @@ def _value_of_units(table: str, of: dict[str, MeasureFinding], rows: dict[str, l
     return found
 
 
+def _sold(table: str) -> bool:
+    """A line of what was sold, its words glued or not (LINEITEM, SALESORDERDETAIL, sales_lines)."""
+    return any(w in _SOLD or any(len(s) >= 4 and (w.startswith(s) or w.endswith(s)) for s in _SOLD)
+               for w in _parts(table.rsplit(".", 1)[-1]))
+
+
 _GIVEN = {"discount", "disc", "dsc", "rebate", "rbt", "markdown", "allowance"}
 _TAX = {"tax", "vat", "gst", "hst"}
 _GROSS = {"extended", "ext", "extendedprice", "gross", "grs", "amount", "amt", "price", "prc", "sales", "sale",
           "total", "tot", "ttl", "value", "val", "line"}
 
 
-def _after_rates(table: str, of: dict[str, MeasureFinding], rows: dict[str, list[float | None]]) -> list[MeasureFinding]:
+def _after_rates(table: str, of: dict[str, MeasureFinding], rows: dict[str, list[float | None]],
+                 value: MeasureFinding | None = None) -> list[MeasureFinding]:
     """A line with an amount and the rate of it given away (a discount between 0 and 1), and no column holding
     what was left: what was sold is the amount less that rate of it, on each row, added up (net sales:
     extended price x (1 - discount)); the discount given is the amount times the rate. A tax rate on the row
     is a tax on what was charged. Proposed once per table, from the plainest amount."""
     def rate(words: set[str]) -> str | None:
         # Named as one and between 0 and 1 on every row, whatever its format (a "unit price discount" of 0.02).
-        return next((c for c, m in of.items() if m.agg == "avg" and set(_parts(c)) & words
+        return next((c for c, m in of.items() if m.agg == "avg" and (set(_parts(c)) | set(names.tokens(m.name))) & words
                      and (values := [v for v in rows[c] if v is not None]) and len(values) >= 20
                      and all(0.0 <= v <= 1.0 for v in values) and max(values) > 0), None)
 
@@ -242,14 +249,27 @@ def _after_rates(table: str, of: dict[str, MeasureFinding], rows: dict[str, list
                and _varies(rows[c]) and set(_parts(c)) & _GROSS
                and not set(_parts(c)) & (_TAKEN | _RESULT | _GIVEN | _TAX | {"unit", "per", "avg", "average", "list"})]
     if not amounts:
-        return []
+        # No amount on the row, only a quantity and its unit price (worked out as their product): what was sold is
+        # the two less the discount of them, when the line is a sale's.
+        if value is None or not value.times or given is None or not _sold(table) \
+                or set(_parts(value.times)) & {"cost", "cst"}:
+            return []
+        q, p, d = value.column, value.times, given
+        if sum(1 for row in _filled(rows[q], rows[p], rows[d]) if row[2]) < 20 or any(
+                _share([(v, x * y * (1 - z)) for v, x, y, z in _filled(rows[c], rows[q], rows[p], rows[d]) if z])
+                >= AGREE for c, m in of.items() if c not in (q, p, d) and m.agg == "sum"):
+            return []
+        net = MeasureFinding(table=table, column=q, agg="sum", additivity=value.additivity, format="currency",
+                             name="Net sales", times=p, after=d, time_aggregation=value.time_aggregation)
+        net.evidence.append(Evidence(kind="after_rate", weight=1, detail=(
+            f"{of[q].name} times {of[p].name.lower()}, less its {of[d].name.lower()}, on each row, added up: "
+            f"{of[d].name.lower()} is a rate between 0 and 1, and no column holds what was sold")))
+        return [net]
     amount = min(amounts, key=lambda c: (not set(_parts(c)) & {"extended", "ext", "extendedprice", "gross", "grs"},
                                          len(_parts(c)), list(of).index(c)))
     a = of[amount]
     out: list[MeasureFinding] = []
-    # A line of what was sold, its words glued or not (LINEITEM, ORDERDETAILS, sales_lines).
-    sold = any(w in _SOLD or any(len(s) >= 4 and (w.startswith(s) or w.endswith(s)) for s in _SOLD)
-               for w in _parts(table.rsplit(".", 1)[-1])) or bool(set(_parts(amount)) & {"sales", "sale"})
+    sold = _sold(table) or bool(set(_parts(amount)) & {"sales", "sale"})
     if given is not None:
         # Read where something was given away: elsewhere the amount and what is left are one.
         if sum(1 for row in _filled(rows[amount], rows[given]) if row[1]) < 20:
@@ -414,7 +434,7 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
         value = _value_of_units(table, of, rows, groups or {}, products)
         if value is not None:
             derived.append(value)
-        derived += _after_rates(table, of, rows)
+        derived += _after_rates(table, of, rows, value)
 
     # Two measures that are the same figure (counted where either holds something: two empty columns agree).
     same = []
