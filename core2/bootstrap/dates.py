@@ -292,7 +292,7 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
                 c.add("posting_name", 0.3, f"the name ({names.readable(c.column)}) is the date the books count by")
         attempt(warehouse, f"the date-order check on {table.name}",
                 partial(_first_of, warehouse, inventory, key, candidates), None)
-        business = [c for c in candidates if _business(c)]
+        business = [c for c in candidates if _business(c)] or _period_of_a_plan(table, candidates)
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:
             ranked[0].is_default = True
@@ -381,6 +381,20 @@ def _sample(t: InvTable, dialect: str) -> str:
     """The first rows of a table, enough to see how two dates of a row relate without reading all of it."""
     return D.aliased(D.first_rows(D.table_sql(t.database, t.schema, t.name, dialect), dialect, rows=200_000),
                      "s", dialect)
+
+
+# What a table of plans holds: a target, a budget, a forecast or a quota for each period.
+_PLAN_TABLES = {"target", "targets", "tgt", "budget", "budgets", "bdgt", "forecast", "forecasts", "fcst", "quota",
+                "quotas", "plan", "plans", "goal", "goals"}
+
+
+def _period_of_a_plan(table: InvTable, candidates: list[DateCandidate]) -> list[DateCandidate]:
+    """A branch's monthly targets, a budget by month: the table's only date is the period each row plans for,
+    named "target month" or "budget period", and it is that table's date, though a planned date is never an
+    event's. Without it, "targets for 2025" could not be told apart by year."""
+    said = {names.singular(w) for w in names.tokens(table.name)} | set(names.tokens(table.name))
+    planned = [c for c in candidates if c.kind == "planned" and c.granularity in ("day", "month")]
+    return planned if said & _PLAN_TABLES and len(planned) == 1 else []
 
 
 def _business(c: DateCandidate) -> bool:

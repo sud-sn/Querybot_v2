@@ -699,7 +699,7 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
             if col.role in ("key", "foreign_key", "date_key", "date", "audit", "period_key", "measure") \
                     and not counted_document:
                 continue
-            if not _attribute_worthy(column, col, kind):
+            if not _attribute_worthy(column, col, kind, table.name):
                 continue
             how = _attribute_kind(column, col, kind)
             if how is None:
@@ -821,12 +821,15 @@ _TECHNICAL = {"etl", "ext", "src", "sys", "dw", "dwh", "hash", "checksum", "rowi
               "msrepl"}
 
 
-def _attribute_worthy(column: InvColumn, col: Column, kind: str) -> bool:
+def _attribute_worthy(column: InvColumn, col: Column, kind: str, table: str = "") -> bool:
     p = col.profile
     if p is None or not p.distinct:
         return False   # never filled
     words = set(names.tokens(column.name))
-    if words & _TECHNICAL or words & AUDIT_WORDS:
+    # A word naming the table's own rows is the business, not a load: a compounding batch's BATCH_STATUS
+    # (released, rejected, quarantined) is no ETL batch.
+    own = {names.singular(w) for w in names.tokens(table)} | set(names.tokens(table))
+    if words & _TECHNICAL or words & AUDIT_WORDS - own:
         return False
     last = names.tokens(column.name)[-1:] or [""]
     if column.data_type in _NUMBERS and last[0] in names.KEY_SUFFIXES - {"code", "cd", "no"}:
