@@ -35,7 +35,7 @@ FLOW_WORDS = {"purchase", "purchased", "pch", "pur", "bought",
               "deductions", "bonus", "commission", "overtime", "whld", "hrs",
               "billed", "bill", "billing", "bil", "usage", "used", "charge", "charges", "charged", "fee", "fees",
               "premium", "premiums", "claimed", "consumption", "dispensed", "compounded", "wasted", "waste",
-              "blld", "usg"}
+              "blld", "usg", "accrued", "accrual", "accruals", "accrd"}
 
 # A fallback reading of common abbreviations (weak evidence; AI labels and admins win).
 EXPANSIONS = {

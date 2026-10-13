@@ -45,7 +45,8 @@ How to plan:
    does it go", "what do you know about customers", "what can I ask about purchasing". Put what it asks
    about in about: measure, group or date slugs, or a subject's name as written after ## in the catalog;
    leave about empty for the data as a whole. "smalltalk" for greetings and thanks. "unsupported" when
-   nothing in the catalog answers it; say why in notes.
+   nothing in the catalog answers it; say why in notes. A question that names no figure at all ("how are we
+   doing?", "show me the numbers") is no refusal: clarify, about "other", with 2-4 of the main measures.
 2. measures: the measure slugs the question names. Never swap in a different measure because it is close
    (sales is not margin, quantity is not value, count of rows is not count of orders). When the question
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
@@ -73,7 +74,8 @@ How to plan:
    when unsaid). No grain for one total.
 5. time.window, written as the user said it; never compute relative dates yourself:
    "last 6 months" -> {"kind": "last", "unit": "month", "n": 6} (complete months before the current one);
-   "this year", "year to date", "so far this year" -> {"kind": "this", "unit": "year"};
+   "this year", "year to date", "so far this year" -> {"kind": "this", "unit": "year"}; "so far", "to date" or
+   "ever" with no period named is everything up to now: no window;
    "last month" -> {"kind": "previous", "unit": "month"}; "last year" -> {"kind": "previous", "unit": "year"};
    "in March 2026" -> {"kind": "between", "start": "2026-03-01", "end": "2026-03-31"};
    "since January" -> {"kind": "since", "start": "<this year>-01-01"};
@@ -1327,6 +1329,33 @@ _LATE = re.compile(r"\b(?:late|later\s+than|delayed|delays?|missed|behind\s+sche
 _ON_TIME = re.compile(r"\bon[\s-]time\b", re.IGNORECASE)
 
 
+# "So far", "to date", "ever": everything up to now, when no period is named with it.
+_ALL_TIME = re.compile(r"\b(?:so far|to date|to this day|ever|all[- ]time|of all time|jusqu'(?:à|a) (?:pr(?:é|e)sent|"
+                       r"maintenant)|(?:à|a) ce jour|depuis (?:toujours|le d(?:é|e)but))\b", re.I)
+# A period named in the question: a year, a quarter, a month, "this", "last", "since".
+_PERIOD_SAID = re.compile(r"\b(?:year|years|month|months|quarter|quarters|week|weeks|today|yesterday|this|last|past|"
+                          r"previous|since|ytd|mtd|qtd|fy\s?\d{2,4}|(?:19|20)\d\d|q[1-4]|h[12]|t[1-4]|s[12]|"
+                          r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+                          r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|ann(?:é|e)e|mois|trimestre|"
+                          r"semaine|semestre|exercice|cette|dernier|derni(?:è|e)re|depuis)\b", re.I)
+
+
+# Why a question was refused, when the reason is that it names nothing to measure.
+_VAGUE = re.compile(r"\b(?:vague|ambiguous|unclear|too (?:broad|general)|not specific|no specific|does not specify|"
+                    r"doesn't specify|unspecified|open[- ]ended)\b", re.I)
+_WHICH_FIGURES = "Which figures would you like to see? These I can answer"
+
+
+def all_time_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """"How many loans have we charged off so far, and for how much?" was answered for this year alone (the sector
+    stress test): with no period named, "so far", "to date" and "ever" are everything up to now."""
+    window = plan.time.window if plan.kind == "query" else None
+    if window is None or window.kind == "all" or not _ALL_TIME.search(question) \
+            or _PERIOD_SAID.search(_ALL_TIME.sub(" ", question)):
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={"window": Window()})})
+
+
 def late_asked(plan: Plan, question: str) -> Plan:
     """The on-time share or the late share, as the question words it: "What share of order lines had a confirmed
     delivery date later than the requested one?" was answered with the share on time (the profitability stress test)."""
@@ -1867,6 +1896,11 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [f"{what} are members of the field {slug}, not measures: compare them by grouping the "
                               f"measure by {slug}."], ""
             continue
+        if plan.kind == "unsupported" and _VAGUE.search(" ".join(plan.notes)) and main_figures(model, question):
+            # "How are we doing?" was refused as too vague (the sector stress test): a question that names no
+            # figure is asked back, with the data's main figures to pick from.
+            plan = Plan(kind="clarify", clarify=Clarify(about="other", question=_WHICH_FIGURES,
+                                                        options=main_figures(model, question)))
         plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
                         '"follow_up"' in text)
         plan = carried(plan, history[-1].plan if history else None, reading)
@@ -1879,7 +1913,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+        for rule in (all_time_asked, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which

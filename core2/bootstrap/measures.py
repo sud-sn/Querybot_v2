@@ -194,6 +194,14 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             kind = "fact"
             evidence.append(Evidence(kind="measures", weight=1, detail=f"{len(numbers)} measure(s) and "
                                      f"{len(outgoing)} link(s) to other tables"))
+        elif not numbers and any(c.kind == "event" and c.is_default for c in roles) and any(
+                keys[j.from_table].line_numbers and set(j.from_columns) <= set(keys[j.from_table].primary_key)
+                for j in incoming):
+            # An invoice its lines point at by their key (invoice and line number), dated by when it was made, and
+            # carrying no figure itself: a document, counted, whose date its lines are dated by.
+            kind = "fact"
+            evidence.append(Evidence(kind="documents", weight=1, detail=(
+                "its lines point at it by their own key, and it is dated: documents, counted")))
         elif incoming or labels or (not numbers and len(keys[key].primary_key) == 1
                                     and _any_label(table, profiles[key], keys[key])):
             kind = "dimension"
