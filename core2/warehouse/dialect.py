@@ -428,7 +428,10 @@ def sample_clause(dialect: str, *, rows: int, total_rows: int) -> str:
     if dialect == "postgres":
         # Whole pages, as Azure SQL's: reads a fraction of a large table rather than all of it.
         return f"TABLESAMPLE SYSTEM ({percent:.4f})"
-    return f"USING SAMPLE {rows} ROWS"
+    # DuckDB's sample of a table, written after the table. Its "USING SAMPLE" belongs at the end of the query,
+    # after GROUP BY: after the table, a profile's "GROUP BY column" was a syntax error on every table of over a
+    # million rows, and the common values of its columns were never read.
+    return f"TABLESAMPLE reservoir({rows} ROWS)"
 
 
 def first_rows(name: str, dialect: str, *, rows: int) -> str:
