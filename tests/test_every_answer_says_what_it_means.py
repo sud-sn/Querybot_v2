@@ -100,7 +100,7 @@ def test_a_why_about_a_quantity_counts_its_main_unit_and_says_so(retail):
 
 def test_a_why_after_a_month_with_no_data_compares_with_the_last_month_that_has(no_april):
     payload = _answer(no_april, {"intent": "drivers", "measures": ["net_amount"], "time": {"window": MAY}})
-    assert "from $194,876.48 in March 2026 to $180,136.22 in May 2026" in payload["answer"]["headline"]
+    assert "from $194.9K in March 2026 to $180.1K in May 2026" in payload["answer"]["headline"]
     assert "Apr 2026 has no data: compared with Mar 2026, the last month before it that has." in _notes(payload)
 
 

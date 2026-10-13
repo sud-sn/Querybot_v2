@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, scoped_label,
+from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, scoped_label, spoken,
                                   span_words, versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
@@ -93,7 +93,7 @@ def _number(value: Any) -> float:
 
 
 def _signed(value: float, format_: str) -> str:
-    return ("+" if value > 0 else "") + fmt(value, format_)
+    return ("+" if value > 0 else "") + spoken(value, format_)
 
 
 # ── which periods ──────────────────────────────────────────────────────────
@@ -566,12 +566,12 @@ def _headline(label: str, format_: str, current: float, prior: float, change: fl
     if not prior and not current:
         return f"There is no {label.lower()} {now} or {before.removeprefix('in ')}."
     if not change:
-        lead = f"{label} did not change: {fmt(current, format_, unit=unit)} {now}, as {before}."
+        lead = f"{label} did not change: {spoken(current, format_, unit=unit)} {now}, as {before}."
     else:
         moved = "rose" if change > 0 else "fell"
         pct_text = f" ({pct * 100:+.1f}%)" if pct is not None else ""
-        lead = (f"{label} {moved} {fmt(abs(change), format_, unit=unit)}{pct_text}, from "
-                f"{fmt(prior, format_, unit=unit)} {before} to {fmt(current, format_, unit=unit)} {now}.")
+        lead = (f"{label} {moved} {spoken(abs(change), format_, unit=unit)}{pct_text}, from "
+                f"{spoken(prior, format_, unit=unit)} {before} to {spoken(current, format_, unit=unit)} {now}.")
     sentences = [lead]
     what = "rise" if change > 0 else "fall"
     for g in reported:

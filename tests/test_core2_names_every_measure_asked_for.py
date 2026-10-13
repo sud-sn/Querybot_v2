@@ -42,8 +42,11 @@ def test_the_leader_is_given_every_measure_asked_for():
     answer, rows = _ask(["net_amount", "cost_amount", "quantity"])
     headline = answer["answer"]["headline"]
     leader = headline.split(": ", 1)[1].split(" leads with ")[0]
-    row = next(r for r in rows if r["store_name"] == leader and f"${r['net_amount']:,.2f}" in headline)
-    assert (f"leads with ${row['net_amount']:,.2f}, and ${row['cost_amount']:,.2f} cost amount and "
+    from core2.answer.builder import spoken
+
+    row = next(r for r in rows if r["store_name"] == leader and spoken(r["net_amount"], "currency") in headline)
+    assert (f"leads with {spoken(row['net_amount'], 'currency')}, and {spoken(row['cost_amount'], 'currency')} "
+            f"cost amount and "
             f"{row['quantity']:,.0f} {row['product_unit_of_measure']} quantity, across 12 stores.") in headline, headline
 
 

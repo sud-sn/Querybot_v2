@@ -135,7 +135,10 @@ def test_the_sentence_names_the_store_with_the_most_in_all_never_one_pair(retail
         totals[r["store_name"]] = totals.get(r["store_name"], 0.0) + r["net_amount"]
     leader = max(totals, key=totals.get)
     headline = payload["answer"]["headline"]
-    assert f"{leader} leads with ${totals[leader]:,.2f}" in headline, "its rows with no category are in its total"
+    from core2.answer.builder import spoken
+
+    assert f"{leader} leads with {spoken(totals[leader], 'currency')}" in headline, \
+        "its rows with no category are in its total"
     assert "across 12 stores; its largest category is" in headline
     assert payload["key_insights"][0].startswith("The top 3 of the 12 stores"), "stores, never store-category pairs"
 

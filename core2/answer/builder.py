@@ -100,8 +100,9 @@ def _day(value: Any) -> dt.date | None:
 _LIKE_A_SIZE = {"k", "m", "b", "t", "g", "mm", "bn"}
 
 
-def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
-    """A value as a sentence writes it: $1.2M, 38.0%, 1,234, 19,000 EA, 19,000 (unit M)."""
+def fmt(value: Any, format_: str, *, unit: str | None = None, rounded: bool = False) -> str:
+    """A value as a sentence writes it: $1.2M, 38.0%, 1,234, 19,000 EA, 19,000 (unit M). ``rounded``: an amount
+    of ten thousand or more in thousands too ($733.0K), as a headline says it (spoken())."""
     number = _number(value)
     if number is None:
         return "no value" if value is None else str(value)
@@ -109,7 +110,7 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
         sign = "-" if number < 0 else ""
         number = abs(number)
         body = (f"{number / 1e9:,.2f}B" if number >= 1e9 else f"{number / 1e6:,.2f}M" if number >= 1e6
-                else f"{number:,.2f}")
+                else f"{number / 1e3:,.1f}K" if number >= 1e4 and rounded else f"{number:,.2f}")
         code = (unit or "").strip()
         if len(code) == 3 and code.isalpha():
             return f"{sign}{code.upper()} {body}"     # amounts kept apart by currency: "CAD 5.14M, USD 803,429.83"
@@ -127,6 +128,13 @@ def fmt(value: Any, format_: str, *, unit: str | None = None) -> str:
     if unit and unit.strip().casefold() in _LIKE_A_SIZE:
         return f"{text} (unit {unit.strip()})"
     return f"{text} {unit}" if unit else text
+
+
+def spoken(value: Any, format_: str, *, unit: str | None = None) -> str:
+    """An amount as a headline says it, rounded as the analyst note and the chart round it ("$733.0K", never
+    "$733,018.59" beside "$3.09M"): a sentence is read, not reconciled. The figure on its own (a one-number
+    answer, a tile, the table, the tooltip) keeps every cent."""
+    return fmt(value, format_, unit=unit, rounded=True)
 
 
 _OP_TEXT = {"gt": "above", "gte": "at least", "lt": "below", "lte": "at most"}
@@ -694,7 +702,7 @@ def _answer_title(logical: Logical, cols: _Columns, labels: dict[str, str], char
     measures = [labels[c.name] for c in cols.of("measure")]
     by = [_by_words(c, labels) for c in [*cols.of("attribute"), *cols.of("time"), *cols.of("period")]]
     if measures:
-        return chart_title(logical, _listed([measures[0], *(_lower(m) for m in measures[1:])], "and"), by)
+        return chart_title(logical, _listed([measures[0], *(_after(measures[0], m) for m in measures[1:])], "and"), by)
     if by:
         things = names.plural(by[0])
         return chart_title(logical, things[:1].upper() + things[1:], [])
@@ -843,7 +851,7 @@ def _two_groupings(lead: str, members: list[OutColumn], m: OutColumn, raw: list[
     part = max((i for i in real if name(shown[i], across) == leader), key=lambda i: _number(raw[i][m.name]) or 0.0)
     # Days of the week are always the same seven: counting them says nothing.
     among = f" across {len(totals):,} {_noun(across.label)}" if across.role != "time" else ""
-    return (f"{lead}: {leader} leads with {fmt(totals[leader], m.format)}{share}{among}; its largest "
+    return (f"{lead}: {leader} leads with {spoken(totals[leader], m.format)}{share}{among}; its largest "
             f"{_thing(down.label)} is {name(shown[part], down)}, at {value(raw[part])}.")
 
 
@@ -854,8 +862,27 @@ def _ranked_periods(logical: Logical, cols: _Columns) -> bool:
 
 
 def _lower(label: str) -> str:
-    """A name inside a sentence: "Net amount" -> "net amount"; "GMV" stays "GMV"."""
-    return label if label[1:2].isupper() else label[:1].lower() + label[1:]
+    """A name inside a sentence: "Net amount" -> "net amount"; "GMV" stays "GMV". A name in title case is lowered
+    word by word ("Net Amount" -> "net amount", never "net Amount"); a word in capitals stays ("Avg GL Balance" ->
+    "avg GL balance")."""
+    if label[1:2].isupper():
+        return label
+    words = label.split(" ")
+    titled = len(words) > 1 and all(w[:1].isupper() for w in words if len(w) > 3 and w[:1].isalpha())
+    if not titled:
+        return label[:1].lower() + label[1:]
+    return " ".join(w[:1].lower() + w[1:] if w[1:].islower() or len(w) == 1 else w for w in words)
+
+
+def _titled(label: str) -> bool:
+    words = [w for w in label.split(" ") if len(w) > 3 and w[:1].isalpha()]
+    return len(label.split(" ")) > 1 and bool(words) and all(w[:1].isupper() for w in words)
+
+
+def _after(first: str, label: str) -> str:
+    """A name listed after another in a title: as the first is written. "Net Amount and Gross Amount", never "Net
+    Amount and gross amount"; "Net amount and quantity"."""
+    return label if _titled(first) else _lower(label)
 
 
 def _moved(by: float, ratio: float | None, format_: str, unit: str | None) -> str:
@@ -866,8 +893,8 @@ def _moved(by: float, ratio: float | None, format_: str, unit: str | None) -> st
     return f"{'up' if by >= 0 else 'down'} {shown}" + (f" ({ratio * 100:+.1f}%)" if ratio is not None else "")
 
 
-def _signed(number: float, format_: str, unit: str | None = None) -> str:
-    return ("+" if number > 0 else "") + fmt(number, format_, unit=unit)
+def _signed(number: float, format_: str, unit: str | None = None, *, rounded: bool = False) -> str:
+    return ("+" if number > 0 else "") + fmt(number, format_, unit=unit, rounded=rounded)
 
 
 def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str],
@@ -902,7 +929,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         return f"{len(raw):,} {what}{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
     m = measures[0]
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
-    value = lambda r, c=m: fmt(r[c.name], c.format, unit=units.of(r))   # noqa: E731
+    value = lambda r, c=m: spoken(r[c.name], c.format, unit=units.of(r))   # noqa: E731
     lead = f"{m.label}{(' ' + before) if before else ''}{(' ' + span) if span else ''}"
     if logical.compare is not None:
         change = next((c for c in cols.columns if c.role == "change" and c.measure == m.measure), None)
@@ -932,7 +959,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             order = sorted(range(len(raw)), key=lambda i: -changes[i])
             hi, lo = order[0], order[-1]
             who = lambda i: str(shown[i][members[0].name])   # noqa: E731
-            by = lambda i: _signed(changes[i], m.format, units.of(raw[i]))   # noqa: E731
+            by = lambda i: _signed(changes[i], m.format, units.of(raw[i]), rounded=True)   # noqa: E731
             many = f"{len(raw)} {_noun(members[0].label)}{' shown' if logical.limit else ''}"
             if changes[hi] > 0 and changes[lo] < 0:
                 said = f"{who(hi)} rose most ({by(hi)}); {who(lo)} fell most ({by(lo)})"
@@ -1063,13 +1090,13 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         if ranked_by is not None:
             high = max(named, key=lambda i: _number(raw[i][ranked_by.name]) or float("-inf"))
             row = raw[high]
-            rest = [_valued(fmt(row[c.name], c.format, unit=units.of(row)), c) for c in measures
+            rest = [_valued(spoken(row[c.name], c.format, unit=units.of(row)), c) for c in measures
                     if c is not ranked_by and c.name in row]
             joined = ", ".join(rest[:-1]) + f" and {rest[-1]}" if len(rest) > 1 else "".join(rest)
             return (f"{lead}: {shown[high][g.name]} has the highest {_lower(ranked_by.label)}, at "
                     f"{value(row, ranked_by)}{(', with ' + joined) if joined else ''}{count}.")
         # The other measures asked for, for the same leader: "and $456K gross profit".
-        others = [_valued(fmt(top[c.name], c.format, unit=units.of(top)), c) for c in measures[1:] if c.name in top]
+        others = [_valued(spoken(top[c.name], c.format, unit=units.of(top)), c) for c in measures[1:] if c.name in top]
         joined = ", ".join(others[:-1]) + f" and {others[-1]}" if len(others) > 1 else "".join(others)
         also = f", and {joined}{',' if count else ''}" if others else ""
         # Days between two dates: more is longer, not a lead ("USPS takes longest, at 4.3 days"). A ratio ranked
@@ -1134,9 +1161,17 @@ def _led_by_period(logical: Logical, period: OutColumn, member: OutColumn, m: Ou
     among = f", among the {count:,} {_noun(member.label)}" if count > 1 else ""
     if len(whole) == 1:
         return f"{who[0]} led in {name(whole[0])} with {value(raw[leaders[0]])}{among}"
+    unit = grain.replace("fiscal_", "fiscal ")
     if len(set(who)) == 1:
-        unit = grain.replace("fiscal_", "fiscal ")
         return f"{who[0]} led in every {unit} from {name(whole[0])} to {name(whole[-1])}{among}"
+    # One member leading most of the periods is the story, not who led the first and the last ("Central led in
+    # Jan 2025 ($43.3K); Central in Dec 2025 ($52.8K)" said nothing of the months between).
+    top = max(dict.fromkeys(who), key=who.count)
+    if who.count(top) * 2 > len(whole):
+        return f"{top} led in {who.count(top):,} of the {len(whole):,} {unit}s{among}"
+    if who[0] == who[-1]:
+        return (f"{who[0]} led in {name(whole[0])} ({value(raw[leaders[0]])}) and in {name(whole[-1])} "
+                f"({value(raw[leaders[-1]])})")
     return (f"{who[0]} led in {name(whole[0])} ({value(raw[leaders[0]])}); "
             f"{who[-1]} in {name(whole[-1])} ({value(raw[leaders[-1]])})")
 
@@ -1572,12 +1607,12 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             renderable, allowed = [*renderable, "scatter"], [*allowed, "scatter"]
         if geo is not None:               # places: also as a map
             renderable, allowed = [*renderable, "map"], [*allowed, "map"]
-    measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "and")
+    measure = labels[m.name] if len(ys) == 1 or compare else _listed([labels[ys[0]], *(_after(labels[ys[0]], labels[y]) for y in ys[1:])], "and")
     bys = [_by_words(c, labels) for c in [*members, *periods]]
     if together:
         bys = [f"pair of {names.plural(_thing(labels[x.name]))}"]
     measure_fr = labels[m.name] if len(ys) == 1 or compare else _listed(
-        [labels[ys[0]], *(_lower(labels[y]) for y in ys[1:])], "et")
+        [labels[ys[0]], *(_after(labels[ys[0]], labels[y]) for y in ys[1:])], "et")
     return {"title": chart_title(logical, measure, bys, unit), "title_fr": chart_title(logical, measure_fr, bys, unit,
                                                                                       lang="fr"),
             "chart_type": kind, "x_key": x.name, "y_keys": ys, "rows": rows, "other": other,

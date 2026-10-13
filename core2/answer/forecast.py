@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import answer_badges, conditions_tail, fmt, frame, scoped_label
+from core2.answer.builder import answer_badges, conditions_tail, fmt, frame, scoped_label, spoken
 from core2.compile.compiler import compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan, TimeSpec
@@ -329,16 +329,16 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
     span = label_of(first_future) if horizon == 1 else f"{label_of(first_future)} to {label_of(last_future)}"
     per = {"day": "a day", "week": "a week", "month": "a month", "quarter": "a quarter", "year": "a year"}[unit]
     if horizon == 1:
-        expected = f"{fmt(fit.values[0], fmt_)} (95% range {fmt(fit.low[0], fmt_)} to {fmt(fit.high[0], fmt_)})"
+        expected = f"{spoken(fit.values[0], fmt_)} (95% range {spoken(fit.low[0], fmt_)} to {spoken(fit.high[0], fmt_)})"
     elif snapshot or m.format == "percent" or (m.measure and m.measure.additivity == "non_additive") or (
             isinstance(m.expr, DaysBetween) and m.expr.agg != "sum"):     # an average of days does not add up
-        expected = (f"from {fmt(fit.values[0], fmt_)} to {fmt(fit.values[-1], fmt_)} "
-                    f"(95% range by {label_of(last_future)}: {fmt(fit.low[-1], fmt_)} to {fmt(fit.high[-1], fmt_)})")
+        expected = (f"from {spoken(fit.values[0], fmt_)} to {spoken(fit.values[-1], fmt_)} "
+                    f"(95% range by {label_of(last_future)}: {spoken(fit.low[-1], fmt_)} to {spoken(fit.high[-1], fmt_)})")
     else:
-        expected = (f"about {fmt(total / horizon, fmt_)} {per}, {fmt(total, fmt_)} in all (95% range by "
-                    f"{label_of(last_future)}: {fmt(fit.low[-1], fmt_)} to {fmt(fit.high[-1], fmt_)})")
+        expected = (f"about {spoken(total / horizon, fmt_)} {per}, {spoken(total, fmt_)} in all (95% range by "
+                    f"{label_of(last_future)}: {spoken(fit.low[-1], fmt_)} to {spoken(fit.high[-1], fmt_)})")
     how = ("the trend and the seasonal pattern" if fit.method == "trend and seasonality" else "the trend")
-    headline = (f"{scoped_label(logical, m.label)} was {fmt(last_value, fmt_)} in {label_of(last_actual)}, the last complete "
+    headline = (f"{scoped_label(logical, m.label)} was {spoken(last_value, fmt_)} in {label_of(last_actual)}, the last complete "
                 f"{unit}. Forecast for {span}, from {how} of {len(values)} {unit}s: {expected}.")
     notes.append(f"Forecast from {how} of {len(values)} complete {unit}s ({label_of(starts[0])} to "
                  f"{label_of(starts[-1])}); the range is the 95% prediction interval.")

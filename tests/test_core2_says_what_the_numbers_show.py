@@ -22,7 +22,7 @@ import json
 
 import pytest
 
-from core2.answer.builder import fmt
+from core2.answer.builder import fmt, spoken
 from core2.plan.values import MemberIndex
 from core2.service import Services, Session, answer_question
 from core2.warehouse.runner import DuckDBWarehouse
@@ -154,7 +154,7 @@ def test_a_ranking_of_months_names_the_leading_month_and_is_drawn_as_ranked_bars
     top = _months_2025(con, 3)
     (first, a), (second, b) = top[0], top[1]
     assert payload["answer"]["headline"] == (f"{first:%b %Y} had the highest net amount in 2025: "
-                                             f"{fmt(a, 'currency')}, then {second:%b %Y} ({fmt(b, 'currency')}).")
+                                             f"{spoken(a, 'currency')}, then {second:%b %Y} ({spoken(b, 'currency')}).")
     chart = payload["chart"]
     assert chart["chart_type"] == "bar" and chart["chart_spec"]["x"]["role"] == "dimension"
     assert [r[chart["x_key"]] for r in chart["rows"]] == [f"{month:%b %Y}" for month, _ in top]
@@ -194,7 +194,7 @@ def test_when_every_member_fell_none_is_said_to_have_risen(retail):
     worst = min(change, key=change.__getitem__)
     headline = _ask(model, con, _compare("2025-01-01"))[0]["answer"]["headline"]
     assert headline == (f"Net amount in January 2025 against December 2024: all {len(change)} regions fell; "
-                        f"{worst} fell most ({fmt(change[worst], 'currency')}).")
+                        f"{worst} fell most ({spoken(change[worst], 'currency')}).")
 
 
 def test_a_rise_is_signed_and_a_fall_is_signed(retail):
@@ -204,8 +204,8 @@ def test_a_rise_is_signed_and_a_fall_is_signed(retail):
     best, worst = max(change, key=change.__getitem__), min(change, key=change.__getitem__)
     assert change[best] > 0 > change[worst]
     headline = _ask(model, con, _compare("2026-05-01"))[0]["answer"]["headline"]
-    assert f"{best} rose most (+{fmt(change[best], 'currency')})" in headline
-    assert f"{worst} fell most ({fmt(change[worst], 'currency')})" in headline
+    assert f"{best} rose most (+{spoken(change[best], 'currency')})" in headline
+    assert f"{worst} fell most ({spoken(change[worst], 'currency')})" in headline
 
 
 # ── series ─────────────────────────────────────────────────────────────────

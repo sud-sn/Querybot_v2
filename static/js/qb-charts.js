@@ -400,6 +400,28 @@
     return any ? out : null;
   }
 
+  // Where each point of a labelled line says its value: above it, unless the line climbs steeply away from it,
+  // where a label above is crossed by the climb ("$180.6K" under the line rising to a one-off month). Such a
+  // point says it below, or beside it in the middle of a climb (to the side the line is not), or not at all when
+  // it sits too near the foot of the chart for a label below (the tooltip still has it). The axis holds zero.
+  function labelSides(values) {
+    const known = values.filter(v => v != null);
+    const lo = Math.min(0, ...known), hi = Math.max(0, ...known);
+    const span = hi - lo;
+    if (!(span > 0)) return values.map(() => 'top');
+    const steep = 0.1 * span;
+    return values.map((v, i) => {
+      if (v == null) return 'top';
+      const before = values[i - 1] == null ? v : values[i - 1];
+      const after = values[i + 1] == null ? v : values[i + 1];
+      const up = Math.max(before, after) - v;
+      if (up <= steep) return 'top';
+      if (after - v > steep && v - before > steep) return 'left';
+      if (before - v > steep && v - after > steep) return 'right';
+      return (v - lo) / span > 0.12 ? 'bottom' : 'none';
+    });
+  }
+
   // ── On a dashboard tile ───────────────────────────────────────────────────
   // The lowest point of a single line, named ("Low $168.0K") below it -- never on a line that does not dip.
   function lowPoint(values, labels, written, c) {
@@ -1182,6 +1204,11 @@
       const pointLabel = r => String(xKey ? (r && r[xKey] != null ? r[xKey] : '') : '');
       const named = new Set(rows.map((r, i) => [Math.abs(num(r && r[yKey]) || 0), i])
         .sort((a, b) => b[0] - a[0]).slice(0, 3).map(([, i]) => i));
+      // The named dots are the furthest out, so most often at the right edge, where a name set to their right
+      // was cut off by the chart's edge ("Riverside Sto"): a dot in the right half is named on its left.
+      const xs = rows.map(r => num(r && r[yKey])).filter(v => v != null);
+      const middle = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0;
+      const nameSide = v => (v != null && xs.length > 1 && v > middle ? 'left' : 'right');
       const valueAxis = (col, withName) => ({
         type: 'value', name: withName ? columnLabel(payload, col) : undefined,
         nameLocation: 'middle', nameGap: 28,
@@ -1207,7 +1234,9 @@
           // The three furthest out on the first measure are named beside their dot; the rest in the tooltip.
           data: rows.map((r, i) => ({
             value: [num(r && r[yKey]), num(r && r[y2]), pointLabel(r)],
-            label: named.has(i) ? {show: true, position: 'right', distance: 6, color: c.ink2, fontSize: 12,
+            // On the surface's own colour, so a dot behind a name never cuts through it.
+            label: named.has(i) ? {show: true, position: nameSide(num(r && r[yKey])), distance: 6, color: c.ink2,
+                                   backgroundColor: c.surface, padding: [1, 3], borderRadius: 3, fontSize: 12,
                                    fontFamily: c.font, formatter: p => labelFmt(p.value[2])} : undefined,
           })),
           itemStyle: {color: colors[0], opacity: 0.9, borderColor: c.surface, borderWidth: 2},
@@ -1490,14 +1519,17 @@
         const lowRuns = low.length ? low[0].label.align : '';
         const crowded = lowAt < 0 ? [] : lowRuns === 'left' ? [lowAt + 1] : lowRuns === 'right' ? [lowAt - 1]
           : [lowAt - 1, lowAt + 1];
+        const placed = pointLabels ? labelSides(values) : null;
         return {
-          name: k, type: 'line', data: values,
+          name: k, type: 'line',
+          data: placed ? values.map((v, j) => (placed[j] === 'top' || placed[j] === 'none' ? v
+            : {value: v, label: {position: placed[j]}})) : values,
           smooth: smooth ? 0.35 : false,
           smoothMonotone: smooth ? 'x' : undefined,
           label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
                                 fontFamily: c.font,
-                                formatter: p => (p.dataIndex === lowAt || crowded.includes(p.dataIndex) ? ''
-                                  : valueFmt(p.value, k, true))} : undefined,
+                                formatter: p => (p.dataIndex === lowAt || crowded.includes(p.dataIndex)
+                                  || placed[p.dataIndex] === 'none' ? '' : valueFmt(p.value, k, true))} : undefined,
           labelLayout: pointLabels ? {hideOverlap: true} : undefined,
           showSymbol: rows.length <= MARKER_MAX_POINTS,
           symbol: 'circle', symbolSize: 8,
@@ -1704,6 +1736,7 @@
     const existing = echarts.getInstanceByDom(el);
     if (existing) existing.dispose();
     const chart = echarts.init(el, null, {renderer: 'svg'});
+    el._qbDrawn = {payload, opts};
     const draw = () => {
       // Drawn again before the box settled: this chart is gone.
       if (chart.isDisposed && chart.isDisposed()) return;
@@ -1748,6 +1781,7 @@
   function update(chart, payload, opts) {
     if (!chart || !payload) return chart;
     const el = chart.getDom();
+    el._qbDrawn = {payload, opts};
     const option = buildOption(payload, layoutFor(el, opts));
     fitToBox(option, el, opts);
     chart.setOption(option, true);
@@ -1757,6 +1791,25 @@
       });
     }
     return chart;
+  }
+
+  // A chart's colours are read from the page's theme when it is drawn: a reader who turns the page dark (or
+  // light, or whose system does under Auto) had every chart on it keep the other theme's ink -- labels too dim
+  // to read on the dark page, gridlines glaring over the data. Each chart on the page is drawn again, in place,
+  // in the colours the page now has.
+  function redrawAll() {
+    const echarts = global.echarts;
+    if (!echarts || !global.document) return;
+    global.document.querySelectorAll('[_echarts_instance_]').forEach(el => {
+      const chart = echarts.getInstanceByDom(el);
+      if (!chart || (chart.isDisposed && chart.isDisposed()) || !el._qbDrawn) return;
+      try { update(chart, el._qbDrawn.payload, el._qbDrawn.opts); } catch (e) { /* the next draw shows it */ }
+    });
+  }
+  if (global.addEventListener) {
+    global.addEventListener('qb-theme-change', redrawAll);
+    const scheme = global.matchMedia ? global.matchMedia('(prefers-color-scheme: dark)') : null;
+    if (scheme && scheme.addEventListener) scheme.addEventListener('change', redrawAll);
   }
 
   // ── A number counting up ─────────────────────────────────────────────────
@@ -1817,6 +1870,7 @@
     buildOption,
     render,
     update,
+    redrawAll,
     fit,
     offeredTypes,
     formatFor,
