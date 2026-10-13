@@ -53,6 +53,9 @@ PAGES = {
     "portal_kb.html": dict(
         user=USER, pending_count=3, saved=False, semantic_tables=[KB_TABLE],
         schemas=["DW"], selected_schema="DW", visible_tables=[KB_TABLE]),
+    "portal_home.html": dict(
+        user=USER, client={"client_name": "Ventes"}, asks=True, news=None, figures_wanted=True, boards=[],
+        hello={"name": "Ada", "workspace": "Ventes", "data_to": None, "learned": None}, data_to="", learned_when=""),
     # Reached from a link in an email, signed in or not.
     "portal_unsubscribe.html": dict(
         ok=True, done=False, token="t.s", kind="follow", name="Ventes", address="ada@example.com"),

@@ -1,0 +1,144 @@
+{% extends "portal_base.html" %}
+{% from "icons.html" import ic %}
+{% block title %}{{ t('ui.title.home') }} — {{ t('ui.title.suffix') }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ asset('css/home.css') }}">
+{% endblock %}
+
+{# A dashboard's first tab in miniature: each tile a box where the grid puts it (12 columns, rows half as tall),
+   marked by its kind. No data is read, so the card never shows a figure the dashboard would not. #}
+{% macro miniature(layout) -%}
+{% set rows = (layout | map(attribute='y') | list | max if layout else 0) %}
+{% set bottom = namespace(v=6) %}
+{% for b in layout %}{% if b.y + b.h > bottom.v %}{% set bottom.v = b.y + b.h %}{% endif %}{% endfor %}
+<svg class="qb-graphic home-board-mini" viewBox="0 0 120 {{ [bottom.v * 5, 48] | max }}" preserveAspectRatio="xMidYMin slice" aria-hidden="true" focusable="false">
+  {% for b in layout %}
+  {% set x = b.x * 10 + 1 %}{% set y = b.y * 5 + 1 %}{% set w = b.w * 10 - 2 %}{% set h = b.h * 5 - 2 %}
+  <rect class="home-mini-box" x="{{ x }}" y="{{ y }}" width="{{ w }}" height="{{ h }}" rx="2"/>
+  {% if b.kind == 'number' %}
+  <rect class="home-mini-ink" x="{{ x + 3 }}" y="{{ y + h / 2 - 1.5 }}" width="{{ [w * 0.45, 3] | max }}" height="3" rx="1"/>
+  {% elif b.kind == 'line' %}
+  <polyline class="home-mini-line" points="{{ x + 3 }},{{ y + h * 0.7 }} {{ x + w * 0.3 }},{{ y + h * 0.5 }} {{ x + w * 0.55 }},{{ y + h * 0.62 }} {{ x + w * 0.8 }},{{ y + h * 0.3 }} {{ x + w - 3 }},{{ y + h * 0.38 }}"/>
+  {% elif b.kind == 'table' %}
+  {% for i in range(3) %}<rect class="home-mini-rule" x="{{ x + 3 }}" y="{{ y + 3 + i * (h - 6) / 3 }}" width="{{ w - 6 }}" height="1"/>{% endfor %}
+  {% else %}
+  {% for i in range(3) %}<rect class="home-mini-bar" x="{{ x + 3 + i * (w - 6) / 3 }}" y="{{ y + h - 3 - (h - 6) * (0.9 - i * 0.25) }}" width="{{ (w - 6) / 3 - 2 }}" height="{{ (h - 6) * (0.9 - i * 0.25) }}" rx="1"/>{% endfor %}
+  {% endif %}
+  {% endfor %}
+</svg>
+{%- endmacro %}
+
+{% block content %}
+<div class="home">
+  <header class="home-head">
+    <div class="home-head-text">
+      <h1 class="home-title">{% if hello.name %}{{ t('ui.home.welcome_name', name=hello.name) }}{% else %}{{ t('ui.home.welcome') }}{% endif %}</h1>
+      {% if hello.workspace or data_to %}
+      <p class="home-sub">{{ hello.workspace }}{% if hello.workspace and data_to %} · {% endif %}{% if data_to %}{{ t('ui.home.data_to', date=data_to) }}{% endif %}</p>
+      {% endif %}
+    </div>
+    {% if learned_when %}<span class="home-learned" title="{{ t('ui.home.learned_hint') }}">{{ ic("clock", 14) }}<span>{{ learned_when }}</span></span>{% endif %}
+  </header>
+
+  <nav class="home-actions" aria-label="{{ t('ui.home.actions') }}">
+    {% if asks %}
+    <a class="home-action" href="/portal/chat?new=1">
+      <span class="home-action-icon is-ask">{{ ic("chat", 18) }}</span>
+      <span><strong>{{ t('ui.home.ask.title') }}</strong><small>{{ t('ui.home.ask.body') }}</small></span>
+    </a>
+    <a class="home-action" href="/portal/chat?new=1&amp;compose=dashboard">
+      <span class="home-action-icon is-dash">{{ ic("dashboard", 18) }}</span>
+      <span><strong>{{ t('ui.home.dash.title') }}</strong><small>{{ t('ui.home.dash.body') }}</small></span>
+    </a>
+    <a class="home-action" href="/portal/kb">
+      <span class="home-action-icon is-guide">{{ ic("book", 18) }}</span>
+      <span><strong>{{ t('ui.home.guide.title') }}</strong><small>{{ t('ui.home.guide.body') }}</small></span>
+    </a>
+    {% endif %}
+    <a class="home-action" href="/portal/notifications">
+      <span class="home-action-icon is-alert">{{ ic("bell", 18) }}</span>
+      <span><strong>{{ t('ui.home.alerts.title') }}</strong><small>{{ t('ui.home.alerts.body') }}</small></span>
+    </a>
+  </nav>
+
+  {% if news %}
+  <section class="home-news" id="homeNews" data-version="{{ news.version }}" aria-labelledby="homeNewsTitle">
+    <div class="home-news-text">
+      <h2 id="homeNewsTitle">{{ plural('ui.home.news.title', news.questions | length) }}</h2>
+      <p>{{ t('ui.home.news.body') }}</p>
+      <ul class="home-news-questions">
+        {% for q in news.questions %}<li><a href="/portal/chat?new=1&amp;ask={{ q | urlencode }}">{{ q }}</a></li>{% endfor %}
+      </ul>
+    </div>
+    <div class="home-news-actions">
+      <a class="btn btn-shell home-news-try" href="/portal/chat?new=1&amp;ask={{ news.questions[0] | urlencode }}">{{ t('ui.home.news.try') }}</a>
+      <button type="button" class="btn btn-link home-news-later" id="homeNewsLater">{{ t('ui.home.news.later') }}</button>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if figures_wanted %}
+  <section class="home-figures" id="homeFigures" aria-label="{{ t('ui.home.figures') }}" aria-busy="true">
+    {% for _ in range(4) %}<div class="home-figure is-loading" aria-hidden="true"><span class="home-skel"></span><span class="home-skel is-big"></span><span class="home-skel is-line"></span></div>{% endfor %}
+    <p class="sr-only">{{ t('ui.home.figures.loading') }}</p>
+  </section>
+  {% endif %}
+
+  <section class="home-boards" aria-labelledby="homeBoardsTitle">
+    <div class="home-section-head">
+      <h2 id="homeBoardsTitle">{{ t('ui.home.boards') }}</h2>
+      <a class="btn btn-secondary btn-sm" href="/portal/dashboard">{{ ic("dashboard", 16) }}<span>{{ t('ui.home.boards.all') }}</span></a>
+    </div>
+    {% if boards %}
+    <div class="home-board-grid">
+      {% for b in boards %}
+      <a class="home-board" href="/portal/dashboard?dashboard_id={{ b.id }}">
+        <span class="home-board-preview">{{ miniature(b.layout) }}</span>
+        <strong class="home-board-name">{{ b.name }}</strong>
+        <small class="home-board-meta">{{ plural('ui.home.board.tiles', b.tiles) }} · {% if b.mine %}{% if b.shared %}{{ t('ui.home.board.team') }}{% else %}{{ t('ui.home.board.yours') }}{% endif %}{% elif b.owner %}{{ t('ui.home.board.from', name=b.owner) }}{% else %}{{ t('ui.home.board.team') }}{% endif %}</small>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="home-boards-empty">
+      <p>{{ t('ui.home.boards.none') }}</p>
+      {% if asks %}<a class="btn btn-primary btn-sm" href="/portal/chat?new=1&amp;compose=dashboard">{{ ic("plus", 16) }}<span>{{ t('ui.dash.describe') }}</span></a>{% endif %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // New questions: "Not now" puts the banner away until Learn runs again (its version), on this device.
+  var news = document.getElementById('homeNews');
+  if (news) {
+    var key = 'qb.home.news';
+    var version = news.getAttribute('data-version') || '';
+    try { if (localStorage.getItem(key) === version) news.hidden = true; } catch (_) {}
+    var later = document.getElementById('homeNewsLater');
+    if (later) later.addEventListener('click', function () {
+      news.hidden = true;
+      try { localStorage.setItem(key, version); } catch (_) {}
+    });
+  }
+  // The headline figures: drawn by their own request, so a slow warehouse never holds the page.
+  var figures = document.getElementById('homeFigures');
+  if (!figures) return;
+  fetch('/portal/home/figures', {credentials: 'same-origin', headers: {'Accept': 'text/html'}})
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+    .then(function (html) {
+      figures.innerHTML = html;
+      figures.setAttribute('aria-busy', 'false');
+      if (!figures.querySelector('.home-figure')) figures.classList.add('is-empty');
+    })
+    .catch(function () {
+      figures.innerHTML = '<p class="home-figures-note"></p>';
+      figures.firstChild.textContent = window.qbT('ui.home.figures.failed');
+      figures.setAttribute('aria-busy', 'false');
+      figures.classList.add('is-empty');
+    });
+})();
+</script>
+{% endblock %}

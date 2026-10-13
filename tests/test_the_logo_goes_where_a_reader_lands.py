@@ -1,8 +1,7 @@
-"""The logo goes where a reader lands after signing in.
+"""The logo goes Home.
 
-Signing in lands a reader in the chat when their workspace has it on, on the
-dashboards otherwise; the logo in the menu still went to the dashboards. It now
-goes through /portal/home, which follows the same rule.
+Signing in lands a reader who may ask on Home (portal_home.html), and on the dashboards otherwise; the logo in the
+menu goes through /portal/home, which is that page for an asker and sends anyone else where they land.
 """
 
 from __future__ import annotations
@@ -38,9 +37,14 @@ def _home(store, *, chat: bool, signed_in: bool = True):
         return asyncio.run(routes.portal_home(MagicMock()))
 
 
-def test_with_the_chat_on_the_logo_goes_to_the_chat(fresh_store):
-    response = _home(fresh_store, chat=True)
-    assert response.status_code == 303 and response.headers["location"] == "/portal/chat"
+def test_with_the_chat_on_the_logo_goes_home(fresh_store):
+    from portal import routes
+
+    assert routes._landing({"id": 1, "account_id": "x", "role": "analyst"}) == "/portal/dashboard"
+    account_id = f"acct{os.urandom(4).hex()}"
+    fresh_store.upsert_client(account_id, "Test Ltd")
+    fresh_store.update_client_meta(account_id, chat_ui_enabled=1)
+    assert routes._landing({"id": 1, "account_id": account_id, "role": "analyst"}) == "/portal/home"
 
 
 def test_with_the_chat_off_it_goes_to_the_dashboards(fresh_store):

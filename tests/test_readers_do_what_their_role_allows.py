@@ -201,7 +201,7 @@ class TestAnAsker:
     def test_asks_and_keeps_answers_but_does_not_share(self, app, workspace):
         _uid, email = _reader(app, workspace, "asker")
         client, home = _signed_in(app, workspace, email)
-        assert home == "/portal/chat"
+        assert home == "/portal/home"
         assert client.get("/portal/chat").status_code == 200
         board = app.store.create_dashboard(workspace, _uid, "t", "My answers")
         page = client.get(f"/portal/dashboard?dashboard_id={board['id']}").text
@@ -263,7 +263,7 @@ class TestACreator:
     def test_does_everything_a_reader_can(self, app, workspace):
         _uid, email = _reader(app, workspace, "creator")
         client, home = _signed_in(app, workspace, email)
-        assert home == "/portal/chat"
+        assert home == "/portal/home"
         board = app.store.create_dashboard(workspace, _uid, "t", "Mine")
         page = client.get(f"/portal/dashboard?dashboard_id={board['id']}").text
         assert 'id="dashShareButton"' in page and "Creator" in page

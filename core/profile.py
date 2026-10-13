@@ -54,6 +54,7 @@ def start_choices(user: dict) -> list[dict]:
     choices = [{"value": "", "label_key": "ui.profile.start.default"}]
     client = store.get_client(str(user.get("account_id") or "")) or {}
     if client.get("chat_ui_enabled") and can(user, "ask"):
+        choices.append({"value": "home", "label_key": "ui.profile.start.home"})
         choices.append({"value": "chat", "label_key": "ui.profile.start.chat"})
     choices.append({"value": "dashboards", "label_key": "ui.profile.start.dashboards"})
     for board in store.list_dashboards(str(user["account_id"]), int(user["id"])):
@@ -73,9 +74,9 @@ def start_path(user: dict | None) -> str:
         return ""
     from core.portal_roles import can
 
-    if chosen == "chat":
+    if chosen in ("chat", "home"):
         client = store.get_client(str(user.get("account_id") or "")) or {}
-        return "/portal/chat" if client.get("chat_ui_enabled") and can(user, "ask") else ""
+        return f"/portal/{chosen}" if client.get("chat_ui_enabled") and can(user, "ask") else ""
     if chosen == "dashboards":
         return "/portal/dashboard"
     found = re.fullmatch(r"dashboard:(\d+)", chosen)

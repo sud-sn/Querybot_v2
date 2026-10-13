@@ -136,14 +136,14 @@ class TestStartPage:
     def test_signing_in_lands_on_the_page_the_reader_chose(self, app, retail):  # noqa: F811
         store = app.store
         sam = _owner(store)
-        assert _sign_in(app, sam)[1] == "/portal/chat", "the workspace's own: the chat"
+        assert _sign_in(app, sam)[1] == "/portal/home", "the workspace's own: Home"
         board, _ = _board(store, retail, sam)
         client = _signed_in(app, sam)
         client.post("/portal/settings/profile", data=_profile_form(sam, start_page=f"dashboard:{board['id']}"))
         assert _sign_in(app, sam)[1] == f"/portal/dashboard?dashboard_id={board['id']}"
         client.post("/portal/settings/profile", data=_profile_form(sam, start_page="dashboards"))
         assert _sign_in(app, sam)[1] == "/portal/dashboard"
-        assert client.get("/portal/home", follow_redirects=False).headers["location"] == "/portal/dashboard"
+        assert client.get("/portal/home", follow_redirects=False).status_code == 200, "Home is a page of its own"
 
     def test_a_dashboard_no_longer_shared_sends_them_where_everyone_goes(self, app, retail):  # noqa: F811
         store = app.store

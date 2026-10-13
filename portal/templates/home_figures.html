@@ -1,0 +1,30 @@
+{# Home's headline figures (portal/home.py figures), put into the page by its script. #}
+{% if figures is none %}
+<p class="home-figures-note">{{ t('ui.home.figures.failed') }}</p>
+{% elif not figures %}
+<p class="home-figures-note">{{ t('ui.home.figures.none') }}</p>
+{% else %}
+{% for f in figures %}
+{% set tag = 'a' if asks else 'div' %}
+<{{ tag }} class="home-figure"{% if asks %} href="/portal/chat?new=1&amp;ask={{ f.question | urlencode }}" title="{{ t('ui.home.figure.ask', title=f.title) }}"{% endif %}>
+  <span class="home-figure-label">{{ f.title }}</span>
+  {% if f.period %}<span class="home-figure-period">{{ f.period }}</span>{% endif %}
+  <span class="home-figure-value" title="{{ f.full }}">{{ f.value }}</span>
+  {% set change = f.change %}
+  {% if change and change.direction %}
+  {% set _moved = (change.change if change.direction == 'flat' else (change.pct or change.change))|replace('+', '')|replace('-', '') %}
+  {% set _good = change.good if change.good is defined else change.direction == 'up' %}
+  <span class="home-figure-change{% if change.direction != 'flat' and _good is not none %} {{ 'is-good' if _good else 'is-bad' }}{% endif %}" title="{{ t('ui.kpi.was', change=change.change, period=change.vs, before=change.before) }}"><span aria-hidden="true">{% if change.direction == 'up' %}▲{% elif change.direction == 'down' %}▼{% else %}—{% endif %}</span><span class="sr-only">{{ enum_label('direction', change.direction) }} </span>{{ _moved }}</span>
+  <span class="home-figure-vs">{{ t('ui.kpi.vs', period=change.vs) }}</span>
+  {% endif %}
+  {% if f.trend and f.trend.path %}
+  <svg class="qb-graphic kpi-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="{{ t('ui.kpi.trend', span=f.trend.span or '') }}">
+    <title>{{ t('ui.kpi.trend', span=f.trend.span or '') }}</title>
+    {% if f.trend.area %}<path class="kpi-spark-area" d="{{ f.trend.area }}"/>{% endif %}
+    <path d="{{ f.trend.path }}"/>
+    {% if f.trend.tail %}<path class="kpi-spark-tail" d="{{ f.trend.tail }}"/>{% endif %}
+  </svg>
+  {% endif %}
+</{{ tag }}>
+{% endfor %}
+{% endif %}

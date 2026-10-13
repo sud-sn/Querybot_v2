@@ -968,8 +968,8 @@ def _linked_workspace(value: str | None) -> str:
 
 
 def _landing(user: dict | None) -> str:
-    """Where a reader lands: the page they chose in their profile when they may still open it; else the chat, where
-    questions are asked, when the workspace has it on."""
+    """Where a reader lands: the page they chose in their profile when they may still open it; else Home, where
+    questions start, when the workspace has its chat on and they may ask; else their dashboards."""
     try:
         client = store.get_client((user or {}).get("account_id") or "") or {}
     except Exception:  # noqa: BLE001 - an unreadable workspace lands where it always did
@@ -979,16 +979,81 @@ def _landing(user: dict | None) -> str:
     chosen = start_path(user)
     if chosen:
         return chosen
-    return "/portal/chat" if client.get("chat_ui_enabled") and can_do(user, "ask") else "/portal/dashboard"
+    return "/portal/home" if client.get("chat_ui_enabled") and can_do(user, "ask") else "/portal/dashboard"
 
 
-@router.get("/home")
+def _learned_when(learned: _dt.datetime | None, today: _dt.date, lang: str) -> str:
+    """When Learn last ran, as Home's chip says it: today, yesterday, N days ago, or the day."""
+    if learned is None:
+        return ""
+    from core.i18n import format_date, t as _t
+
+    days = (today - learned.date()).days
+    if days <= 0:
+        return _t("ui.home.learned_today", lang=lang)
+    if days == 1:
+        return _t("ui.home.learned_yesterday", lang=lang)
+    if days < 7:
+        return _t("ui.home.learned_days", lang=lang, count=days)
+    return _t("ui.home.learned_on", lang=lang, date=format_date(learned.date(), "day_month_short_year", lang))
+
+
+def _home_for(user: dict, client: dict) -> bool:
+    """Home is for a reader who may ask: its figures are new questions run for them. Anyone else's home is
+    where they land (a Viewer opens the dashboards shared with them, and nothing else)."""
+    return bool(client.get("chat_ui_enabled")) and can_do(user, "ask")
+
+
+@router.get("/home", response_class=HTMLResponse)
 async def portal_home(request: Request):
-    """The logo's link: where this reader lands, as after signing in."""
+    """Home: a welcome, what to do next, new questions Learn found, the headline figures (drawn after the page,
+    from /portal/home/figures) and the reader's dashboards (portal/home.py)."""
     user = _get_portal_user(request)
     if not user:
         return _login_redirect(request)
-    return RedirectResponse(_landing(user), status_code=303)
+    client = store.get_client(user["account_id"]) or {}
+    if not _home_for(user, client):
+        return RedirectResponse(_landing(user), status_code=303)
+    from core.i18n import format_date
+    from portal import home
+
+    lang = _request_language(request)
+    today = _dt.date.today()
+    hello = await asyncio.to_thread(home.welcome, user, client, today=today)
+    return _resp(request, "portal_home.html", {
+        "user": user,
+        "client": client,
+        "hello": hello,
+        "data_to": format_date(hello["data_to"], "day_month_short_year", lang) if hello["data_to"] else "",
+        "learned_when": _learned_when(hello["learned"], today, lang),
+        "asks": True,
+        "news": await asyncio.to_thread(home.news, user, client, today=today),
+        "figures_wanted": hello["learned"] is not None,
+        "boards": await asyncio.to_thread(home.boards, user),
+    })
+
+
+@router.get("/home/figures", response_class=HTMLResponse)
+async def portal_home_figures(request: Request):
+    """Home's headline figures, as this reader may see them: cards to put in the page, or nothing."""
+    user = _get_portal_user(request)
+    if not user:
+        return HTMLResponse("", status_code=401)
+    client = store.get_client(user["account_id"]) or {}
+    if not _home_for(user, client):
+        return HTMLResponse("", status_code=403)
+    from portal import home
+
+    lang = _request_language(request)
+    token = activate_language(lang)
+    try:
+        figures = await asyncio.to_thread(home.figures, user, client, today=_dt.date.today(), lang=lang)
+    except Exception as exc:  # noqa: BLE001 - the page says the figures could not be drawn
+        log.warning("Home figures failed for %s: %s", user.get("account_id"), exc, exc_info=True)
+        figures = None
+    finally:
+        deactivate_language(token)
+    return _resp(request, "home_figures.html", {"user": user, "figures": figures, "asks": True})
 
 
 @router.get("/login", response_class=HTMLResponse)
