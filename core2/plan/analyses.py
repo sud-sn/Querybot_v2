@@ -101,17 +101,33 @@ def start_and_end(model: SemanticModel, may: May = _all) -> tuple[DateRole, Date
     return found[0] if found else None
 
 
+# A date that says a row was finished or arrived (its end, completion, receipt), and one that says it began.
+_ENDED = {"end", "ended", "completed", "completion", "closed", "finished", "done", "received", "receipt", "delivered",
+          "delivery", "fulfilled", "resolved", "shipped", "ship", "arrived", "arrival"}
+_STARTED = {"start", "started", "begin", "began", "opened", "created"}
+
+
 def due_and_done(model: SemanticModel, may: May = _all) -> tuple[DateRole, DateRole] | None:
     """A date rows were expected by (promised, due) and the date they happened, on the same rows or on rows that
     point at them (a receipt of an order line)."""
     joined = {(j.from_table, j.to_table) for j in model.joins.values() if P.usable(j)}
+
+    def said(role: DateRole, words: set[str]) -> bool:
+        """Does the role's name or column say one of the words, glued or not (ACTUALSTARTDATE, end_date)?"""
+        own = set(names.tokens(role.slug)) | set(names.tokens(role.key.rsplit(".", 1)[-1]))
+        own |= {w[:-len(d)] for w in list(own) for d in ("date", "dt", "time") if w.endswith(d) and len(w) > len(d)}
+        return any(w in words or any(len(x) >= 4 and w.endswith(x) for x in words) for w in own)
+
     for due in sorted(model.date_roles.values(), key=lambda r: r.slug):
         if due.kind not in ("planned", "due") or due.granularity == "month" or not may(due.table):
             continue
+        # A work order due by its due date is done when it ends, never when a step of it starts: a date that says
+        # it ended or arrived first (its own rows' before a step's), one that says it started last.
         done = sorted((r for r in model.date_roles.values() if r.kind == "event" and r.key != due.key
                        and r.granularity != "month" and may(r.table)
                        and (r.table == due.table or (r.table, due.table) in joined)),
-                      key=lambda r: (r.table == due.table and r.is_default, not r.is_default, r.slug))
+                      key=lambda r: (said(r, _STARTED), not said(r, _ENDED), r.table != due.table and said(r, _ENDED),
+                                     r.table == due.table and r.is_default, not r.is_default, r.slug))
         if done:
             return due, done[0]
     return None

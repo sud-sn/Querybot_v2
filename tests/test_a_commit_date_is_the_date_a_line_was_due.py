@@ -52,3 +52,21 @@ def test_a_word_that_only_ends_like_a_date_word_is_not_split():
 
     assert "up" not in {w[:-len(d)] for w in ["update"] for d in dates._GLUED_DATE
                         if w.endswith(d) and len(w) - len(d) >= 3}
+
+
+def test_a_work_order_is_done_when_it_ends_not_when_it_starts():
+    """AdventureWorks: a work order's due date was set against the date one of its steps actually started. A date
+    that says it ended comes first, one that says it started last, whatever their names' order."""
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE workorder AS SELECT range + 1 AS workorderid, 1 + range % 40 AS productid, 10 + range % 90 AS orderqty,
+               DATE '2024-01-01' + (range % 500)::INTEGER AS startdate,
+               DATE '2024-01-01' + (range % 500)::INTEGER + (range % 3)::INTEGER AS actualstartdate,
+               DATE '2024-01-01' + (range % 500)::INTEGER + (range % 12)::INTEGER AS enddate,
+               DATE '2024-01-01' + (range % 500)::INTEGER + 10 AS duedate FROM range(3000);
+    """)
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t-wo", options=BuildOptions(workers=1))
+    found = due_and_done(model)
+    assert found is not None, sorted((r.slug, r.kind) for r in model.date_roles.values())
+    assert found[0].key.endswith(".duedate") and found[1].key.endswith(".enddate"), (found[0].key, found[1].key)
