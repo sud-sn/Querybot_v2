@@ -649,8 +649,10 @@
 .pp-dialog h3 { margin: 0 0 .35rem; font-family: var(--font-display); font-size: var(--font-xl); font-weight: var(--weight-bold);
   letter-spacing: -.01em; color: var(--text-strong); }
 @media (prefers-reduced-motion: reduce) { .pp-dialog { animation: none; } }
-.pp-dialog .form-actions { position: sticky; bottom: -1.25rem; z-index: 1; background: var(--surface-raised);
-  border-top: 1px solid var(--border); padding: .75rem 0 1.25rem; margin: .5rem 0 -1.25rem; }
+/* The buttons stay in view at the foot of a long form: they sit on the dialog's own padding (22px), so nothing
+   scrolls out beneath them. */
+.pp-dialog .form-actions { position: sticky; bottom: -22px; z-index: 1; background: var(--surface-raised);
+  border-top: 1px solid var(--line-subtle); padding: 14px 0 22px; margin: .5rem 0 -22px; }
 .pp-scope { border: 0; padding: 0; margin: .25rem 0 .75rem; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
 .pp-scope legend { font-weight: var(--weight-semibold); font-size: var(--font-sm); margin-bottom: 4px; }
 .pp-scope-list { display: flex; flex-direction: column; gap: 6px; padding-left: 1.5rem; }

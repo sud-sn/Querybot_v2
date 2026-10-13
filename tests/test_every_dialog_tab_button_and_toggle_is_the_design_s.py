@@ -86,6 +86,14 @@ def test_a_dialog_blurs_the_page_behind_it(where, backdrop):
     assert "var(--scrim)" in rule and "blur(4px)" in rule
 
 
+def test_a_long_dialog_s_buttons_sit_on_its_own_padding():
+    """The Add person form scrolls on a phone; its buttons stay at the foot. They were pinned 20px below the box's
+    edge, which once matched its padding: at the design's 22px a strip of the form showed under them."""
+    padding = re.search(r"padding:\s*(\d+)px", _rule("admin/templates/client_users.html", ".pp-dialog")).group(1)
+    actions = _rule("admin/templates/client_users.html", ".pp-dialog .form-actions")
+    assert f"bottom: -{padding}px" in actions and f"0 -{padding}px" in actions and f"{padding}px; margin" in actions
+
+
 def test_the_mask_preview_is_the_design_s_dialog_too():
     rule = _rule("admin/templates/client_setup.html", ".mask-preview-modal")
     assert "var(--radius-card)" in rule and "var(--line-subtle)" in rule
@@ -223,3 +231,16 @@ def test_an_entrance_keeps_no_transform_that_would_hold_an_overlay(sheet, select
     assert found, selector
     for animation in found:
         assert " both" not in animation and "forwards" not in animation, (sheet, animation)
+
+
+# ── words, not capitals ─────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("where,selector", [
+    ("portal/templates/portal_chat.html", ".data-table thead th"), ("portal/templates/portal_chat.html", ".rc-table thead th"),
+    ("portal/templates/portal_kb.html", ".field-table th"), ("static/css/dashboard.css", ".dash-sched-list-head h3"),
+    ("static/css/dashboard.css", ".dash-alert-recent-title")])
+def test_a_table_s_head_and_a_dialog_s_section_read_as_words(where, selector):
+    """An answer's table said REGION NAME and NET AMOUNT; the schedule and alert dialogs headed their lists in capitals.
+    The admin's tables read as words since the console's restyle; these do too."""
+    assert "uppercase" not in _rule(where, selector)
+
