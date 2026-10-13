@@ -109,11 +109,16 @@ def _named_as_pointer(column: str) -> bool:
 
 
 def _numbers_lines(table: InvTable, profile: TableProfile, column: str) -> bool:
-    """Could ``column`` number the lines of a document: a small whole number from 0 or 1, or named so."""
+    """Could ``column`` number the lines of a document: a small whole number from 0 or 1, or named so. An online
+    retailer's busiest invoices run to well over a thousand lines; whether it starts again in every document is
+    tested after."""
     p = profile.columns[column]
-    return table.type_of(column) == "integer" \
-        and (p.min_num in (0, 1) or bool(set(names.tokens(column)) & _SEQUENCE_WORDS)) \
-        and 1 < p.distinct <= 1000 and (p.max_num or 0) <= 10000
+    words = names.tokens(column)
+    named = bool(set(words) & _SEQUENCE_WORDS)
+    # Over a thousand only for a column named as a line's number (LINE_NO), never a key (LN_KEY).
+    many = named and words[-1:] not in (["key"], ["id"], ["sk"], ["pk"])
+    return table.type_of(column) == "integer" and (p.min_num in (0, 1) or named) \
+        and 1 < p.distinct <= (20000 if many else 1000) and (p.max_num or 0) <= (100000 if many else 10000)
 
 
 def _lines_in_key(warehouse: Warehouse, table: InvTable, profile: TableProfile, result: TableKeys) -> None:

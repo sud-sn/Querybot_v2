@@ -6,7 +6,8 @@ quantity, unit price). The invoices hold no number to add up, so Learn took them
 and the date of a list is never what an answer about other rows is counted by: every question about the
 year's sales or units -- the money is all on the lines -- was asked back ("I could not work out how to answer
 that as asked"). A table its lines point at by their own key (invoice and line number), and dated, is a
-document: a fact, counted, whose date its lines are dated by.
+document: a fact, counted, whose date its lines are dated by -- the busiest invoices of over a thousand lines
+included.
 
 Invented rows only.
 """
@@ -43,6 +44,9 @@ def shop():
         CREATE TABLE invoice_lines AS SELECT (500000 + range // 4)::VARCHAR AS invoice_no, range % 4 + 1 AS line_no,
                'P' || lpad(((range * 11) % 200)::VARCHAR, 4, '0') AS stock_code, range % 12 + 1 AS quantity,
                round(0.85 + (range % 40) * 0.25, 2) AS unit_price FROM range(6000);
+        -- One wholesale invoice of over a thousand lines, as the busiest invoices of the real data run to.
+        INSERT INTO invoice_lines SELECT '501499', 5 + range, 'P' || lpad((range % 200)::VARCHAR, 4, '0'), 2, 1.25
+        FROM range(1300);
     """)
     warehouse = DuckDBWarehouse(con)
     model = build_model(warehouse, from_duckdb(warehouse), client_id="t-shop", options=BuildOptions(workers=1))
