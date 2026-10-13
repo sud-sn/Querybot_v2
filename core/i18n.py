@@ -5040,6 +5040,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chart.total": {"en": "Total", "fr": "Total"},
     # Under a tooltip, where a click on the mark asks for its breakdown.
     "ui.chart.drill_hint": {"en": "Click to look closer", "fr": "Cliquez pour voir de plus près"},
+    # Under a dashboard tile's tooltip, where a click on the member filters the dashboard to it.
+    "ui.chart.pick_hint": {"en": "Click to filter the dashboard to {name} · Ctrl-click to add or remove it",
+                           "fr": "Cliquez pour filtrer le tableau de bord sur {name} · Ctrl-clic pour l'ajouter ou le retirer"},
+    "ui.chart.pick_clear": {"en": "Click to clear this filter", "fr": "Cliquez pour retirer ce filtre"},
     "ui.chart.change": {"en": "Change", "fr": "Variation"},
 
     # The artifact pane's own copy.

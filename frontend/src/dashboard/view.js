@@ -31,3 +31,12 @@ export function steady(before, after) {
   }
   return { ...after, filters: [...filters, ...fresh.values()] }
 }
+
+// The members a click on a tile's member leaves chosen (static/js/qb-charts.js): that member alone, or none when
+// it was the only one chosen (the click clears the filter); with Ctrl, Cmd or Shift, the member added to those
+// chosen, or taken out of them.
+export function picked(now, member, add) {
+  const chosen = (now || []).map(String)
+  if (add) return chosen.includes(member) ? chosen.filter((m) => m !== member) : [...chosen, member]
+  return chosen.length === 1 && chosen[0] === member ? [] : [member]
+}

@@ -2009,6 +2009,16 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         band = None if dated else _shaded_period(view, drawn)
         if band:
             drawn["highlight"] = band
+        # A tile grouped by one field (not by time) answers a click on one of its members: the dashboard is filtered
+        # to it, as from the filter bar (static/js/qb-charts.js hands the click to it). The members the filter has
+        # chosen stand out on it and the others step back -- it is never narrowed by its own field
+        # (dashboard_view.view_plan), so the others are still there to pick.
+        if (len(groups) == 1 and shape_x and drawn.get("x_key") == shape_x
+                and (drawn.get("chart_spec") or {}).get("x", {}).get("role") != "temporal"):
+            chosen = ((view or {}).get("members") or {}).get(groups[0]) or []
+            drawn["pick"] = {"field": groups[0],
+                             "label": (result.get("grouping") or {}).get("label") or _field_word(groups[0]),
+                             "selected": [chosen] if isinstance(chosen, str) else [str(v) for v in chosen]}
         # "Top 10 of 34" beside the period, when the rest were folded into one bar.
         other = drawn.get("other") or {}
         if other.get("count") and not other.get("ranges"):

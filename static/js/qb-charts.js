@@ -723,6 +723,21 @@
     const drillHint = layout && layout.drill
       ? `<div style="color:${c.muted};font-size:12px;margin-top:6px">${escHtml(t('ui.chart.drill_hint'))}</div>`
       : '';
+    // A dashboard tile a click filters by (payload.pick, set by the dashboard): the members its filter chose stand
+    // out and the others step back, and the tooltip says what a click on a member does. "Other (n)" is the rest of
+    // the members, not one of them.
+    const pick = payload && payload.pick && payload.pick.field ? payload.pick : null;
+    const chosen = pick && Array.isArray(pick.selected) && pick.selected.length
+      ? new Set(pick.selected.map(String)) : null;
+    const restName = payload && payload.other && payload.other.label ? String(payload.other.label) : '';
+    const quiet = name => Boolean(chosen) && !chosen.has(String(name));
+    const only = name => Boolean(chosen) && chosen.size === 1 && chosen.has(String(name));
+    const pickHint = name => (pick && name != null && String(name) !== restName
+      ? `<div style="color:${c.muted};font-size:12px;margin-top:6px">${escHtml(t(
+        only(name) ? 'ui.chart.pick_clear' : 'ui.chart.pick_hint', {name: String(name)}))}</div>`
+      : '');
+    const dim = item => Object.assign({}, item, {itemStyle: Object.assign({}, item.itemStyle, {opacity: 0.3}),
+                                                 label: Object.assign({}, item.label, {opacity: 0.5})});
     const legendBase = (names, line) => ({
       type: 'scroll', top: 0, left: 0, right: 0,
       icon: line ? 'path://M0 0h14v2.5H0z' : 'roundRect',
@@ -753,7 +768,10 @@
         const name = String((xKey && r && r[xKey] != null) ? r[xKey] : t('ui.chart.unspecified'));
         agg.set(name, (agg.get(name) || 0) + (num(r && r[yKey]) || 0));
       });
-      const data = Array.from(agg, ([name, value], i) => ({name, value, itemStyle: {color: colors[i % colors.length]}}));
+      const data = Array.from(agg, ([name, value], i) => {
+        const slice = {name, value, itemStyle: {color: colors[i % colors.length]}};
+        return quiet(name) ? dim(slice) : slice;
+      });
       const total = data.reduce((s, d) => s + (Number(d.value) || 0), 0);
       const share = v => (total > 0 ? (Number(v) || 0) / total * 100 : 0);
       const shares = new Map(data.map(d => [d.name, share(d.value)]));
@@ -773,7 +791,8 @@
           formatter: p => tipHeader(`${xLabel}: ${p.name == null ? t('ui.chart.unspecified') : p.name}`, c)
             + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch')
             + tipRow('transparent', t('ui.chart.share_of_total'),
-                     global.qbPct(Number(p.percent != null ? p.percent : share(p.value)), 1), c, 'swatch'),
+                     global.qbPct(Number(p.percent != null ? p.percent : share(p.value)), 1), c, 'swatch')
+            + pickHint(p.name),
         }),
         legend: Object.assign(legendBase(data.map(d => d.name), false), (labelled || narrow)
           ? {type: 'scroll', orient: 'horizontal', left: 'center', top: 'auto', bottom: 0}
@@ -1310,7 +1329,7 @@
       const signed = d => (d > 0 ? '+' : d < 0 ? '−' : '') + valueFmt(Math.abs(d), currentKey, true);
       const dot = (name, color, values) => ({
         name, type: 'scatter', symbolSize: 10, z: 3,
-        data: labels.map((l, i) => [values[i], l]),
+        data: labels.map((l, i) => (quiet(l) ? dim({value: [values[i], l]}) : [values[i], l])),
         itemStyle: {color, borderColor: c.surface, borderWidth: 2},
       });
       return Object.assign(base, {
@@ -1325,7 +1344,8 @@
             return tipHeader(labels[i], c)
               + tipRow(c.muted, priorName, valueFmt(prior[i], priorKey), c, 'swatch')
               + tipRow(colors[0], currentName, valueFmt(current[i], currentKey), c, 'swatch')
-              + tipRow(c.axis, t('ui.chart.change'), signed(d), c, 'line');
+              + tipRow(c.axis, t('ui.chart.change'), signed(d), c, 'line')
+              + pickHint(labels[i]);
           },
         }),
         xAxis: {type: 'value', axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true,
@@ -1509,7 +1529,7 @@
       return tipHeader(shownLabel(head), c)
         + arr.map(p => tipRow(p.color, columnLabel(payload, p.seriesName || ''), valueFmt(p.value, p.seriesName), c,
                               type === 'bar' ? 'swatch' : 'line')).join('')
-        + sum + drillHint;
+        + sum + (type === 'bar' ? pickHint(head) : '') + drillHint;
     }
 
     // ── Line / area ────────────────────────────────────────────────────────
@@ -1676,7 +1696,7 @@
           + tipRow(p.color, yLabel, valueFmt(p.value, yKey), c, 'swatch')
           + (shareOf(p.dataIndex) != null ? tipRow('transparent', shareLabel,
                                                    formatValue(shareOf(p.dataIndex), 'percentage'), c, 'swatch') : '')
-          + drillHint});
+          + pickHint(p.name) + drillHint});
     // A variance or a change carries its direction in the product's delta
     // colours, and in a sign on its label; any other single measure keeps one
     // colour for every bar -- a hue per bar would encode the length twice.
@@ -1736,7 +1756,8 @@
       const last = i === yKeys.length - 1;
       if (stacked) {
         return {
-          name: k, type: 'bar', stack: 'total', barMaxWidth: 24, data: values,
+          name: k, type: 'bar', stack: 'total', barMaxWidth: 24,
+          data: values.map((v, at) => (quiet(labels[at]) ? dim({value: v}) : v)),
           itemStyle: {color, borderColor: c.surface, borderWidth: 2,
                       borderRadius: last ? (horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]) : 0},
           label: last && totals ? {
@@ -1761,12 +1782,16 @@
         // A plain value unless the bar needs its own styling: a variance's
         // direction colour, or a rounded end and a label on the far side of
         // the baseline for a value below zero.
-        data: values.map((v, at) => ((delta || (v != null && v < 0) || at === otherAt) ? {
-          value: v,
-          itemStyle: {color: delta ? (v != null && v < 0 ? c.bad : c.good) : (at === otherAt ? c.muted : color),
-                      borderRadius: end(v)},
-          label: {position: place(v)},
-        } : v)),
+        data: values.map((v, at) => {
+          const item = (delta || (v != null && v < 0) || at === otherAt) ? {
+            value: v,
+            itemStyle: {color: delta ? (v != null && v < 0 ? c.bad : c.good) : (at === otherAt ? c.muted : color),
+                        borderRadius: end(v)},
+            label: {position: place(v)},
+          } : null;
+          if (multi || !quiet(labels[at])) return item || v;
+          return dim(item || {value: v});
+        }),
         // Bars -> the value at the tip; columns -> on the cap. A bar below
         // zero carries its own position on the far side of the baseline.
         label: labelled ? {
@@ -1789,6 +1814,37 @@
       };
     });
     return option;
+  }
+
+  // ── A click on a dashboard tile ───────────────────────────────────────────
+  // What a click on a mark of a tile the dashboard filters by (payload.pick) asks for: that member as the filter
+  // for the tile's field -- with Ctrl, Cmd or Shift, added to the members chosen (the filter bar decides, from
+  // what it has: portal/templates/portal_dashboard.html's bar, frontend/src/dashboard). Null for anything else: a
+  // tile no click filters, the rest of the members ("Other (n)"), a mark that is not a member.
+  function pickOf(params, payload) {
+    const pick = payload && payload.pick;
+    if (!pick || !pick.field || !params || params.componentType !== 'series') return null;
+    let member = null;
+    const data = params.data;
+    if (data && typeof data === 'object' && !Array.isArray(data) && data.member != null) member = data.member;
+    else if (Array.isArray(params.value) && typeof params.value[params.value.length - 1] === 'string') {
+      member = params.value[params.value.length - 1];     // a dumbbell's dot ([value, member]), a named dot
+    } else member = params.name;
+    member = member == null ? '' : String(member);
+    if (!member || (payload.other && member === String(payload.other.label || ''))) return null;
+    const e = params.event && params.event.event;
+    return {field: String(pick.field), label: String(pick.label || ''), member,
+            add: Boolean(e && (e.ctrlKey || e.metaKey || e.shiftKey)), chart: payload.chart_id || null};
+  }
+  function wirePicks(chart, el) {
+    if (!chart || chart._qbPicks || typeof chart.on !== 'function') return;
+    chart._qbPicks = true;
+    chart.on('click', params => {
+      const asked = pickOf(params, el._qbDrawn && el._qbDrawn.payload);
+      if (asked && typeof global.CustomEvent === 'function') {
+        global.dispatchEvent(new global.CustomEvent('qb-pick', {detail: asked}));
+      }
+    });
   }
 
   // ── Mounting ──────────────────────────────────────────────────────────────
@@ -1856,6 +1912,7 @@
     if (existing) existing.dispose();
     const chart = echarts.init(el, null, {renderer: 'svg'});
     el._qbDrawn = {payload, opts};
+    wirePicks(chart, el);
     const draw = () => {
       // Drawn again before the box settled: this chart is gone.
       if (chart.isDisposed && chart.isDisposed()) return;
@@ -1988,6 +2045,7 @@
     _geo: geoStore,
     buildOption,
     paletteFor,
+    pickOf,
     render,
     update,
     redrawAll,

@@ -7,7 +7,7 @@ import AddFilter from './AddFilter.vue'
 import DatePicker from './DatePicker.vue'
 import MemberFilter from './MemberFilter.vue'
 import { refreshPage } from './refresh.js'
-import { address, copy, steady } from './view.js'
+import { address, copy, picked, steady } from './view.js'
 
 const props = defineProps({ store: { type: Object, required: true } })
 const state = computed(() => props.store.state)
@@ -55,6 +55,21 @@ async function remove(filter) {
 // A filter just added: the same view, drawn again with it in the bar.
 const added = () => go(copy(state.value), { push: false })
 
+// A member clicked on a tile (static/js/qb-charts.js sends 'qb-pick'): the dashboard filtered to it, as from its
+// filter here -- which the bar is given, under the field's own word, when it has none for that field yet.
+function pick(event) {
+  const asked = event.detail || {}
+  if (!asked.field || !asked.member || props.store.busy) return
+  change((s) => {
+    let filter = s.filters.find((f) => f.field === asked.field)
+    if (!filter) {
+      filter = { field: asked.field, label: asked.label || asked.field, values: null, source: 'address', selected: [] }
+      s.filters.push(filter)
+    }
+    filter.selected = picked(filter.selected, asked.member, asked.add)
+  })
+}
+
 // Back and Forward go through the views chosen here.
 const back = () => {
   props.store.busy = true
@@ -62,8 +77,14 @@ const back = () => {
     .then((fresh) => { if (fresh) props.store.state = steady(state.value, fresh) })
     .finally(() => { props.store.busy = false })
 }
-onMounted(() => window.addEventListener('popstate', back))
-onBeforeUnmount(() => window.removeEventListener('popstate', back))
+onMounted(() => {
+  window.addEventListener('popstate', back)
+  window.addEventListener('qb-pick', pick)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', back)
+  window.removeEventListener('qb-pick', pick)
+})
 </script>
 
 <template>
