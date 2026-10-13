@@ -22,7 +22,7 @@ from typing import Any
 from core2.bootstrap import names
 from core2.bootstrap.calendar import CalendarFinding
 from core2.bootstrap.inventory import Inventory
-from core2.bootstrap.joins import (_HIERARCHY, VERIFIED, JoinFinding, _compatible, _measure_target, _name_roles,
+from core2.bootstrap.joins import (_HIERARCHY, VERIFIED, JoinFinding, _compatible, _measure_target, _name_roles, bare,
                                    _names_its_table, _of_its_own_table, _test, counts_things)
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
@@ -75,11 +75,12 @@ def unplaced(inventory: Inventory, profiles: dict[str, TableProfile], keys: dict
         numbering = set(tkeys.line_numbers) | {c for alt in tkeys.alternate_keys for c in alt[1:]}
         for column in table.columns:
             a = profiles[key].columns.get(column.name)
-            words = names.tokens(column.name)
+            plain = bare(table, column.name)
+            words = names.tokens(plain)
             if a is None or (key, column.name) in linked or column.name in numbering \
                     or column.data_type not in ("integer", "text") or not _pointer_like(words) \
                     or a.pattern in _PERSONAL or (a.pattern or "").startswith("flag") or counts_things(column.name) \
-                    or _names_its_table(column.name, table.name) or _of_its_own_table(column.name, table.name) \
+                    or _names_its_table(plain, table.name) or _of_its_own_table(plain, table.name) \
                     or column.name in tkeys.unique_columns:
                 continue      # the table's own number or alternate key (an order header's SalesOrderID): its own
             fits = [(to, k) for to, k in targets if (to, k) != (key, column.name)
@@ -143,7 +144,7 @@ def second_opinion(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         # Its name is the role it plays for the target: a support rep, among the employees.
         found = JoinFinding(key, column, to, k, coverage=min(1.0, a.distinct / t.distinct) if t.distinct else 0.0,
                             from_unique=column in keys[key].unique_columns,
-                            role_tokens=[] if names.opaque(column) else names.core_column(column))
+                            role_tokens=[] if names.opaque(column) else names.core_column(bare(table, column)))
         try:
             _test(warehouse, inventory, found, profiles, [])
         except Exception as exc:  # noqa: BLE001 - untested, so not kept

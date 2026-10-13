@@ -205,6 +205,6 @@ def _as_link(a: str, b: str, columns: list[tuple[str, str]], keys: dict[str, Tab
 
 
 def _names(inventory: Inventory, table: str, columns: tuple[str, ...]) -> bool:
-    from core2.bootstrap.joins import _names_its_table
+    from core2.bootstrap.joins import _names_its_table, bare
 
-    return len(columns) == 1 and _names_its_table(columns[0], inventory.tables[table].name)
+    return len(columns) == 1 and _names_its_table(bare(inventory.tables[table], columns[0]), inventory.tables[table].name)

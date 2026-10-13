@@ -22,7 +22,7 @@ from core2.bootstrap import names, personal
 from core2.bootstrap.calendar import CalendarFinding
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate
 from core2.bootstrap.inventory import Inventory, InvColumn, InvTable
-from core2.bootstrap.joins import JoinFinding
+from core2.bootstrap.joins import JoinFinding, bare
 from core2.bootstrap.keys import TableKeys
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import ColumnProfile, Evidence
@@ -312,7 +312,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             p = profile.columns[name]
             words = _words(name)
             opaque = names.opaque(name)
-            label = names.readable(name)
+            label = names.readable(bare(table, name))     # SS_EXT_SALES_PRICE: "Ext sales price", not "Ss ext..."
             if _counted(name):
                 events = names.read_tokens(_counted(name)).lower().split()
                 events[-1] = _EVENT_NOUNS.get(events[-1], events[-1])     # NUM_OF_DLV: deliveries

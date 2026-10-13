@@ -22,7 +22,7 @@ from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.history import MIN_QUERIES, links_in, read_query_log
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
-from core2.bootstrap.joins import JoinFinding, discover_joins, identifier_text
+from core2.bootstrap.joins import JoinFinding, bare, discover_joins, identifier_text
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
 from core2.bootstrap.ledger import ledger_measures
@@ -356,10 +356,10 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 name = c.via_calendar.role
             elif c.via_calendar and not names.opaque(c.column):
                 # A key into a calendar is named by what it keys: PRD_DMS_KEY is the period.
-                text = names.read_tokens(names.core_column(c.column))
+                text = names.read_tokens(names.core_column(bare(inv.tables[key], c.column)))
                 name = text[:1].upper() + text[1:]
             elif not names.opaque(c.column):
-                text = names.read_tokens(names.core_column(c.column))
+                text = names.read_tokens(names.core_column(bare(inv.tables[key], c.column)))
                 name = text[:1].upper() + text[1:]
             else:
                 name = names.readable(c.column)

@@ -840,9 +840,11 @@ def counts_things(column: str) -> bool:
 
 
 def _of_its_own_table(column: str, table: str) -> bool:
-    """PRODUCT_CATEGORY_ALTERNATE_KEY on the product categories: named for its own table, then more."""
+    """PRODUCT_CATEGORY_ALTERNATE_KEY on the product categories: named for its own table, then more. ADDRESS_ID on
+    the customer addresses: named for what each of its rows is."""
     core, own = names.core_column(column), names.core_table(table)
-    return bool(own) and len(core) >= len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
+    return bool(own) and (len(core) >= len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
+                          or len(own) > 1 and len(core) == 1 and names.same_word(core[0], own[-1]))
 
 
 def _names_its_table(column: str, table: str) -> bool:

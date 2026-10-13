@@ -232,7 +232,7 @@ def column_prefix(columns: list[str], table: str) -> str | None:
     if not head.isalpha() or len(head) > 3 or head in KEY_SUFFIXES:
         return None
     rests = [tokens(c.split("_", 1)[1]) for c in columns]
-    if any(not rest or len(rest) == 1 and rest[0] in KEY_SUFFIXES for rest in rests):
+    if any(not rest or rest in (["id"], ["key"], ["sk"], ["pk"]) for rest in rests):
         return None
     if any(same_word(head, w) or same_word(EXPANSIONS.get(head, head), w) for w in core_table(table)):
         return None

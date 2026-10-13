@@ -53,6 +53,11 @@ def learned():
                round(100 + (range * 17) % 9000 + 0.5, 2) AS l_extendedprice FROM range(8000);
         CREATE TABLE partsupp AS SELECT range % 300 + 1 AS ps_partkey, (range * 7) % 40 + 1 AS ps_suppkey,
                range % 900 + 10 AS ps_availqty FROM range(1200);
+        CREATE TABLE ship_mode AS SELECT range + 1 AS sm_ship_mode_sk, 'AAAAAAAA' || chr((66 + range)::INTEGER) || 'AAAAAAA' AS sm_ship_mode_id,
+               ['EXPRESS', 'NEXT DAY', 'OVERNIGHT', 'REGULAR'][range % 4 + 1] AS sm_type, 'CODE' || range AS sm_code
+        FROM range(20);
+        CREATE TABLE reason AS SELECT range + 1 AS r_reason_sk, 'AAAAAAAA' || chr((66 + range)::INTEGER) || 'AAAAAAA' AS r_reason_id,
+               'reason ' || range || repeat('?', range % 6) AS r_reason_desc FROM range(25);
         CREATE TABLE promotion AS SELECT range + 1 AS pr_promokey, 'Promo ' || range || repeat('!', range % 5) AS pr_name,
                (100 + range * 3)::DECIMAL(15, 2) AS pr_cost FROM range(90);
         CREATE TABLE item AS SELECT range + 1 AS i_itemkey, 'Item ' || range || repeat(' blue', range % 3) AS i_product_name,
@@ -87,6 +92,12 @@ def test_a_key_named_with_its_tables_initials_links_to_its_table(learned, table,
 def test_a_tables_initials_are_never_the_name_of_a_links_role(learned):
     roles = {k: v[3] for k, v in learned.items() if v[3]}
     assert not roles, roles
+
+
+def test_a_tables_own_identifier_points_nowhere(learned):
+    """Benchmark identifiers are made alike in every table (AAAAAAAAB..., AAAAAAAAC...): the ship modes' own
+    identifier is not a reason's, however well its values fit."""
+    assert ("ship_mode", "sm_ship_mode_id") not in learned, learned
 
 
 def test_a_cost_is_no_customer(learned):
