@@ -646,6 +646,15 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                          'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
                         trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+    if payload.get("beyond_data") and _found_nothing(payload, zero=True):
+        # "What will our total sales be in 2004?" said "no value": the data ends before the period asked for. The
+        # answer stays an empty one (a dashboard tile draws it over all the data instead), said as it is.
+        last = dt.date.fromisoformat(payload["beyond_data"])
+        said = (f"The data ends on {last.day} {last:%b %Y}: it has nothing yet for the period you asked about. Ask "
+                "about a period it covers, or for a forecast (\"forecast it for the next 12 months\").")
+        payload.setdefault("answer", {})["headline"] = said
+        payload["answer"]["short_value"] = ""
+        payload["text"] = said
     if plan.group_by and (plan.limit and _found_nothing(payload) or shown and all(s[1] is None for s in shown)):
         _by_key(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     if plan.time.date and _found_nothing(payload, zero=True):
@@ -721,6 +730,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, result.rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
+    if logical.beyond:
+        payload["beyond_data"] = logical.beyond.isoformat()     # the period asked for starts after the data ends
     if logical.share:
         _share_of_the_whole(plan, logical, payload, model, ctx, warehouse)
     if logical.people or any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"

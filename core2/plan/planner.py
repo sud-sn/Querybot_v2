@@ -1590,6 +1590,32 @@ def _figure_against_figure(plan: Plan, model: SemanticModel) -> list[str]:
     return out
 
 
+def _total_against_average(plan: Plan, model: SemanticModel) -> list[str]:
+    """A figure worked out from a total and an average of the same rows ("the discount rate, discount over list
+    price": the discounts added up over the list price per unit, averaged) is no rate nor any figure at all: 71
+    million percent (the sector stress test). Both are totals: the total the average is the unit of, when the rows
+    keep one (the extended list price)."""
+    if plan.kind != "query":
+        return []
+    by_slug = {m.slug: m for m in model.measures.values() if m.slug}
+    out = []
+    for d in plan.derived:
+        pair = [by_slug.get(s) for s in d.measures]
+        if None in pair or pair[0].table != pair[1].table:
+            continue
+        aggs = [getattr(m.expr, "agg", "sum" if m.additivity == "additive" else "") for m in pair]
+        if sorted(aggs) != ["avg", "sum"]:
+            continue
+        average, total = (pair[0], pair[1]) if aggs[0] == "avg" else (pair[1], pair[0])
+        words = set(_words(average.business_name)) - {"unit", "per", "average", "avg"}
+        twins = [m.slug for m in model.measures.values() if m.table == average.table and m is not total
+                 and getattr(m.expr, "agg", "sum" if m.additivity == "additive" else "") == "sum"
+                 and words and words <= set(_words(m.business_name))]
+        out.append(f"{d.name} sets {total.slug}, a total, against {average.slug}, an average per row: worked out from "
+                   "the two it is no figure. Use totals for both" + (f" ({', '.join(twins[:2])})." if twins else "."))
+    return out
+
+
 def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
     """ "What are the most common sales reasons on internet orders?" was planned as the number of sales reasons
     by sales reason: 1 each. A count of a list's own members grouped by those members says nothing; how often
@@ -1716,7 +1742,7 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
     shape = _shape(plan, model, question)
     if shape:
         return shape, ""
-    compared = _figure_against_figure(plan, model)
+    compared = _figure_against_figure(plan, model) or _total_against_average(plan, model)
     if compared:
         return compared, ""
     try:

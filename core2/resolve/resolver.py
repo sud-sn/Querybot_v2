@@ -292,6 +292,7 @@ class Logical:
     conditions: list[Condition] = field(default_factory=list)  # what narrowed the rows, for the answer's words
     expected: list[dt.date] = field(default_factory=list)  # a series' periods within the data: one with no row is a gap
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
+    beyond: dt.date | None = None       # the data's last day, when the period asked for starts after it ("in 2004")
     shape: object | None = None         # an analytical shape worked out over these rows (core2/resolve/shapes.py)
     target: object | None = None        # a figure against its target: what the answer says of it (shapes.TargetInfo)
     people: str | None = None           # the hidden column counting each group's people, when age is used
@@ -1904,7 +1905,8 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                    notes=_unique(notes),
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
-                   expected=expected, data_last=last if plan.time.grain else None, conditions=conditions)
+                   expected=expected, data_last=last if plan.time.grain else None, conditions=conditions,
+                   beyond=last if last is not None and window.start is not None and window.start > last else None)
 
 
 @dataclass
