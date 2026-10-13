@@ -147,7 +147,7 @@
   padding: 5px 12px; border-radius: 999px; cursor: pointer; }
 .chart-editor-seg button:hover { color: var(--text); }
 .chart-editor-seg button.is-on { background: var(--surface-raised); color: var(--text); font-weight: var(--weight-semibold);
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, .08)); }
+  box-shadow: var(--shadow-sm); }
 .chart-editor-palettes { display: flex; flex-wrap: wrap; gap: 8px; }
 .chart-editor-palettes button { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: var(--font-sm); cursor: pointer; }
@@ -156,7 +156,7 @@
 .chart-editor-swatches i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .chart-editor-preview { height: 260px; border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); background: var(--surface); }
 .chart-editor-note { margin: 4px 0 0; font-size: var(--font-xs); color: var(--text-muted); }
-.chart-editor-problem { margin: 0; font-size: var(--font-sm); color: var(--danger, #c0392b); }
+.chart-editor-problem { margin: 0; font-size: var(--font-sm); color: var(--danger); }
 .chart-editor-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 18px; border-top: 1px solid var(--line-subtle); }
 .chart-editor-seg button:focus-visible, .chart-editor-palettes button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 @media (max-width: 640px) {
