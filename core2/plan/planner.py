@@ -1344,6 +1344,10 @@ _PERIOD_SAID = re.compile(r"\b(?:year|years|month|months|quarter|quarters|week|w
 _VAGUE = re.compile(r"\b(?:vague|ambiguous|unclear|too (?:broad|general)|not specific|no specific|does not specify|"
                     r"doesn't specify|unspecified|open[- ]ended)\b", re.I)
 _WHICH_FIGURES = "Which figures would you like to see? These I can answer"
+# A question about the data itself, not its figures: "what data do you have", "what can I ask", "how far back".
+_ABOUT_THE_DATA = re.compile(r"\b(?:data|dataset|database|tables?|fields?|columns?|ask|know|cover|covers|covered|"
+                             r"mean|means|meaning|calculated|defined|definition|available|go back|far back|"
+                             r"donn(?:é|e)es|tables?|champs?|demander|signifie|couvre)\b", re.I)
 
 
 def all_time_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
@@ -1896,7 +1900,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [f"{what} are members of the field {slug}, not measures: compare them by grouping the "
                               f"measure by {slug}."], ""
             continue
-        if plan.kind == "unsupported" and _VAGUE.search(" ".join(plan.notes)) and main_figures(model, question):
+        if (plan.kind == "unsupported" and _VAGUE.search(" ".join(plan.notes)) or plan.kind == "describe_data"
+                and not plan.about and not _ABOUT_THE_DATA.search(question)) and main_figures(model, question):
             # "How are we doing?" was refused as too vague (the sector stress test): a question that names no
             # figure is asked back, with the data's main figures to pick from.
             plan = Plan(kind="clarify", clarify=Clarify(about="other", question=_WHICH_FIGURES,

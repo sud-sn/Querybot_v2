@@ -1064,9 +1064,35 @@ def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
     return role.first, last
 
 
+# A name the planner wrote as a slug ("rejection_rate") for a figure it worked out.
+_SLUG_NAME = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)+")
+
+
+def _readable(name: str) -> str:
+    """"rejection_rate" -> "Rejection rate": the name of a figure worked out for the question, as the answer's
+    headline, chart and chips say it. A name already written for readers stays as it is."""
+    if not _SLUG_NAME.fullmatch(name or ""):
+        return name
+    text = name.replace("_", " ")
+    return text[:1].upper() + text[1:]
+
+
+def _named_for_readers(plan: Plan) -> Plan:
+    """The rates, figures and durations the plan works out, named for readers; what refers to them still finds
+    them, as names are compared by their words."""
+    rates = [r.model_copy(update={"name": _readable(r.name)}) for r in plan.rates]
+    derived = [d.model_copy(update={"name": _readable(d.name)}) for d in plan.derived]
+    durations = [d.model_copy(update={"name": _readable(d.name)}) for d in plan.durations]
+    if [r.name for r in rates] == [r.name for r in plan.rates] and [d.name for d in derived] == [
+            d.name for d in plan.derived] and [d.name for d in durations] == [d.name for d in plan.durations]:
+        return plan
+    return plan.model_copy(update={"rates": rates, "derived": derived, "durations": durations})
+
+
 def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     from core2.resolve import age
 
+    plan = _named_for_readers(plan)
     if age.uses_age(plan, model):
         return age.resolve_with_age(plan, model, ctx)       # type: ignore[return-value]
     return _resolve(plan, model, ctx)

@@ -100,3 +100,29 @@ def test_a_question_nothing_in_the_data_answers_is_still_refused(retail):
         {"kind": "unsupported", "notes": ["The catalog has no measure for net promoter score."]}),
         today=dt.date(2026, 6, 15))
     assert outcome.plan.kind == "unsupported"
+
+
+def test_how_a_year_is_going_is_asked_back_not_described(retail):
+    """"How's 2025 going?" was read as a question about the data and answered with its tables: no figure."""
+    import datetime as dt
+    import json
+
+    from core2.plan.planner import plan_question
+
+    outcome = plan_question(retail, "hows 2025 going", lambda system, user: json.dumps({"kind": "describe_data"}),
+                            today=dt.date(2026, 6, 15))
+    assert outcome.plan.kind == "clarify" and outcome.plan.clarify.options, outcome.plan
+    assert all("2025" in o for o in outcome.plan.clarify.options)
+
+
+@pytest.mark.parametrize("question", ["what data do you have?", "what can I ask about purchasing?",
+                                      "how far back does the data go?"])
+def test_a_question_about_the_data_itself_is_still_described(retail, question):
+    import datetime as dt
+    import json
+
+    from core2.plan.planner import plan_question
+
+    outcome = plan_question(retail, question, lambda system, user: json.dumps({"kind": "describe_data"}),
+                            today=dt.date(2026, 6, 15))
+    assert outcome.plan.kind == "describe_data"
