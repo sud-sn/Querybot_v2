@@ -137,19 +137,29 @@ def test_the_animated_mark_follows_the_theme_tokens():
     assert not bare_hex, f"brand-motion.css hardcodes colour outside the tokens: {bare_hex}"
 
 
-def test_there_is_exactly_one_theme_and_it_is_pinned():
-    """The product is light only. `color-scheme: light` is not cosmetic: without
-    it a visitor whose OS is dark gets dark scrollbars, dark form controls and a
-    dark autofill wash on a light page, because the browser still believes it may
-    render UA widgets either way."""
-    tokens = _read("static/css/tokens.css")
-    assert "color-scheme: light" in tokens, "the single theme is not pinned"
-    assert "data-theme" not in tokens, "a theme block came back"
+def test_there_are_two_themes_and_each_is_pinned():
+    """Light, and dark in its own sheet, chosen by <html data-theme>.
+    `color-scheme` is not cosmetic: without it a visitor whose OS is dark gets
+    dark scrollbars, dark form controls and a dark autofill wash on a light
+    page, because the browser still believes it may render UA widgets either
+    way. So the light palette pins light, each dark block pins dark, and no
+    other sheet carries theme rules: a page restyled for one theme alone is
+    what the dark sheet's shared names are there to prevent."""
+    tokens = _strip_css_comments(_read("static/css/tokens.css"))
+    assert "color-scheme: light" in tokens, "the light theme is not pinned"
+    assert "data-theme" not in tokens, "a theme block crept into the light palette"
+    dark = _strip_css_comments(_read("static/css/tokens-dark.css"))
+    blocks = re.findall(r':root\[data-theme="(dark|auto)"\]\s*\{([^}]*)\}', dark)
+    assert [name for name, _ in blocks] == ["dark", "auto"], blocks
+    for _, body in blocks:
+        assert "color-scheme: dark" in body
+    assert " ".join(blocks[0][1].split()) == " ".join(blocks[1][1].split()), "Auto is not the dark theme"
+    assert "@media (prefers-color-scheme: dark)" in dark
     for stylesheet in _stylesheets():
-        if stylesheet == "tokens.css":
+        if stylesheet in ("tokens.css", "tokens-dark.css"):
             continue
         css = _read(f"static/css/{stylesheet}")
-        assert "data-theme" not in css, f"{stylesheet} still carries theme rules"
+        assert not re.search(r"data-theme(?!-choice)", css), f"{stylesheet} carries theme rules"
 
 
 def test_admin_and_portal_shells_use_shared_sidebar_tokens():
@@ -169,7 +179,7 @@ def test_theme_stylesheets_are_linked_by_their_content():
     chat = _read("portal/templates/portal_chat.html")
     for sheet in ("tokens", "base", "admin", "brand-motion"):
         assert f"href=\"{{{{ asset('css/{sheet}.css') }}}}\"" in admin, sheet
-    for sheet in ("tokens", "base", "portal", "brand-motion"):
+    for sheet in ("tokens", "tokens-dark", "base", "portal", "brand-motion"):
         assert f"href=\"{{{{ asset('css/{sheet}.css') }}}}\"" in portal, sheet
     assert "href=\"{{ asset('css/chat_workspace.css') }}\"" in chat
 
@@ -190,7 +200,7 @@ def test_the_shared_sheets_carry_the_mobile_and_reduced_motion_guards():
     base = _read("static/css/base.css")
     assert "@media (max-width: 640px)" in base
     assert "@media (prefers-reduced-motion: reduce)" in base
-    assert "@media (max-width: 900px)" in _read("static/css/portal.css")
+    assert "@media (max-width: 720px)" in _read("static/css/portal.css")
     assert "@media (max-width: 640px)" in _read("static/css/admin.css")
 
 
@@ -223,7 +233,9 @@ def test_chat_uses_unified_portal_sidebar_and_responsive_drawer():
     assert "portal-drawer-open" in base
     assert "portal-drawer-open" in portal_stylesheet
     assert "@media (max-width: 720px)" in portal_stylesheet
-    assert "transform: translateX(-101%)" in stylesheet
+    # The drawer is the shell's, the same on every page: the chat keeps no copy of it.
+    assert "transform: translateX(-101%)" in portal_stylesheet
+    assert "translateX(-101%)" not in stylesheet
 
 
 def test_chat_empty_state_uses_workspace_suggestions_and_large_composer():

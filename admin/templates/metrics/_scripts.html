@@ -2751,7 +2751,7 @@ function _showMcMetricSuggest(editor, metrics, partial){
   _mcMetricSuggestEl.innerHTML = metrics.map(function(m, i){
     var hl = '<mark style="background:none;color:var(--primary);font-weight:var(--weight-bold)">'+escHtml(m.name.slice(0, partial.length))+'</mark>'+escHtml(m.name.slice(partial.length));
     return '<div class="fcs-item" data-idx="'+i+'" onclick="_pickMetricSuggest('+i+')" style="padding:6px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin:1px 3px;font-size:var(--font-xs)">'
-      +'<span style="font-family:var(--font-mono);background:var(--primary);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0">fx</span>'
+      +'<span style="font-family:var(--font-mono);background:var(--primary-fill);color:var(--on-primary);border-radius:3px;padding:1px 5px;font-size:var(--font-xs);font-weight:var(--weight-bold);flex-shrink:0">fx</span>'
       +'<span style="font-weight:var(--weight-bold);flex:1">'+hl+'</span>'
       +'<span style="font-size:var(--font-xs);color:var(--text-muted)">'+(m.result_format||"")+'</span>'
       +'</div>';

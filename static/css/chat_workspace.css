@@ -14,20 +14,6 @@ body:has(.chat-page) .main {
 
 body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 
-/* Chat is a focused workspace: keep global navigation available without
-   spending a quarter of the viewport on a second full-width sidebar. */
-body:has(.chat-page) .portal-app-shell { grid-template-columns: 72px minmax(0, 1fr); }
-body:has(.chat-page) .portal-sidebar { padding: 14px 10px; align-items: stretch; }
-body:has(.chat-page) .portal-brand { justify-content: center; padding-inline: 0; }
-body:has(.chat-page) .portal-brand-word,
-body:has(.chat-page) .portal-nav a span,
-body:has(.chat-page) .portal-user-meta,
-body:has(.chat-page) .portal-side-actions a > span:last-child { display: none; }
-body:has(.chat-page) .portal-nav a,
-body:has(.chat-page) .portal-side-actions .btn { justify-content: center; padding-inline: 0; }
-body:has(.chat-page) .portal-user-card { justify-content: center; padding: 8px 0; }
-body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
-
 .chat-page { background: var(--surface); }
 
 .chat-workspace {
@@ -160,13 +146,6 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
   .chat-workspace-main .composer-actions { display: none; }
 }
 
-@media (max-width: 900px) {
-  body:has(.chat-page) .main {
-    height: calc(100% - 56px);
-    padding-bottom: 56px;
-  }
-}
-
 @media (max-width: 600px) {
   .chat-workspace-main .chat-shell-header { flex-direction: row; align-items: center; }
   .chat-workspace-main .status-badge { padding: 6px 8px; }
@@ -177,32 +156,8 @@ body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
 /* ============================================================
    Portal-first chat redesign — one sidebar, one focused canvas
    ============================================================ */
-body:has(.chat-page) .portal-app-shell { grid-template-columns: 252px minmax(0, 1fr); }
-body:has(.chat-page) .portal-sidebar { padding: 12px 10px 10px; align-items: stretch; }
-body:has(.chat-page) .portal-brand { justify-content: flex-start; padding-inline: 7px; }
-body:has(.chat-page) .portal-brand-word,
-body:has(.chat-page) .portal-nav a span,
-body:has(.chat-page) .portal-user-meta,
-body:has(.chat-page) .portal-side-actions a > span:last-child,
-body:has(.chat-page) .portal-side-actions button > span:last-child { display: inline; }
-body:has(.chat-page) .portal-nav a,
-body:has(.chat-page) .portal-side-actions a,
-body:has(.chat-page) .portal-side-actions button { justify-content: flex-start; padding-inline: 10px; }
-body:has(.chat-page) .portal-side-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-body:has(.chat-page) .portal-side-actions a,
-body:has(.chat-page) .portal-side-actions button { justify-content: center; padding-inline: 5px; }
-body:has(.chat-page) .portal-user-card { justify-content: flex-start; padding: 7px 8px 9px; }
-body:has(.chat-page) .portal-user-meta { display: block; }
-body:has(.chat-page) .portal-sidebar-spacer { display: none; }
-
-body:has(.chat-page) .portal-sidebar-context {
-  min-width: 0;
-  min-height: 120px;
-  display: flex;
-  flex: 1 1 auto;
-  overflow: hidden;
-}
-
+/* The shell is the same on every page (portal.css); the chat page adds its
+   conversations to the sidebar (portal_sidebar_context). */
 .portal-thread-panel {
   min-width: 0;
   min-height: 0;
@@ -210,8 +165,7 @@ body:has(.chat-page) .portal-sidebar-context {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  border-top: 1px solid var(--shell-line);
-  padding-top: 9px;
+  margin-top: 6px;
 }
 .portal-thread-heading {
   min-height: 28px;
@@ -219,42 +173,44 @@ body:has(.chat-page) .portal-sidebar-context {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 7px 5px 9px;
-  color: var(--shell-muted);
+  padding: 0 4px 4px 12px;
+  color: var(--sidebar-muted);
   font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: .07em;
-  text-transform: uppercase;
+  font-weight: var(--weight-medium);
 }
 .portal-thread-heading button {
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--shell-muted);
+  color: var(--sidebar-muted);
   cursor: pointer;
 }
 .portal-thread-heading button:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
 
+/* Search sits behind the sidebar's round search button: shown when it is
+   pressed on this page, or on arrival from it (?search=1). */
 .portal-sidebar .hp-search-wrap {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex: 0 0 auto;
-  margin: 0 2px 7px;
-  padding: 7px 9px;
+  margin: 2px 2px 8px;
+  padding: 8px 12px;
   border: 1px solid var(--sidebar-border);
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
   background: var(--sidebar-surface);
 }
+.portal-sidebar .hp-search-wrap[hidden] { display: none; }
 .portal-sidebar .hp-search-wrap:focus-within { border-color: var(--sidebar-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 18%, transparent); }
 .portal-sidebar .hp-search-icon { color: var(--sidebar-muted); }
-.portal-sidebar .hp-search-input { min-width: 0; color: var(--sidebar-text); font-size: var(--font-xs); }
+.portal-sidebar .hp-search-input { min-width: 0; color: var(--sidebar-text); font-size: var(--font-sm); }
+.portal-sidebar .hp-search-input:focus-visible { outline: none; }   /* the pill around it shows the focus */
 .portal-sidebar .hp-search-input::placeholder { color: var(--sidebar-muted); }
 .portal-sidebar .hp-search-clear { color: var(--sidebar-muted); }
 
@@ -272,62 +228,38 @@ body:has(.chat-page) .portal-sidebar-context {
   background: transparent;
   box-shadow: none;
 }
-.portal-sidebar .hp-header { min-height: 24px; padding: 4px 8px; border: 0; background: transparent; }
-.portal-sidebar .hp-title { color: var(--sidebar-muted); font-size: var(--font-xs); letter-spacing: .04em; text-transform: uppercase; }
-.portal-sidebar .hp-close { display: none; color: var(--sidebar-muted); }
-.portal-sidebar .hp-list { min-height: 0; padding: 0 2px 6px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--shell-muted) 28%, transparent) transparent; }
-.portal-sidebar .hp-group-label { padding: 8px 8px 4px; color: var(--sidebar-muted); font-size: var(--font-xs); }
+/* The panel's own title and close button serve the old pop-out list; in the
+   sidebar the heading above names it. */
+.portal-sidebar .hp-header { display: none; }
+.portal-sidebar .hp-list { min-height: 0; padding: 0 2px 6px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--sidebar-muted) 28%, transparent) transparent; }
+.portal-sidebar .hp-group-label { padding: 10px 12px 6px; color: var(--sidebar-muted); font-size: var(--font-xs); font-weight: var(--weight-medium); letter-spacing: 0; text-transform: none; }
+.portal-sidebar .hp-group-label:not(:first-child) { margin-top: 6px; border-top: 1px solid var(--sidebar-border); }
 .portal-sidebar .hp-item {
   position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
   margin: 0 0 2px;
-  padding: 8px;
+  padding: 8px 12px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-item);
   color: var(--sidebar-text);
+  cursor: pointer;
 }
+.portal-sidebar .hp-item .hp-icon { color: var(--sidebar-muted); }
 .portal-sidebar .hp-item:hover { background: var(--sidebar-hover); border-color: transparent; }
 .portal-sidebar .hp-item:focus-visible { outline: 0; border-color: var(--sidebar-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sidebar-accent) 18%, transparent); }
-.portal-sidebar .hp-item.active { background: var(--sidebar-active); border-color: color-mix(in srgb, var(--sidebar-accent) 30%, transparent); box-shadow: inset 2px 0 0 var(--sidebar-accent); }
-.portal-sidebar .hp-q { margin-bottom: 4px; color: var(--sidebar-text); font-size: var(--font-xs); font-weight: var(--weight-bold); -webkit-line-clamp: 1; }
-.portal-sidebar .hp-meta { gap: 6px; }
-.portal-sidebar .hp-badge { padding: 0; border: 0; background: transparent; color: var(--sidebar-muted); font-size: var(--font-xs); }
-.portal-sidebar .hp-badge.ok { border: 0; background: transparent; color: var(--sidebar-accent); }
+.portal-sidebar .hp-item.active { background: var(--primary-soft); }
+.portal-sidebar .hp-item.active .hp-q { font-weight: var(--weight-semibold); }
+.portal-sidebar .hp-item.active .hp-icon { color: var(--sidebar-accent); }
+.portal-sidebar .hp-q { margin: 0; color: var(--sidebar-text); font-size: var(--font-sm); font-weight: var(--weight-regular); -webkit-line-clamp: 1; }
+/* When, how many turns and rows: on the item's tooltip, not under every title. */
+.portal-sidebar .hp-meta { display: none; }
 .portal-sidebar .hp-empty { padding: 24px 10px; color: var(--sidebar-muted); font-size: var(--font-xs); line-height: 1.55; }
 .portal-sidebar .hp-loading { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .hp-state-dot { width: 8px; height: 8px; border: 2px solid color-mix(in srgb, var(--sidebar-muted) 28%, transparent); border-top-color: var(--sidebar-accent); border-radius: 50%; animation: hp-spin .75s linear infinite; }
 @keyframes hp-spin { to { transform: rotate(360deg); } }
-
-.portal-thread-workspace {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px;
-  border-top: 1px solid var(--shell-line);
-}
-.portal-thread-workspace-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--success-line); }
-.portal-thread-workspace > span:last-child { min-width: 0; }
-.portal-thread-workspace small,
-.portal-thread-workspace strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.portal-thread-workspace small { color: var(--shell-muted); font-size: var(--font-xs); letter-spacing: .05em; text-transform: uppercase; }
-.portal-thread-workspace strong { margin-top: 1px; color: var(--shell-text); font-size: var(--font-xs); }
-
-body:has(.chat-page) .portal-app-shell.portal-sidebar-collapsed { grid-template-columns: 68px minmax(0, 1fr); }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar { padding-inline: 9px; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-brand-word,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-new-thread > span:last-child,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-nav a > span,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar-notifications > span,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-user-meta,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions span:last-child,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar-context { display: none; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar-head { flex-direction: column; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar-head .portal-brand { justify-content: center; padding-inline: 0; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-new-thread,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-nav a,
-body:has(.chat-page) .portal-sidebar-collapsed .portal-sidebar-notifications { justify-content: center; padding-inline: 0; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-user-card { justify-content: center; padding-inline: 0; }
-body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-template-columns: 1fr; }
 
 .chat-page { background: var(--bg); }
 .chat-workspace { display: flex; width: 100%; height: 100%; background: var(--bg); }
@@ -410,8 +342,8 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
   box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-tint) 8%, transparent);
 }
 .chat-workspace-main .chat-input { min-height: 44px; max-height: 168px; padding-top: 11px; padding-bottom: 11px; }
-.send-btn { border-radius: 7px; background: var(--primary); box-shadow: none; }
-.send-btn:hover { background: var(--primary-hover); box-shadow: none; }
+.send-btn { border-radius: 7px; background: var(--primary-fill); box-shadow: none; }
+.send-btn:hover { background: var(--primary-fill-hover); box-shadow: none; }
 .chat-workspace-main .composer-footer { width: var(--chat-column); margin-inline: auto; }
 
 /* Conversational message state and recovery controls. */
@@ -487,15 +419,15 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .clarification-submit {
   min-height: 38px;
   padding: 8px 13px;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--primary-fill);
   border-radius: 7px;
-  background: var(--primary);
+  background: var(--primary-fill);
   color: var(--on-primary);
   font-size: var(--font-xs);
   font-weight: var(--weight-bold);
   cursor: pointer;
 }
-.clarification-submit:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.clarification-submit:hover { background: var(--primary-fill-hover); border-color: var(--primary-hover); }
 .clarification-freeform :disabled { opacity: .58; cursor: not-allowed; }
 .clarification-help { color: var(--text-muted); font-size: var(--font-xs); }
 .clarification-business-suggestions {
@@ -581,51 +513,7 @@ body:has(.chat-page) .portal-sidebar-collapsed .portal-side-actions { grid-templ
 .data-table-scroll { max-width: 100%; overscroll-behavior-x: contain; }
 .chart-canvas { max-width: 100%; }
 
-@media (max-width: 1100px) and (min-width: 721px) {
-  body:has(.chat-page) .portal-app-shell { grid-template-columns: 68px minmax(0, 1fr); }
-  body:has(.chat-page) .portal-sidebar { display: flex; padding-inline: 9px; }
-  body:has(.chat-page) .portal-brand-word,
-  body:has(.chat-page) .portal-new-thread > span:last-child,
-  body:has(.chat-page) .portal-nav a > span,
-  body:has(.chat-page) .portal-sidebar-notifications > span,
-  body:has(.chat-page) .portal-user-meta,
-  body:has(.chat-page) .portal-side-actions a > span:last-child,
-  body:has(.chat-page) .portal-side-actions button > span:last-child,
-  body:has(.chat-page) .portal-sidebar-context { display: none; }
-  body:has(.chat-page) .portal-sidebar-head { flex-direction: column; }
-  body:has(.chat-page) .portal-sidebar-head .portal-brand { justify-content: center; padding-inline: 0; }
-  body:has(.chat-page) .portal-new-thread,
-  body:has(.chat-page) .portal-nav a,
-  body:has(.chat-page) .portal-sidebar-notifications { justify-content: center; padding-inline: 0; }
-  body:has(.chat-page) .portal-user-card { justify-content: center; padding-inline: 0; }
-  body:has(.chat-page) .portal-side-actions { grid-template-columns: 1fr; }
-}
-
 @media (max-width: 720px) {
-  body:has(.chat-page) .portal-app-shell { grid-template-columns: minmax(0, 1fr); }
-  body:has(.chat-page) .portal-sidebar {
-    position: fixed;
-    width: min(86vw, 288px);
-    padding: 12px 10px 10px;
-    transform: translateX(-101%);
-  }
-  body:has(.chat-page) .portal-drawer-open .portal-sidebar { transform: translateX(0); }
-  body:has(.chat-page) .portal-brand-word,
-  body:has(.chat-page) .portal-new-thread > span:last-child,
-  body:has(.chat-page) .portal-nav a > span,
-  body:has(.chat-page) .portal-sidebar-notifications > span,
-  body:has(.chat-page) .portal-user-meta,
-  body:has(.chat-page) .portal-side-actions span:last-child,
-  body:has(.chat-page) .portal-sidebar-context { display: flex; }
-  body:has(.chat-page) .portal-sidebar-head { flex-direction: row; }
-  body:has(.chat-page) .portal-sidebar-head .portal-brand { justify-content: flex-start; padding-inline: 7px; }
-  body:has(.chat-page) .portal-new-thread,
-  body:has(.chat-page) .portal-nav a,
-  body:has(.chat-page) .portal-sidebar-notifications { justify-content: flex-start; padding-inline: 10px; }
-  body:has(.chat-page) .portal-user-card { justify-content: flex-start; padding-inline: 8px; }
-  body:has(.chat-page) .portal-user-meta { display: block; }
-  body:has(.chat-page) .portal-side-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .portal-sidebar .hp-close { display: inline-grid; }
   body:has(.chat-page) .main { height: calc(100% - 52px); padding-bottom: 0; }
   .chat-workspace-main .chat-shell-header { min-height: 54px; padding: 8px 10px; }
   .chat-workspace-main .chat-shell-title p,

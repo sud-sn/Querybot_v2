@@ -216,7 +216,7 @@
 .dash-ctrl-row { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); align-items: center; }
 .dctt-btn { padding: 3px 10px; font-size: var(--font-2xs); font-weight: var(--weight-bold); border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); cursor: pointer; transition: border-color var(--t-fast), color var(--t-fast); white-space: nowrap; }
 .dctt-btn:hover { border-color: var(--primary); color: var(--primary); }
-.dctt-btn.dctt-active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.dctt-btn.dctt-active { background: var(--primary-fill); border-color: var(--primary-fill); color: var(--on-primary); }
 /* The grid's resize strip -- 10px along a card's bottom edge, given z-index
    100 by gridstack -- lay across these buttons: a click on their lower half
    started a resize instead of choosing a type or palette. They sit above it;
@@ -277,7 +277,7 @@
 .chart-card-header { padding: 14px 16px 4px; }
 .chart-card-body { padding: 8px 16px 14px; }
 .chart-canvas { background: var(--surface); }
-.welcome-banner { background: var(--primary); box-shadow: none; }
+.welcome-banner { background: var(--primary-fill); box-shadow: none; }
 
 
 /* ── View and edit ────────────────────────────────────────────────────────

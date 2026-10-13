@@ -48,10 +48,12 @@ class TestPlainEnglishMeansPlainLanguage:
 class TestTheChromeIsTranslated:
 
     def test_the_thread_panel(self):
+        # One heading over the conversations; the search behind the sidebar's
+        # search button keeps its French label.
         markup = visible(render(lang="fr"))
-        for expected in ("Conversations récentes", "Vos conversations",
-                         "Espace de travail"):
-            assert expected in markup, expected
+        assert "Vos conversations" in markup
+        assert "Your conversations" not in markup
+        assert 'placeholder="Rechercher' in unescaped(render(lang="fr"))
 
     def test_the_conversation_shell(self):
         # The header is the workspace's name and, until the session is live,
@@ -80,7 +82,7 @@ class TestTheChromeIsTranslated:
 
     def test_the_accessible_names_are_translated(self):
         markup = unescaped(render(lang="fr"))
-        for expected in ('aria-label="Conversations récentes"',
+        for expected in ('aria-label="Vos conversations"',
                          'aria-label="Historique des requêtes récentes"',
                          'aria-label="Panneau d\'analyse"',
                          'aria-label="Fermer le panneau"'):

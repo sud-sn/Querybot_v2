@@ -1,24 +1,24 @@
 /* ============================================================
-   QueryBot — Design Tokens
+   Solviz — Design Tokens
    ------------------------------------------------------------
-   Identity: navy and azure, on cool blue-grey paper; Inter for
-   text and numbers, JetBrains Mono for SQL and code.
+   Identity (the approved prototype): indigo on soft periwinkle
+   grounds, a light sidebar, white cards with a hairline, and one
+   turmeric dot for the brand. Bricolage Grotesque for headings,
+   the wordmark and headline figures; Inter for every other word
+   and number; JetBrains Mono for SQL and code.
 
-   The approved direction ("A · Navy"): a deep navy navigation
-   shell, azure blue for actions and links, and one blue-to-cyan
-   gradient reserved for the brand mark and the primary action.
-   Colour in the content area belongs to the data -- chart
-   series, status, deltas -- so the chrome stays in navy, blue
+   Two themes, chosen by the reader (Light, Dark or Auto, which
+   follows the system): this sheet is the light palette; the dark
+   one, with the same names, is tokens-dark.css. Colour in the content area belongs to the data
+   -- chart series, status, deltas -- so the chrome stays indigo
    and cool greys.
 
    Every name the product already used is kept, so re-skinning
-   happens here and nowhere else. The one rename: the brand ramp
-   is --accent-50..900 (it was --teal-*, which had stopped
-   describing it). The structure is tested, not the taste
-   (tests/test_palette_structure.py): the grounds are ordered,
-   body ink clears 7:1 and secondary ink 4.5:1 on every ground,
-   a control edge clears 3:1, the ramps step evenly, and hover
-   and selection are told apart by chroma, not only brightness.
+   happens here and nowhere else. The structure is tested, not the
+   taste (tests/test_palette_structure.py): the grounds are ordered,
+   body ink clears 7:1 and secondary ink 4.5:1 on every ground, a
+   control edge clears 3:1, the ramps step evenly, and hover and
+   selection are told apart by chroma, not only brightness.
    ============================================================ */
 
 :root {
@@ -33,7 +33,7 @@
      Inter for all text, headings and figures; JetBrains Mono for
      SQL, code and identifiers only. See fonts.css. */
   --font-ui:      'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-display: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-mono:    'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
   /* Spacing: a 4px scale. */
@@ -73,110 +73,124 @@
   --line-relaxed: 1.7;
 
   /* ── Radii ── */
-  --radius:    6px;
-  --radius-sm: 4px;
-  --radius-lg: 10px;
+  --radius:    10px;
+  --radius-sm: 8px;
+  --radius-lg: 20px;
   --radius-pill: 999px;
+  --radius-window: 30px;     /* the app's window on the periwinkle page */
+  --radius-card: 20px;       /* cards, panels, the sidebar */
+  --radius-item: 12px;       /* list rows, nav items, small panels */
+
+  /* The page the app window sits on, and the window itself. */
+  --ground: #C7CFE3;
+  --window: #FFFFFF;
 
   /* ── Brand ramp ─────────────────────────────────────────────
      Azure, hue ~224. 600 is the primary.
      Saturation eases down the dark end instead of dropping to a
      neutral, so 700-900 are still brand. */
-  --accent-50:  #EEF2FE;
-  --accent-100: #DBE4FD;
-  --accent-200: #BDCDFA;
-  --accent-300: #93ADF6;
-  --accent-400: #6187EF;
-  --accent-500: #3766E6;
-  --accent-600: #2151CA;
-  --accent-700: #1E43A9;
-  --accent-800: #1B3383;
-  --accent-900: #16245A;
+  --accent-50:  #EEEFFD;
+  --accent-100: #DFE0FB;
+  --accent-200: #C3C5F6;
+  --accent-300: #A2A5EF;
+  --accent-400: #7F83E7;
+  --accent-500: #5C61E0;
+  --accent-600: #4F54D6;
+  --accent-700: #3A3EB8;
+  --accent-800: #2C2F8E;
+  --accent-900: #1E2062;
 
   /* The gradient. --brand-gradient is for the mark, which carries
      no text; its cyan end is too light for white text (3.0:1).
      --action-gradient is for a filled primary action: white text
      clears 6:1 at both ends. */
-  --brand-gradient:  linear-gradient(135deg, #2151CA 0%, #0B9ED9 100%);
-  --action-gradient: linear-gradient(135deg, #2151CA 0%, #0B67A0 100%);
+  --brand-gradient:  linear-gradient(135deg, #5C61E0 0%, #8D92F5 100%);
+  --action-gradient: linear-gradient(135deg, #4F54D6 0%, #3A3EB8 100%);
 
   /* ── Primary aliases — the whole product routes through these,
         so editing this block re-skins every surface. ────────── */
-  --blue:       #2151CA;
-  --blue-mid:   #1E43A9;
-  --blue-soft:  #3766E6;
-  --blue-light: #DBE4FD;
+  --blue:       #4F54D6;
+  --blue-mid:   #3A3EB8;
+  --blue-soft:  #5C61E0;
+  --blue-light: #DFE0FB;
 
-  --primary:       #2151CA;
-  --primary-hover: #1E43A9;
-  --primary-soft:  #EEF2FE;
+  --primary:       #4F54D6;
+  --primary-hover: #3A3EB8;
+  --primary-soft:  #EEEFFD;
+  /* The primary as a fill (buttons, the send button, a checked switch)
+     under its own name: in the light theme it is the primary itself; in
+     the dark one the primary turns light to read as ink and the fill
+     stays a deep indigo that white text reads on. */
+  --primary-fill:       #4F54D6;
+  --primary-fill-hover: #3A3EB8;
   /* The dot of the Solviz mark and wordmark: turmeric on a light ground,
-     the brighter turmeric on the navy shell. A logo, so no text contrast
-     applies; both still clear 2:1 on their ground. */
+     the brighter turmeric on a dark one (the dark theme, a photo). A
+     logo, so no text contrast applies; both still clear 2:1 on their
+     ground. */
   --brand-dot:        #E59D12;
   --brand-dot-bright: #F7B63C;
-  /* Text on a primary fill: 6.8:1 on --primary. */
+  /* Text on a primary fill: 6.8:1 on --primary-fill. */
   --on-primary:    #FFFFFF;
   --on-status:     #FFFFFF;   /* text on a filled danger, success or warning */
   /* Brand as ink rather than as fill: link text and headings that
      must clear 7:1 on every ground. */
-  --primary-ink:   #1E43A9;
+  --primary-ink:   #3539AE;
 
   /* ── Neutral ramp ───────────────────────────────────────────
      One hue (218deg, a cool navy cast held off the brand's 224),
      lightness in even 9.5-point steps, saturation easing to the
      middle so the mid-greys are grey and the ends keep the cast. */
-  --gray-50:  #F6F8FB;
-  --gray-100: #D7DEEA;
-  --gray-200: #BBC5D5;
-  --gray-300: #A0ACC0;
-  --gray-400: #8693A9;
-  --gray-500: #6B7A94;
-  --gray-600: #55627A;
-  --gray-700: #3E4A60;
-  --gray-800: #263247;
-  --gray-900: #121B2B;
+  --gray-50:  #F6F7FB;
+  --gray-100: #D7D9EA;
+  --gray-200: #BBBED5;
+  --gray-300: #A0A4C0;
+  --gray-400: #868BA9;
+  --gray-500: #6B7094;
+  --gray-600: #555A7A;
+  --gray-700: #3E4260;
+  --gray-800: #262A47;
+  --gray-900: #12152B;
 
   /* ── Grounds ────────────────────────────────────────────────
      Six, ordered dark to light, so elevation is carried by the
      ground itself. Cards sit a step above the page and read as
      white; menus and dialogs are white. */
-  --paper-recessed: #E4E9F1;   /* table header bands, toolbars, rails   */
-  --paper-sunken:   #EBEFF5;   /* code wells, inset read-only blocks    */
-  --paper:          #F2F5F9;   /* the app page                          */
-  --surface-alt:    #F7F9FC;   /* zebra rows, nested blocks in a card   */
-  --surface:        #FCFDFE;   /* cards, panels, table bodies           */
+  --paper-recessed: #E8EAF3;   /* table header bands, toolbars, rails   */
+  --paper-sunken:   #EEF0F7;   /* code wells, inset read-only blocks    */
+  --paper:          #F5F6FB;   /* the app page                          */
+  --surface-alt:    #F8F9FD;   /* zebra rows, nested blocks in a card   */
+  --surface:        #FCFCFF;   /* cards, panels, table bodies           */
   --surface-raised: #FFFFFF;   /* menus, popovers, modals, inputs       */
 
   /* Legacy ground names, kept as the public API. */
-  --bg:        #F2F5F9;
-  --bg-soft:   #EBEFF5;
-  --bg-muted:  #E4E9F1;
-  --surface-2: #F7F9FC;
-  --surface-3: #EBEFF5;
-  --navy:      #0B1F3A;
+  --bg:        #F5F6FB;
+  --bg-soft:   #EEF0F7;
+  --bg-muted:  #E8EAF3;
+  --surface-2: #F8F9FD;
+  --surface-3: #EEF0F7;
+  --navy:      #14173A;
 
   /* ── Lines ──────────────────────────────────────────────────
      Split by obligation: --line-control carries a control edge
      and clears 3:1 on the darkest ground (3.5); the others are
      separators. */
-  --line-subtle: #DCE3EC;      /* gridlines, list separators          */
-  --line:        #C3CDDB;      /* card edge, panel divider            */
-  --line-control:#6E7B91;      /* inputs, selects, checkboxes, radios */
+  --line-subtle: #E2E4EF;      /* gridlines, list separators          */
+  --line:        #CDD0E4;      /* card edge, panel divider            */
+  --line-control:#767BA6;      /* inputs, selects, checkboxes, radios */
 
-  --border:        #C3CDDB;
-  --border-strong: #6E7B91;
+  --border:        #CDD0E4;
+  --border-strong: #767BA6;
 
   /* ── Ink ────────────────────────────────────────────────────
      Body clears 12:1 and secondary 7:1 on every ground; muted
      clears 5.2:1 on the darkest. */
-  --text-strong:    #0B1424;
-  --text:           #1A2536;
-  --text-secondary: #3A475C;
-  --text-muted:     #526077;
-  --text-faint:     #7E8AA0;   /* disabled labels only, never body    */
-  --text-inverse:   #E6EDF8;
-  --text-soft:      #3A475C;
+  --text-strong:    #0D0F2E;
+  --text:           #14173A;
+  --text-secondary: #3C4066;
+  --text-muted:     #4E537A;
+  --text-faint:     #8A8FB5;   /* disabled labels only, never body    */
+  --text-inverse:   #EEEFF8;
+  --text-soft:      #3C4066;
 
   /* ── Semantic colours ───────────────────────────────────────
      Four families, each with ink / pressed / tint / edge. Every
@@ -200,50 +214,50 @@
   /* ── Interaction states ─────────────────────────────────────
      Ground-aware: each hover darkens its own ground by at least
      1.07:1, so a hovered row never brightens or vanishes. */
-  --hover-on-surface:  #F0F3F8;  --active-on-surface:  #E7ECF3;
-  --hover-on-alt:      #EDF1F6;  --active-on-alt:      #E4E9F1;
-  --hover-on-paper:    #E9EDF4;  --active-on-paper:    #E0E6EE;
-  --hover-on-recessed: #DAE1EB;  --active-on-recessed: #D0D8E4;
-  --row-hover:         #F0F3F8;
+  --hover-on-surface:  #F0F1F9;  --active-on-surface:  #E7E9F5;
+  --hover-on-alt:      #EDEFF8;  --active-on-alt:      #E4E7F3;
+  --hover-on-paper:    #E9EBF6;  --active-on-paper:    #E0E3F1;
+  --hover-on-recessed: #DCDFEE;  --active-on-recessed: #D2D5E9;
+  --row-hover:         #F0F1F9;
 
   /* Selection is separated from hover by chroma, not by another
      step of grey. */
-  --state-selected:       #E4EBFD;
-  --state-selected-hover: #D8E2FC;
-  --state-selected-line:  #2151CA;
-  --state-disabled:       #EBEFF5;
+  --state-selected:       #E6E7FC;
+  --state-selected-hover: #DADCFA;
+  --state-selected-line:  #4F54D6;
+  --state-disabled:       #EEF0F7;
 
   /* ── Focus ──────────────────────────────────────────────────
      The offset exists so a ring on a primary fill still shows. */
-  --focus-ring-color:  #2151CA;
+  --focus-ring-color:  #4F54D6;
   --focus-ring-offset: #FFFFFF;
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
 
   /* ── Navigation shell ───────────────────────────────────────
      The deep navy rail: chrome framing the light page. Text
      clears 14:1, muted 7.5:1, the accent 7.5:1 on it. */
-  --shell:          #0B1F3A;
-  --shell-surface:  #12294A;
-  --shell-line:     #223F66;
-  --shell-text:     #E6EDF8;
-  --shell-muted:    #9DB0CB;
-  --shell-selected: #1C3A63;
-  --shell-accent:   #93ADF6;
+  --shell:          #F1F2F6;
+  --shell-surface:  #FFFFFF;
+  --shell-line:     #E2E4EF;
+  --shell-text:     #14173A;
+  --shell-muted:    #4E537A;
+  --shell-selected: #FFFFFF;
+  --shell-accent:   #4F54D6;
 
-  --sidebar-bg:      #0B1F3A;
-  --sidebar-surface: #12294A;
-  --sidebar-border:  #223F66;
-  --sidebar-text:    #E6EDF8;
-  --sidebar-muted:   #9DB0CB;
-  --sidebar-hover:   rgba(255, 255, 255, .07);
-  --sidebar-active:  #1C3A63;
-  --sidebar-accent:  #93ADF6;
+  --sidebar-bg:      #F1F2F6;
+  --sidebar-surface: #FFFFFF;
+  --sidebar-border:  #E2E4EF;
+  --sidebar-text:    #14173A;
+  --sidebar-muted:   #4E537A;
+  --sidebar-hover:   rgba(255, 255, 255, .72);
+  --sidebar-active:  #FFFFFF;
+  --sidebar-accent:  #4F54D6;
 
   /* ── Code and data surfaces ─────────────────────────────────
      A light code well: the syntax colours are solved on it. */
-  --code-bg:   #EDF1F6;
-  --code-text: #1A2536;
-  --grid-line: #DCE3EC;
+  --code-bg:   #EEF0F7;
+  --code-text: #14173A;
+  --grid-line: #E2E4EF;
 
   /* ── Entity taxonomy ───────────────────────────────────────
      A categorical palette, not a semantic one: a fact table is
@@ -264,12 +278,12 @@
   /* ── Shadows ────────────────────────────────────────────────
      Tinted navy, never black, and restrained: elevation is the
      ground ladder's job; shadow is for what genuinely floats. */
-  --shadow-tint: #0F1B2D;
-  --shadow-sm: 0 1px 2px rgba(15, 27, 45, .05);
-  --shadow:    0 1px 2px rgba(15, 27, 45, .06), 0 1px 1px rgba(15, 27, 45, .03);
-  --shadow-md: 0 6px 16px rgba(15, 27, 45, .08), 0 1px 3px rgba(15, 27, 45, .05);
-  --shadow-lg: 0 16px 36px rgba(15, 27, 45, .14), 0 3px 8px rgba(15, 27, 45, .08);
-  --scrim: rgba(8, 18, 34, .45);
+  --shadow-tint: #14173A;
+  --shadow-sm: 0 1px 2px rgba(20, 23, 58, .05);
+  --shadow:    0 1px 2px rgba(20, 23, 58, .06), 0 12px 30px -16px rgba(20, 23, 58, .24);
+  --shadow-md: 0 6px 16px rgba(20, 23, 58, .08), 0 1px 3px rgba(20, 23, 58, .05);
+  --shadow-lg: 0 18px 40px -18px rgba(67, 71, 198, .35), 0 3px 8px rgba(20, 23, 58, .08);
+  --scrim: rgba(10, 12, 34, .38);
 
   /* ── Z-index ── */
   --z-base:     1;
@@ -280,8 +294,8 @@
   --z-toast:    9000;
 
   /* ── Skeleton shimmer surfaces ── */
-  --skeleton-base:  #E4E9F1;
-  --skeleton-shine: #F7F9FC;
+  --skeleton-base:  #E8EAF3;
+  --skeleton-shine: #F8F9FD;
 
   /* ── Motion ── */
   --ease-out: cubic-bezier(.4, 0, .2, 1);

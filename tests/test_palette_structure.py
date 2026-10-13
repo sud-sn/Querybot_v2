@@ -181,11 +181,13 @@ def test_selection_differs_from_hover_by_more_than_brightness(tok):
 
 def test_no_dark_surface_survives_in_a_light_only_product(tok):
     """--code-bg was #12211D, a near-black slab in six places, and the SQL
-    syntax colours are tuned for a light ground. The navigation shell is the
-    deliberate exception: it is chrome framing the page, not content."""
-    CHROME = {"--shell", "--shell-surface", "--shell-line", "--shell-selected",
-              "--sidebar-bg", "--sidebar-surface", "--sidebar-border",
-              "--sidebar-active", "--navy", "--shadow-tint", "--scrim",
+    syntax colours are tuned for a light ground. The navigation shell was
+    the one exception, a navy panel; in the approved design it is a light
+    panel like the rest, so only its inks are exempt. (The dark theme is
+    tokens-dark.css, tested in tests/test_the_dark_theme_reads.py.)"""
+    CHROME = {"--shell-text", "--shell-muted", "--shell-accent",
+              "--sidebar-text", "--sidebar-muted", "--sidebar-accent",
+              "--navy", "--shadow-tint", "--scrim",
               "--text-strong", "--text", "--text-secondary", "--text-muted",
               "--text-faint", "--line-control", "--border-strong"}
     for name, value in tok.items():

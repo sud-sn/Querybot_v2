@@ -67,8 +67,8 @@ class TestThePrimary:
         assert _worst_ground(tok, "--primary-ink") >= 7.0
 
     def test_its_text_on_its_fill(self, tok):
-        assert _ratio(tok["--on-primary"], tok["--primary"]) >= 4.5
-        assert _ratio(tok["--on-primary"], tok["--primary-hover"]) >= 4.5
+        assert _ratio(tok["--on-primary"], tok["--primary-fill"]) >= 4.5
+        assert _ratio(tok["--on-primary"], tok["--primary-fill-hover"]) >= 4.5
 
     def test_its_text_on_every_stop_of_the_action_gradient(self, tok):
         stops = re.findall(r"#[0-9a-fA-F]{6}", tok["--action-gradient"])
@@ -110,21 +110,26 @@ def test_an_entity_chip_reads(tok, kind):
 
 
 class TestTheIdentity:
-    """The approved direction, held: a cool navy cast in the greys, an azure
-    brand ramp under its own name, the gradient defined once, and a navy
-    shell -- so a retune cannot drift back to the old palette unnoticed."""
+    """The approved direction, held: a cool indigo cast in the greys, an
+    indigo brand ramp under its own name, the gradient defined once, and a
+    light shell framed by a darker ground -- so a retune cannot drift back to
+    the old palette unnoticed."""
 
-    def test_the_brand_ramp_is_azure(self, tok):
+    def test_the_brand_ramp_is_indigo(self, tok):
         for step in (400, 500, 600, 700):
             r, g, b = (int(tok[f"--accent-{step}"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-            assert b > g > r, f"--accent-{step} is not azure"
+            assert b > g >= r - 8 and b - g > 90, f"--accent-{step} is not indigo"
 
     def test_the_primary_is_the_ramp(self, tok):
         assert tok["--primary"] == tok["--accent-600"]
 
-    def test_the_shell_is_navy(self, tok):
-        r, g, b = (int(tok["--shell"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
-        assert b > g > r and _lum(tok["--shell"]) < 0.03
+    def test_the_primary_fill_is_the_primary_in_the_light_theme(self, tok):
+        assert tok["--primary-fill"] == tok["--primary"]
+        assert tok["--primary-fill-hover"] == tok["--primary-hover"]
+
+    def test_the_shell_is_a_light_panel_on_a_darker_ground(self, tok):
+        assert _lum(tok["--shell"]) > 0.8 and _lum(tok["--sidebar-bg"]) > 0.8
+        assert _lum(tok["--ground"]) < _lum(tok["--shell"]) < _lum(tok["--window"])
 
     def test_the_gradient_is_defined_once_for_each_use(self, tok):
         assert tok["--brand-gradient"].startswith("linear-gradient(")

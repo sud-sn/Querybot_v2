@@ -44,7 +44,7 @@ def _page_colour_sources(page: Path, scripts: bool) -> str:
 
 def _sources(scripts: bool = True):
     for sheet in sorted(CSS.glob("*.css")):
-        if sheet.name != "tokens.css":
+        if sheet.name not in ("tokens.css", "tokens-dark.css"):   # the two palettes
             yield sheet.name, _clean(sheet.read_text(encoding="utf-8"))
     for page in sorted(list((ROOT / "admin" / "templates").rglob("*.html")) +
                        list((ROOT / "portal" / "templates").rglob("*.html"))):
@@ -89,11 +89,10 @@ def _ratio(a: str, b: str) -> float:
 
 @pytest.mark.parametrize("sheet,selector", [
     ("portal.css", ".portal-nav a"),
-    ("chat_workspace.css", ".portal-thread-workspace small"),
     ("chat_workspace.css", ".portal-thread-heading"),
     ("base.css", ".sidebar-group-label"),
 ])
-def test_text_on_the_navy_shell_reads(sheet, selector):
+def test_text_on_the_shell_reads(sheet, selector):
     tokens = _tokens()
     css = _clean((CSS / sheet).read_text(encoding="utf-8"))
     body = next((b for s, b in re.findall(r"([^{}]+)\{([^{}]*)\}", css)

@@ -12,6 +12,20 @@
 <link rel="preload" href="/static/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ asset('css/fonts.css') }}">
 <link rel="stylesheet" href="{{ asset('css/tokens.css') }}">
+<link rel="stylesheet" href="{{ asset('css/tokens-dark.css') }}">
+<link rel="preload" href="/static/fonts/bricolage-grotesque-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+{# The reader's theme, set before the first paint so a dark page never flashes white: Light (the default), Dark,
+   or Auto (the system's). A dashboard drawn for an email or a PDF is always light. #}
+<script>
+(function () {
+  var theme = 'light';
+  {% if not (snapshot is defined and snapshot) %}
+  try { theme = localStorage.getItem('qb.theme') || 'light'; } catch (e) {}
+  if (['light', 'dark', 'auto'].indexOf(theme) < 0) theme = 'light';
+  {% endif %}
+  document.documentElement.dataset.theme = theme;
+})();
+</script>
 <link rel="stylesheet" href="{{ asset('css/base.css') }}">
 <link rel="stylesheet" href="{{ asset('css/portal.css') }}">
 <script src="{{ asset('js/qb-icons.js') }}" data-sprite="{{ asset('icons/qb-icons.svg') }}"></script>
@@ -243,40 +257,50 @@ window.qbEnumLabel = function (group, value) {
     {# A viewer opens dashboards only: no chat, no data guide (portal/access.py refuses them too). #}
     {% set _asks = reader_can(user if user is defined else none, 'ask') if reader_can is defined else true %}
     {% if _asks %}
-    <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="{{ t('ui.shell.new_thread') }}" title="{{ t('ui.shell.new_thread') }}">
-      <span class="portal-new-thread-icon" aria-hidden="true">+</span>
-      <span>{{ t('ui.shell.new_thread') }}</span>
-    </a>
+    <div class="portal-new-row">
+      <a href="/portal/chat?new=1" class="portal-new-thread" aria-label="{{ t('ui.shell.new_thread') }}" title="{{ t('ui.shell.new_thread') }}">
+        {{ ic("plus", 18) }}<span>{{ t('ui.shell.new_thread') }}</span>
+      </a>
+      <a href="/portal/chat?search=1" class="portal-thread-finder" aria-label="{{ t('ui.shell.search_threads') }}" title="{{ t('ui.shell.search_threads') }}">{{ ic("search", 18) }}</a>
+    </div>
     {% endif %}
 
     <nav class="portal-nav" aria-label="{{ t('ui.shell.nav_primary') }}">
+      <a href="/portal/home" title="{{ t('ui.shell.home_page') }}" class="{% if request.url.path.endswith('/home') %}active{% endif %}" {% if request.url.path.endswith('/home') %}aria-current="page"{% endif %}>
+        {{ ic("home", 18) }} <span>{{ t('ui.shell.home_page') }}</span>
+      </a>
       {% if _asks %}
       <a href="/portal/chat" title="{{ t('ui.shell.chat') }}" class="{% if '/chat' in request.url.path %}active{% endif %}" {% if '/chat' in request.url.path %}aria-current="page"{% endif %}>
-        {{ ic("chat", 17) }} <span>{{ t('ui.shell.chat') }}</span>
+        {{ ic("chat", 18) }} <span>{{ t('ui.shell.chat') }}</span>
       </a>
       {% endif %}
       <a href="/portal/dashboard" title="{{ t('ui.shell.dashboard') }}" class="{% if 'dashboard' in request.url.path %}active{% endif %}" {% if 'dashboard' in request.url.path %}aria-current="page"{% endif %}>
-        {{ ic("dashboard", 17) }} <span>{{ t('ui.shell.dashboard') }}</span>
+        {{ ic("dashboard", 18) }} <span>{{ t('ui.shell.dashboard') }}</span>
       </a>
       {% if _asks %}
       <a href="/portal/kb" title="{{ t('ui.shell.semantic_layer') }}" class="{% if '/kb' in request.url.path %}active{% endif %}" {% if '/kb' in request.url.path %}aria-current="page"{% endif %}>
-        {{ ic("database", 17) }} <span>{{ t('ui.shell.semantic_layer') }}</span>
+        {{ ic("book", 18) }} <span>{{ t('ui.shell.semantic_layer') }}</span>
       </a>
       {% endif %}
+      <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}" {% if '/notifications' in request.url.path %}aria-current="page"{% endif %}>
+        {{ ic("bell", 18) }}
+        <span>{{ t('ui.shell.notifications') }}</span>
+        {# Unread notices: filled by the page script, and as each one arrives. #}
+        <span class="portal-sidebar-count" id="noticeCount" hidden></span>
+      </a>
     </nav>
 
     {% block portal_sidebar_context %}{% endblock %}
 
     <div class="portal-sidebar-spacer"></div>
 
-    <a href="/portal/notifications" title="{{ t('ui.shell.notifications') }}" class="portal-sidebar-notifications {% if '/notifications' in request.url.path %}active{% endif %}" {% if '/notifications' in request.url.path %}aria-current="page"{% endif %}>
-      {{ ic("bell", 17) }}
-      <span>{{ t('ui.shell.notifications') }}</span>
-      {# Unread notices: filled by the page script, and as each one arrives. #}
-      <span class="portal-sidebar-count" id="noticeCount" hidden></span>
-    </a>
-
     <footer class="portal-sidebar-footer">
+      {# Appearance: Light (the default), Dark, or Auto, which follows the system. Kept on this device. #}
+      <div class="portal-theme" role="group" aria-label="{{ t('ui.shell.appearance') }}" title="{{ t('ui.shell.theme_hint') }}">
+        <button type="button" data-theme-choice="light" aria-pressed="false">{{ ic("sun", 14) }}<span>{{ t('ui.shell.theme_light') }}</span></button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">{{ ic("moon", 14) }}<span>{{ t('ui.shell.theme_dark') }}</span></button>
+        <button type="button" data-theme-choice="auto" aria-pressed="false"><span>{{ t('ui.shell.theme_auto') }}</span></button>
+      </div>
       <div class="portal-user-card">
         {% set _photo = photo_url(user) if photo_url is defined else '' %}
         <a class="avatar{% if _photo %} has-photo{% endif %}" href="/portal/settings?tab=profile" title="{{ t('ui.profile.tab.profile') }}" aria-label="{{ t('ui.profile.tab.profile') }}">{% if _photo %}<img src="{{ _photo }}" alt="">{% else %}{{ (user.name or 'U')[0].upper() }}{% endif %}</a>
@@ -284,8 +308,9 @@ window.qbEnumLabel = function (group, value) {
           <div class="topbar-user-name">{{ user.name }}</div>
           <div class="topbar-user-role">{{ user.group_name or t('ui.shell.no_group') }} &middot; {{ enum_label('portal_role', reader_role(user)) if reader_role is defined else enum_label('role', user.role) }}</div>
         </div>
+        <button type="button" class="portal-account-toggle" aria-expanded="false" aria-controls="portalAccountMenu" aria-label="{{ t('ui.shell.account_menu') }}" title="{{ t('ui.shell.account_menu') }}">{{ ic("settings", 16) }}</button>
       </div>
-      <div class="portal-side-actions" aria-label="{{ t('ui.shell.account_actions') }}">
+      <div class="portal-side-actions" id="portalAccountMenu" aria-label="{{ t('ui.shell.account_actions') }}" hidden>
         {# The switcher is a plain form on purpose. A fetch() version would have
            to re-translate the whole shell in JavaScript to avoid a half-French
            page; posting and coming back re-renders every string server-side,
@@ -395,6 +420,35 @@ window.qbEnumLabel = function (group, value) {
     syncToggleLabel();
     window.dispatchEvent(new Event('resize'));
   };
+
+  // Appearance: the reader's choice, kept on this device; a chart already drawn is drawn again in the new colours.
+  var themeButtons = sidebar.querySelectorAll('[data-theme-choice]');
+  function showTheme(theme){
+    themeButtons.forEach(function(button){
+      button.setAttribute('aria-pressed', button.getAttribute('data-theme-choice') === theme ? 'true' : 'false');
+    });
+  }
+  showTheme(document.documentElement.dataset.theme || 'light');
+  themeButtons.forEach(function(button){
+    button.addEventListener('click', function(){
+      var theme = button.getAttribute('data-theme-choice');
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem('qb.theme', theme); } catch (_) {}
+      showTheme(theme);
+      window.dispatchEvent(new CustomEvent('qb-theme-change', {detail: {theme: theme}}));
+      window.dispatchEvent(new Event('resize'));
+    });
+  });
+  // The account menu: language, Settings and Log out, under the gear beside the reader's name.
+  var accountToggle = sidebar.querySelector('.portal-account-toggle');
+  var accountMenu = document.getElementById('portalAccountMenu');
+  if (accountToggle && accountMenu) {
+    accountToggle.addEventListener('click', function(){
+      var open = accountMenu.hidden;
+      accountMenu.hidden = !open;
+      accountToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  }
 
   try {
     if (!isMobile() && localStorage.getItem(storageKey) === '1') {

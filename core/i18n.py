@@ -905,7 +905,15 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.expand": {"en": "Expand sidebar", "fr": "Développer le menu latéral"},
     "ui.shell.open_nav": {"en": "Open navigation", "fr": "Ouvrir la navigation"},
     "ui.shell.close_nav": {"en": "Close navigation", "fr": "Fermer la navigation"},
-    "ui.shell.new_thread": {"en": "New Thread", "fr": "Nouvelle conversation"},
+    "ui.shell.new_thread": {"en": "New chat", "fr": "Nouvelle conversation"},
+    "ui.shell.home_page": {"en": "Home", "fr": "Accueil"},
+    "ui.shell.search_threads": {"en": "Search conversations", "fr": "Rechercher dans les conversations"},
+    "ui.shell.appearance": {"en": "Appearance", "fr": "Apparence"},
+    "ui.shell.theme_light": {"en": "Light", "fr": "Clair"},
+    "ui.shell.theme_dark": {"en": "Dark", "fr": "Sombre"},
+    "ui.shell.theme_auto": {"en": "Auto", "fr": "Auto"},
+    "ui.shell.theme_hint": {"en": "Auto follows your system.", "fr": "Auto suit votre système."},
+    "ui.shell.account_menu": {"en": "Account and language", "fr": "Compte et langue"},
     "ui.shell.chat": {"en": "Chat", "fr": "Chat"},
     "ui.shell.dashboard": {"en": "Dashboards", "fr": "Tableaux de bord"},
     # A reader's word for the semantic layer: what they can ask about.
@@ -914,7 +922,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.no_group": {"en": "No group", "fr": "Aucun groupe"},
     "ui.shell.account_actions": {"en": "Account actions", "fr": "Actions du compte"},
     "ui.shell.settings": {"en": "Settings", "fr": "Paramètres"},
-    "ui.shell.logout": {"en": "Logout", "fr": "Déconnexion"},
+    "ui.shell.logout": {"en": "Log out", "fr": "Déconnexion"},
     # The house confirm dialog. Its defaults are set in JS, so they need the
     # catalogue on the browser side too.
     "ui.shell.confirm_title": {"en": "Are you sure?", "fr": "Confirmer l'action ?"},
@@ -5784,7 +5792,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     # French customer to ask their questions in English.
 
     # The thread panel in the sidebar.
-    "ui.chat.recent_threads": {"en": "Recent Threads", "fr": "Conversations récentes"},
     "ui.chat.refresh_threads": {"en": "Refresh threads", "fr": "Actualiser les conversations"},
     "ui.chat.search_threads": {"en": "Search threads", "fr": "Rechercher une conversation"},
     "ui.chat.clear_search": {"en": "Clear thread search", "fr": "Effacer la recherche"},
@@ -5792,8 +5799,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.your_conversations": {"en": "Your conversations", "fr": "Vos conversations"},
     "ui.chat.close_history": {"en": "Close history", "fr": "Fermer l'historique"},
     "ui.chat.loading_threads": {"en": "Loading recent threads...", "fr": "Chargement des conversations récentes..."},
-    "ui.chat.current_workspace": {"en": "Current workspace", "fr": "Espace de travail actuel"},
-    "ui.chat.workspace": {"en": "Workspace", "fr": "Espace de travail"},
     "ui.chat.your_workspace": {"en": "Your workspace", "fr": "Votre espace de travail"},
 
     # Chat turned off for the workspace.

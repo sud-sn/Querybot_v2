@@ -113,7 +113,7 @@ window.QB_CHART_STATUS = function () {
     background: { gain: alpha(good, 0.09), drop: alpha(bad, 0.09) },
     border:     { gain: alpha(good, 0.25), drop: alpha(bad, 0.25) },
     shadow:     { gain: alpha(good, 0.22), drop: alpha(bad, 0.24) },
-    ring:       token('--surface', '#FCFDFE'),
+    ring:       token('--surface', '#FCFCFF'),
   };
 };
 
@@ -131,12 +131,12 @@ window.QB_CHART_THEME = function () {
   const root = getComputedStyle(document.documentElement);
   const token = (name, fallback) => root.getPropertyValue(name).trim() || fallback;
 
-  const muted = token('--text-muted', '#526077');
-  const line = token('--line', '#C3CDDB');
-  const gridline = token('--line-subtle', '#DCE3EC');
-  const surface = token('--surface', '#FCFDFE');
+  const muted = token('--text-muted', '#4E537A');
+  const line = token('--line', '#CDD0E4');
+  const gridline = token('--line-subtle', '#E2E4EF');
+  const surface = token('--surface', '#FCFCFF');
   const raised = token('--surface-raised', '#FFFFFF');
-  const strong = token('--text-strong', '#0B1424');
+  const strong = token('--text-strong', '#0D0F2E');
 
   return {
     // Retained and always false: callers that still pass it through to ECharts'
@@ -157,7 +157,7 @@ window.QB_CHART_THEME = function () {
     tooltipBg:   raised,
     tooltipText: strong,
     // Secondary ink: legend entries, data labels, tooltip row names.
-    ink2:        token('--text-secondary', '#3A475C'),
+    ink2:        token('--text-secondary', '#3C4066'),
     // The product's delta colours: a variance going up or down, always with a
     // sign beside it, never colour alone.
     good:        token('--success', '#067647'),

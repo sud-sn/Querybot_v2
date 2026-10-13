@@ -266,13 +266,13 @@
     const theme = (global.QB_CHART_THEME ? global.QB_CHART_THEME() : {}) || {};
     return {
       font: theme.font || "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
-      surface: theme.surface || '#FCFDFE',
+      surface: theme.surface || '#FCFCFF',
       raised: theme.tooltipBg || '#FFFFFF',
-      ink: theme.tooltipText || theme.ink || '#0B1424',
+      ink: theme.tooltipText || theme.ink || '#0D0F2E',
       ink2: theme.ink2 || '#3A475C',
-      muted: theme.axis || '#526077',
-      grid: theme.split || '#DCE3EC',
-      axis: theme.axisLine || '#C3CDDB',
+      muted: theme.axis || '#4E537A',
+      grid: theme.split || '#E2E4EF',
+      axis: theme.axisLine || '#CDD0E4',
       good: theme.good || '#067647',
       bad: theme.bad || '#B42318',
     };

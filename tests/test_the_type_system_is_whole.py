@@ -89,7 +89,7 @@ class TestTheFacesShip:
 
     def test_every_face_is_a_shipped_woff2(self):
         faces = _font_faces()
-        assert {face["family"] for face in faces} == {"Inter", "JetBrains Mono"}
+        assert {face["family"] for face in faces} == {"Inter", "JetBrains Mono", "Bricolage Grotesque"}
         for face in faces:
             for url in face["urls"]:
                 path = ROOT / url.lstrip("/")
@@ -103,12 +103,12 @@ class TestTheFacesShip:
             assert "SIL OPEN FONT LICENSE" in licence.read_text(encoding="utf-8").upper()
 
     def test_each_family_covers_latin_for_english_and_french(self):
-        for family in ("Inter", "JetBrains Mono"):
+        for family in ("Inter", "JetBrains Mono", "Bricolage Grotesque"):
             ranges = " ".join(face["range"] for face in _font_faces() if face["family"] == family)
             assert "U+0000-00FF" in ranges, family
 
     @pytest.mark.parametrize("token,family", [
-        ("--font-ui", "Inter"), ("--font-display", "Inter"), ("--font-mono", "JetBrains Mono"),
+        ("--font-ui", "Inter"), ("--font-display", "Bricolage Grotesque"), ("--font-mono", "JetBrains Mono"),
     ])
     def test_the_tokens_lead_with_a_shipped_face(self, token, family):
         assert _first_family(_tokens()[token]) == family
@@ -124,7 +124,7 @@ class TestTheFacesShip:
         preloads = re.findall(r'<link rel="preload" href="([^"]+)" as="font"', page)
         assert preloads, shell
         latin = {url for face in _font_faces() if "U+0000-00FF" in face["range"]
-                 for url in face["urls"] if face["family"] == "Inter"}
+                 for url in face["urls"] if face["family"] in ("Inter", "Bricolage Grotesque")}
         assert set(preloads) <= latin, preloads
 
 

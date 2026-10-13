@@ -205,7 +205,7 @@ class TestOnePerScreen:
         assert re.search(r'<div\s+class="qb-brand-motion qb-brand-motion--sm portal-brand-mark"', chat_page)
         css = (ROOT / "static" / "css" / "portal.css").read_text(encoding="utf-8")
         assert re.search(r"\.portal-sidebar[^{]*\.portal-brand-mark[^{]*\{[^}]*--qb-mark-glyph:\s*var\(--sidebar-accent\)"
-                         r"[^}]*--qb-mark-dot:\s*var\(--brand-dot-bright\)", css)
+                         r"[^}]*--qb-mark-dot:\s*var\(--brand-dot\)", css)
 
 
 def test_the_admin_sidebar_carries_the_same_lockup_with_a_tag():
@@ -219,7 +219,7 @@ def test_the_admin_sidebar_carries_the_same_lockup_with_a_tag():
     assert 'class="qb-wordmark sidebar-brand-text" role="img" aria-label="Solviz"' in brand
     assert re.search(r">\s*Admin\s*<", brand)
     assert "<img" not in brand
-    # On the navy sidebar the mark takes the sidebar's colours. Two classes: the mark's own
+    # In the sidebar the mark takes the sidebar's colours. Two classes: the mark's own
     # stylesheet sets the light-ground colours and loads after the admin one.
     css = (ROOT / "static" / "css" / "admin.css").read_text(encoding="utf-8")
     assert re.search(r"\.sidebar-brand \.sidebar-brand-mark\s*\{[^}]*--qb-mark-glyph:\s*var\(--sidebar-accent\)", css)

@@ -87,7 +87,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .processing-row{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.processing-row.active{display:flex}
 .stage-status{display:flex;align-items:center;gap:.5rem}
 .stage-dots{display:flex;align-items:center;gap:4px}
-.stage-dot{width:5px;height:5px;border-radius:50%;background:var(--primary);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
+.stage-dot{width:5px;height:5px;border-radius:50%;background:var(--primary-fill);opacity:.35;animation:dot-bounce 1.3s ease-in-out infinite}
 .stage-dot:nth-child(2){animation-delay:.18s}
 .stage-dot:nth-child(3){animation-delay:.36s}
 .stage-label{font-size:var(--font-sm);font-weight:var(--weight-semibold);color:var(--text-muted)}
@@ -105,7 +105,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .agent-run-meta{display:flex;align-items:center;gap:.55rem;margin:-.25rem 0 .75rem;padding-bottom:.7rem;border-bottom:1px solid var(--border);font-size:var(--font-2xs);color:var(--text-muted);min-width:0}
 .agent-run-meta[hidden]{display:none}
 .agent-run-governed{display:inline-flex;align-items:center;gap:.3rem;font-weight:var(--weight-bold);color:var(--primary)}
-.agent-run-governed::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--primary)}
+.agent-run-governed::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--primary-fill)}
 .agent-run-tool{font-family:var(--font-mono),monospace;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .agent-run-id{margin-left:auto;font-family:var(--font-mono),monospace;color:var(--text-muted);white-space:nowrap}
 .agent-run-meta[data-status="completed"] .agent-run-governed{color:var(--green)}
@@ -126,7 +126,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stage-step summary::after,.trust-box summary::after{content:'';flex-shrink:0;width:7px;height:7px;border-right:1.75px solid currentColor;border-bottom:1.75px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform .15s ease}
 .stage-step[open] summary::after,.trust-box[open] summary::after{transform:translateY(2px) rotate(-135deg)}
 .stage-step summary::after{margin-left:auto;color:var(--line-subtle)}
-.stage-step-tick{flex-shrink:0;width:5px;height:5px;border-radius:999px;background:var(--primary);opacity:.5;transform:translateY(-1px)}
+.stage-step-tick{flex-shrink:0;width:5px;height:5px;border-radius:999px;background:var(--primary-fill);opacity:.5;transform:translateY(-1px)}
 .stage-step-label{min-width:0}
 .stage-step-detail{padding:.1rem 0 .4rem 1rem;font-size:var(--font-xs);color:var(--text-muted)}
 .answer-progress-skeleton{display:grid;gap:7px}
@@ -150,10 +150,10 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chart-type-toggle{display:flex;gap:.3rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);flex-wrap:wrap}
 .ctt-btn{padding:4px 11px;font-size:var(--font-xs);font-weight:var(--weight-bold);border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
 .ctt-btn:hover{border-color:var(--primary);color:var(--primary)}
-.ctt-btn.ctt-active{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.ctt-btn.ctt-active{background:var(--primary-fill);border-color:var(--primary-fill);color:var(--on-primary)}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:var(--font-xs);flex-wrap:wrap}
 .assistant-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1rem .95rem;box-shadow:var(--shadow);position:relative}
-.assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary)}
+.assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary-fill)}
 .result-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0;padding-left:.15rem}
 .result-answer{flex:1 1 260px;min-width:0}
 .result-layout{display:flex;flex-direction:column;gap:.95rem}.result-chart-wrap{background:color-mix(in srgb,var(--surface-2) 65%, transparent);border:1px solid var(--border);border-radius:var(--radius);padding:.65rem}.chart-canvas.compact{height:320px}
@@ -195,7 +195,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-panel.open{display:flex}
 .rc-thread{display:flex;flex-direction:column;gap:.55rem;padding:.75rem .9rem;max-height:320px;overflow-y:auto}
 .rc-bubble{max-width:88%;padding:.55rem .85rem;border-radius:10px;font-size:var(--font-base);line-height:1.6}
-.rc-bubble.user{align-self:flex-end;background:var(--primary);color:var(--on-primary);border-bottom-right-radius:3px}
+.rc-bubble.user{align-self:flex-end;background:var(--primary-fill);color:var(--on-primary);border-bottom-right-radius:3px}
 .rc-bubble.bot{align-self:flex-start;background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:3px}
 .rc-bubble.bot.error{background:var(--danger-soft);border-color:var(--danger);color:var(--danger)}
 .rc-typing{align-self:flex-start;padding:.4rem .7rem;font-size:var(--font-sm);color:var(--text-muted);font-style:italic}
@@ -213,7 +213,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .rc-input-row{display:flex;gap:.4rem;padding:.55rem .7rem;border-top:1px solid var(--border);background:var(--surface);align-items:center}
 .rc-input{flex:1;padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--font-base);outline:none;resize:none;min-height:36px;max-height:100px;line-height:1.5}
 .rc-input:focus{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 15%, transparent)}
-.rc-send{padding:6px 14px;border-radius:7px;border:none;background:var(--primary);color:var(--on-primary);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.rc-send{padding:6px 14px;border-radius:7px;border:none;background:var(--primary-fill);color:var(--on-primary);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;white-space:nowrap;transition:opacity .15s}
 .rc-send:hover{opacity:.88}
 .rc-send:disabled{opacity:.45;cursor:default}
 .rc-hint{padding:.55rem .9rem;font-size:var(--font-xs);color:var(--text-muted);border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface-2) 40%, transparent);line-height:1.55}
@@ -267,7 +267,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .feedback-panel.open{display:flex}
 .feedback-reason{font-size:var(--font-sm);padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%}
 .feedback-comment{font-size:var(--font-sm);padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%;resize:vertical;min-height:50px;font-family:inherit}
-.feedback-submit{align-self:flex-end;font-size:var(--font-sm);padding:4px 14px;border-radius:6px;border:1px solid var(--primary);background:var(--primary);color:var(--on-primary);cursor:pointer;font-weight:var(--weight-bold)}
+.feedback-submit{align-self:flex-end;font-size:var(--font-sm);padding:4px 14px;border-radius:6px;border:1px solid var(--primary-fill);background:var(--primary-fill);color:var(--on-primary);cursor:pointer;font-weight:var(--weight-bold)}
 .feedback-submit:hover{opacity:.85}
 .trust-box{margin-top:.95rem;border:1px solid var(--border);border-radius:var(--radius);background:color-mix(in srgb,var(--surface-2) 46%,transparent);overflow:hidden}
 .trust-box summary{cursor:pointer;list-style:none;font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-soft);padding:.75rem .85rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem}
@@ -376,7 +376,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .schema-bar{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 .schema-tab{border:1px solid var(--border);background:var(--surface);color:var(--text-soft);font-size:var(--font-xs);font-weight:var(--weight-bold);padding:5px 13px;border-radius:999px;cursor:pointer;transition:all .15s;white-space:nowrap}
 .schema-tab:hover{border-color:var(--primary);color:var(--primary)}
-.schema-tab.active{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
+.schema-tab.active{background:var(--primary-fill);border-color:var(--primary-fill);color:var(--on-primary)}
 .schema-bar-label{font-size:var(--font-2xs);font-weight:var(--weight-bold);text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-right:.25rem;flex-shrink:0}
 .schema-current{font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);padding:5px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);white-space:nowrap}
 .schema-mode-note{display:flex;align-items:center;gap:.45rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 82%,var(--surface-2));font-size:var(--font-xs);color:var(--text-muted);line-height:1.45;flex-shrink:0}
@@ -397,7 +397,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chat-input{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-size:var(--font-md);resize:none;max-height:140px;min-height:24px;line-height:1.55;padding:7px 6px}.chat-input::placeholder{color:var(--text-muted)}
 .chat-input:focus-visible{box-shadow:none} /* the pill itself already shows focus via :focus-within */
 .composer-side{display:flex;align-items:center;gap:.55rem;flex-shrink:0;padding-bottom:2px}.char-count{font-size:var(--font-xs);color:var(--text-muted);min-width:30px;text-align:right}
-.send-btn{width:38px;height:38px;background:var(--primary);border:none;border-radius:999px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--on-primary);font-size:var(--font-lg);flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s,box-shadow .15s;box-shadow:0 3px 10px color-mix(in srgb,var(--primary) 38%,transparent)}
+.send-btn{width:38px;height:38px;background:var(--primary-fill);border:none;border-radius:999px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--on-primary);font-size:var(--font-lg);flex-shrink:0;transition:transform .15s,opacity .15s,filter .15s,box-shadow .15s;box-shadow:0 3px 10px color-mix(in srgb,var(--primary) 38%,transparent)}
 .send-btn:hover{transform:translateY(-1px) scale(1.04);filter:brightness(1.05);box-shadow:0 5px 14px color-mix(in srgb,var(--primary) 45%,transparent)}
 .send-btn:active{transform:translateY(0) scale(.97)}
 .send-btn:disabled{opacity:.4;cursor:not-allowed;box-shadow:none;transform:none}
@@ -703,7 +703,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-card .answer-definition { margin: 0; font-size: var(--font-sm); line-height: 1.5; color: var(--text-muted); text-wrap: pretty; }
 /* A dashboard the reader asked for: how far it is while its tiles are built, then its name, tabs and link. */
 .dash-made-bar { height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-.dash-made-bar span { display: block; height: 100%; background: var(--primary); border-radius: inherit; transition: width .3s ease; }
+.dash-made-bar span { display: block; height: 100%; background: var(--primary-fill); border-radius: inherit; transition: width .3s ease; }
 @media (prefers-reduced-motion: reduce) { .dash-made-bar span { transition: none; } }
 .dash-made-tabs { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .dash-made-tabs a { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
@@ -750,12 +750,12 @@ body:has(.chat-page) .main { background: var(--bg); }
 
 {% block portal_sidebar_context %}
 <div class="portal-sidebar-context">
-  <section class="portal-thread-panel" aria-label="{{ t('ui.chat.recent_threads') }}">
+  <section class="portal-thread-panel" aria-label="{{ t('ui.chat.your_conversations') }}">
     <div class="portal-thread-heading">
-      <span>{{ t('ui.chat.recent_threads') }}</span>
+      <span>{{ t('ui.chat.your_conversations') }}</span>
       <button type="button" onclick="refreshHistory()" title="{{ t('ui.chat.refresh_threads') }}" aria-label="{{ t('ui.chat.refresh_threads') }}">{{ ic("refresh", 14) }}</button>
     </div>
-    <div class="hp-search-wrap">
+    <div class="hp-search-wrap" id="historySearchWrap" hidden>
       {{ ic("search", 15, "hp-search-icon") }}
       <input type="search" id="historySearch" class="hp-search-input"
              placeholder="{{ t('ui.chat.search_threads') }}" autocomplete="off" spellcheck="false"
@@ -772,10 +772,6 @@ body:has(.chat-page) .main { background: var(--bg); }
       <div class="hp-list" id="historyList">
         <div class="hp-empty hp-loading" id="historyEmpty"><span class="hp-state-dot" aria-hidden="true"></span>{{ t('ui.chat.loading_threads') }}</div>
       </div>
-    </div>
-    <div class="portal-thread-workspace" title="{{ t('ui.chat.current_workspace') }}">
-      <span class="portal-thread-workspace-dot" aria-hidden="true"></span>
-      <span><small>{{ t('ui.chat.workspace') }}</small><strong>{{ client.client_name or t('ui.chat.your_workspace') }}</strong></span>
     </div>
   </section>
 </div>
@@ -1015,6 +1011,19 @@ const _requestedNewThread = new URLSearchParams(location.search).get('new') === 
 const _questionFromUrl = (new URLSearchParams(location.search).get('ask') || '').slice(0, 500);
 // "New dashboard" on the dashboards page: the box asks the reader to describe the dashboard they want.
 const _composeDashboard = new URLSearchParams(location.search).get('compose') === 'dashboard';
+// The sidebar's round search button opens the conversation search: here, in
+// place; from another page it comes here with ?search=1.
+function _openThreadSearch() {
+  const wrap = document.getElementById('historySearchWrap');
+  if (!wrap) return false;
+  wrap.hidden = false;
+  document.getElementById('historySearch')?.focus();
+  return true;
+}
+document.querySelector('.portal-thread-finder')?.addEventListener('click', (event) => {
+  if (_openThreadSearch()) event.preventDefault();
+});
+if (new URLSearchParams(location.search).get('search') === '1') _openThreadSearch();
 const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
 const THREAD_ID = _requestedNewThread
   ? _createThreadId()
@@ -5071,9 +5080,12 @@ async function loadHistory() {
       const dur  = item.duration_ms ? t('ui.chat.hist.duration', {count: window.qbNum(Math.round(item.duration_ms))}) : '';
       const turns = item.turn_count > 1 ? t('ui.chat.hist.turns', {count: window.qbNum(item.turn_count)}) : '';
       const active = item.thread_id === THREAD_ID ? ' active' : '';
+      const about = [ts, turns, rows, dur].filter(Boolean).join(' · ');
       return `${groupHeader}<div class="hp-item${active}" role="button" tabindex="0" data-thread-id="${escHtml(item.thread_id || '')}"
+                   title="${escHtml(about)}"
                    onclick="openHistoryThread(this.dataset.threadId, this)"
                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openHistoryThread(this.dataset.threadId,this)}">
+        ${window.qbIcon('chat', 16, 'hp-icon')}
         <div class="hp-q">${escHtml(item.question || '—')}</div>
         <div class="hp-meta">
           ${ts ? `<span class="hp-badge">${ts}</span>` : ''}

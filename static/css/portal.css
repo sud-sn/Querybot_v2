@@ -1,9 +1,15 @@
 /* ============================================================
-   QueryBot Portal — Topbar, layout & portal-specific styles
-   (Sprint 1)
+   Solviz Portal — the shell and portal-wide pieces
+   ------------------------------------------------------------
+   The approved prototype: the app is a white window with large
+   rounded corners on a soft periwinkle page; inside it, a light
+   sidebar panel (the brand, New chat with search beside it, the
+   pages, the reader's conversations, Appearance and the reader)
+   and the page itself. From 1100px down the sidebar is a rail of
+   icons; at 720px and below the window fills the screen and the
+   sidebar is a drawer.
    ============================================================ */
 
-/* ── Theme-toggle icon swap ─────────────────────────────── */
 body {
   min-height: 100vh;
   overflow: auto;
@@ -11,125 +17,266 @@ body {
 }
 body:has(.portal-app-shell) {
   overflow: hidden;
-  display: block;
+  /* flow-root: the window's top margin stays inside the body instead of
+     carrying it down and baring a strip of the page above the ground. */
+  display: flow-root;
+  background: var(--ground);
 }
 
 .portal-app-shell {
-  width: 100vw;
-  height: 100vh;
+  width: calc(100vw - 32px);
+  max-width: 1600px;
+  height: calc(100vh - 32px);
+  margin: 16px auto;
+  padding: 12px;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  background: var(--bg);
+  grid-template-columns: 284px minmax(0, 1fr);
+  gap: 12px;
+  background: var(--window);
+  border-radius: var(--radius-window);
+  box-shadow: var(--shadow);
   overflow: hidden;
+  transition: grid-template-columns var(--t-med) var(--ease-out);
 }
+
+/* ── Sidebar ── */
 .portal-sidebar {
+  position: relative;
+  z-index: 410;
   min-width: 0;
-  height: 100vh;
-  padding: 14px 12px;
+  min-height: 0;
+  height: 100%;
+  padding: 18px 14px 14px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow: hidden;
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--sidebar-border);
+  border-radius: 24px;
   color: var(--sidebar-text);
+  transition: transform var(--t-med) var(--ease-out);
 }
+.portal-sidebar-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.portal-sidebar-head .portal-brand { flex: 1; min-width: 0; }
 .portal-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
   min-height: 38px;
-  padding: 7px 8px;
+  padding: 2px 6px 4px;
   color: var(--sidebar-text);
-  font-size: var(--font-md);
+  font-family: var(--font-display);
+  font-size: 25px;
   font-weight: var(--weight-bold);
-  letter-spacing: -.02em;
+  letter-spacing: -.035em;
+  line-height: 1;
   text-decoration: none;
 }
-.portal-brand:hover { text-decoration: none; color: var(--on-primary); }
-/* The lockup: a 24px mark a third of its height from the wordmark, still.
-   On the navy sidebar the mark takes the sidebar accent and both dots the
-   brighter turmeric. */
-.portal-brand-mark { flex: 0 0 auto; }
-.portal-sidebar .portal-brand-mark { --qb-mark-glyph: var(--sidebar-accent); --qb-mark-dot: var(--brand-dot-bright); }
+.portal-brand:hover { text-decoration: none; color: var(--sidebar-text); }
+.portal-brand-mark { flex: 0 0 auto; background: transparent; box-shadow: none; }
+.portal-sidebar .portal-brand-mark { --qb-mark-glyph: var(--sidebar-accent); --qb-mark-dot: var(--brand-dot); }
 .portal-sidebar .portal-brand-word { --qb-mark-dot: var(--brand-dot-bright); }
-.portal-nav { display: flex; flex-direction: column; gap: 4px; }
+.portal-brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.portal-sidebar-toggle,
+.portal-mobile-menu {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-item);
+  background: transparent;
+  color: var(--sidebar-muted);
+  cursor: pointer;
+}
+.portal-sidebar-toggle:hover { color: var(--sidebar-text); background: var(--sidebar-hover); }
+.portal-sidebar-toggle .qb-icon { transition: transform var(--t-med); }
+
+/* New chat, a filled pill, with the search button round beside it. */
+.portal-new-row { display: flex; gap: 8px; min-width: 0; }
+.portal-new-thread {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--primary-fill);
+  color: var(--on-primary);
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--primary) 90%, transparent);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+.portal-new-thread:hover { background: var(--primary-fill-hover); color: var(--on-primary); text-decoration: none; transform: translateY(-1px); }
+.portal-thread-finder {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--surface-raised);
+  text-decoration: none;
+}
+.portal-thread-finder:hover { background: var(--text-strong); color: var(--surface-raised); text-decoration: none; }
+
+/* The pages: the current one a white pill with a soft shadow, its icon in the accent. */
+.portal-nav { display: grid; gap: 2px; }
 .portal-nav a {
-  min-height: 38px;
+  min-height: 40px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  color: var(--shell-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-bold);
-  border: 1px solid transparent;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.portal-nav a:hover {
+  gap: 11px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--radius-item);
+  color: var(--sidebar-muted);
+  font-size: var(--font-base);
+  font-weight: var(--weight-medium);
   text-decoration: none;
-  color: var(--shell-text);
-  background: var(--sidebar-hover);
-  border-color: var(--sidebar-border);
+  transition: background var(--t-fast), color var(--t-fast);
 }
+.portal-nav a:hover { color: var(--sidebar-text); background: var(--sidebar-hover); text-decoration: none; }
 .portal-nav a.active {
-  color: var(--on-primary);
+  color: var(--sidebar-text);
   background: var(--sidebar-active);
-  border-color: color-mix(in srgb, var(--sidebar-accent) 34%, transparent);
+  box-shadow: var(--shadow);
 }
 .portal-nav a.active svg { color: var(--sidebar-accent); }
-.portal-sidebar-spacer { flex: 1; min-height: 12px; }
-.portal-user-card {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  border: 1px solid var(--sidebar-border);
-  border-radius: 10px;
-  background: var(--sidebar-surface);
+/* Unread notices beside the Notifications link: a number, never a colour alone. */
+.portal-sidebar-notifications .portal-sidebar-count {
+  margin-inline-start: auto; min-width: 22px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill);
+  background: var(--danger); color: var(--on-status); font-size: var(--font-xs); font-weight: var(--weight-bold);
+  line-height: 20px; text-align: center;
 }
-.portal-user-meta { min-width: 0; }
-.portal-user-card .topbar-user-name {
-  color: var(--shell-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.portal-user-card .topbar-user-role { color: var(--sidebar-muted); }
-.portal-side-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.portal-app-main {
-  min-width: 0;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.portal-mobile-bar {
-  display: none;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 56px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
+.portal-sidebar-notifications .portal-sidebar-count[hidden] { display: none; }
 
-/* ── Topbar ── */
-.topbar {
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: blur(16px);
-  height: 60px;
+.portal-sidebar-spacer { flex: 1 1 auto; min-height: 4px; }
+
+/* ── The foot: Appearance, then the reader ── */
+.portal-sidebar-footer { flex: 0 0 auto; display: grid; gap: 8px; }
+.portal-theme {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+}
+.portal-theme button {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--sidebar-muted);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.portal-theme button:hover { color: var(--sidebar-text); }
+.portal-theme button[aria-pressed="true"] {
+  background: var(--surface-raised);
+  color: var(--sidebar-text);
+  font-weight: var(--weight-semibold);
+  box-shadow: var(--shadow);
+}
+.portal-user-card {
+  min-width: 0;
   display: flex;
   align-items: center;
-  padding: 0 1.5rem;
-  gap: 1rem;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  flex-shrink: 0;
+  gap: 10px;
+  padding: 6px 6px 6px 6px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
 }
+.portal-user-meta { min-width: 0; flex: 1; }
+.portal-user-card .topbar-user-name { color: var(--sidebar-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.portal-user-card .topbar-user-role { color: var(--sidebar-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.portal-user-card .avatar { width: 34px; height: 34px; flex: 0 0 34px; background: var(--brand-gradient); box-shadow: none; }
+.portal-user-card a.avatar { text-decoration: none; }
+.portal-user-card a.avatar:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.portal-account-toggle {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--sidebar-muted);
+  cursor: pointer;
+}
+.portal-account-toggle:hover,
+.portal-account-toggle[aria-expanded="true"] { background: var(--surface-raised); color: var(--sidebar-text); }
+
+/* The account menu: language, Settings, Log out. */
+.portal-side-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-item);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+.portal-side-actions[hidden] { display: none; }
+.portal-side-actions button,
+.portal-side-actions a {
+  min-width: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-item);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: none;
+}
+.portal-side-actions button:hover,
+.portal-side-actions a:hover { color: var(--text); background: var(--hover-on-surface); text-decoration: none; }
+/* The language switcher takes the menu's first row; Settings and Log out share the second. */
+.portal-lang-switch { display: flex; min-width: 0; gap: 4px; grid-column: 1 / -1; }
+.portal-lang-switch .portal-lang-option { flex: 1 1 auto; min-width: 0; }
+.portal-lang-switch .portal-lang-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The same switcher on the signed-out pages, where there is no sidebar to inherit from: the login and
+   registration screens are the first thing a customer sees and were the only ones with no way to choose a
+   language. */
+.portal-lang-switch-bare { justify-content: center; gap: 6px; padding: 14px 0 0; background: transparent; border: 0; }
+.portal-lang-switch-bare .portal-lang-option {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: var(--radius-pill); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-soft);
+  font-size: var(--font-xs); cursor: pointer;
+}
+.portal-lang-switch-bare .portal-lang-option:hover { color: var(--text); border-color: var(--text-soft); }
 
 .avatar {
   width: 32px;
@@ -143,22 +290,41 @@ body:has(.portal-app-shell) {
   font-weight: var(--weight-bold);
   color: var(--on-primary);
   flex-shrink: 0;
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
+.avatar.has-photo { background: var(--surface-2); overflow: hidden; }
+.avatar.has-photo img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
 .topbar-user-name { font-size: var(--font-sm); font-weight: var(--weight-bold); color: var(--text); }
 .topbar-user-role { font-size: var(--font-xs); color: var(--text-muted); }
 
-/* ── Page content ── */
+/* ── The page ── */
+.portal-app-main {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
 .main {
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: clamp(16px, 2vw, 28px);
+  padding: clamp(18px, 2.1vw, 32px);
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 body:has(.portal-app-shell) .main { height: 100%; }
+/* Authentication screens must not inherit desktop minimum content widths. */
+body:not(:has(.portal-app-shell)) .main {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-x: hidden;
+}
 
 /* ── Metrics (slightly narrower cells for portal) ── */
 .metrics {
@@ -168,13 +334,134 @@ body:has(.portal-app-shell) .main { height: 100%; }
   margin-bottom: 1.5rem;
 }
 
-/* ── Responsive ── */
-@media (max-width: 900px) {
-  .portal-app-shell { grid-template-columns: 1fr; }
-  .portal-sidebar { display: none; }
-  .portal-mobile-bar { display: flex; flex-shrink: 0; }
-  .portal-mobile-bar .portal-brand { color: var(--text); }
-  .main { padding: 1rem; padding-bottom: calc(1rem + 56px + env(safe-area-inset-bottom, 0)); }
+/* ── The phone's bar: the menu, the brand, Settings ── */
+.portal-mobile-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 4px 4px 10px;
+  z-index: 300;
+  background: transparent;
+}
+.portal-mobile-menu { margin-right: 6px; color: var(--text); background: var(--surface-raised); border-color: var(--line); }
+.portal-mobile-bar .portal-brand { flex: 1; color: var(--text); padding-block: 4px; font-size: 21px; }
+.portal-mobile-actions { display: flex; align-items: center; gap: 6px; }
+.portal-drawer-backdrop { display: none; }
+
+/* A page's own block in the sidebar (the chat's conversations) takes the
+   room the spacer would, and hides with the labels when the sidebar folds. */
+.portal-sidebar-context {
+  min-width: 0;
+  min-height: 120px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+.portal-sidebar:has(.portal-sidebar-context) .portal-sidebar-spacer { display: none; }
+
+/* ── Collapsed: the icons alone ── */
+.portal-app-shell.portal-sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+.portal-sidebar-collapsed .portal-sidebar { padding-inline: 10px; }
+.portal-sidebar-collapsed .portal-brand-word,
+.portal-sidebar-collapsed .portal-new-thread > span,
+.portal-sidebar-collapsed .portal-thread-finder,
+.portal-sidebar-collapsed .portal-nav a > span,
+.portal-sidebar-collapsed .portal-user-meta,
+.portal-sidebar-collapsed .portal-account-toggle,
+.portal-sidebar-collapsed .portal-theme,
+.portal-sidebar-collapsed .portal-side-actions,
+.portal-sidebar-collapsed .portal-sidebar-context { display: none; }
+.portal-sidebar-collapsed .portal-sidebar-head { flex-direction: column; }
+.portal-sidebar-collapsed .portal-sidebar-head .portal-brand { flex: 0 0 auto; padding-inline: 0; }
+.portal-sidebar-collapsed .portal-sidebar-toggle .qb-icon { transform: rotate(180deg); }
+.portal-sidebar-collapsed .portal-new-thread,
+.portal-sidebar-collapsed .portal-nav a { justify-content: center; padding-inline: 0; }
+.portal-sidebar-collapsed .portal-user-card { justify-content: center; padding: 4px; border-color: transparent; }
+
+@media (max-width: 1100px) and (min-width: 721px) {
+  .portal-app-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .portal-sidebar { padding-inline: 10px; }
+  .portal-brand-word,
+  .portal-new-thread > span,
+  .portal-thread-finder,
+  .portal-nav a > span,
+  .portal-user-meta,
+  .portal-account-toggle,
+  .portal-theme,
+  .portal-side-actions,
+  .portal-sidebar-context { display: none; }
+  .portal-sidebar-head { flex-direction: column; }
+  .portal-sidebar-head .portal-brand { flex: 0 0 auto; padding-inline: 0; }
+  .portal-sidebar-toggle { display: none; }
+  .portal-new-thread,
+  .portal-nav a { justify-content: center; padding-inline: 0; }
+  .portal-user-card { justify-content: center; padding: 4px; border-color: transparent; }
+  .portal-drawer-open .portal-sidebar {
+    position: fixed;
+    inset: 12px auto 12px 12px;
+    width: 284px;
+    padding: 18px 14px 14px;
+    box-shadow: var(--shadow-lg);
+  }
+  .portal-drawer-open .portal-drawer-backdrop {
+    position: fixed; inset: 0; z-index: 400; display: block; border: 0; background: var(--scrim);
+  }
+  .portal-drawer-open .portal-brand-word,
+  .portal-drawer-open .portal-new-thread > span,
+  .portal-drawer-open .portal-nav a > span,
+  .portal-drawer-open .portal-user-meta,
+  .portal-drawer-open .portal-sidebar-context { display: flex; }
+  .portal-drawer-open .portal-thread-finder,
+  .portal-drawer-open .portal-account-toggle { display: grid; }
+  .portal-drawer-open .portal-theme { display: grid; }
+  .portal-drawer-open .portal-user-meta { display: block; }
+  .portal-drawer-open .portal-sidebar-head { flex-direction: row; }
+  .portal-drawer-open .portal-sidebar-head .portal-brand { justify-content: flex-start; padding-inline: 6px; }
+  .portal-drawer-open .portal-new-thread { justify-content: center; padding-inline: 14px; }
+  .portal-drawer-open .portal-nav a { justify-content: flex-start; padding-inline: 12px; }
+  .portal-drawer-open .portal-user-card { justify-content: flex-start; padding: 6px; border-color: var(--sidebar-border); }
+}
+
+/* ── Phone: the window fills the screen; the sidebar is a drawer ── */
+@media (max-width: 720px) {
+  body:has(.portal-app-shell) { background: var(--window); }
+  .portal-app-shell {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 10px 12px 0;
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .portal-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 300px);
+    display: flex;
+    border-radius: 0 24px 24px 0;
+    transform: translateX(-101%);
+    /* No shadow while closed: it fell onto the page, a grey band down every phone screen. */
+    box-shadow: none;
+  }
+  .portal-drawer-open .portal-sidebar { transform: translateX(0); box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 34%, transparent); }
+  .portal-drawer-open .portal-drawer-backdrop {
+    position: fixed; inset: 0; z-index: 400; display: block; border: 0; background: var(--scrim);
+  }
+  .portal-mobile-bar { display: flex; flex: 0 0 auto; }
+  .portal-sidebar-toggle { display: none; }
+  .main { padding: 12px 2px 16px; }
+  body:not(:has(.portal-app-shell)) .main { padding: 24px 16px; }
+  body.portal-drawer-visible { overflow: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-app-shell,
+  .portal-sidebar,
+  .portal-new-thread,
+  .portal-sidebar-toggle .qb-icon { transition: none; }
 }
 
 /* ── Page entrance ── */
@@ -248,344 +535,10 @@ body:has(.portal-app-shell) .main { height: 100%; }
 .ac-item:hover[data-kind],
 .ac-item.ac-active[data-kind] { border-left-color: var(--ac-accent); }
 
-/* ============================================================
-   Unified portal shell — portal-first SaaS navigation
-   ============================================================ */
-body { background: var(--bg); }
-
-.portal-app-shell {
-  grid-template-columns: 252px minmax(0, 1fr);
-  transition: grid-template-columns var(--t-med) var(--ease-out);
-}
-
-.portal-sidebar {
-  position: relative;
-  z-index: 410;
-  padding: 12px 10px 10px;
-  gap: 10px;
-  overflow: hidden;
-  background: var(--sidebar-bg);
-  border-right: 1px solid var(--sidebar-border);
-  transition: transform var(--t-med) var(--ease-out);
-}
-
-.portal-sidebar-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.portal-sidebar-head .portal-brand { flex: 1; min-width: 0; }
-.portal-brand { min-width: 0; min-height: 38px; padding: 5px 7px; gap: 8px; font-weight: var(--weight-bold); }
-.portal-brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.portal-sidebar-toggle,
-.portal-mobile-menu {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  display: inline-grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid var(--sidebar-border);
-  border-radius: 6px;
-  background: var(--sidebar-surface);
-  color: var(--sidebar-muted);
-  cursor: pointer;
-}
-.portal-sidebar-toggle:hover { color: var(--sidebar-text); background: var(--sidebar-hover); }
-.portal-sidebar-toggle .qb-icon { transition: transform var(--t-med); }
-
-.portal-new-thread {
-  width: 100%;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--primary) 65%, var(--surface-raised));
-  border-radius: 7px;
-  background: var(--primary);
-  color: var(--on-primary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-bold);
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-  box-shadow: none;
-}
-.portal-new-thread:hover { background: var(--primary-hover); border-color: var(--sidebar-accent); color: var(--on-primary); text-decoration: none; }
-.portal-new-thread-icon { width: 18px; font-size: var(--font-xl); font-weight: var(--weight-regular); line-height: 1; text-align: center; }
-
-.portal-nav { gap: 2px; }
-.portal-nav a,
-.portal-sidebar-notifications {
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--sidebar-muted);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-bold);
-  text-decoration: none;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.portal-nav a:hover,
-.portal-sidebar-notifications:hover {
-  color: var(--sidebar-text);
-  background: var(--sidebar-hover);
-  border-color: transparent;
-  text-decoration: none;
-}
-.portal-nav a.active,
-.portal-sidebar-notifications.active {
-  color: var(--on-primary);
-  background: var(--sidebar-active);
-  border-color: color-mix(in srgb, var(--sidebar-accent) 30%, transparent);
-}
-.portal-nav a.active svg { color: var(--sidebar-accent); }
-
-.portal-sidebar-spacer { flex: 1 1 auto; min-height: 4px; }
-.portal-sidebar-notifications { flex: 0 0 auto; }
-/* Unread notices beside the Notifications link: a number, never a colour alone. */
-.portal-sidebar-notifications .portal-sidebar-count {
-  margin-inline-start: auto; min-width: 20px; padding: 0 6px; border-radius: var(--radius-pill);
-  background: var(--primary); color: var(--on-primary); font-size: var(--font-xs); font-weight: var(--weight-bold);
-  line-height: 20px; text-align: center;
-}
-.portal-sidebar-notifications .portal-sidebar-count[hidden] { display: none; }
-.portal-sidebar-footer { flex: 0 0 auto; padding-top: 9px; border-top: 1px solid var(--sidebar-border); }
-.portal-user-card {
-  min-width: 0;
-  padding: 7px 8px 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-}
-.portal-user-card .avatar { width: 30px; height: 30px; flex: 0 0 30px; background: var(--primary); box-shadow: none; }
-.portal-user-card a.avatar { text-decoration: none; }
-.portal-user-card a.avatar:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.avatar.has-photo { background: var(--surface-2); overflow: hidden; }
-.avatar.has-photo img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
-.portal-user-meta { display: block; }
-
-.portal-side-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-.portal-side-actions button,
-.portal-side-actions a {
-  min-width: 0;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 6px 5px;
-  border: 1px solid var(--sidebar-border);
-  border-radius: 6px;
-  background: var(--sidebar-surface);
-  color: var(--sidebar-muted);
-  font-size: var(--font-xs);
-  font-weight: var(--weight-bold);
-  text-decoration: none;
-  cursor: pointer;
-  box-shadow: none;
-}
-.portal-side-actions button:hover,
-.portal-side-actions a:hover { color: var(--sidebar-text); background: var(--sidebar-hover); text-decoration: none; }
-
-/* The language switcher takes a row of its own above Settings and Logout:
-   three buttons in one row of the sidebar cut the endonym to "Fran...". The
-   <form> is the grid item and the button fills it, which means the switcher
-   picks up the Settings/Logout styling rather than repeating it -- including
-   the collapsed-sidebar rule that hides `span:last-child` and leaves the icon. */
-.portal-lang-switch { display: flex; min-width: 0; gap: 4px; grid-column: 1 / -1; }
-.portal-lang-switch .portal-lang-option { flex: 1 1 auto; min-width: 0; }
-.portal-lang-switch .portal-lang-option span {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* The same switcher on the signed-out pages, where there is no sidebar to
-   inherit from: the login and registration screens are the first thing a
-   customer sees and were the only ones with no way to choose a language. */
-.portal-lang-switch-bare {
-  justify-content: center; gap: 6px; padding: 14px 0 0;
-  background: transparent; border: 0;
-}
-.portal-lang-switch-bare .portal-lang-option {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--text-soft);
-  font-size: var(--font-xs); cursor: pointer;
-}
-.portal-lang-switch-bare .portal-lang-option:hover {
-  color: var(--text); border-color: var(--text-soft);
-}
-
-.portal-drawer-backdrop { display: none; }
-
-.portal-mobile-bar { min-height: 52px; padding: 0 12px; z-index: 300; }
-.portal-mobile-menu { margin-right: 6px; color: var(--text-soft); background: var(--surface-2); border-color: var(--border); }
-.portal-mobile-bar .portal-brand { flex: 1; color: var(--text); padding-block: 4px; }
-.portal-mobile-actions { display: flex; align-items: center; gap: 5px; }
-
-.portal-app-shell.portal-sidebar-collapsed { grid-template-columns: 68px minmax(0, 1fr); }
-.portal-sidebar-collapsed .portal-sidebar { padding-inline: 9px; }
-.portal-sidebar-collapsed .portal-brand-word,
-.portal-sidebar-collapsed .portal-new-thread > span:last-child,
-.portal-sidebar-collapsed .portal-nav a > span,
-.portal-sidebar-collapsed .portal-sidebar-notifications > span,
-.portal-sidebar-collapsed .portal-user-meta,
-.portal-sidebar-collapsed .portal-side-actions span:last-child,
-.portal-sidebar-collapsed .portal-sidebar-context { display: none; }
-.portal-sidebar-collapsed .portal-sidebar-head { flex-direction: column; }
-.portal-sidebar-collapsed .portal-sidebar-head .portal-brand { flex: 0 0 auto; padding-inline: 0; }
-.portal-sidebar-collapsed .portal-sidebar-toggle .qb-icon { transform: rotate(180deg); }
-.portal-sidebar-collapsed .portal-new-thread,
-.portal-sidebar-collapsed .portal-nav a,
-.portal-sidebar-collapsed .portal-sidebar-notifications { justify-content: center; padding-inline: 0; }
-.portal-sidebar-collapsed .portal-new-thread-icon { width: auto; }
-.portal-sidebar-collapsed .portal-user-card { justify-content: center; padding-inline: 0; }
-.portal-sidebar-collapsed .portal-side-actions { grid-template-columns: 1fr; }
-
-@media (max-width: 1100px) and (min-width: 721px) {
-  .portal-app-shell { grid-template-columns: 68px minmax(0, 1fr); }
-  .portal-sidebar { padding-inline: 9px; }
-  .portal-brand-word,
-  .portal-new-thread > span:last-child,
-  .portal-nav a > span,
-  .portal-sidebar-notifications > span,
-  .portal-user-meta,
-  .portal-side-actions span:last-child,
-  .portal-sidebar-context { display: none; }
-  .portal-sidebar-head { flex-direction: column; }
-  .portal-sidebar-head .portal-brand { flex: 0 0 auto; padding-inline: 0; }
-  .portal-sidebar-toggle { display: none; }
-  .portal-new-thread,
-  .portal-nav a,
-  .portal-sidebar-notifications { justify-content: center; padding-inline: 0; }
-  .portal-new-thread-icon { width: auto; }
-  .portal-user-card { justify-content: center; padding-inline: 0; }
-  .portal-side-actions { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 720px) {
-  .portal-app-shell { grid-template-columns: minmax(0, 1fr); }
-  .portal-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: min(86vw, 288px);
-    display: flex;
-    transform: translateX(-101%);
-    /* No shadow while closed: it fell 64px onto the page, a grey band down every phone screen. */
-    box-shadow: none;
-  }
-  .portal-drawer-open .portal-sidebar {
-    transform: translateX(0);
-    box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 34%, transparent);
-  }
-  .portal-drawer-open .portal-drawer-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 400;
-    display: block;
-    border: 0;
-    background: color-mix(in srgb, var(--shadow-tint) 48%, transparent);
-  }
-  .portal-mobile-bar { display: flex; flex: 0 0 auto; }
-  .portal-sidebar-toggle { display: none; }
-  .main { padding: 14px; padding-bottom: 14px; }
-  body.portal-drawer-visible { overflow: hidden; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .portal-app-shell,
-  .portal-sidebar,
-  .portal-sidebar-toggle .qb-icon { transition: none; }
-}
-
-@media (max-width: 1100px) and (min-width: 721px) {
-  .portal-drawer-open .portal-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: 252px;
-    padding: 12px 10px 10px;
-    box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 32%, transparent);
-  }
-  .portal-drawer-open .portal-drawer-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 400;
-    display: block;
-    border: 0;
-    background: color-mix(in srgb, var(--shadow-tint) 42%, transparent);
-  }
-  .portal-drawer-open .portal-brand-word,
-  .portal-drawer-open .portal-new-thread > span:last-child,
-  .portal-drawer-open .portal-nav a > span,
-  .portal-drawer-open .portal-sidebar-notifications > span,
-  .portal-drawer-open .portal-user-meta,
-  .portal-drawer-open .portal-side-actions span:last-child,
-  .portal-drawer-open .portal-sidebar-context { display: flex; }
-  .portal-drawer-open .portal-sidebar-head { flex-direction: row; }
-  .portal-drawer-open .portal-sidebar-head .portal-brand { justify-content: flex-start; padding-inline: 7px; }
-  .portal-drawer-open .portal-new-thread,
-  .portal-drawer-open .portal-nav a,
-  .portal-drawer-open .portal-sidebar-notifications { justify-content: flex-start; padding-inline: 10px; }
-  .portal-drawer-open .portal-user-card { justify-content: flex-start; padding-inline: 8px; }
-  .portal-drawer-open .portal-user-meta { display: block; }
-  .portal-drawer-open .portal-side-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-/* ── Folded from production.css ─────────────────────────────
-   These rules came from the override layer that loaded after every
-   page's own styles; they sit last in the sheet that owns them. */
-/* Portal shell */
-.portal-app-shell { grid-template-columns: 244px minmax(0, 1fr); }
-.portal-sidebar {
-  padding: 16px 12px;
-  gap: 12px;
-  background: var(--sidebar-bg);
-  border-right-color: var(--sidebar-border);
-}
-.portal-brand-mark { background: transparent; box-shadow: none; }
-.portal-nav a { min-height: 40px; border-radius: var(--radius-sm); }
-.portal-nav a:hover {
-  background: var(--sidebar-hover);
-  border-color: transparent;
-}
-.portal-nav a.active {
-  color: var(--on-primary);
-  background: var(--sidebar-active);
-  border-color: transparent;
-  box-shadow: inset 3px 0 0 var(--sidebar-accent);
-}
-.portal-nav a.active svg { color: var(--sidebar-accent); }
-.portal-user-card {
-  background: var(--sidebar-surface);
-  border-color: var(--sidebar-border);
-}
-.portal-user-card { border-radius: var(--radius); }
-.avatar { background: var(--primary); box-shadow: none; }
-.main { padding: clamp(18px, 2.1vw, 32px); }
-/* Authentication screens must not inherit desktop minimum content widths. */
-body:not(:has(.portal-app-shell)) .main {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow-x: hidden;
-}
-@media (max-width: 1100px) {
-  .portal-app-shell { grid-template-columns: 220px minmax(0, 1fr); }
-  .portal-sidebar { padding-inline: 10px; }
-}
-@media (max-width: 900px) {
-  .portal-app-shell { grid-template-columns: 1fr; }
-  .portal-mobile-bar { display: flex; }
-  .portal-mobile-actions { display: flex; align-items: center; gap: 6px; }
-  .main { padding: 16px; padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
-  body:not(:has(.portal-app-shell)) .main { padding: 24px 16px; }
-}
-
 /* The menu, the new-thread button and the brand are touch targets too. */
 @media (pointer: coarse) {
-  .portal-nav a, .portal-new-thread, .portal-brand, .portal-sidebar-notifications { min-height: 44px; }
+  .portal-nav a, .portal-new-thread, .portal-brand, .portal-thread-finder, .portal-theme button,
+  .portal-account-toggle { min-height: 44px; }
 }
 
 /* Numbers and charts arriving: a KPI rises in, its trend line draws from the left, a dashboard's tiles come in

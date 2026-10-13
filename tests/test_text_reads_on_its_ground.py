@@ -60,19 +60,20 @@ def test_every_text_token_reads_on_every_light_surface(ink):
 
 
 @pytest.mark.parametrize("ink", SIDEBAR_TEXT)
-def test_every_sidebar_ink_reads_on_the_navy(ink):
+def test_every_sidebar_ink_reads_on_the_sidebar(ink):
     tokens = _tokens()
     for ground in SIDEBAR_GROUNDS:
         assert _ratio(tokens[ink], tokens[ground]) >= 4.5, (ink, ground)
 
 
 def _faint_greys() -> set[str]:
-    """Neutral tokens a reader cannot read on a card: under 4.5:1 on --surface.
-    --text-inverse is for dark grounds and is not among them."""
+    """Neutral tokens a reader cannot read on a card or on the page: under
+    4.5:1 on any light ground. --text-inverse is for dark grounds and is not
+    among them."""
     tokens = _tokens()
     return {name for name, value in tokens.items()
             if re.fullmatch(r"--(?:gray-\d+|text(?:-[a-z]+)?)", name) and name != "--text-inverse"
-            and _ratio(value, tokens["--surface"]) < 4.5}
+            and min(_ratio(value, tokens[ground]) for ground in LIGHT_GROUNDS) < 4.5}
 
 
 def _sources():
@@ -127,7 +128,7 @@ def _rule(css: str, selector: str) -> str:
     return re.search(r"(?:^|\})\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", _strip(css)).group(1)
 
 
-def test_the_admin_sidebar_s_group_headings_read_on_the_navy():
+def test_the_admin_sidebar_s_group_headings_read_on_the_sidebar():
     body = _rule((CSS / "base.css").read_text(encoding="utf-8"), ".sidebar-group-label")
     ink = re.search(r"(?<![\w-])color\s*:\s*var\((--[\w-]+)\)", body).group(1)
     assert "opacity" not in body

@@ -56,7 +56,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 2px;
 }
-/* On the navy sidebars the ring is the sidebar's accent, which reads there. */
+/* In the sidebars the ring is the sidebar's accent, which reads there. */
 .sidebar, .portal-sidebar { --focus-ring-color: var(--sidebar-accent); }
 
 /* ── Cards ── */
@@ -93,7 +93,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
      .btn-success / .btn-warning   approve / hold, filled
      .btn-soft-success / -danger / -warning   the same, outlined,
                      for approve / reject side by side in a queue
-     .btn-shell      on the navy shell (sidebar actions)
+     .btn-shell      on the shell (sidebar actions)
    Sizes .btn-xs, .btn-sm, (default), .btn-lg; .btn-icon is square.
    aria-pressed="true" marks the chosen one of a set; aria-busy
    ="true" (set by qb-ui.js on a submitted form's button) shows a
@@ -122,8 +122,8 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 }
 .btn:hover { background: var(--btn-bg-hover); border-color: var(--btn-line-hover); color: var(--btn-ink-hover); text-decoration: none; }
 .btn-primary {
-  --btn-bg: var(--primary); --btn-ink: var(--on-primary); --btn-line: var(--primary);
-  --btn-bg-hover: var(--primary-hover); --btn-line-hover: var(--primary-hover);
+  --btn-bg: var(--primary-fill); --btn-ink: var(--on-primary); --btn-line: var(--primary-fill);
+  --btn-bg-hover: var(--primary-fill-hover); --btn-line-hover: var(--primary-fill-hover);
 }
 .btn-secondary { /* the .btn defaults */ }
 .btn-ghost {
@@ -300,7 +300,7 @@ select.form-input:not([multiple]),
   padding-right: 34px;
   /* Lucide chevron-down in --text-muted: a data URI cannot read a token,
      tests/test_one_field.py holds it to the token. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23526077' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234E537A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   background-size: 16px 16px;
@@ -393,7 +393,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   place-content: center;
 }
 .choice-card input[type="radio"] { border-radius: 50%; }
-.choice-card input:checked { border-color: var(--primary); background: var(--primary); }
+.choice-card input:checked { border-color: var(--primary-fill); background: var(--primary-fill); }
 .choice-card input:checked::after {
   content: "";
   width: 8px;
@@ -436,7 +436,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 28%, transparent);
   transition: transform var(--t-med);
 }
-.form-switch input:checked + .form-switch-track { background: var(--primary); }
+.form-switch input:checked + .form-switch-track { background: var(--primary-fill); }
 .form-switch input:checked + .form-switch-track::after { transform: translateX(16px); }
 .form-switch input:focus-visible + .form-switch-track { box-shadow: var(--focus-ring); }
 .form-switch-copy { display: block; min-width: 0; }
@@ -555,8 +555,8 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   white-space: nowrap;
 }
 .ui-chip.active {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--primary-fill);
+  border-color: var(--primary-fill);
   color: var(--on-primary);
 }
 
@@ -803,7 +803,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 .metric-progress-fill {
   height: 100%;
   border-radius: 999px;
-  background: var(--primary);
+  background: var(--primary-fill);
   transition: width .6s cubic-bezier(.22,.61,.36,1);
 }
 .metric-progress-fill.success { background: var(--success); }
@@ -1103,7 +1103,7 @@ main[tabindex="-1"]:focus { outline: none; }
   background: var(--surface); text-decoration: none; transition: all var(--t-fast) var(--ease-out);
 }
 .qb-pagination a:hover { border-color: var(--primary); color: var(--primary); }
-.qb-pagination .qb-page-current { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.qb-pagination .qb-page-current { background: var(--primary-fill); border-color: var(--primary-fill); color: var(--on-primary); }
 .qb-pagination .qb-page-disabled { opacity: .45; pointer-events: none; }
 
 /* ============================================================
@@ -1183,7 +1183,7 @@ main[tabindex="-1"]:focus { outline: none; }
   /* --gray-900 inverts between themes, so using it as tooltip ink gave
      white text on a near-white ground in dark mode. These two hold
      their relationship in both themes. */
-  background: var(--navy); color: var(--sidebar-text); font-size: var(--font-xs); font-weight: var(--weight-semibold);
+  background: var(--navy); color: var(--text-inverse); font-size: var(--font-xs); font-weight: var(--weight-semibold);
   padding: 5px 8px; border-radius: var(--radius-sm); white-space: nowrap;
   opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
   z-index: var(--z-dropdown); box-shadow: var(--shadow-md);

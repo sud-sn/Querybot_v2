@@ -202,6 +202,7 @@ class TestTheCatalogueIsWellFormed:
         "ui.enum.charttype.kpi",        # an international acronym
         "ui.shell.chat",                # borrowed into French unchanged
         "ui.shell.notifications",       # same spelling in both
+        "ui.shell.theme_auto",          # "Auto" in both, the system's own word for it
         # Not a word: the assembly rule for "3 profile rows" / "3 lignes de
         # profil". Both languages happen to put the count first, and it is an
         # entry so that a language which does not can change it.
