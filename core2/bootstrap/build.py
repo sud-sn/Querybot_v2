@@ -354,12 +354,10 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 continue     # a birth date is never a date questions count by
             if c.via_calendar and c.via_calendar.role:
                 name = c.via_calendar.role
-            elif c.via_calendar and not names.opaque(c.column):
-                # A key into a calendar is named by what it keys: PRD_DMS_KEY is the period.
-                text = names.read_tokens(names.core_column(bare(inv.tables[key], c.column)))
-                name = text[:1].upper() + text[1:]
             elif not names.opaque(c.column):
-                text = names.read_tokens(names.core_column(bare(inv.tables[key], c.column)))
+                # A key into a calendar is named by what it keys: PRD_DMS_KEY is the period.
+                own = names.own_words(inv.tables[key].name, bare(inv.tables[key], c.column))
+                text = names.read_tokens(names.core_column(own))
                 name = text[:1].upper() + text[1:]
             else:
                 name = names.readable(c.column)
@@ -440,7 +438,8 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 key=k, table=key, name=column.name, data_type=column.data_type,  # type: ignore[arg-type]
                 raw_type=column.raw_type, nullable=column.nullable, comment=column.comment,
                 role=role,  # type: ignore[arg-type]
-                business_name=names.readable(column.name, column.data_type), format=fmt,  # type: ignore[arg-type]
+                business_name=names.readable(names.own_words(table.name, column.name), column.data_type),
+                format=fmt,  # type: ignore[arg-type]
                 values_allowed=f.values_allowed(key, column.name) and held is None,
                 sensitivity="pii" if held == personal.PII else "none",
                 personal="detail" if held == personal.PII else "name" if held == personal.NAME else "none",
@@ -456,12 +455,22 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         if m.column is None:
             key_m = f"m:{m.table}.rows"
             expr = AggExpr(agg="count")
-        elif m.times:
-            # A value no column holds: the two columns multiplied on each row, then added up (as an admin's formula).
-            key_m = f"m:{m.table}.{m.column.casefold()}.times.{m.times.casefold()}"
-            parts = [ck[(m.table, m.column)], ck[(m.table, m.times)]]
-            product = exp.Mul(this=exp.column(exp.to_identifier(parts[0], quoted=True)),
-                              expression=exp.column(exp.to_identifier(parts[1], quoted=True)))
+        elif m.times or m.after:
+            # A value no column holds: the two columns multiplied on each row (or the first less a rate of it: a
+            # price after its discount), then added up, as an admin's formula.
+            key_m = f"m:{m.table}.{m.column.casefold()}" + (f".less.{m.after.casefold()}" if m.after else "") \
+                + (f".times.{m.times.casefold()}" if m.times else "")
+            parts = [ck[(m.table, c)] for c in (m.column, m.after, m.times) if c]
+
+            def col(key: str) -> exp.Expression:
+                return exp.column(exp.to_identifier(key, quoted=True))
+
+            product: exp.Expression = col(parts[0])
+            if m.after:
+                product = exp.Mul(this=product, expression=exp.Paren(this=exp.Sub(
+                    this=exp.Literal.number(1), expression=col(ck[(m.table, m.after)]))))
+            if m.times:
+                product = exp.Mul(this=product, expression=col(ck[(m.table, m.times)]))
             expr = SqlExpr(sql=exp.Sum(this=product).sql(), columns=parts)
         elif m.agg == "count_distinct":
             key_m = f"m:{m.table}.{m.column.casefold()}.distinct"
@@ -563,6 +572,15 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
 def _value_words(m: MeasureFinding) -> dict[str, list[str]]:
     """The words people use for a value Learn worked out (a quantity times its unit cost): stock value for a level
     at cost, the value or extended price otherwise."""
+    if m.after and not m.times:
+        if m.name == "Net sales":
+            return {"en": ["revenue", "net revenue", "sales", "net sales amount", "turnover"],
+                    "fr": ["chiffre d'affaires", "ventes nettes", "ventes"]}
+        return {"en": ["net amount"], "fr": ["montant net"]}
+    if m.times and any(e.kind == "value_of_rate" for e in m.evidence):
+        if set(names.tokens(m.times)) & {"tax", "vat", "gst", "hst"}:
+            return {"en": ["tax charged", "total tax", "taxes"], "fr": ["taxes", "montant des taxes"]}
+        return {"en": ["discounts given", "discount value", "discounts"], "fr": ["remises accordées", "remises"]}
     if not m.times:
         return {}
     at_cost = bool(set(names.tokens(m.times)) & {"cost", "cst"})
@@ -772,11 +790,13 @@ def _label_column(table: InvTable, profile: TableProfile, keys: TableKeys,
         described = bool(words & _DESCRIPTION_WORDS) and (p.avg_len or 0) <= 60
         # A name or a description may repeat now and then (13 descriptions for 15 item types): it still names its
         # members better than their codes, and the code beside it keeps two that share one apart.
-        near_unique = p.non_null >= 0.9 * rows and p.distinct >= 0.8 * min(p.non_null, members or p.non_null)
+        # Filled on nine rows in ten, or on all but one of a short list (four of five warehouses named).
+        filled = p.non_null >= 0.9 * rows or rows <= 20 and p.non_null >= max(2, rows - 1)
+        near_unique = filled and p.distinct >= 0.8 * min(p.non_null, members or p.non_null)
         own = named and ("full" in words or any(names.same_word(w, t) for w in words for t in subject))
         # The table's own name (EnglishProductName on the products) names its members though they repeat once per
         # version, when the versions' dates do not say so.
-        repeated = own and p.non_null >= 0.9 * rows and p.distinct >= 0.5 * p.non_null
+        repeated = own and filled and p.distinct >= 0.5 * p.non_null
         if not (unique or (near_unique and (named or described)) or repeated):
             continue
         rank = -1 if own else 0 if named else 2 if described else 3

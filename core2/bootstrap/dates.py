@@ -164,6 +164,26 @@ def _periodic(warehouse: Warehouse, inventory: Inventory, table: str, column: st
     return False, ""
 
 
+def _calendar_days(warehouse: Warehouse, inventory: Inventory, calendar: CalendarFinding, join: JoinFinding,
+                   low: object, high: object) -> tuple[dt.date | None, dt.date | None]:
+    """The calendar's dates at a key's lowest and highest values (a placeholder key's sentinel day is none)."""
+    if not calendar.date_column or low is None or high is None:
+        return None, None
+    t = inventory.tables[calendar.table]
+    d = warehouse.dialect
+    day = t.read(calendar.date_column, d)
+    key = t.read(join.to_column, d)
+    q = exp.select(exp.Min(this=day.copy()), exp.Max(this=day.copy())).from_(exp.to_table("__SRC__")).where(
+        exp.In(this=key, expressions=[exp.Literal.number(v) if isinstance(v, (int, float)) else exp.Literal.string(
+            str(v)) for v in (low, high)]))
+    try:
+        row = warehouse.query(q.sql(dialect=d).replace("__SRC__", D.table_sql(t.database, t.schema, t.name, d))).rows[0]
+    except Exception:  # noqa: BLE001 - a range is a courtesy: the role stands without one
+        return None, None
+    first, last = _parse_day(row[0], "day"), _parse_day(row[1], "day")
+    return (first if first and first.year > 1901 else None), last
+
+
 def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[str, TableProfile],
                     keys: dict[str, TableKeys], calendars: dict[str, CalendarFinding],
                     joins: list[JoinFinding]) -> dict[str, list[DateCandidate]]:
@@ -205,6 +225,10 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             c.whole_year_share = (p.whole_year_rows or 0) / profile.rows if profile.rows else 0.0
             low, high = (p.date_min, p.date_max) if p.date_min else (p.min, p.max)
             c.first, c.last = _parse_day(low, granularity), _parse_day(high, granularity)
+            if join and (c.first is None or c.last is None):
+                # A key into a calendar that is no date written out (TPC-DS's 2451545): the calendar's dates at
+                # its first and last key.
+                c.first, c.last = _calendar_days(warehouse, inventory, calendars[join.to_table], join, low, high)
             if c.first and c.first.year <= 1901:
                 c.first = None   # a sentinel, not a date
             candidates.append(c)

@@ -888,6 +888,8 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
                 own = f.from_table == f.to_table
             if not words:
                 continue
+            # INV on the inventory is the inventory, never an invoice.
+            words[:1] = [names.table_word(inventory.tables[f.from_table].name, words[0]) or words[0]]
             # Read in the company of the noun: "CFM DLY" before a date is a confirmed delivery.
             text = names.read_tokens([*words, "dt"]).rsplit(" ", 1)[0] if f.to_calendar else names.read_tokens(words)
             if f.to_calendar:

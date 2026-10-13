@@ -311,6 +311,28 @@ def read_tokens(parts: list[str]) -> str:
     return " ".join(_word(t, parts, None) for t in parts)
 
 
+def table_word(table: str, head: str) -> str | None:
+    """The table's own word ``head`` shortens, where read on its own it would be another (INV on the inventory)."""
+    if not head.isalpha() or not 2 <= len(head) <= 4 or head in _WHOLE_WORDS:
+        return None
+    word = next((w for w in core_table(table) if len(w) > len(head) and w.startswith(head)), None)
+    return None if word is None or EXPANSIONS.get(head) == word else word
+
+
+def own_words(table: str, column: str) -> str:
+    """The column's name with a first word that shortens its own table's name written out as the table's word:
+    INV_DATE_SK on the INVENTORY table is the inventory's date, never an invoice's (INV read on its own)."""
+    parts = tokens(column)
+    if len(parts) < 2:
+        return column
+    head = parts[0]
+    word = table_word(table, head)
+    if word is None:
+        return column
+    at = column.casefold().find(head)
+    return column[:at] + (word.upper() if column[at:at + len(head)].isupper() else word) + column[at + len(head):]
+
+
 def readable(name: str, data_type: str | None = None) -> str:
     """A fallback label from a name: ``CUST_ORD_DT_KEY`` -> "Customer order date key"."""
     if opaque(name):

@@ -19,7 +19,7 @@ from itertools import combinations, permutations
 from core2.bootstrap import names
 from core2.bootstrap.inventory import Inventory
 from core2.bootstrap.journal import attempt
-from core2.bootstrap.measures import _CODE, _MONEY, _QUANTITY, _RATE, _UNIT_PRICE, MeasureFinding
+from core2.bootstrap.measures import _CODE, _MONEY, _QUANTITY, _RATE, _UNIT_PRICE, MeasureFinding, _parts
 from core2.bootstrap.profiler import TableProfile
 from core2.model.schema import Evidence
 from core2.warehouse import dialect as D
@@ -218,6 +218,74 @@ def _value_of_units(table: str, of: dict[str, MeasureFinding], rows: dict[str, l
     return found
 
 
+_GIVEN = {"discount", "disc", "dsc", "rebate", "rbt", "markdown", "allowance"}
+_TAX = {"tax", "vat", "gst", "hst"}
+_GROSS = {"extended", "ext", "extendedprice", "gross", "grs", "amount", "amt", "price", "prc", "sales", "sale",
+          "total", "tot", "ttl", "value", "val", "line"}
+
+
+def _after_rates(table: str, of: dict[str, MeasureFinding], rows: dict[str, list[float | None]]) -> list[MeasureFinding]:
+    """A line with an amount and the rate of it given away (a discount between 0 and 1), and no column holding
+    what was left: what was sold is the amount less that rate of it, on each row, added up (net sales:
+    extended price x (1 - discount)); the discount given is the amount times the rate. A tax rate on the row
+    is a tax on what was charged. Proposed once per table, from the plainest amount."""
+    def rate(words: set[str]) -> str | None:
+        # Named as one and between 0 and 1 on every row, whatever its format (a "unit price discount" of 0.02).
+        return next((c for c, m in of.items() if m.agg == "avg" and set(_parts(c)) & words
+                     and (values := [v for v in rows[c] if v is not None]) and len(values) >= 20
+                     and all(0.0 <= v <= 1.0 for v in values) and max(values) > 0), None)
+
+    given, tax = rate(_GIVEN), rate(_TAX)
+    if given is None and tax is None:
+        return []
+    amounts = [c for c, m in of.items() if m.agg == "sum" and m.additivity == "additive" and m.format == "currency"
+               and _varies(rows[c]) and set(_parts(c)) & _GROSS
+               and not set(_parts(c)) & (_TAKEN | _RESULT | _GIVEN | _TAX | {"unit", "per", "avg", "average", "list"})]
+    if not amounts:
+        return []
+    amount = min(amounts, key=lambda c: (not set(_parts(c)) & {"extended", "ext", "extendedprice", "gross", "grs"},
+                                         len(_parts(c)), list(of).index(c)))
+    a = of[amount]
+    out: list[MeasureFinding] = []
+    # A line of what was sold, its words glued or not (LINEITEM, ORDERDETAILS, sales_lines).
+    sold = any(w in _SOLD or any(len(s) >= 4 and (w.startswith(s) or w.endswith(s)) for s in _SOLD)
+               for w in _parts(table.rsplit(".", 1)[-1])) or bool(set(_parts(amount)) & {"sales", "sale"})
+    if given is not None:
+        # Read where something was given away: elsewhere the amount and what is left are one.
+        if sum(1 for row in _filled(rows[amount], rows[given]) if row[1]) < 20:
+            return []
+        # What is left is on the row already (a net amount beside the gross), or is the amount itself (a line total
+        # of quantity x unit price x (1 - discount)): nothing to work out.
+        held = any(_share([(v, g * (1 - d)) for v, g, d in _filled(rows[c], rows[amount], rows[given]) if d]) >= AGREE
+                   for c, m in of.items() if c not in (amount, given) and m.agg == "sum")
+        net_already = any(_share([(v, x * y * (1 - d)) for v, x, y, d in _filled(rows[amount], rows[x], rows[y],
+                                                                                  rows[given]) if d]) >= AGREE
+                          for x, y in combinations([c for c in of if c not in (amount, given)], 2))
+        if held or net_already:
+            return []
+        d = of[given]
+        net = MeasureFinding(table=table, column=amount, agg="sum", additivity="additive", format="currency",
+                             name="Net sales" if sold else f"{a.name} after {d.name.lower()}", after=given)
+        net.evidence.append(Evidence(kind="after_rate", weight=1, detail=(
+            f"{a.name} less its {d.name.lower()} on each row ({a.name.lower()} x (1 - {d.name.lower()})), added "
+            f"up: {d.name.lower()} is a rate between 0 and 1, and no column holds what is left")))
+        off = MeasureFinding(table=table, column=amount, agg="sum", additivity="additive", format="currency",
+                             name=f"{d.name} amount", times=given)
+        off.evidence.append(Evidence(kind="value_of_rate", weight=1, detail=(
+            f"{a.name} times {d.name.lower()} on each row, added up: what the {d.name.lower()} gave away")))
+        out += [net, off]
+    if tax is not None:
+        t = of[tax]
+        charged = f"{a.name.lower()} less {of[given].name.lower()}" if given is not None else a.name.lower()
+        levied = MeasureFinding(table=table, column=amount, agg="sum", additivity="additive", format="currency",
+                                name=f"{t.name} amount", after=given, times=tax)
+        levied.evidence.append(Evidence(kind="value_of_rate", weight=1, detail=(
+            f"{t.name} on what was charged ({charged}) on each row, added up: {t.name.lower()} is a rate between "
+            "0 and 1")))
+        out.append(levied)
+    return out
+
+
 def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[float | None]],
                  groups: dict[str, list[object]] | None = None, *,
                  derived: list[MeasureFinding] | None = None) -> list[tuple[str, str, str, float]]:
@@ -346,6 +414,7 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
         value = _value_of_units(table, of, rows, groups or {}, products)
         if value is not None:
             derived.append(value)
+        derived += _after_rates(table, of, rows)
 
     # Two measures that are the same figure (counted where either holds something: two empty columns agree).
     same = []

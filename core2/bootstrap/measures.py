@@ -84,6 +84,9 @@ class MeasureFinding:
     # A value no column holds, worked out on each row: this column times another of the same row (an on-hand
     # quantity times its unit cost), then added up.
     times: str | None = None
+    # ...or this column less a rate of itself (a line's price after its discount: price x (1 - discount)), then,
+    # with ``times`` too, times that (the tax on what was charged).
+    after: str | None = None
 
 
 # Words a name written in one case glues after another: LINENUMBER, SHIPPRIORITY, EXTENDEDPRICE, ACCTBAL.
@@ -214,6 +217,16 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
 
 
 _NUMBERED = {"no", "num", "nbr", "number"}
+# What numbers a row within its document, never the document: a line, a sequence, a revision.
+_WITHIN = {"line", "ln", "lin", "seq", "sequence", "item", "itm", "position", "pos", "revision", "rev", "version",
+           "renewal", "fill", "step"}
+
+
+def _numbers_documents(column: str) -> bool:
+    """Named as the number of a document (a sale's ticket number on the key of item and ticket, TICKET_NO), never as
+    a line's or a revision's within one."""
+    words = names.tokens(column)
+    return bool(words) and words[-1] in _NUMBERED and not set(words) & _WITHIN
 
 
 def _document_numbers(table: InvTable, links: set[str]) -> list[str]:
@@ -394,7 +407,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             p = profile.columns[column.name]
             if column.data_type not in ("text", "integer") or column.name in keys[key].unique_columns:
                 continue
-            if any(column.name in k[1:] for k in [keys[key].primary_key, *keys[key].alternate_keys] if len(k) > 1):
+            if column.name in keys[key].line_numbers or not _numbers_documents(column.name) and any(
+                    column.name in k[1:] for k in [keys[key].primary_key, *keys[key].alternate_keys] if len(k) > 1):
                 continue   # a line or renewal number runs within its document: it counts nothing on its own
             if any(j.from_table == key and column.name in j.from_columns and j.trust != "rejected" for j in joins):
                 continue
@@ -411,7 +425,7 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                     and not _counted(column.name)
             if not is_document or column.name in {c.column for c in dates.get(key, [])}:
                 continue
-            thing = [w for w in names.core_column(column.name)]
+            thing = [w for w in names.core_column(bare(table, column.name))]
             while len(thing) > 1 and thing[-1] in ("number", "no", "nbr", "num", "id", "ref", "code") \
                     and not (len(thing) == 2 and len(thing[0]) <= 3):   # "Rx number": a short word keeps its "number"
                 thing.pop()
