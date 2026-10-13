@@ -1643,6 +1643,18 @@ def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow
     return plan.model_copy(update=update) if update else plan
 
 
+def _named_in_full(model: SemanticModel, question: str):
+    """The one measure the question names by its whole name ("scrapped quantity"), or None: none, or several of the
+    same name (an order quantity of sales, of purchases and of work orders)."""
+    text = " ".join(re.findall(r"[a-z0-9]+", question.casefold()))
+    said = [m for m in model.measures.values() if not m.hidden and m.business_name and len(m.business_name) > 3
+            and re.search(rf"\b{re.escape(' '.join(re.findall(r'[a-z0-9]+', m.business_name.casefold())))}\b", text)]
+    # A longer name holds a shorter one ("net sales amount" holds "sales amount"): the longest is the one named.
+    longest = max((len(m.business_name) for m in said), default=0)
+    said = [m for m in said if len(m.business_name) == longest]
+    return said[0] if len({m.business_name.casefold() for m in said}) == 1 and len(said) == 1 else None
+
+
 def _measures_named(model: SemanticModel, question: str) -> set[str]:
     from core2.plan.followup import measures_named
 
@@ -1881,6 +1893,14 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [f"The question names no figure: it is about the figure of the answer above "
                               f"({', '.join(previous.measures)}). Plan it with those measures and follow_up "
                               '"refine", rather than asking which measure.'], ""
+            continue
+        spelled = _named_in_full(model, question) if attempt == 0 and plan.kind == "clarify" and \
+            plan.clarify is not None and plan.clarify.about == "measure" else None
+        if spelled is not None:
+            # "Scrapped quantity by month" was asked back, scrapped or rejected quantity? (the sector stress test):
+            # a question that names one figure by its whole name means it.
+            problems, hint = [f'The question names the measure {spelled.slug} by its own name '
+                              f'("{spelled.business_name}"): plan it with that measure rather than asking which one.'], ""
             continue
         refused = plan.kind in ("unsupported", "clarify") and (plan.clarify is None or plan.clarify.about != "member")
         reuse = _derived_named(question, defined or []) if attempt == 0 and refused else []
