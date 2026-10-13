@@ -20,12 +20,13 @@ trusted: both are proposed and the choice goes to the review queue.
 
 from __future__ import annotations
 
+import functools
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from sqlglot import exp
 
-from core2.bootstrap import names
+from core2.bootstrap import names, personal
 from core2.bootstrap.calendar import CalendarFinding
 from core2.bootstrap.history import MIN_QUERIES
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
@@ -124,6 +125,33 @@ _COPY_WORDS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp", "arch
                "prev", "previous", "save", "saved"}
 SMALL_TARGET = 30          # members: below this, values alone must use most of them
 RUN = 0.9                  # share of a stretch's whole numbers a column holds for it to be a run of numbers
+
+
+# A step up to a person: whoever manages, supervises or owns is someone on the staff.
+_PERSON_STEPS = {"mgr", "manager", "mngr", "supervisor", "supv", "reports", "rpt", "rprt", "lead", "owner", "boss"}
+
+
+def _a_person_step(word: str) -> bool:
+    return word in _PERSON_STEPS or len(word) >= 4 and any(
+        len(h) >= len(word) and names.same_word(word, h) for h in _PERSON_STEPS)
+
+
+def _of_people(table: InvTable) -> bool:
+    """The employees, the staff, the sales reps: a table whose rows are people."""
+    return personal.about_people(table) or bool(
+        {names.singular(w) for w in names.tokens(table.name)} & personal.PERSON_WORDS)
+
+
+@functools.lru_cache(maxsize=4096)
+def _prefix_of(table: str, columns: tuple[str, ...]) -> str | None:
+    return names.column_prefix(list(columns), table)
+
+
+def bare(table: InvTable, column: str) -> str:
+    """A column's name without the initials its table writes before every column: O_CUSTKEY on the orders reads
+    CUSTKEY, SS_ITEM_SK on the store sales ITEM_SK."""
+    prefix = _prefix_of(table.name, tuple(c.name for c in table.columns))
+    return column[len(prefix) + 1:] if prefix and column.lower().startswith(prefix + "_") else column
 
 
 def _a_step_up(word: str) -> bool:
@@ -346,7 +374,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 for a, b in pairs):  # type: ignore[arg-type]
             continue
         (first, to_first), *rest = pairs
-        score, role = name_score(first, tgt.name, to_first)  # type: ignore[arg-type]
+        score, role = name_score(bare(src, first), tgt.name, bare(tgt, to_first))  # type: ignore[arg-type]
         a, k = profiles[fk.table].columns[first], profiles[fk.ref_table].columns[to_first]  # type: ignore[index]
         candidates[(fk.table, first, fk.ref_table, to_first)] = JoinFinding(  # type: ignore[index]
             fk.table, first, fk.ref_table, to_first, declared=True, name_score=score,  # type: ignore[arg-type]
@@ -367,9 +395,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         for column in table.columns:
             a = profiles[key].columns[column.name]
             own_key = column.name in tkeys.primary_key and len(tkeys.primary_key) == 1
-            if own_key and _names_its_table(column.name, table.name):
+            plain = bare(table, column.name)
+            if own_key and _names_its_table(plain, table.name):
                 continue   # CUSTOMER_ID on CUSTOMERS identifies the row; it points nowhere
-            column_words = names.tokens(column.name)
+            column_words = names.tokens(plain)
             # A step up named by its words alone: REPORTS_TO, PARENT, MANAGED_BY. No key word after them, but no
             # other reading either.
             stepping = any(_a_step_up(w) for w in column_words)
@@ -378,6 +407,12 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             # step up the hierarchy, tested like any other.
             hierarchy_key = stepping and bool(column_words) \
                 and (column_words[-1] in names.KEY_SUFFIXES or step_up) and a.distinct == 1
+            # A manager is a person: up to the same table only on a table of people (an employee's manager). An
+            # item's or a department's manager is someone on the staff, never another item or department.
+            to_a_person = stepping and all(_a_person_step(w) for w in column_words if _a_step_up(w)) \
+                and not names.opaque(table.name) and not _of_people(table)
+            # COMPOUNDED_BY, VERIFIED_BY, COUNTED_BY: whoever did it, one of the people a table of people lists.
+            by_whom = len(column_words) >= 2 and column_words[-1] == "by" and not stepping
             # A code that holds one value (every rate converts from USD): linked only where its name says where.
             single_valued = a.distinct < 2 and not hierarchy_key
             if column.name in sequence_columns or a.distinct < 1 \
@@ -398,14 +433,18 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     continue
                 ident = (key, column.name, to_table, to_column)
                 is_declared = (key, names_norm(column.name), to_table, names_norm(to_column)) in declared
-                if counts_things(column.name) and not is_declared:
+                if counts_things(plain) and not is_declared:
                     continue          # NumberEmployees on the resellers: how many, not which
                 if to_table != key and not is_declared and (
-                        column.name in tkeys.unique_columns and _of_its_own_table(column.name, table.name)
-                        or _names_its_table(column.name, table.name)):
+                        column.name in tkeys.unique_columns and _of_its_own_table(plain, table.name)
+                        or _names_its_table(plain, table.name)):
                     continue          # the categories' own alternate key, a review's ProductReviewID: its own rows'
                     #                   number, pointing nowhere, however its values look
-                score, role = name_score(column.name, inventory.tables[to_table].name, to_column)
+                score, role = name_score(plain, inventory.tables[to_table].name,
+                                         bare(inventory.tables[to_table], to_column))
+                if by_whom and not score and to_table != key and [to_column] == keys[to_table].primary_key \
+                        and _of_people(inventory.tables[to_table]):
+                    score, role = 0.8, column_words
                 if single_valued and not (is_declared or score >= 0.8):
                     continue
                 if mixed and not (is_declared or score >= 0.9):
@@ -424,7 +463,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     grain = calendars[to_table].grain
                     plausible = (a.pattern == "yyyymmdd" and grain == "day") or (a.pattern == "yyyymm" and grain == "month") \
                         or (column.data_type == "date" and grain == "day") or is_declared or score > 0
-                words = names.tokens(column.name)
+                words = column_words
                 # MGR_KEY on the employees: a key named for a step up a hierarchy. Few rows are managers,
                 # so the share of members it uses proves nothing; the test run decides.
                 up_the_hierarchy = to_table == key and stepping and bool(words) \
@@ -434,7 +473,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 own_role = to_table == key and score >= 0.85 and bool(role)
                 same_type = column.data_type == inventory.tables[key].type_of(to_column)
                 if to_table == key and not (is_declared or score >= 0.8 and up_the_hierarchy or own_role
-                                            or up_the_hierarchy and same_type):
+                                            or up_the_hierarchy and same_type) or to_table == key and to_a_person \
+                        and not is_declared:
                     continue   # a table points at itself only up a hierarchy (a parent, a manager) or by a role
                 if is_calendar and not (is_declared or score >= 0.9):
                     continue   # a calendar's own period numbers are not foreign keys
@@ -444,7 +484,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # speak for them whatever the column is called (APPOINTMENTID holding the encounters' Id).
                 same_identifiers = identifier_text(a) and identifier_text(k) and a.max_len == k.max_len
                 if plausible and not (is_declared or score) and not to_calendar and not same_identifiers \
-                        and not names.opaque(column.name) and not _shares_a_word(column.name, inventory.tables[to_table].name):
+                        and not names.opaque(column.name) and not _shares_a_word(plain, inventory.tables[to_table].name):
                     plausible = False   # whole-number keys collide by chance: a meaningful name must agree
                     if words and words[-1] in names.KEY_SUFFIXES and to_table != key:
                         roles_by_value.append((ident, coverage, column.name in tkeys.unique_columns))
@@ -506,7 +546,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                                                 tuple(t for _, t in f.pairs)) == (key, froms, to_key, tos)), None)
         if found is None:
             a, k = profiles[key].columns[froms[0]], profiles[to_key].columns[tos[0]]
-            score, role = name_score(froms[0], tgt.name, tos[0]) if len(froms) == 1 else (0.0, [])
+            score, role = name_score(bare(src, froms[0]), tgt.name, bare(tgt, tos[0])) if len(froms) == 1 else (0.0, [])
             found = candidates[ident] = JoinFinding(
                 key, froms[0], to_key, tos[0], name_score=score, role_tokens=role, to_calendar=to_key in calendars,
                 coverage=min(1.0, a.distinct / k.distinct) if k.distinct else 0.0,
@@ -633,7 +673,8 @@ def _keep_one(group: list[JoinFinding], kept: list[JoinFinding], profiles: dict[
     # Equal otherwise, the table the column is named for: PRODUCT_ID points at PRODUCTS, not at
     # PRODUCT_CATEGORIES, which holds the same numbers once each beside each product's category.
     group.sort(key=lambda f: (order[f.trust], -f.declared, -f.history, -f.name_score,
-                              not _names_its_table(f.to_column, inventory.tables[f.to_table].name), -f.coverage,
+                              not _names_its_table(bare(inventory.tables[f.to_table], f.to_column),
+                                                   inventory.tables[f.to_table].name), -f.coverage,
                               -f.match_rate, f.ident))
     one = _one_to_one(group, profiles, inventory)
     if one is not None:
@@ -811,7 +852,8 @@ def _shares_a_word(column: str, table: str) -> bool:
     """The column names what the table's rows are: VendorID and the vendors, SalesPersonID and the salespeople.
     Only the table's last word counts (what each row is): a transaction's ReferenceOrderID names an order, and the
     order lines' numbers (SalesOrderDetail) are no orders, however well its values sit inside them."""
-    left = [t for t in names.tokens(column) if t not in names.KEY_SUFFIXES and not t.isdigit() and t not in _GENERIC_WORDS]
+    left = [t for w in names.tokens(column) for t in names.unglued(w)
+            if t not in names.KEY_SUFFIXES and not t.isdigit() and t not in _GENERIC_WORDS]
     right = [t for t in names.core_table(table) if t not in _GENERIC_WORDS]
     if not left or not right:
         return False
@@ -830,7 +872,7 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
             words = list(f.role_tokens)
             own = False         # the column names the role itself (MANAGER_ID on employees: the manager)
             if not words and (len(group) > 1 or f.from_table == f.to_table) and not names.opaque(f.from_column):
-                words = names.core_column(f.from_column)
+                words = names.core_column(bare(inventory.tables[f.from_table], f.from_column))
                 own = f.from_table == f.to_table
             if not words:
                 continue

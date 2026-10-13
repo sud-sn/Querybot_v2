@@ -58,6 +58,10 @@ _CAPACITY = {"speed", "bandwidth", "capacity", "mbps", "gbps", "kbps", "bps", "t
 _ALLOWANCE = {"authorized", "authorised", "authd", "authzd", "allowed", "allw", "alwd", "allwd", "permitted",
               "entitled", "allowance", "quota"}
 _CURRENCY_CODES = {"usd", "cad", "eur"}
+# A price for the whole line or document, not per unit: an amount, added up (EXTENDED_PRICE, TOTAL_PRICE, PRICE_CHARGED).
+_PRICE_TOTAL = {"extended", "ext", "total", "tot", "charged", "billed", "invoiced"}
+# What a test or an instrument read: a value of its own, averaged, never added up (RESULT_VALUE, READING).
+_READING = {"result", "reading", "measurement", "measured", "observed", "observation"}
 _UNIT_VALUES = {"ea", "each", "pc", "pcs", "piece", "kg", "g", "lb", "lbs", "oz", "ft", "m", "cm", "mm", "l", "ml",
                 "box", "bx", "cs", "case", "pk", "pack", "pallet", "unk", "units", "unit", "dz", "doz", "gal", "ton"}
 _CURRENCIES = {"usd", "cad", "eur", "gbp", "jpy", "aud", "chf", "cny", "inr", "mxn", "brl", "sek", "nok", "dkk",
@@ -82,17 +86,39 @@ class MeasureFinding:
     times: str | None = None
 
 
-# Code words a name in capitals glues to its noun: DEPARTMENTID, REASONCODE, DIAGNOSISREF.
-_GLUED = ("code", "id", "key", "ref")
+# Words a name written in one case glues after another: LINENUMBER, SHIPPRIORITY, EXTENDEDPRICE, ACCTBAL.
+_GLUED_TAILS = ("priority", "quantity", "balance", "percent", "number", "amount", "status", "total", "value", "price",
+                "count", "cost", "rate", "flag", "mode", "type", "qty", "amt", "bal", "pct")
+_KNOWN = _MONEY | _QUANTITY | _CODE | _RATE | _PERCENT | names.LEVEL_WORDS | names.FLOW_WORDS \
+    | {w for reading in names.EXPANSIONS.values() for w in reading.split()}
+
+
+def _apart(word: str) -> list[str]:
+    """``linenumber`` -> line, number; ``acctbal`` -> acct, bal; ``departmentid`` -> department, id. A word of its
+    own stays whole: discount, headcount, account."""
+    if word in _KNOWN:
+        return [word]
+    parts = names.unglued(word)
+    if len(parts) == 2:
+        return parts
+    for tail in _GLUED_TAILS:
+        head = word[:-len(tail)]
+        if word.endswith(tail) and (len(head) >= 4 or len(head) >= 3 and head in _KNOWN):
+            return [head, tail]
+    return [word]
+
+
+def _parts(column: str) -> list[str]:
+    """The column's words in order, glued words read apart."""
+    return [part for word in names.tokens(column) for part in _apart(word)]
 
 
 def _words(column: str) -> set[str]:
     out: set[str] = set()
     for word in names.tokens(column):
         out.add(word)
-        glued = next((g for g in _GLUED if word.endswith(g) and len(word) >= len(g) + 4), None)
-        if glued and word not in _MONEY | _QUANTITY:
-            out |= {word[:-len(glued)], glued}
+        if word not in _MONEY | _QUANTITY:
+            out |= set(_apart(word))       # DEPARTMENTID, REASONCODE, LINENUMBER
     return out
 
 
@@ -255,10 +281,12 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         if not names.opaque(column.name) and words & _CODE and not words & (_MONEY | _QUANTITY | _PERCENT | _RATE) \
                 and not _counted(column.name):
             continue
-        last = [w for w in names.tokens(column.name) if not w.isdigit()][-1:] or [""]
-        if last[0] in _NAMING_LAST and not _counted(column.name) and not (names.tokens(column.name) or [""])[0] in (
+        last = [w for w in _parts(column.name) if not w.isdigit()][-1:] or [""]
+        if last[0] in _NAMING_LAST and not _counted(column.name) and not (_parts(column.name) or [""])[0] in (
                 "number", "num", "nbr", "no", "count", "cnt", "total"):
             continue   # SalesOrderLineNumber, RevisionNumber: a row's number, never added up
+        if last[0] == "by" and not names.opaque(column.name):
+            continue   # COMPOUNDED_BY, VERIFIED_BY: who did it, never an amount
         if words & (_CAPACITY | _ALLOWANCE) and not words & (_MONEY | _QUANTITY):
             continue   # a port's speed, the refills a prescription allows: what may be, not an amount of it
         if "per" in words and not dates.get(key):
@@ -292,17 +320,26 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
             m = MeasureFinding(table=key, column=name, agg="sum", additivity="additive", format="number", name=label)
             in_unit_range = p.min_num is not None and p.max_num is not None and p.min_num >= 0 and p.max_num <= 1
             in_percent_range = p.min_num is not None and p.max_num is not None and p.min_num >= -100 and p.max_num <= 100
+            # EXTENDED_PRICE, TOTAL_PRICE, PRICE_CHARGED: a line's or a document's price, an amount.
+            rate = words & _RATE - ({"price", "prc"} if words & _PRICE_TOTAL else set())
             if words & _PERCENT or ("margin" in words or "mrg" in words) and in_percent_range and "amt" not in words \
                     and "amount" not in words:
                 m.agg, m.additivity, m.format = "avg", "non_additive", "percent"
                 m.evidence.append(Evidence(kind="percent", weight=1, detail=f"{label} is a percentage: averaged, never summed"))
-            elif words & _RATE or (words & _UNIT_PRICE and words & _MONEY):
+            elif words & _READING and not words & (_QUANTITY | _MONEY - {"value", "val"}):
+                m.agg, m.additivity = "avg", "non_additive"
+                m.evidence.append(Evidence(kind="reading", weight=1,
+                                           detail=f"{label} is what a test or an instrument read: averaged, never summed"))
+            elif rate or (words & _UNIT_PRICE and words & _MONEY and not words & _PRICE_TOTAL):
                 m.agg, m.additivity = "avg", "non_additive"
                 m.format = "currency" if words & _MONEY else "number"
                 m.evidence.append(Evidence(kind="rate", weight=1, detail=f"{label} is a rate or a price per unit: averaged"))
             elif in_unit_range and words & {"rate", "ratio", "share"}:
                 m.agg, m.additivity, m.format = "avg", "non_additive", "percent"
             else:
+                if words & {"price", "prc"} and words & _PRICE_TOTAL:
+                    m.evidence.append(Evidence(kind="amount", weight=1, detail=(
+                        f"{label} is the price of a whole line or document, not of one unit: an amount, added up")))
                 if words & _MONEY and not (words & _QUANTITY and words & _MONEY <= _CURRENCY_CODES):
                     m.format = "currency"     # PRTS_USD_QTY: parts used, a quantity, never US dollars
                 elif words & _QUANTITY or column_is_whole(p):

@@ -180,6 +180,10 @@ def _skeleton(word: str) -> str:
     return word[0] + re.sub(r"[aeiou]", "", word[1:]) if word else word
 
 
+# Whole words a reading of an abbreviation gives: a word of their own, never another word cut short to its consonants.
+_WHOLE_WORDS = {w for reading in EXPANSIONS.values() for w in reading.split()}
+
+
 def same_word(a: str, b: str) -> bool:
     """Equal, or one an abbreviation of the other (``cust``/``customer``, ``prd``/``product``)."""
     a, b = singular(a), singular(b)
@@ -192,14 +196,48 @@ def same_word(a: str, b: str) -> bool:
     short, long_ = (a, b) if len(a) <= len(b) else (b, a)
     if len(short) < 3:
         return False
+    if short in _WHOLE_WORDS:
+        return long_.startswith(short)      # COST is no customer, COUNT no country, STORE no storage
     # By consonants, three at least: CUST is a customer and DEPT a department, but LINE is not a
     # language, DATE not a detail and NAME not a number for sharing two.
     return long_.startswith(short) or len(_skeleton(short)) >= 3 and _skeleton(long_).startswith(_skeleton(short))
 
 
+# Key words a name written in one case glues to its noun: custkey, suppkey, customerid, reasoncode.
+GLUED_KEYS = ("code", "id", "key", "ref")
+
+
+def unglued(word: str) -> list[str]:
+    """``custkey`` -> cust, key; ``customerid`` -> customer, id. A word too short to hold a noun and a key word
+    stays whole: paid, monkey."""
+    glued = next((g for g in GLUED_KEYS if word.endswith(g) and len(word) >= len(g) + 4), None)
+    return [word[:-len(glued)], glued] if glued else [word]
+
+
+def column_prefix(columns: list[str], table: str) -> str | None:
+    """The initials a table writes before every one of its columns (O_ on the orders, SS_ on the store sales,
+    CR_ on the catalog returns), or None. They say which table a column is on and nothing else: CR_ is no
+    credit, CD_ no code. A word naming the table (CUST_ on the customers, INV_ on the inventory, STS_ on a
+    status table called STTS) is read, and so is one a column needs to say anything (STS_KEY, STS_NM)."""
+    if len(columns) < 2 or not all("_" in c for c in columns):
+        return None
+    heads = {c.split("_", 1)[0].lower() for c in columns}
+    head = heads.pop() if len(heads) == 1 else ""
+    if not head.isalpha() or len(head) > 3 or head in KEY_SUFFIXES:
+        return None
+    rests = [tokens(c.split("_", 1)[1]) for c in columns]
+    if any(not rest or len(rest) == 1 and rest[0] in KEY_SUFFIXES for rest in rests):
+        return None
+    if any(same_word(head, w) or same_word(EXPANSIONS.get(head, head), w) for w in core_table(table)):
+        return None
+    return head
+
+
 def core_column(name: str) -> list[str]:
-    """Column tokens without trailing key words: ``order_date_key`` -> order, date."""
+    """Column tokens without trailing key words: ``order_date_key`` -> order, date; ``o_custkey`` -> o, cust."""
     parts = tokens(name)
+    if parts:
+        parts[-1:] = unglued(parts[-1])
     while len(parts) > 1 and parts[-1] in KEY_SUFFIXES:
         parts.pop()
     return parts
