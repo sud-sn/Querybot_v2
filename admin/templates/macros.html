@@ -14,16 +14,16 @@
      --qb-mark-glyph and the dot --qb-mark-dot, so the mark reads on a light
      ground and on the navy sidebar alike.
 
-     It is still everywhere but one place. While an answer is being worked out
-     the dot pulses (the working beat); the moment the answer arrives the mark
-     goes with the working line. No hover tilt, no pop on load, no red and no
-     shake on error -- the words carry a failure, never the brand -- and under
-     reduced motion it never moves. `uid` is kept for the callers that name
-     each mark; the drawing needs no ids of its own. #}
+     Its parts are named so a state can move them (static/css/brand-motion.css):
+     one movement per working stage beside an answer being worked out, a
+     one-time arrival in the sidebar and on sign-in, a hop under the pointer.
+     Never on an error -- the words carry a failure, never the brand -- and
+     under reduced motion it never moves. `uid` is kept for the callers that
+     name each mark; the drawing needs no ids of its own. #}
   <svg class="qb-brand-motion__mark" viewBox="0 0 32 32" fill="none" aria-hidden="true" focusable="false">
     <g class="qb-brand-motion__brackets" stroke-width="3.6" stroke-linecap="round">
-      <path d="M6.5 14V10a3.5 3.5 0 0 1 3.5-3.5h4"/>
-      <path d="M25.5 18v4a3.5 3.5 0 0 1-3.5 3.5h-4"/>
+      <path class="qb-brand-motion__tl" d="M6.5 14V10a3.5 3.5 0 0 1 3.5-3.5h4"/>
+      <path class="qb-brand-motion__br" d="M25.5 18v4a3.5 3.5 0 0 1-3.5 3.5h-4"/>
     </g>
     <circle class="qb-brand-motion__dot" cx="16" cy="16" r="4.2"/>
   </svg>

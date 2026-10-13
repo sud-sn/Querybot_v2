@@ -434,12 +434,13 @@
 .filter-clear:hover{background:var(--surface-3,var(--border))}
 
 /* ── Modals ─────────────────────────────────────────────────────────────────── */
-.eg-modal-overlay{position:fixed;inset:0;background:color-mix(in srgb, var(--shadow-tint) 45%, transparent);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
-.eg-modal{background:var(--surface);border-radius:8px;width:520px;max-width:96vw;box-shadow:0 24px 64px color-mix(in srgb, var(--shadow-tint) 22%, transparent);overflow:hidden}
-.eg-modal-head{padding:.8rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface-2);font-size:var(--font-md);font-weight:var(--weight-bold)}
+.eg-modal-overlay{position:fixed;inset:0;background:var(--scrim);z-index:8000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+/* The design's dialog: the card radius, its title in the display face, rising in. */
+.eg-modal{background:var(--surface-raised);border:1px solid var(--line-subtle);border-radius:var(--radius-card);width:520px;max-width:96vw;box-shadow:var(--shadow-lg);overflow:hidden;animation:qb-modalIn .22s var(--ease-out)}
+.eg-modal-head{padding:20px 22px 8px;display:flex;align-items:center;justify-content:space-between;font-family:var(--font-display);font-size:var(--font-xl);font-weight:var(--weight-bold);letter-spacing:-.01em;color:var(--text-strong)}
 .eg-modal-close{background:none;border:none;font-size:var(--font-xl);cursor:pointer;color:var(--text-muted);padding:0 4px;line-height:1;transition:color .12s}
 .eg-modal-close:hover{color:var(--text)}
-.eg-modal-body{padding:.85rem 1rem}
+.eg-modal-body{padding:8px 22px 20px}
 .eg-form-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.55rem}
 .eg-form-row.full{grid-template-columns:1fr}
 .eg-lbl{display:block;font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted);margin-bottom:.2rem}

@@ -1444,7 +1444,7 @@ function mountDashChartControls(ctrlRow) {
   const typeHtml = visibleTypes.map(kind =>
     `<button class="dctt-btn${ct===kind?' dctt-active':''}" data-type="${kind}">${escHtmlDash(t('ui.enum.charttype.' + kind))}</button>`
   ).join('');
-  ctrlRow.innerHTML = typeHtml;
+  ctrlRow.innerHTML = typeHtml ? `<span class="dctt-seg">${typeHtml}</span>` : '';
 
   ctrlRow.querySelectorAll('.dctt-btn').forEach(btn => {
     btn.addEventListener('click', () => {

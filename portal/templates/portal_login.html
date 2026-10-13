@@ -6,7 +6,7 @@
 {% block content %}
 <div class="login-shell">
   <div class="login-brand-identity">
-    {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
+    {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
     <div class="login-brand">{{ wordmark() }}</div>
     <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
   </div>
@@ -80,4 +80,12 @@
 @media (max-width: 480px) { .login-card-body { padding: 22px 18px 22px; } }
 </style>
 
+<script>
+// While signing in, the mark turns (brand-motion.css, "loading"); the server's answer replaces the page.
+(function () {
+  var mark = document.getElementById('portalAuthMark');
+  var form = document.querySelector('form[method="post"]');
+  if (mark && form) form.addEventListener('submit', function () { mark.dataset.state = 'loading'; });
+})();
+</script>
 {% endblock %}

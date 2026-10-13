@@ -359,8 +359,85 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 .chat-workspace-main .chat-input { min-height: 40px; max-height: 168px; padding-top: 9px; padding-bottom: 9px; }
 /* One line of hint, cut short on a narrow screen rather than wrapped under the box's edge. */
 .chat-workspace-main .chat-input::placeholder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.send-btn { width: 42px; height: 42px; border-radius: var(--radius-pill); background: var(--primary-fill); box-shadow: none; }
-.send-btn:hover { background: var(--primary-fill-hover); box-shadow: none; }
+/* The send button: an arrow in the brand's round button. Quiet while the box is empty; filled, with a soft glow,
+   once there is something to send, the arrow lifting under the pointer; a stop square on red while an answer is
+   worked out, a ring running round it. */
+.chat-workspace-main .send-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: var(--primary-fill);
+  color: var(--on-primary);
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--primary) 90%, transparent);
+  transition: background-color var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+.chat-workspace-main .send-btn:hover { background: var(--primary-fill-hover); transform: translateY(-1px);
+  box-shadow: 0 12px 24px -12px color-mix(in srgb, var(--primary) 95%, transparent); }
+.chat-workspace-main .send-btn:active { transform: scale(.92); }
+.chat-workspace-main .send-btn .qb-icon { stroke-width: 2.4; transition: transform var(--t-fast) var(--ease-out); }
+.chat-workspace-main .send-btn:hover .qb-icon { transform: translateY(-2px); }
+.chat-workspace-main .send-btn[data-empty="true"]:not(.is-stop) {
+  border-color: var(--line-subtle);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  box-shadow: none;
+  transform: none;
+}
+.chat-workspace-main .send-btn[data-empty="true"]:not(.is-stop) .qb-icon { transform: none; }
+.chat-workspace-main .send-btn.is-stop { background: var(--danger); color: var(--on-status); box-shadow: none; }
+.chat-workspace-main .send-btn.is-stop:hover { background: var(--danger-strong); }
+.chat-workspace-main .send-btn.is-stop::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 2px solid transparent;
+  border-top-color: var(--danger);
+  border-right-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 50%;
+  animation: qb-spin .9s linear infinite;
+  pointer-events: none;
+}
+.chat-workspace-main .send-btn .stop-icon { width: 12px; height: 12px; border-radius: 3px; background: currentColor; }
+
+/* While an answer is worked out the question box's edge runs in the brand's colours, and the stage being worked
+   on shimmers beside the moving mark. */
+.chat-workspace-main .chat-composer.is-working .chat-input-bar {
+  border-color: transparent;
+  background: linear-gradient(var(--surface-raised), var(--surface-raised)) padding-box,
+    linear-gradient(90deg, var(--primary), var(--brand-dot), var(--primary), var(--primary)) border-box;
+  background-size: 100% 100%, 300% 100%;
+  animation: qb-edge-run 2.4s linear infinite;
+}
+@keyframes qb-edge-run {
+  from { background-position: 0 0, 0% 0; }
+  to   { background-position: 0 0, 300% 0; }
+}
+.answer-progress-label {
+  background: linear-gradient(90deg, var(--text-secondary) 0%, var(--text-secondary) 40%, var(--primary) 50%,
+    var(--text-secondary) 60%, var(--text-secondary) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: qb-label-shine 2.2s linear infinite;
+}
+/* Its own name: base.css's qb-shimmer runs the loading skeletons, and a second keyframes of that name would win. */
+@keyframes qb-label-shine {
+  from { background-position: 100% 0; }
+  to   { background-position: -150% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-workspace-main .send-btn,
+  .chat-workspace-main .send-btn .qb-icon { transition: none; }
+  .chat-workspace-main .send-btn.is-stop::after,
+  .chat-workspace-main .chat-composer.is-working .chat-input-bar,
+  .answer-progress-label { animation: none; }
+  .answer-progress-label { background: none; color: var(--text-secondary); }
+}
 .chat-workspace-main .composer-footer { width: var(--chat-column); margin-inline: auto; justify-content: center; }
 .chat-workspace-main .composer-hint { color: var(--text-muted); text-align: center; }
 

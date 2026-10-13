@@ -1,4 +1,4 @@
-"""The mark: one drawing, one per screen, and it moves only while an answer is worked out.
+"""The mark: one drawing, one per screen, and it moves only to say what the product is doing.
 
 The chat screen wore the logo four times -- the sidebar, a tile beside every
 answer, a mascot inside the question box, and a separate "thinking" mark -- and
@@ -16,8 +16,14 @@ Now (the logo step, L1, redrawn for the Solviz name):
 - One per screen: the sidebar lockup. No mark beside answers, none in the
   question box. The working beat beside a pending answer is the one place it
   moves, and it goes when the answer arrives.
-- Nothing else moves: no hover tilt, no intro, no colour or shake on error --
-  a failure is said in words. Under reduced motion nothing moves at all.
+- It moves to say what the product is doing, and for nothing else (the motion
+  step, M1): beside a pending answer each stage has its own movement (the frame
+  breathes while the question is read, turns while the measures are found, the
+  dot searches the frame while the query runs, the frame closes on it while the
+  answer is drawn); the sidebar's and the sign-in page's marks draw themselves in
+  once a visit; over the brand the frame opens and the dot hops. No colour or
+  shake on error -- a failure is said in words. Under reduced motion nothing
+  moves at all, and the favicon never does.
 - The wordmark, "solvız", is one macro in both consoles; its i carries the
   mark's dot, and a screen reader hears "Solviz".
 
@@ -139,34 +145,94 @@ class TestTheBrowserTab:
         assert re.search(r'rel="icon"[^>]*href="\{\{ asset\(\'img/logo-mark\.svg\'\) \}\}"', head), page
 
 
-# ── it moves only while an answer is worked out ─────────────────────────────
+# ── it moves only to say what the product is doing ──────────────────────────
 
 
-class TestOnlyTheWorkingWaveMoves:
+INTRO = ".qb-brand-motion--intro"
+HOVER = '[data-brand-hover]:hover .qb-brand-motion[data-state="idle"]'
 
-    def test_every_animation_belongs_to_a_working_state(self):
+
+def _animation_names(css: str, state: str) -> set[str]:
+    names = set()
+    for selector, body in _rules(css):
+        if f'[data-state="{state}"]' in selector and ":hover" not in selector:
+            found = re.search(r"animation:\s*([\w-]+)", body)
+            if found:
+                names.add(found.group(1))
+    return names
+
+
+class TestTheMotionSaysWhatIsHappening:
+
+    def test_every_animation_is_a_working_stage_the_arrival_or_the_pointer(self):
         for selector, body in _rules(_css()):
             if "animation" in body and "animation: none" not in body:
                 for part in selector.split(","):
-                    assert any(f'[data-state="{s}"]' in part for s in WORKING), part
+                    assert (any(f'[data-state="{s}"]' in part for s in WORKING) or part.strip().startswith(INTRO)
+                            or part.strip().startswith(HOVER)), part
 
-    def test_nothing_answers_the_pointer(self):
-        assert ":hover" not in _css() and ":active" not in _css()
+    def test_each_working_stage_moves_its_own_way(self):
+        css = _css()
+        moves = {state: frozenset(_animation_names(css, state)) for state in WORKING}
+        for state, names in moves.items():
+            assert names, f"{state} does not move"
+        assert len(set(moves.values())) == len(WORKING), moves
+
+    def test_the_chat_names_a_movement_for_every_stage_the_server_reports(self):
+        source = (ROOT / "portal" / "templates" / "portal_chat.html").read_text(encoding="utf-8")
+        table = source.split("const BRAND_STAGE_STATES = {", 1)[1].split("};", 1)[0]
+        named = dict(re.findall(r"(\w+):\s*'(\w+)'", table))
+        assert set(named.values()) <= set(WORKING) | {"idle"}, named
+        pipeline = (ROOT / "core" / "query_pipeline.py").read_text(encoding="utf-8")
+        reported = set(re.findall(r'_send_live_stage\(\s*\w+,\s*\w+,\s*"(\w+)"', pipeline))
+        assert {"executing_query", "formatting_results"} <= reported, "the stages are still read from the pipeline"
+        assert reported <= set(named), reported - set(named)
+
+    def test_only_the_brand_answers_the_pointer_and_only_when_still(self):
+        css = _css()
+        for selector, _ in _rules(css):
+            if ":hover" in selector:
+                for part in selector.split(","):
+                    assert part.strip().startswith(HOVER), part
+        assert ":active" not in css and ":focus" not in css
+        for page in ("portal/templates/portal_base.html", "admin/templates/base.html"):
+            source = (ROOT / page).read_text(encoding="utf-8")
+            assert "data-brand-hover" in source, page
 
     def test_an_error_is_not_said_by_the_mark(self):
         css = _css()
         assert '[data-state="error"]' not in css and '[data-state="success"]' not in css
         assert "shake" not in css and "--danger" not in css
 
-    def test_nothing_plays_on_arrival(self):
-        assert "--intro" not in _css()
-        for page in ("portal/templates/portal_login.html", "admin/templates/login.html"):
-            assert "qb-brand-motion--intro" not in (ROOT / page).read_text(encoding="utf-8"), page
+    @pytest.mark.parametrize("page", ["portal/templates/portal_base.html", "admin/templates/base.html"])
+    def test_the_sidebar_draws_itself_in_once_a_visit(self, page):
+        source = (ROOT / page).read_text(encoding="utf-8")
+        script = source[source.index("The brand draws itself in once a visit"):]
+        script = script[:script.index("</script>")]
+        assert "sessionStorage.getItem('qb.brandIntro')" in script and "sessionStorage.setItem('qb.brandIntro'" in script
+        assert "classList.add('qb-brand-motion--intro')" in script
+        assert "if (!mark.getClientRects().length) return;" in script, "only a mark on screen, which can end its arrival"
+        # Once it has arrived, the class goes, so the pointer's hop never replays the arrival.
+        assert "classList.remove('qb-brand-motion--intro')" in script and "'qb-intro-dot'" in script
+        assert "data-brand-intro" in source.split("The brand draws itself in once a visit", 1)[0]
+
+    @pytest.mark.parametrize("page", ["portal/templates/portal_login.html", "admin/templates/login.html",
+                                      "admin/templates/admin_invite.html", "admin/templates/admin_account_setup.html"])
+    def test_a_sign_in_page_s_mark_arrives_and_turns_while_it_signs_in(self, page):
+        source = (ROOT / page).read_text(encoding="utf-8")
+        assert "extra_class='qb-brand-motion--intro'" in source, page
+        assert "dataset.state = 'loading'" in source or "dataset.state='loading'" in source, page
+
+    def test_the_arrival_leaves_no_transform_behind(self):
+        for selector, body in _rules(_css()):
+            if selector.startswith(INTRO):
+                assert "backwards" in body and "both" not in body and "forwards" not in body, selector
 
     def test_reduced_motion_stops_everything(self):
         reduced = _css().split("prefers-reduced-motion: reduce", 1)[1]
         assert "animation: none !important" in reduced
         assert "transition: none !important" in reduced
+        assert "transform: none !important" in reduced, "the pointer's nudge rests too"
 
 
 # ── one per screen ──────────────────────────────────────────────────────────

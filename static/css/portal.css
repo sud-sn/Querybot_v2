@@ -465,8 +465,9 @@ body:not(:has(.portal-app-shell)) .main {
 }
 
 /* ── Page entrance ── */
+/* Backwards, not both: a transform kept after the entrance would hold every fixed overlay inside the page. */
 @media (prefers-reduced-motion: no-preference) {
-  .main { animation: qb-fadeUp .22s ease both; }
+  .main { animation: qb-fadeUp .22s ease backwards; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

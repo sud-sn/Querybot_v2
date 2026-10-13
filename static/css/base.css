@@ -34,6 +34,8 @@ code {
   border-radius: var(--radius-sm);
 }
 button, input, select, textarea { font: inherit; }
+/* A tick box and a round choice take the brand's colour, as a switch that is on does: one colour for "chosen". */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--primary-fill); }
 /* An icon from the sprite (icons.html, qb-icons.js): sits on the text's
    baseline and never shrinks in a flex row. */
 .qb-icon { flex-shrink: 0; display: inline-block; vertical-align: -0.2em; }
@@ -109,7 +111,7 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   min-height: 36px;
   padding: 8px 13px;
   border: 1px solid var(--btn-line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: var(--btn-bg);
   color: var(--btn-ink);
   font-size: var(--font-sm);
@@ -118,12 +120,16 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   white-space: nowrap;
   text-decoration: none;
   cursor: pointer;
-  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform var(--t-fast), box-shadow var(--t-fast);
 }
 .btn:hover { background: var(--btn-bg-hover); border-color: var(--btn-line-hover); color: var(--btn-ink-hover); text-decoration: none; }
+/* A pill that answers the hand: it gives a little under a press. */
+.btn:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(.97); }
 .btn-primary {
   --btn-bg: var(--primary-fill); --btn-ink: var(--on-primary); --btn-line: var(--primary-fill);
   --btn-bg-hover: var(--primary-fill-hover); --btn-line-hover: var(--primary-fill-hover);
+  /* The one main action glows softly in its own colour, as the design's New chat does. */
+  box-shadow: 0 10px 22px -14px color-mix(in srgb, var(--primary-fill) 90%, transparent);
 }
 .btn-secondary { /* the .btn defaults */ }
 .btn-ghost {
@@ -173,6 +179,26 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
 .btn[aria-pressed="true"] {
   --btn-bg: var(--state-selected); --btn-ink: var(--primary-ink); --btn-line: var(--state-selected-line);
   --btn-bg-hover: var(--state-selected-hover);
+}
+/* A set of choices as one segmented control (Chart | Table, a chart's shapes): .btn-seg around .btn buttons, on a
+   pill track, the chosen one (aria-pressed) raised on it, as the design's tabs. */
+.btn-seg {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
+}
+.btn-seg > .btn {
+  --btn-bg: transparent; --btn-ink: var(--text-secondary); --btn-line: transparent;
+  --btn-bg-hover: transparent; --btn-ink-hover: var(--text-strong); --btn-line-hover: transparent;
+}
+.btn-seg > .btn[aria-pressed="true"] {
+  --btn-bg: var(--surface-raised); --btn-ink: var(--text-strong); --btn-line: transparent;
+  --btn-bg-hover: var(--surface-raised); --btn-ink-hover: var(--text-strong);
+  box-shadow: var(--shadow-sm);
 }
 .btn:disabled,
 .btn[aria-disabled="true"] {
@@ -416,28 +442,29 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 .form-switch input { position: absolute; opacity: 0; pointer-events: none; }
 .form-switch-track {
   position: relative;
-  width: 38px;
-  height: 22px;
-  flex: 0 0 38px;
-  margin-top: 1px;
+  width: 40px;
+  height: 24px;
+  flex: 0 0 40px;
+  margin-top: 0;
   border-radius: 999px;
   background: var(--gray-300);
-  transition: background var(--t-med);
+  transition: background var(--t-med) var(--ease-out);
 }
 .form-switch-track::after {
   content: "";
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--surface-raised);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 28%, transparent);
-  transition: transform var(--t-med);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 32%, transparent);
+  transition: transform var(--t-med) cubic-bezier(.34, 1.56, .64, 1);
 }
 .form-switch input:checked + .form-switch-track { background: var(--primary-fill); }
 .form-switch input:checked + .form-switch-track::after { transform: translateX(16px); }
+.form-switch:active .form-switch-track::after { width: 22px; }
 .form-switch input:focus-visible + .form-switch-track { box-shadow: var(--focus-ring); }
 .form-switch-copy { display: block; min-width: 0; }
 .form-switch-title { display: block; color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-bold); }
@@ -701,7 +728,7 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
 
 /* ── Tab pane & modal appear ── */
 .tab-pane { display: none; }
-.tab-pane.active { display: block; animation: qb-fadeIn .17s ease both; }
+.tab-pane.active { display: block; animation: qb-fadeIn .17s ease backwards; }
 .mask-preview-modal { animation: qb-modalIn .18s ease both; }
 
 /* ══════════════════════════════════════════════════════════
@@ -820,50 +847,57 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   margin: auto;
   width: min(440px, calc(100vw - 32px));
   padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-card);
   background: var(--surface-raised);
   color: var(--text);
   box-shadow: var(--shadow-lg);
-  animation: qb-modalIn .18s ease;
+  animation: qb-modalIn .22s var(--ease-out);
 }
-.qb-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
+.qb-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
 .qb-dialog-form { display: flex; flex-direction: column; }
 .qb-dialog-title {
   margin: 0;
-  padding: 1.25rem 1.25rem 0;
-  font-size: var(--font-lg);
+  padding: 22px 24px 0;
+  font-family: var(--font-display);
+  font-size: var(--font-xl);
   font-weight: var(--weight-bold);
+  letter-spacing: -.01em;
   line-height: var(--line-tight);
+  color: var(--text-strong);
 }
 .qb-dialog-body {
   margin: .5rem 0 0;
-  padding: 0 1.25rem;
+  padding: 0 24px;
   font-size: var(--font-base);
   color: var(--text-secondary);
   line-height: var(--line-normal);
   white-space: pre-line;
 }
-.qb-dialog-input { margin: .9rem 1.25rem 0; width: auto; }
+.qb-dialog-input { margin: .9rem 24px 0; width: auto; }
 .qb-dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: 1.25rem;
-  padding: .85rem 1.25rem;
-  border-top: 1px solid var(--border);
-  background: var(--surface-2);
+  padding: 0 24px 22px;
+  background: none;
 }
 
 /* ── Tabs (qb-ui.js qbTabs) ────────────────────────────────
-   One tab style: an underline under the selected tab, which is
-   also the only one in the Tab order. */
+   One tab style, the design's segmented control: the tabs on a
+   pill track, the selected one raised on it (and the only one in
+   the Tab order). */
 .qb-tabs {
-  display: flex;
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--border);
+  display: inline-flex;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .qb-tab {
   appearance: none;
@@ -871,22 +905,21 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: -1px;
-  padding: .55rem .8rem;
+  padding: 6px 16px;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-pill);
   background: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font: inherit;
   font-size: var(--font-sm);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
   cursor: pointer;
-  transition: color .15s ease, border-color .15s ease;
+  transition: color .15s ease, background-color .15s ease, box-shadow .15s ease;
 }
-.qb-tab:hover { color: var(--text); }
-.qb-tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
-.qb-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
+.qb-tab:hover { color: var(--text-strong); }
+.qb-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--text-strong); box-shadow: var(--shadow-sm); }
+.qb-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 [role="tabpanel"][hidden] { display: none; }
 
 /* ── Searchable select (qb-ui.js qbSelect) ─────────────────
@@ -1131,8 +1164,8 @@ main[tabindex="-1"]:focus { outline: none; }
 .qb-switch:hover { border-color: var(--border-strong); background: var(--surface-2); }
 .qb-switch-track {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 40px;
+  height: 24px;
   border-radius: 999px;
   background: var(--gray-300);
   flex-shrink: 0;
@@ -1140,16 +1173,17 @@ main[tabindex="-1"]:focus { outline: none; }
 }
 .qb-switch-thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--surface-raised);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 30%, transparent);
-  transition: transform var(--t-med) var(--ease-out);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-tint) 32%, transparent);
+  transition: transform var(--t-med) cubic-bezier(.34, 1.56, .64, 1);
 }
-.qb-switch.on .qb-switch-track { background: var(--success); }
+/* On is the brand's colour, as the form switch: one switch in the product, whatever it turns on. */
+.qb-switch.on .qb-switch-track { background: var(--primary-fill); }
 .qb-switch.on .qb-switch-thumb { transform: translateX(16px); }
 
 /* Compact variant for dense toolbars */

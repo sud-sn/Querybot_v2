@@ -62,7 +62,7 @@
   {% set _can = admin_can if admin_can is defined else none %}
   <aside class="sidebar" id="sidebar" aria-label="Admin navigation">
 
-    <div class="sidebar-brand">
+    <div class="sidebar-brand" data-brand-hover data-brand-intro>
       {{ brand_motion('admin-brand', 'idle', 'sm', extra_class='sidebar-brand-mark') }}
       {{ wordmark('sidebar-brand-text') }}
       <span class="sidebar-brand-tag">Admin</span>
@@ -154,6 +154,26 @@
 {# ── end shell ── #}
 
 {# ── Mobile sidebar JS ── #}
+<script>
+// The brand draws itself in once a visit, on its first page; a hop under the pointer after that (brand-motion.css).
+(function () {
+  try {
+    if (sessionStorage.getItem('qb.brandIntro')) return;
+    sessionStorage.setItem('qb.brandIntro', '1');
+  } catch (e) { return; }
+  document.querySelectorAll('[data-brand-intro] .qb-brand-motion').forEach(function (mark) {
+    // Only a mark on screen: a hidden one (the phone bar's, at a desk) never ends its arrival, and would play it later.
+    if (!mark.getClientRects().length) return;
+    mark.classList.add('qb-brand-motion--intro');
+    // Once the dot has dropped in, the mark is the still one again, so the pointer's hop never replays the arrival.
+    mark.addEventListener('animationend', function done(e) {
+      if (e.animationName !== 'qb-intro-dot') return;
+      mark.classList.remove('qb-brand-motion--intro');
+      mark.removeEventListener('animationend', done);
+    });
+  });
+})();
+</script>
 <script>
 // Appearance: the choice is kept on this device; a chart already drawn is drawn again in the new colours.
 (function () {

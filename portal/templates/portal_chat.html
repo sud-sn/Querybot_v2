@@ -148,9 +148,11 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chart-warning{font-size:var(--font-xs);color:var(--warning);background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:7px;padding:.45rem .55rem;line-height:1.35}
 /* ── Chart type toggle ───────────────────────────────────────────────── */
 .chart-type-toggle{display:flex;gap:.3rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);flex-wrap:wrap}
-.ctt-btn{padding:4px 11px;font-size:var(--font-xs);font-weight:var(--weight-bold);border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;transition:all .15s;white-space:nowrap}
-.ctt-btn:hover{border-color:var(--primary);color:var(--primary)}
-.ctt-btn.ctt-active{background:var(--primary-fill);border-color:var(--primary-fill);color:var(--on-primary)}
+/* A chart's shapes as one segmented control, the drawn one raised on the track (base.css .btn-seg's look). */
+.ctt-seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:3px;border:1px solid var(--line-subtle);border-radius:var(--radius-pill);background:var(--surface-alt)}
+.ctt-btn{padding:4px 11px;font-size:var(--font-xs);font-weight:var(--weight-semibold);border-radius:999px;border:0;background:transparent;color:var(--text-secondary);cursor:pointer;transition:background-color .15s,color .15s,box-shadow .15s;white-space:nowrap}
+.ctt-btn:hover{color:var(--text-strong)}
+.ctt-btn.ctt-active{background:var(--surface-raised);color:var(--text-strong);box-shadow:var(--shadow-sm)}
 .chart-footer{margin-top:.75rem;display:flex;justify-content:space-between;gap:1rem;color:var(--text-muted);font-size:var(--font-xs);flex-wrap:wrap}
 .assistant-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1rem .95rem;box-shadow:var(--shadow);position:relative}
 .assistant-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary-fill)}
@@ -407,35 +409,37 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .stop-icon{width:11px;height:11px;border-radius:3px;background:var(--surface-raised);display:block}
 .composer-footer{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.65rem;flex-wrap:wrap}.composer-hint{font-size:var(--font-xs);color:var(--text-muted)}
 .composer-actions{display:flex;gap:.45rem;flex-wrap:wrap}
-.dashboard-picker-backdrop{position:fixed;inset:0;z-index:var(--z-modal);background:var(--scrim);display:none;align-items:center;justify-content:center;padding:var(--space-4);backdrop-filter:blur(3px)}
+.dashboard-picker-backdrop{position:fixed;inset:0;z-index:var(--z-modal);background:var(--scrim);display:none;align-items:center;justify-content:center;padding:var(--space-4);backdrop-filter:blur(4px)}
 .dashboard-picker-backdrop.open{display:flex;animation:qb-fadeIn var(--t-fast) var(--ease-out)}
-.dashboard-picker{width:min(560px,100%);max-height:min(720px,92dvh);overflow:hidden;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);animation:qb-modalIn var(--t-med) var(--ease-out)}
+/* The design's dialog (base.css .qb-dialog): the card radius, a quiet edge, its title in the display face. */
+.dashboard-picker{width:min(560px,100%);max-height:min(720px,92dvh);overflow:hidden;display:flex;flex-direction:column;background:var(--surface-raised);border:1px solid var(--line-subtle);border-radius:var(--radius-card);box-shadow:var(--shadow-lg);animation:qb-modalIn var(--t-med) var(--ease-out)}
 @media(prefers-reduced-motion:reduce){.dashboard-picker-backdrop.open,.dashboard-picker{animation:none}}
-.dashboard-picker-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);padding:var(--space-4) var(--space-5) var(--space-3)}
-.dashboard-picker-title{font-size:var(--font-lg);font-weight:var(--weight-bold);color:var(--text);line-height:1.3}
+.dashboard-picker-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);padding:22px 24px var(--space-3)}
+.dashboard-picker-title{font-family:var(--font-display);font-size:var(--font-xl);font-weight:var(--weight-bold);letter-spacing:-.01em;color:var(--text-strong);line-height:1.25}
 .dashboard-picker-copy{font-size:var(--font-sm);color:var(--text-muted);margin-top:var(--space-1);line-height:var(--line-relaxed)}
-.dashboard-picker-close{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border:1px solid transparent;background:transparent;color:var(--text-muted);font-size:var(--font-lg);line-height:1;cursor:pointer;border-radius:var(--radius);transition:background var(--t-fast),color var(--t-fast)}
+.dashboard-picker-close{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border:1px solid transparent;background:transparent;color:var(--text-muted);font-size:var(--font-lg);line-height:1;cursor:pointer;border-radius:50%;transition:background var(--t-fast),color var(--t-fast)}
 .dashboard-picker-close:hover{background:var(--surface-2);color:var(--text)}
 /* The strip the modal never had. It already knew the title and the chart type
    and displayed neither, so "Add to dashboard" asked the user to place
    something the dialog would not name. */
-.dashboard-picker-subject{display:grid;gap:var(--space-1);margin:0 var(--space-5) var(--space-3);min-width:0}
+.dashboard-picker-subject{display:grid;gap:var(--space-1);margin:0 24px var(--space-3);min-width:0}
 .dashboard-picker-subject[hidden]{display:none}
 .dashboard-picker-name{font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--text-soft)}
 .dashboard-picker-name-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
 .dashboard-picker-name-row input{flex:1;min-width:0}
 .dashboard-picker-numbers{margin:0;font-size:var(--font-sm);color:var(--text-muted)}
 .dashboard-picker-kind{margin-left:auto;flex:none;font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px var(--space-2)}
-.dashboard-picker-body{padding:0 var(--space-5) var(--space-4);overflow:auto;flex:1;min-height:0}
-.dashboard-picker-switch{display:flex;gap:var(--space-1);margin-bottom:var(--space-3);padding:var(--space-1);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius)}
-.dashboard-picker-switch button{flex:1;border:1px solid transparent;background:transparent;color:var(--text-soft);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);font-size:var(--font-sm);font-weight:var(--weight-bold);cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.dashboard-picker-body{padding:0 24px var(--space-4);overflow:auto;flex:1;min-height:0}
+/* Existing or new: the design's segmented control, the choice raised on its pill track. */
+.dashboard-picker-switch{display:flex;gap:2px;margin-bottom:var(--space-3);padding:3px;background:var(--surface-alt);border:1px solid var(--line-subtle);border-radius:var(--radius-pill)}
+.dashboard-picker-switch button{flex:1;border:0;background:transparent;color:var(--text-secondary);padding:7px var(--space-3);border-radius:var(--radius-pill);font-size:var(--font-sm);font-weight:var(--weight-semibold);cursor:pointer;transition:background var(--t-fast),color var(--t-fast),box-shadow var(--t-fast)}
 .dashboard-picker-switch button:hover{color:var(--text)}
-.dashboard-picker-switch button.active{border-color:var(--border);background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.dashboard-picker-switch button.active{background:var(--surface-raised);color:var(--text-strong);box-shadow:var(--shadow-sm)}
 .dashboard-picker-search{width:100%;margin-bottom:var(--space-2)}
 /* No inner scroller and no fixed 285px cap: the body already scrolls, and two
    nested scrollbars in a 560px dialog is one too many. */
 .dashboard-picker-list{display:flex;flex-direction:column;gap:var(--space-1)}
-.dashboard-picker-option{width:100%;display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);text-align:left;border:1px solid var(--border);background:var(--surface);padding:var(--space-3);border-radius:var(--radius);cursor:pointer;color:var(--text);transition:border-color var(--t-fast),background var(--t-fast)}
+.dashboard-picker-option{width:100%;display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);text-align:left;border:1px solid var(--line-subtle);background:var(--surface-raised);padding:var(--space-3) 14px;border-radius:var(--radius-item);cursor:pointer;color:var(--text);transition:border-color var(--t-fast),background var(--t-fast)}
 .dashboard-picker-option:hover{border-color:var(--line-control);background:var(--surface-2)}
 .dashboard-picker-option.selected{border-color:var(--state-selected-line);background:var(--state-selected)}
 .dashboard-picker-option.selected:hover{background:var(--state-selected-hover)}
@@ -469,7 +473,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .dashboard-picker-skeleton{height:52px;border-radius:var(--radius);background:linear-gradient(90deg,var(--skeleton-base) 25%,var(--skeleton-shine) 37%,var(--skeleton-base) 63%);background-size:400% 100%;animation:qbPickerShimmer 1.2s ease-in-out infinite}
 @keyframes qbPickerShimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
 @media(prefers-reduced-motion:reduce){.dashboard-picker-skeleton{animation:none}}
-.dashboard-picker-footer{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-2);padding:var(--space-3) var(--space-5);border-top:1px solid var(--border);background:linear-gradient(180deg,var(--surface-2),color-mix(in srgb,var(--surface-2) 72%,var(--surface)))}
+.dashboard-picker-footer{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-2);padding:14px 24px 20px;border-top:1px solid var(--line-subtle);background:none}
 @media(max-width:560px){
   .dashboard-picker-backdrop{padding:0;align-items:flex-end}
   .dashboard-picker{width:100%;max-height:92dvh;border-radius:var(--radius-lg) var(--radius-lg) 0 0}
@@ -651,7 +655,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-one-off-said { font-size: var(--font-xs); color: var(--text-muted); }
 .answer-chart { width: 100%; }
 .answer-table .data-table-wrap { margin: 4px 0; }
-.answer-seg { display: inline-flex; gap: 4px; flex: none; }
+.answer-seg { flex: none; }
 .answer-insights { border-left: 2px solid var(--primary); padding-left: 12px; display: flex; flex-direction: column; gap: 4px; }
 .answer-insights-label { font-size: var(--font-xs); font-weight: var(--weight-semibold); color: var(--text-muted); }
 .answer-summary { max-width: 80ch; display: flex; flex-direction: column; gap: 4px; }
@@ -904,7 +908,7 @@ body:has(.chat-page) .main { background: var(--bg); }
           </div>
           <div class="composer-side">
             <span class="char-count" id="charCount" hidden>500</span>
-            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="{{ t('ui.chat.send') }}" aria-label="{{ t('ui.chat.send') }}"><span id="sendBtnIcon" class="send-btn-icon">↑</span></button>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="{{ t('ui.chat.send') }}" aria-label="{{ t('ui.chat.send') }}" data-empty="true"><span id="sendBtnIcon" class="send-btn-icon">{{ ic("arrow-up", 20) }}</span></button>
           </div>
         </div>
         <div class="composer-footer">
@@ -1650,6 +1654,7 @@ function setProcessing(active){
   processingActive = active;
   const row = document.getElementById('processingRow');
   row.classList.toggle('active', !!active);
+  document.querySelector('.chat-composer')?.classList.toggle('is-working', !!active);
   _setSendButtonMode(!!active);
 
   // The composer says what it is doing rather than waiting to reject the user.
@@ -1737,7 +1742,8 @@ function _setSendButtonMode(isStop){
   const icon = document.getElementById('sendBtnIcon');
   if (!btn || !icon) return;
   btn.classList.toggle('is-stop', isStop);
-  icon.textContent = isStop ? '' : '↑';
+  // An arrow to send, a square to stop: drawn icons, never a typed character.
+  icon.innerHTML = isStop ? '' : qbIcon('arrow-up', 20);
   icon.className = isStop ? 'send-btn-icon stop-icon' : 'send-btn-icon';
   const sendLabel = t(isStop ? 'ui.chat.action.stop' : 'ui.chat.send');
   btn.title = sendLabel;
@@ -2256,7 +2262,7 @@ function _mountChartControls(wrapEl, chartId, onUpdate) {
   // same thing on every chart (and two of the six it offered failed the
   // colour-vision check). The shapes offered are only the ones that fit.
   wrapEl.insertAdjacentHTML('beforeend', `
-    <div class="chart-type-toggle" data-ctrl-for="${chartId}">${typeHtml}</div>`);
+    <div class="chart-type-toggle" data-ctrl-for="${chartId}"><span class="ctt-seg">${typeHtml}</span></div>`);
 
   // Wire events
   wrapEl.querySelectorAll(`.chart-type-toggle[data-ctrl-for="${chartId}"] .ctt-btn`).forEach(btn => {
@@ -3405,7 +3411,7 @@ function _answerVisualHtml(msg, ids) {
   const period = ((msg.answer || {}).badges || []).find(b => b && b.kind === 'period');
   const title = chart ? _answerChartTitle(chart) : t('ui.chat.card.table');
   const switcher = (chart && rows.length)
-    ? `<div class="answer-seg" role="group" aria-label="${escHtml(t('ui.chat.card.view'))}">`
+    ? `<div class="answer-seg btn-seg" role="group" aria-label="${escHtml(t('ui.chat.card.view'))}">`
       + `<button type="button" class="btn btn-xs" aria-pressed="true" data-view="chart">${escHtml(t('ui.chat.card.chart'))}</button>`
       + `<button type="button" class="btn btn-xs" aria-pressed="false" data-view="table">${escHtml(t('ui.chat.card.table'))}</button></div>`
     : '';
@@ -3413,7 +3419,7 @@ function _answerVisualHtml(msg, ids) {
   // asks for it ("as a donut").
   const types = _answerChartTypes(chart);
   const typeSwitch = types.length > 1
-    ? `<div class="answer-seg answer-types" role="group" aria-label="${escHtml(t('ui.chat.card.chart_type'))}">`
+    ? `<div class="answer-seg btn-seg answer-types" role="group" aria-label="${escHtml(t('ui.chat.card.chart_type'))}">`
       + types.map(k => `<button type="button" class="btn btn-xs" aria-pressed="${k === chart.chart_type ? 'true' : 'false'}" data-type="${k}">${escHtml(enumLabel('charttype', k))}</button>`).join('')
       + `</div>`
     : '';
@@ -4532,6 +4538,9 @@ function updateCharCount(){
   el.hidden = rem > 120;
   el.style.color = rem <= 50 ? 'var(--danger)' : rem <= 120 ? 'var(--warning)' : '';
   el.style.fontWeight = rem <= 50 ? 'var(--weight-bold)' : '';
+  // The send button is quiet until there is something to send.
+  var send = document.getElementById('sendBtn');
+  if (send) send.dataset.empty = inp.value.trim() ? 'false' : 'true';
 }
 
 /* Paste truncation guard */
@@ -4570,7 +4579,13 @@ const BRAND_STAGE_STATES = {
   validating_sql: 'resolving',
   repairing_query: 'resolving',
   executing_query: 'querying',
+  corroborating: 'querying',
   formatting_results: 'answering',
+  compiling_sql: 'resolving',
+  recovering_sql: 'resolving',
+  reusing_sql: 'resolving',
+  accepted: 'thinking',
+  dashboard_work: 'answering',
   chart_ready: 'idle',
   _idle: 'thinking',
   _error: 'idle',

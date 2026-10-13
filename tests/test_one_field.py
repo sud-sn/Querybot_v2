@@ -201,6 +201,7 @@ SPECIAL_FIELDS = {
                      ".metrics-toolbar input[type=text]:focus", ".metrics-toolbar select", ".sql-hl-wrap textarea",
                      ".time-col-select", ".time-col-select:focus"},                       # metrics, phase 6
     "chat_workspace.css": {".chat-workspace-main .chat-input-bar", ".chat-workspace-main .chat-input-bar:focus-within",
+                           ".chat-workspace-main .chat-composer.is-working .chat-input-bar",  # its running edge
                            ".clarification-input-row textarea",
                            ".clarification-input-row textarea:focus", ".portal-sidebar .hp-search-wrap",
                            ".portal-sidebar .hp-search-wrap:focus-within"},                 # chat composer, phase 6

@@ -1,20 +1,31 @@
 /* Solviz brand motion -------------------------------------------------------
-   The mark, and the one place it moves.
+   The mark, and how it moves.
 
    THE MARK is two corner brackets (the frame a question is asked in) and a
    dot at the centre (the answer found in it). One drawing at every size, on
    a 32-unit grid, the same as static/img/logo-mark.svg; pages draw it inline
-   with the brand_motion macro so a state can move its dot.
+   with the brand_motion macro so a state can move its parts: the top-left
+   bracket (__tl), the bottom-right one (__br) and the dot.
 
-   THE MOTION is the working beat. While an answer is being worked out the
-   dot pulses; the mark goes with the working line when the answer arrives.
-   Nothing else moves: no hover tilt, no pop on load, no shake, no red on
-   error -- a failure is said in words beside an alert icon, never by the
-   brand -- and under reduced motion nothing moves at all (WCAG 2.3.3).
+   THE MOTION says what the product is doing, and nothing else:
+   - Working, beside an answer being worked out, one movement per stage:
+       thinking   the frame breathes open and closed round the dot (reading the question);
+       resolving  the frame turns round the dot (finding the measures and fields);
+       querying   the dot travels inside the still frame (running the query);
+       answering  the frame closes on the dot (drawing the answer);
+       loading    the frame turns while the dot beats (signing in, a long wait).
+   - Arriving, once: the sidebar's mark and the sign-in page's draw themselves
+     in (the brackets slide into place, the dot drops in), on the first page
+     of a visit only (qb-brand-motion--intro, set by the page).
+   - Answering the pointer: over the brand, the frame opens a little and the
+     dot hops once (a mark inside [data-brand-hover]).
+   Never on an error -- a failure is said in words beside an alert icon, never
+   by the brand: no red, no shake. The favicon never moves. Under reduced
+   motion nothing moves at all (WCAG 2.3.3).
 
    The colours are two custom properties: --qb-mark-glyph for the brackets
-   (Primary on a light ground, the shell's accent on the navy sidebar) and
-   --qb-mark-dot for the dot (turmeric, brighter on the navy sidebar).
+   (Primary on a light ground, the shell's accent in the sidebar) and
+   --qb-mark-dot for the dot (turmeric).
    --------------------------------------------------------------------------- */
 
 .qb-brand-motion {
@@ -37,14 +48,19 @@
   height: var(--qb-mark-size);
   display: block;
   flex: 0 0 var(--qb-mark-size);
+  overflow: visible;
 }
 .qb-brand-motion__brackets { stroke: var(--qb-mark-glyph); }
-/* The dot pulses about its own centre. */
+/* Each part moves about its own box: the frame about the mark's centre, a bracket and the dot about their own. */
+.qb-brand-motion__brackets,
+.qb-brand-motion__tl,
+.qb-brand-motion__br,
 .qb-brand-motion__dot {
-  fill: var(--qb-mark-dot);
   transform-box: fill-box;
   transform-origin: center;
 }
+.qb-brand-motion__brackets { transform-box: view-box; transform-origin: 16px 16px; }
+.qb-brand-motion__dot { fill: var(--qb-mark-dot); }
 
 .qb-brand-motion__label {
   min-width: 0;
@@ -70,19 +86,86 @@
   background: var(--qb-mark-dot, var(--brand-dot));
 }
 
-/* ── Working: the beat ──────────────────────────────────────────────────── */
-.qb-brand-motion[data-state="loading"]   .qb-brand-motion__dot,
-.qb-brand-motion[data-state="thinking"]  .qb-brand-motion__dot,
-.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot,
-.qb-brand-motion[data-state="querying"]  .qb-brand-motion__dot,
-.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot {
-  animation: qb-beat 1s ease-in-out infinite;
-}
+/* ── Working: one movement per stage ────────────────────────────────────── */
+/* Reading the question: the frame breathes round a beating dot. */
+.qb-brand-motion[data-state="thinking"] .qb-brand-motion__tl { animation: qb-frame-open-tl 1.6s ease-in-out infinite; }
+.qb-brand-motion[data-state="thinking"] .qb-brand-motion__br { animation: qb-frame-open-br 1.6s ease-in-out infinite; }
+.qb-brand-motion[data-state="thinking"] .qb-brand-motion__dot { animation: qb-beat 1.6s ease-in-out infinite; }
+/* Finding the measures and fields: the frame turns a quarter at a time. */
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__brackets { animation: qb-frame-turn 1.8s cubic-bezier(.65, 0, .35, 1) infinite; }
+.qb-brand-motion[data-state="resolving"] .qb-brand-motion__dot { animation: qb-beat 0.9s ease-in-out infinite; }
+/* Running the query: the dot looks into each corner of the still frame. */
+.qb-brand-motion[data-state="querying"] .qb-brand-motion__dot { animation: qb-dot-search 2.4s ease-in-out infinite; }
+/* Drawing the answer: the frame closes on the dot, which grows into place. */
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__brackets { animation: qb-frame-close 1.2s ease-in-out infinite; }
+.qb-brand-motion[data-state="answering"] .qb-brand-motion__dot { animation: qb-dot-found 1.2s ease-in-out infinite; }
+/* A long wait with nothing more to say (signing in, Learn): the frame turns, the dot beats. */
+.qb-brand-motion[data-state="loading"] .qb-brand-motion__brackets { animation: qb-frame-spin 1.4s linear infinite; }
+.qb-brand-motion[data-state="loading"] .qb-brand-motion__dot { animation: qb-beat 1s ease-in-out infinite; }
+
+/* ── Arriving, once ─────────────────────────────────────────────────────── */
+.qb-brand-motion--intro .qb-brand-motion__tl { animation: qb-intro-tl .7s cubic-bezier(.22, 1, .36, 1) backwards; }
+.qb-brand-motion--intro .qb-brand-motion__br { animation: qb-intro-br .7s cubic-bezier(.22, 1, .36, 1) backwards; }
+.qb-brand-motion--intro .qb-brand-motion__dot { animation: qb-intro-dot .7s cubic-bezier(.34, 1.56, .64, 1) .25s backwards; }
+
+/* ── Answering the pointer ──────────────────────────────────────────────── */
+[data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__tl { transform: translate(-1.2px, -1.2px); }
+[data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__br { transform: translate(1.2px, 1.2px); }
+[data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__dot { animation: qb-dot-hop .6s cubic-bezier(.34, 1.56, .64, 1); }
+.qb-brand-motion__tl,
+.qb-brand-motion__br { transition: transform .25s cubic-bezier(.22, 1, .36, 1); }
 
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
 @keyframes qb-beat {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(.55); }
+}
+@keyframes qb-frame-open-tl {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(-1.6px, -1.6px); }
+}
+@keyframes qb-frame-open-br {
+  0%, 100% { transform: translate(0, 0); }
+  50%      { transform: translate(1.6px, 1.6px); }
+}
+@keyframes qb-frame-turn {
+  0%   { transform: rotate(0deg); }
+  50%  { transform: rotate(90deg); }
+  100% { transform: rotate(180deg); }
+}
+@keyframes qb-frame-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes qb-dot-search {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  20%      { transform: translate(-4px, -4px) scale(.7); }
+  40%      { transform: translate(4px, -4px) scale(.7); }
+  60%      { transform: translate(4px, 4px) scale(.7); }
+  80%      { transform: translate(-4px, 4px) scale(.7); }
+}
+@keyframes qb-frame-close {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(.82); }
+}
+@keyframes qb-dot-found {
+  0%, 100% { transform: scale(.8); }
+  50%      { transform: scale(1.15); }
+}
+@keyframes qb-intro-tl {
+  from { transform: translate(-6px, -6px); opacity: 0; }
+  to   { transform: translate(0, 0); opacity: 1; }
+}
+@keyframes qb-intro-br {
+  from { transform: translate(6px, 6px); opacity: 0; }
+  to   { transform: translate(0, 0); opacity: 1; }
+}
+@keyframes qb-intro-dot {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+@keyframes qb-dot-hop {
+  0%, 100% { transform: translateY(0) scale(1); }
+  40%      { transform: translateY(-3px) scale(1.12); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -91,6 +174,9 @@
     animation: none !important;
     transition: none !important;
   }
-  /* With motion off the dot rests at full size: the still mark. */
-  .qb-brand-motion__dot { transform: none; }
+  /* With motion off every part rests in place: the still mark. */
+  .qb-brand-motion__brackets,
+  .qb-brand-motion__tl,
+  .qb-brand-motion__br,
+  .qb-brand-motion__dot { transform: none !important; }
 }

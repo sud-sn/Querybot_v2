@@ -45,9 +45,14 @@ var sessionStorage = {
 const DRAFT_STORAGE_KEY = 'draft';
 let wsReady = true;
 function updateCharCount(){}
+// The page's icon helper (qb-icons.js): an <svg> naming the icon it draws.
+function qbIcon(name, size){ return '<svg data-icon="' + name + '" width="' + size + '"></svg>'; }
 function stopQuery(){}
 function sendMessage(){}
 """
+
+DOM_SEND = "wsReady = true;\n"
+
 
 COMPOSER_FUNCTIONS = (
     "function _setComposerState(message, tone = '')",
@@ -131,6 +136,17 @@ class TestTheSendButton:
     def test_english_is_unchanged(self):
         assert _composer("_setSendButtonMode(true);", "en")["title"] == "Stop generating"
         assert _composer("_setSendButtonMode(false);", "en")["title"] == "Send message"
+
+    def test_send_is_a_drawn_arrow_and_stop_a_square(self):
+        """The arrow was a typed character ("\u2191"), drawn by the font at its own weight and height."""
+        out = run_js(DOM_SEND + "_setSendButtonMode(false); JSON.stringify({html: _nodes.sendBtnIcon.innerHTML,"
+                     " cls: _nodes.sendBtnIcon.className, stop: _nodes.sendBtn.classList.contains('is-stop')});",
+                     lang="en", functions=COMPOSER_FUNCTIONS, preamble=DOM)
+        assert 'data-icon="arrow-up"' in out["html"] and out["cls"] == "send-btn-icon" and not out["stop"]
+        out = run_js(DOM_SEND + "_setSendButtonMode(true); JSON.stringify({html: _nodes.sendBtnIcon.innerHTML,"
+                     " cls: _nodes.sendBtnIcon.className, stop: _nodes.sendBtn.classList.contains('is-stop')});",
+                     lang="en", functions=COMPOSER_FUNCTIONS, preamble=DOM)
+        assert out["html"] == "" and "stop-icon" in out["cls"] and out["stop"]
 
     def test_the_title_and_the_accessible_name_cannot_drift(self):
         """They were two separate ternaries over the same pair of literals."""

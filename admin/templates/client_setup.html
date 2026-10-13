@@ -51,7 +51,7 @@
 .mask-item-body.open{max-height:600px;border-top-color:var(--border)}
 /* ── Mask preview modal ── */
 .mask-preview-overlay{position:fixed;inset:0;background:color-mix(in srgb, var(--shadow-tint) 55%, transparent);z-index:900;display:flex;align-items:center;justify-content:center;padding:1rem}
-.mask-preview-modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px color-mix(in srgb, var(--shadow-tint) 35%, transparent)}
+.mask-preview-modal{background:var(--surface-raised);border:1px solid var(--line-subtle);border-radius:var(--radius-card);width:100%;max-width:900px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg);animation:qb-modalIn .22s var(--ease-out)}
 .mask-preview-head{display:flex;align-items:center;justify-content:space-between;padding:.875rem 1.25rem;border-bottom:1px solid var(--border);background:var(--surface-2)}
 .mask-preview-title{font-size:var(--font-md);font-weight:var(--weight-bold)}
 .mask-preview-body{overflow:auto;padding:1rem 1.25rem;flex:1}

@@ -317,8 +317,10 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 }
 
 /* ── Page entrance ── */
+/* Backwards, not both: a transform kept after the entrance would hold every fixed overlay inside the page (the
+   metric editor's backdrop stopped at the page's edge). */
 @media (prefers-reduced-motion: no-preference) {
-  .page { animation: qb-fadeUp .22s ease both; }
+  .page { animation: qb-fadeUp .22s ease backwards; }
 }
 
 /* ── Health score arc draw ── */
@@ -767,7 +769,29 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
 .admin-emergency-banner { border-radius: var(--radius-item); border: 1px solid var(--danger-line); margin: 0 0 4px; }
 .ws-head { background: transparent; border-bottom: 1px solid var(--line-subtle); }
 .ws-name { font-family: var(--font-display); font-size: clamp(24px, 2.4vw, 30px); letter-spacing: -.02em; }
-.client-workspace-secondary { background: transparent; border-bottom: 1px solid var(--line-subtle); }
+/* The open area's menu is the design's segmented control, as the portal's tabs: the places on a pill track, the open
+   one raised on it. */
+.client-workspace-secondary {
+  align-self: flex-start;
+  width: max-content;
+  max-width: calc(100% - 64px);
+  gap: 2px;
+  margin: 14px 32px 0;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
+}
+.client-workspace-secondary a { height: 32px; padding: 0 14px; border-radius: var(--radius-pill); font-weight: var(--weight-semibold);
+  transition: color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.client-workspace-secondary a:hover { background: transparent; }
+.client-workspace-secondary a.active { background: var(--surface-raised); box-shadow: var(--shadow-sm); }
+@media (max-width: 1100px) {
+  .client-workspace-secondary { max-width: calc(100% - 36px); margin-inline: 18px; }
+}
+@media (max-width: 760px) {
+  .client-workspace-secondary { max-width: calc(100% - 32px); margin: 10px 16px 0; }
+}
 
 /* A page opens with its name in the display face. */
 .shell .page-header h1,

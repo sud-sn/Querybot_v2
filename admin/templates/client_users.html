@@ -639,13 +639,16 @@
 .pp-fold > summary .qb-icon { color: var(--text-muted); transition: transform .15s ease; }
 .pp-fold[open] > summary .qb-icon { transform: rotate(180deg); }
 /* ── Dialogs ── */
-.pp-dialog { border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 460px;
+/* The design's dialog (base.css .qb-dialog): the card radius, its title in the display face, rising in. */
+.pp-dialog { border: 1px solid var(--line-subtle); border-radius: var(--radius-card); padding: 22px 24px; max-width: 460px;
   width: calc(100% - 32px); max-height: calc(100dvh - 32px); overflow: auto; margin: auto; inset: 0;
-  background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-lg); }
+  background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-lg); animation: qb-modalIn .22s var(--ease-out); }
 .pp-dialog [id$="DialogWho"] { margin: 0 0 1rem; }
 .pp-dialog-wide { max-width: 640px; }
-.pp-dialog::backdrop { background: color-mix(in srgb, var(--shadow-tint) 45%, transparent); }
-.pp-dialog h3 { margin: 0 0 .35rem; }
+.pp-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
+.pp-dialog h3 { margin: 0 0 .35rem; font-family: var(--font-display); font-size: var(--font-xl); font-weight: var(--weight-bold);
+  letter-spacing: -.01em; color: var(--text-strong); }
+@media (prefers-reduced-motion: reduce) { .pp-dialog { animation: none; } }
 .pp-dialog .form-actions { position: sticky; bottom: -1.25rem; z-index: 1; background: var(--surface-raised);
   border-top: 1px solid var(--border); padding: .75rem 0 1.25rem; margin: .5rem 0 -1.25rem; }
 .pp-scope { border: 0; padding: 0; margin: .25rem 0 .75rem; display: flex; flex-direction: column; gap: 6px; font-size: var(--font-sm); }
