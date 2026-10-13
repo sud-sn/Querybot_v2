@@ -4,6 +4,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { t } from '../components/i18n.js'
 import AddFilter from './AddFilter.vue'
+import ChartEditor from './ChartEditor.vue'
 import DatePicker from './DatePicker.vue'
 import MemberFilter from './MemberFilter.vue'
 import TileMenu from './TileMenu.vue'
@@ -133,17 +134,43 @@ const back = () => {
     .then((fresh) => { if (fresh) props.store.state = steady(state.value, fresh) })
     .finally(() => { props.store.busy = false })
 }
+
+// A tile's editor (ChartEditor.vue), opened from its settings button in Edit; what it saves is drawn again in place.
+const editing = ref(null)
+function openEditor(event) {
+  const button = event.target.closest('[data-edit-tile]')
+  if (!button || props.store.busy) return
+  const card = button.closest('.chart-card')
+  let payload = null
+  try {
+    payload = JSON.parse(card?.querySelector('[data-chart]')?.dataset.chart || 'null')
+  } catch {
+    payload = null
+  }
+  if (!payload) return
+  editing.value = {
+    id: Number(button.dataset.editTile), payload, palette: button.dataset.editPalette || 'default',
+    title: (card.querySelector('.chart-card-title')?.textContent || '').trim(),
+    limit: button.dataset.editLimit || '', order: button.dataset.editOrder || '',
+  }
+}
+function edited() {
+  editing.value = null
+  back()
+}
 onMounted(() => {
   window.addEventListener('popstate', back)
   window.addEventListener('qb-pick', pick)
   window.addEventListener('qb-menu', openMenu)
   document.addEventListener('click', drillUp)
+  document.addEventListener('click', openEditor)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', back)
   window.removeEventListener('qb-pick', pick)
   window.removeEventListener('qb-menu', openMenu)
   document.removeEventListener('click', drillUp)
+  document.removeEventListener('click', openEditor)
 })
 </script>
 
@@ -156,5 +183,6 @@ onBeforeUnmount(() => {
     <button v-if="changed" type="button" class="dash-filters-clear" @click="clearAll">{{ t('ui.dash.clear') }}</button>
     <span class="dash-filters-busy" :class="{ 'is-on': store.busy }" role="status" aria-live="polite">{{ store.busy ? t('ui.dash.f.updating') : '' }}</span>
     <TileMenu :ask="menu" @filter="menuFilter" @drill="menuDrill" @close="menu = null" />
+    <ChartEditor :tile="editing" :dashboard-id="state.dashboard_id" @close="editing = null" @saved="edited" />
   </div>
 </template>

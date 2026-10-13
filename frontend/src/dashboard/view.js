@@ -69,3 +69,24 @@ export function splitsUrl(dashboardId, ask, search) {
   for (const offer of ask.all || []) params.append('offer', offer.field)
   return `/portal/api/dashboard/${dashboardId}/tiles/${ask.chart}/splits?${params}`
 }
+
+// A chart of members' rows as its editor's preview draws them (ChartEditor.vue): in the order asked -- the largest
+// value first, the smallest, or by name -- and, when a number is asked, only that many, with no "Other" (the rest
+// are not shown). The rows the tile has are all the preview has; Save draws it again from the data.
+export function arranged(payload, order, limit) {
+  const x = payload.x_key
+  const y = (payload.y_keys || [])[0]
+  const rest = payload.other ? payload.other.label : null
+  const rows = payload.rows || []
+  const members = rows.filter((row) => row[x] !== rest)
+  const value = (row) => Number(row[y]) || 0
+  const by = {
+    name: (a, b) => String(a[x]).localeCompare(String(b[x])),
+    low: (a, b) => value(a) - value(b),
+    high: (a, b) => value(b) - value(a),
+  }
+  const sorted = [...members].sort(by[order] || by.high)
+  const n = Number(limit) || 0
+  return n ? { rows: sorted.slice(0, n), other: null }
+    : { rows: [...sorted, ...rows.filter((row) => row[x] === rest)], other: payload.other || null }
+}

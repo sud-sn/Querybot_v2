@@ -625,10 +625,15 @@ def update_dashboard_chart(
     title: str | None = None,
     chart_type: str | None = None,
     color_palette: str | None = None,
+    display_config: dict | None = None,
 ) -> bool:
-    """Update one owned visual, reflowing it when its visual kind changes."""
+    """Update one owned visual, reflowing it when its visual kind changes. ``display_config``: what a new-core
+    tile is drawn from (its plan), kept whole."""
     assignments: list[str] = []
     values: list = []
+    if display_config is not None:
+        assignments.append("display_config=?")
+        values.append(json.dumps(display_config))
     if title is not None:
         assignments.extend(("title=?", "title_set=1"))     # the reader's own name, kept as written
         values.append(str(title).strip()[:120])

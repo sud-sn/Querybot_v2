@@ -21,6 +21,7 @@ import asyncio
 import base64
 import collections
 import contextvars
+import copy
 import datetime as _dt
 import functools
 import hashlib
@@ -1903,6 +1904,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     question = str(chart.get("question") or "")
     from portal import dashboard_view
 
+    # What its editor may change beyond its name, kind and colours: a chart of members' length and order.
+    if dashboard_view.drillable(plan) and plan.get("measures"):
+        result["edit"] = {"limit": plan.get("limit") or "", "order": _tile_order(plan)}
+
     # Drilled into ("North by store"): the members drilled through are the tile's own filters -- the dashboard's
     # filters on those fields give way to them -- and the tile is broken down by the field chosen last. Its path
     # back up is drawn above it.
@@ -2965,6 +2970,19 @@ async def update_chart_api(request: Request):
         "chart_type": str(payload["chart_type"]).strip() if "chart_type" in payload else None,
         "color_palette": str(payload["color_palette"]).strip() if "color_palette" in payload else None,
     }
+    if updates["color_palette"] is not None and updates["color_palette"] not in TILE_PALETTES:
+        return JSONResponse({"ok": False, "error": "Choose one of the colour sets offered."}, status_code=400)
+    # How many a chart of members shows, and in what order (the chart editor, frontend/src/dashboard/ChartEditor.vue):
+    # its plan's, so every refresh, schedule and email draws it so.
+    if "limit" in payload or "order" in payload:
+        chart = next((c for c in store.list_dashboard_charts_for_view(dashboard_id, user["id"], user["account_id"])
+                      if int(c.get("id") or 0) == chart_id), None) if dashboard_id else None
+        config = _pin_display_config(chart) if chart else {}
+        shaped = _shaped_plan(config.get("core2_plan"), payload)
+        if shaped is None:
+            return JSONResponse({"ok": False, "error": "This chart's order and length are its question's."},
+                                status_code=400)
+        updates["display_config"] = {**config, "core2_plan": shaped}
     if dashboard_id:
         if not store.update_dashboard_chart(
             dashboard_id, chart_id, user["id"], user["account_id"], **updates
@@ -2973,6 +2991,46 @@ async def update_chart_api(request: Request):
     else:
         store.update_pinned_chart(chart_id=chart_id, user_id=user["id"], **updates)
     return JSONResponse({"ok": True})
+
+
+# The colour sets a tile may keep (static/js/chart-palettes.js), as a reader may choose on Settings.
+TILE_PALETTES = ("default", "ocean", "candy")
+# How many members a tile of members may show: these, or every one (None).
+TILE_LIMITS = (5, 10, 20)
+TILE_ORDERS = ("high", "low", "name")
+
+
+def _tile_order(plan: dict) -> str:
+    """A chart of members' order, as its editor offers it: largest first (its default), smallest first, by name."""
+    first = next(iter(plan.get("sort") or []), None) or {}
+    groups = [str(g) for g in plan.get("group_by") or []]
+    if first.get("by") in groups:
+        return "name"
+    return "low" if first and first.get("desc") is False else "high"
+
+
+def _shaped_plan(plan: dict | None, asked: dict) -> dict | None:
+    """``plan`` with the length and order its editor asked for, or None when it is not a chart of members."""
+    from portal import dashboard_view
+
+    if not plan or not dashboard_view.drillable(plan) or not plan.get("measures"):
+        return None
+    out = copy.deepcopy(plan)
+    if "limit" in asked:
+        limit = asked.get("limit")
+        if limit in (None, "", "all"):
+            out.pop("limit", None)
+        elif str(limit).isdigit() and int(limit) in TILE_LIMITS:
+            out["limit"] = int(limit)
+        else:
+            return None
+    if "order" in asked:
+        order = str(asked.get("order") or "")
+        if order not in TILE_ORDERS:
+            return None
+        by = str(out["group_by"][0]) if order == "name" else str(out["measures"][0])
+        out["sort"] = [{"by": by, "desc": order == "high"}]
+    return out
 
 
 @router.post("/api/update-chart-layout")

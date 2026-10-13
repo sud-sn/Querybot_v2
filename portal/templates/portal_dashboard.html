@@ -255,6 +255,12 @@
                 title="{{ t('ui.alert.button_firing' if _alert and _alert.firing else ('ui.alert.button_on' if _alert else 'ui.alert.button')) }}"
                 aria-label="{{ t('ui.alert.button_firing' if _alert and _alert.firing else ('ui.alert.button_on' if _alert else 'ui.alert.button')) }}">{{ ic("bell", 15) }}</button>
         {% endif %}
+        {# Its editor (frontend/src/dashboard/ChartEditor.vue): name, kind, colours, and for a chart of members how
+           many it shows and in what order. #}
+        {% if _can_edit and chart.chart_json and dashboard_artifact and not chart.drill %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action dash-edit-only"
+          data-edit-tile="{{ chart.id }}" data-edit-palette="{{ chart.color_palette or 'default' }}"
+          {% if chart.edit %}data-edit-limit="{{ chart.edit.limit }}" data-edit-order="{{ chart.edit.order }}"{% endif %}
+          title="{{ t('ui.dash.edit_chart') }}" aria-label="{{ t('ui.dash.edit_chart') }}" aria-haspopup="dialog">{{ ic("settings", 15) }}</button>{% endif %}
         {% if chart.chart_json %}<button type="button" class="btn btn-ghost btn-icon btn-xs dash-tile-action"
           onclick="openChartModal(this.closest('.chart-card'))"
           title="{{ t('ui.dash.expand_title') }}" aria-label="{{ t('ui.dash.expand_title') }}">{{ ic("expand", 15) }}</button>{% endif %}
