@@ -650,11 +650,16 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # "What will our total sales be in 2004?" said "no value": the data ends before the period asked for. The
         # answer stays an empty one (a dashboard tile draws it over all the data instead), said as it is.
         last = dt.date.fromisoformat(payload["beyond_data"])
-        said = (f"The data ends on {last.day} {last:%b %Y}: it has nothing yet for the period you asked about. Ask "
-                "about a period it covers, or for a forecast (\"forecast it for the next 12 months\").")
+        # The figure and the conditions it was asked under stay said ("Net amount in 2030, excluding segment Mail
+        # order"); only its "no value" becomes why.
+        old = (payload.get("answer") or {}).get("headline") or ""
+        asked = old[:-len(": no value.")] if old.endswith(": no value.") else ""
+        said = (f"{asked}: nothing yet. The data ends on {last.day} {last:%b %Y}." if asked else
+                f"The data ends on {last.day} {last:%b %Y}: it has nothing yet for the period you asked about.")
         payload.setdefault("answer", {})["headline"] = said
         payload["answer"]["short_value"] = ""
-        payload["text"] = said
+        payload["text"] = (said + " Ask about a period it covers, or for a forecast (\"forecast it for the next 12 "
+                           "months\").")
     if plan.group_by and (plan.limit and _found_nothing(payload) or shown and all(s[1] is None for s in shown)):
         _by_key(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
     if plan.time.date and _found_nothing(payload, zero=True):

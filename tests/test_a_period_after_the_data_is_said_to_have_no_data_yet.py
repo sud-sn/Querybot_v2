@@ -35,6 +35,14 @@ def test_a_year_after_the_data_says_the_data_ends_before_it(retail):  # noqa: F8
     payload = _ask(retail, {"kind": "query", "measures": ["net_amount"],
                             "time": {"window": {"kind": "between", "start": "2030-01-01", "end": "2030-12-31"}}})
     assert "The data ends on" in _text(payload) and "no value" not in _text(payload), _text(payload)
+    assert "Ask about a period it covers" in payload["text"]
+
+
+def test_the_conditions_asked_under_are_still_said(retail):  # noqa: F811
+    payload = _ask(retail, {"kind": "query", "measures": ["net_amount"],
+                            "time": {"window": {"kind": "between", "start": "2030-01-01", "end": "2030-12-31"}},
+                            "filters": [{"field": "customer.segment", "op": "ne", "values": ["Mail order"]}]})
+    assert "excluding segment Mail order" in _text(payload) and "The data ends on" in _text(payload), _text(payload)
 
 
 def test_a_year_the_data_covers_is_still_answered(retail):  # noqa: F811
