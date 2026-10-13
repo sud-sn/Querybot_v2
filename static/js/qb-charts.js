@@ -643,7 +643,23 @@
   }
 
   // ── The option ────────────────────────────────────────────────────────────
+  // The option for ``payload``, its marks ready to move into the next one drawn in the same chart (update): a bar
+  // grows into a slice, a line into bars, rather than the one fading out and the other in. Not when the reader
+  // asked for no motion.
   function buildOption(payload, layout) {
+    const option = optionFor(payload, layout);
+    if (option && option.animation !== false && Array.isArray(option.series)) {
+      option.series.forEach(series => {
+        if (series && MORPHS.includes(series.type) && series.universalTransition === undefined) {
+          series.universalTransition = {enabled: true};
+        }
+      });
+    }
+    return option;
+  }
+  const MORPHS = ['bar', 'line', 'pie', 'scatter'];
+
+  function optionFor(payload, layout) {
     let rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
     const xKey = payload && payload.x_key;
     const xStyle = String((payload && payload.x_style) || '');
@@ -1800,7 +1816,15 @@
       scale.axisLabel = Object.assign({}, scale.axisLabel, {show: false});
       scale.splitLine = Object.assign({}, scale.splitLine, {show: false});
       // "$1.3M · 3.0%" is longer than the value alone: the axis ends far enough past the longest bar for it.
-      (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, horizontal && shareOnLabel ? shareGap : '8%'];
+      // Above a column the label stands in lines, its share under its value: the axis ends far enough above the
+      // tallest for them. 8% of a 200px chart was less than one line, and the tallest's value was cut off by the
+      // chart's top edge.
+      const capPlot = ((layout && (layout.height || layout.tall)) || 300) - top - 32;
+      const capNeed = (shareOnLabel ? 2 : 1) * 16 + 8;
+      const upper = horizontal
+        ? (shareOnLabel ? shareGap : '8%')
+        : `${Math.max(8, Math.ceil(capNeed / Math.max(capPlot - capNeed, 40) * 100))}%`;
+      (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, upper];
       // A bar below zero is labelled past its own tip, at the low end of the
       // axis -- where the category names are, at a ranking's left and under a
       // column chart -- and with the axis ending at its value the label was
@@ -1815,7 +1839,7 @@
           ? ((layout && layout.width) || 600) - 64 - Math.min(nameWidth, maxLabel * 7)
           : ((layout && layout.height) || 300) - top - 32;
         const share = 1.2 * need * 1.08 / Math.max(plot - need, plot * 0.3, 40);
-        (horizontal ? option.xAxis : option.yAxis).boundaryGap = [`${Math.ceil(share * 100)}%`, '8%'];
+        (horizontal ? option.xAxis : option.yAxis).boundaryGap = [`${Math.ceil(share * 100)}%`, upper];
       }
     }
     // The members past the largest, added up as one "Other (n)" bar: a neutral ink, so it reads as the rest.
@@ -1942,7 +1966,8 @@
   // owner gave it on the grid. opts.drill: the page answers a click on a mark.
   function layoutFor(el, opts) {
     const fixed = Boolean(opts && opts.grow === false);
-    return {width: el.clientWidth || 0, height: fixed ? el.clientHeight || 0 : 0,
+    // ``tall``: the height the box has now, fixed or not -- what a column's label has above it.
+    return {width: el.clientWidth || 0, height: fixed ? el.clientHeight || 0 : 0, tall: el.clientHeight || 0,
             drill: Boolean(opts && opts.drill)};
   }
 
@@ -2040,6 +2065,14 @@
     chart.resize();
   }
 
+  // Drawn into ``el``: moved there from what it shows now when a chart is already drawn in it (a new type, a new
+  // palette, new rows), drawn afresh otherwise. The one way the chat and the dashboards draw a chart again.
+  function draw(el, payload, opts) {
+    const existing = el && global.echarts ? global.echarts.getInstanceByDom(el) : null;
+    if (existing && !(existing.isDisposed && existing.isDisposed()) && el._qbDrawn) return update(existing, payload, opts);
+    return render(el, payload, opts);
+  }
+
   // A new type or palette on a chart already on screen: the same instance, so
   // the marks ease from the old state to the new, laid out for its box
   // exactly as render() lays out a new chart.
@@ -2049,6 +2082,9 @@
     el._qbDrawn = {payload, opts};
     const option = buildOption(payload, layoutFor(el, opts));
     fitToBox(option, el, opts);
+    // A box that changed with it (a pie is drawn taller than bars) is taken first: sized afterwards, by the
+    // observer, the chart would be laid out again at once and its move cut short.
+    if (chart.resize && chart.getWidth && (chart.getWidth() !== el.clientWidth || chart.getHeight() !== el.clientHeight)) chart.resize();
     chart.setOption(option, true);
     if (String(payload.chart_type || '').toLowerCase() === 'map' && !geoReady(payload) && !geoFailed(payload)) {
       loadGeo(payload).then(() => {
@@ -2136,6 +2172,7 @@
     paletteFor,
     pickOf,
     render,
+    draw,
     update,
     redrawAll,
     fit,

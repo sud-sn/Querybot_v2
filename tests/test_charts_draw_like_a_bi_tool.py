@@ -132,9 +132,27 @@ class TestTheMarks:
                    "opt.series[0].label.position") == "right"
 
     def test_the_axis_leaves_room_past_the_largest_labelled_bar(self):
-        assert opt(ranking(["North", "South", "West"]), "opt.yAxis.boundaryGap") == [0, "8%"]
         assert opt(ranking([f"Region number {n}" for n in range(12)]),
                    "opt.xAxis.boundaryGap") == [0, "8%"]
+        low, high = opt(ranking(["North", "South", "West"]), "opt.yAxis.boundaryGap")
+        assert low == 0 and float(high.rstrip("%")) >= 8
+
+    @pytest.mark.parametrize("share, tall", [(False, 300), (False, 200), (True, 300), (True, 200)])
+    def test_the_tallest_column_has_room_above_it_for_its_label(self, share, tall):
+        # "$640K" over "74%" above the tallest column of a 200px chat chart was cut off by the chart's top
+        # edge: the axis ended 8% past it, about 13px, and the label stands 36px tall. Room in pixels above the
+        # tallest: the plot's height (the box less the grid's top, 8px, and the names under it, ~32px) times
+        # the gap over one plus the gap.
+        payload = ranking(["North", "South", "West"], [640.0, 120.0, 105.0])
+        if share:
+            payload["share_key"] = "SHR"
+            for row, part in zip(payload["rows"], (74.0, 13.9, 12.1)):
+                row["SHR"] = part
+        gap = json.loads(_run("portal_chat.html", "en", f"JSON.stringify(QBCharts.buildOption("
+                                                        f"{json.dumps(payload)}, {{width: 860, height: 0, tall: {tall}}}).yAxis.boundaryGap)"))[1]
+        g = float(gap.rstrip("%")) / 100
+        room = (tall - 8 - 32) * g / (1 + g)
+        assert room >= (2 if share else 1) * 16 + 4, (gap, room)
 
     def test_a_bar_below_zero_has_room_for_its_label_before_the_names(self):
         # "-$25.8K" was drawn across a customer's name: the axis ended just past
@@ -150,7 +168,7 @@ class TestTheMarks:
         # A column below zero, labelled under its foot, above the names under the chart.
         low, high = opt(ranking(["North", "South", "West"], [120.0, -80.0, 30.0], measure="NET_MARGIN"),
                         "opt.yAxis.boundaryGap")
-        assert high == "8%" and float(low.rstrip("%")) >= 8
+        assert float(high.rstrip("%")) >= 8 and float(low.rstrip("%")) >= 8
         # A wider label ("-149.9K" against "-4.3K") needs more room.
         def room(lowest):
             gap = opt(ranking(labels[:3], [120400.0, 88200.0, lowest], measure="NET_MARGIN"), "opt.xAxis.boundaryGap")

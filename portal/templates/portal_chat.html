@@ -2201,16 +2201,20 @@ function _openDrillMenu(chart, payload, params) {
 // The click sends a real follow-up question through the normal chat path,
 // which core/conversation_state.py classifies as a refinement against the
 // still-active cached result (not a fresh, unrelated question), so it drills
-// into what was just shown rather than starting a new analysis. Shared by the
-// initial render and the theme-change re-init, which creates a fresh chart
-// instance needing its own click binding.
+// into what was just shown rather than starting a new analysis. Bound once to
+// a chart: a new type is moved into the same chart (QBCharts.draw), so the
+// click answers for what the chart shows now -- a bar turned into a pie
+// answers none.
 function _wireChartDrillClick(chart, payload) {
-  if (!_chartDrillable(payload)) return;
+  if (!_chartDrillable(payload) || chart._qbChatDrill) return;
+  chart._qbChatDrill = true;
   chart.on('click', (params) => {
+    const shown = chart.getDom?.()?._qbDrawn?.payload || payload;
+    if (!_chartDrillable(shown)) return;
     if (!params || params.componentType !== 'series') return;
     const label = String(params.name ?? '').trim();
     if (!label) return;
-    if (payload.drill) { _openDrillMenu(chart, payload, params); return; }
+    if (shown.drill) { _openDrillMenu(chart, shown, params); return; }
     sendChartDrill(t('ui.chat.drill.break_down_for', {label}));
   });
 }
@@ -2223,13 +2227,15 @@ function renderChartInto(chartEl, payload){
   }
   try {
     // Drawn by the shared renderer, which also keeps the chart sized to its
-    // box as the card reflows (a ResizeObserver on the element).
-    const chart = window.QBCharts.render(chartEl, payload, {drill: _chartDrillable(payload)});
+    // box as the card reflows (a ResizeObserver on the element). A chart
+    // already in the element -- a new type, the one-offs left out, a wider
+    // box -- moves into the new one rather than being drawn from nothing.
+    const opts = {drill: _chartDrillable(payload)};
+    const live = window.echarts.getInstanceByDom?.(chartEl);
+    const chart = window.QBCharts.draw ? window.QBCharts.draw(chartEl, payload, opts) : window.QBCharts.render(chartEl, payload, opts);
     if (!chart) throw new Error('chart renderer unavailable');
     _wireChartDrillClick(chart, payload);
-    window.__qbCharts = window.__qbCharts || [];
-    window.__qbCharts.push(chart);
-    if (!window.ResizeObserver) {
+    if (!window.ResizeObserver && chart !== live) {
       window.addEventListener('resize', () => { try { chart.resize(); } catch {} });
     }
   } catch (err) {

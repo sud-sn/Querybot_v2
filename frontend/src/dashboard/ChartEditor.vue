@@ -41,8 +41,8 @@ function draw() {
     color_palette: palette.value,
     ...(shaped.value ? arranged(props.tile.payload, order.value, limit.value) : {}),
   }
-  drawn?.dispose?.()
-  drawn = window.QBCharts.render(preview.value, payload, { grow: false })
+  // Moved into the new choice in the same chart: a kind, a colour set, an order eases from what was there.
+  drawn = window.QBCharts.draw(preview.value, payload, { grow: false })
 }
 
 function key(event) {
