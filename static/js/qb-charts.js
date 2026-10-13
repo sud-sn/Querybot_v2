@@ -249,6 +249,8 @@
     const p = global.QB_CHART_PREFS;
     return p && typeof p === 'object' ? p : {};
   }
+  // Lines are curves unless the reader chose straight ones.
+  const curved = () => prefs().line !== 'straight';
   // Still when the system asks for less motion, or the reader chose no motion.
   function prefersReducedMotion() {
     if (prefs().motion === 'off') return true;
@@ -1148,17 +1150,21 @@
         },
         series: [
           {name: actualName, type: 'line', data: hist, showSymbol: hist.filter(v => v != null).length <= MARKER_MAX_POINTS,
+           smooth: curved() ? 0.35 : false, smoothMonotone: curved() ? 'x' : undefined,
            symbol: 'circle', symbolSize: 8, lineStyle: {width: 2, color: colors[0], cap: 'round', join: 'round'},
            itemStyle: {color: colors[0], borderColor: c.surface, borderWidth: 2},
            areaStyle: wash(colors[0], 0.2, c), connectNulls: false},
           {name: forecastName, type: 'line', data: proj, symbol: 'circle', symbolSize: 8,
+           smooth: curved() ? 0.35 : false, smoothMonotone: curved() ? 'x' : undefined,
            lineStyle: {width: 2, color: projColor, type: [6, 4], cap: 'round'},
            itemStyle: {color: projColor, borderColor: c.surface, borderWidth: 2}, connectNulls: true},
         ].concat(hasBand ? [
-          {name: 'band-base', type: 'line', stack: 'fcband', stackStrategy: 'all', data: bandBase,
+          {name: 'band-base', type: 'line', stack: 'fcband', stackStrategy: 'all', smooth: curved() ? 0.35 : false,
+           smoothMonotone: curved() ? 'x' : undefined, data: bandBase,
            lineStyle: {opacity: 0}, itemStyle: {opacity: 0}, symbol: 'none', silent: true,
            tooltip: {show: false}, legendHoverLink: false},
-          {name: bandName, type: 'line', stack: 'fcband', stackStrategy: 'all', data: bandSpan,
+          {name: bandName, type: 'line', stack: 'fcband', stackStrategy: 'all', smooth: curved() ? 0.35 : false,
+           smoothMonotone: curved() ? 'x' : undefined, data: bandSpan,
            lineStyle: {opacity: 0}, symbol: 'none', silent: true, itemStyle: {color: projColor},
            areaStyle: {color: projColor, opacity: 0.14}},
         ] : []),
@@ -1491,7 +1497,8 @@
             itemStyle: {color, borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]},
             data: values, animationDelay: stagger,
           } : {
-            name: k, type: 'line', xAxisIndex: i, yAxisIndex: i, data: values, smooth: false,
+            name: k, type: 'line', xAxisIndex: i, yAxisIndex: i, data: values, smooth: curved() ? 0.35 : false,
+            smoothMonotone: curved() ? 'x' : undefined,
             showSymbol: rows.length <= MARKER_MAX_POINTS, symbol: 'circle', symbolSize: 8,
             lineStyle: {width: 2, color, cap: 'round', join: 'round'},
             itemStyle: {color, borderColor: c.surface, borderWidth: 2},
@@ -1549,9 +1556,9 @@
         axisPointer: {type: 'line', lineStyle: {color: c.axis, width: 1}},
         formatter: multiTip,
       });
-      // Straight segments by default: a curve can bulge past the data. A reader who chose smooth lines gets a
-      // monotone curve, which never overshoots a point it passes through.
-      const smooth = prefs().line === 'smooth';
+      // Curves by default (asked for, October 2026): a monotone curve, which stays between each two points it
+      // joins and never bulges past the data. A reader who chose straight lines on their Settings page gets them.
+      const smooth = curved();
       // A single line of a dozen points or fewer says each value above its point (unless the reader chose not
       // to); a longer one, or several, says only where each ends.
       const pointLabels = single && rows.length <= 12 && prefs().values !== 'hide';

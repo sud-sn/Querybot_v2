@@ -48,7 +48,7 @@ PAGES = {
         subscriptions={}),
     "portal_settings.html": dict(
         user=USER, saved=True, prefs={"palette": "ocean", "line": "smooth", "values": "show", "motion": "on"},
-        choices={"palette": ("default", "ocean", "candy"), "line": ("straight", "smooth"),
+        choices={"palette": ("default", "ocean", "candy"), "line": ("smooth", "straight"),
                  "values": ("show", "hide"), "motion": ("on", "off")}),
     "portal_kb.html": dict(
         user=USER, pending_count=3, saved=False, semantic_tables=[KB_TABLE],

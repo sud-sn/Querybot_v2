@@ -47,7 +47,7 @@ def test_only_an_offered_value_is_ever_kept(fresh_store):  # noqa: F811
     user = _reader(fresh_store)
     kept = fresh_store.set_chart_prefs(user["id"], {"palette": "ocean", "line": "wavy", "values": "<script>",
                                                     "motion": "off", "extra": "x"})
-    assert kept == {"palette": "ocean", "line": "straight", "values": "show", "motion": "off"}
+    assert kept == {"palette": "ocean", "line": "smooth", "values": "show", "motion": "off"}
     assert fresh_store.chart_prefs(fresh_store.get_user(user["id"])) == kept
 
 
@@ -66,14 +66,14 @@ def test_the_settings_page_saves_and_every_page_carries_the_choice(fresh_store):
     request = MagicMock()
 
     async def form():
-        return {"palette": "candy", "line": "smooth", "values": "hide", "motion": "on"}
+        return {"palette": "candy", "line": "straight", "values": "hide", "motion": "on"}
     request.form = form
     with patch.object(routes, "_get_portal_user", return_value=user):
         response = asyncio.run(routes.settings_submit(request))
     assert response.status_code == 303 and response.headers["location"] == "/portal/settings?tab=charts&saved=charts"
     stored = fresh_store.get_user(user["id"])
     assert routes.templates.env.globals["chart_prefs"](stored) == {
-        "palette": "candy", "line": "smooth", "values": "hide", "motion": "on"}
+        "palette": "candy", "line": "straight", "values": "hide", "motion": "on"}
     markup = _render([])
     assert "window.QB_CHART_PREFS = {" in markup
     assert "document.documentElement.dataset.motion = window.QB_CHART_PREFS.motion" in markup
@@ -93,9 +93,33 @@ def test_the_readers_palette_colours_their_charts_and_a_saved_one_wins():
     assert _with({"palette": "ocean"}, {**BARS, "color_palette": "candy"}, "o.color")[0] == "#7c3aed"
 
 
-def test_lines_run_straight_unless_the_reader_chose_curves():
-    assert _with({}, LINE, "[o.series[0].smooth, o.series[0].smoothMonotone || null]") == [False, None]
+def test_lines_curve_unless_the_reader_chose_straight():
+    # Curves by default (asked for, October 2026: "also the curves in the line chart"); straight stays a choice.
+    assert _with({}, LINE, "[o.series[0].smooth, o.series[0].smoothMonotone]") == [0.35, "x"]
     assert _with({"line": "smooth"}, LINE, "[o.series[0].smooth, o.series[0].smoothMonotone]") == [0.35, "x"]
+    assert _with({"line": "straight"}, LINE, "[o.series[0].smooth, o.series[0].smoothMonotone || null]") \
+        == [False, None]
+
+
+FORECAST = {"chart_type": "forecast", "x_key": "p", "y_keys": ["v"], "x_style": "quarter",
+            "rows": [{"p": p, "v": v, "is_forecast": f, "forecast_low": lo, "forecast_high": hi}
+                     for p, v, f, lo, hi in (("2025-01-01", 4.0, False, None, None), ("2025-04-01", 6.0, False, None, None),
+                                             ("2025-07-01", 5.0, False, None, None), ("2025-10-01", 7.0, True, 6.0, 8.0),
+                                             ("2026-01-01", 8.0, True, 6.5, 9.5))]}
+PANELS = {"chart_type": "line", "x_key": "m", "y_keys": ["v", "n"], "facets": [["v"], ["n"]],
+          "rows": [{"m": f"2026-{i:02d}-01", "v": 10.0 * i, "n": float(i % 3)} for i in range(1, 7)],
+          "column_roles": {"m": {"role": "temporal"}}}
+
+
+def test_a_forecast_and_lines_in_panels_curve_as_a_single_line_does():
+    lines = "o.series.filter(function (s) { return s.type === 'line'; })"
+    curves = f"{lines}.map(function (s) {{ return [s.smooth, s.smoothMonotone || null]; }})"
+    drawn = _with({}, FORECAST, curves)
+    assert len(drawn) >= 2 and all(d == [0.35, "x"] for d in drawn), "actual, projection and its band alike"
+    assert all(d == [False, None] for d in _with({"line": "straight"}, FORECAST, curves))
+    panels = _with({}, PANELS, curves)
+    assert len(panels) == 2 and all(d == [0.35, "x"] for d in panels)
+    assert all(d == [False, None] for d in _with({"line": "straight"}, PANELS, curves))
 
 
 def test_a_short_single_line_says_each_value_unless_the_reader_chose_not():

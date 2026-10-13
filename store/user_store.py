@@ -591,7 +591,8 @@ def set_user_attributes(user_id: int, attributes: dict) -> dict:
 # offered only once it passes the colour-vision checks (static/js/chart-palettes.js says which do).
 CHART_PREFS: dict[str, tuple[str, ...]] = {
     "palette": ("default", "ocean", "candy"),
-    "line": ("straight", "smooth"),
+    # Curves (asked for, October 2026): a monotone curve stays between each two points it joins, never past them.
+    "line": ("smooth", "straight"),
     "values": ("show", "hide"),
     "motion": ("on", "off"),
 }

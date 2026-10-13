@@ -181,9 +181,12 @@ class TestTheMarks:
         drawn = opt(payload, "[opt.series[0].itemStyle.color, opt.series[0].data[1].itemStyle.color]")
         assert drawn[0] == drawn[1]
 
-    def test_lines_are_straight_segments(self):
+    def test_lines_are_monotone_curves(self):
+        # Curved (asked for, October 2026: "also the curves in the line chart"), and monotone along the axis: the
+        # curve between two months never rises above the higher or dips below the lower, so it says no value the
+        # data did not. A reader may still choose straight lines on their Settings page.
         payload = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")
-        assert opt(payload, "opt.series[0].smooth") is False
+        assert opt(payload, "[opt.series[0].smooth, opt.series[0].smoothMonotone]") == [0.35, "x"]
 
     def test_a_single_line_stands_on_a_wash_and_several_lines_do_not(self):
         # A single line on its own ground (asked for, October 2026: lines that look good), as a dashboard tile's
