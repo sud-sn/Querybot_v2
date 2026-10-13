@@ -201,7 +201,11 @@ def breakdowns(plan: Plan, logical: Logical, model: SemanticModel, allowed: set[
     table = logical.parts[0].table
     slugs = _apart(model, table, [grouped[0].attribute, *_one_member(plan)],
                    candidates(model, table, allowed=allowed, skip=skip, limit=20))
-    return [{"field": slug, "label": _word(model, slug)} for slug in slugs[:5] if _word(model, slug)]
+    out = [{"field": slug, "label": _word(model, slug)} for slug in slugs[:5] if _word(model, slug)]
+    # And its months, where the measure is counted by a date ("North by month", as the chat's menu offers it).
+    if measure_dates(plan, model)[0] is not None:
+        out.append({"field": "time:month", "label": "month"})
+    return out
 
 
 def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: SemanticModel,

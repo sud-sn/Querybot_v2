@@ -58,12 +58,18 @@ onBeforeUnmount(stop)
           <span class="tile-menu-icon" v-html="icon('filter', 14)"></span>{{ t('ui.dash.drill.filter', { name: ask.member }) }}
         </button>
       </div>
-      <div class="tile-menu-group" role="group" :aria-label="t('ui.dash.drill.break', { name: ask.member })">
+      <div v-if="ask.offers && ask.offers.length" class="tile-menu-group" role="group"
+           :aria-label="t('ui.dash.drill.break', { name: ask.member })">
         <div class="tile-menu-head">{{ t('ui.dash.drill.break', { name: ask.member }) }}</div>
         <button v-for="offer in ask.offers" :key="offer.field" type="button" class="tile-menu-item" role="menuitem"
                 @click="emit('drill', ask, offer)">
           <span class="tile-menu-icon" v-html="icon('chevron-right', 14)"></span>{{ offer.label }}
         </button>
+      </div>
+      <div v-else class="tile-menu-group">
+        <p class="tile-menu-note" role="status">
+          {{ t(ask.offers ? 'ui.dash.drill.none' : 'ui.dash.drill.checking', { name: ask.member }) }}
+        </p>
       </div>
     </div>
   </Teleport>

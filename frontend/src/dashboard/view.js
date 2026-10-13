@@ -57,3 +57,15 @@ export function picked(now, member, add) {
   if (add) return chosen.includes(member) ? chosen.filter((m) => m !== member) : [...chosen, member]
   return chosen.length === 1 && chosen[0] === member ? [] : [member]
 }
+
+// Where the dashboard is asked what a right-clicked member splits into (portal/routes.py tile_splits_api): the
+// page's own address (its dates, filters and drilled tiles), the member, the field it is a member of, and each field
+// its menu offers.
+export function splitsUrl(dashboardId, ask, search) {
+  const params = new URLSearchParams(search || '')
+  for (const key of ['member', 'field', 'offer']) params.delete(key)
+  params.set('member', ask.member)
+  params.set('field', ask.field)
+  for (const offer of ask.all || []) params.append('offer', offer.field)
+  return `/portal/api/dashboard/${dashboardId}/tiles/${ask.chart}/splits?${params}`
+}

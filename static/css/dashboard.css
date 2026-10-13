@@ -125,6 +125,7 @@
   background: transparent; color: var(--text); font: inherit; font-size: var(--font-sm); text-align: left; cursor: pointer; }
 .tile-menu-item:hover, .tile-menu-item:focus-visible { background: var(--surface-3); outline: none; }
 .tile-menu-item .tile-menu-icon { display: inline-flex; color: var(--text-muted); }
+.tile-menu-note { margin: 0; padding: 6px 10px 7px; font-size: var(--font-xs); color: var(--text-muted); }
 .tile-menu-group + .tile-menu-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line-subtle); }
 
 /* The dates: presets by kind on the left, two months of calendar on the right. */

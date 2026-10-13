@@ -5051,6 +5051,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.dash.drill.path": {"en": "Drilled into", "fr": "Détail"},
     "ui.dash.drill.up": {"en": "Back to every {field}", "fr": "Revenir à tous ({field})"},
     "ui.dash.drill.by": {"en": "by {field}", "fr": "par {field}"},
+    "ui.dash.drill.month": {"en": "month", "fr": "mois"},
+    "ui.dash.drill.checking": {"en": "Looking for what splits {name}…", "fr": "Recherche de ce qui détaille {name}…"},
+    "ui.dash.drill.none": {"en": "Nothing here splits {name} further", "fr": "Rien ici ne détaille davantage {name}"},
     "ui.chart.change": {"en": "Change", "fr": "Variation"},
 
     # The artifact pane's own copy.

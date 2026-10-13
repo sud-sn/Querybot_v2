@@ -108,6 +108,24 @@ def test_nor_one_the_members_drilled_through_hold_one_value_of(retail):  # noqa:
         "two stores may lie in two regions"
 
 
+def test_a_member_s_months_are_a_level_too():
+    # As the chat's menu offers "North by month": the member's trend over the tile's own period, every month in order.
+    down = dv.drill_plan({**BY_REGION, "sort": [{"by": "net_amount", "desc": True}], "limit": 5},
+                         {"path": [{"field": "region.name", "member": "North"}], "by": dv.BY_MONTH})
+    assert down["intent"] == "trend" and down["group_by"] == [] and down["time"]["grain"] == "month"
+    assert down["time"]["window"] == BY_REGION["time"]["window"] and "sort" not in down and "limit" not in down
+    assert not dv.drillable(down), "a trend is not drilled further"
+    params = QueryParams([("d.4", "region.name:North"), ("by.4", "time:month")])
+    assert dv.read_drills(params) == {4: {"path": [{"field": "region.name", "member": "North"}], "by": "time:month"}}
+    assert dv.read_drills(QueryParams([("d.4", "region.name:North"), ("by.4", "time:day; x")])) == {}
+    assert dv.drill_word(dv.BY_MONTH) == "Month"
+
+
+def test_the_core_offers_a_member_s_months_where_its_measure_has_a_date(retail):  # noqa: F811
+    offered, _ = _offers(retail, "region.name")
+    assert offered[-1] == "time:month"
+
+
 # ── the page ─────────────────────────────────────────────────────────────────
 
 def _board(store, retail):  # noqa: F811
@@ -219,6 +237,70 @@ def test_a_drilled_title_leaves_out_the_members_drilled_through():
     assert _without_path("Net Amount by customer", path) == "Net Amount by customer"
 
 
+def _splits(store, user, board, tile, retail, pairs, **asked):  # noqa: F811
+    """What the server says a right-clicked member splits into, for the page's address ``pairs``."""
+    import asyncio
+    from unittest.mock import MagicMock, patch
+
+    from portal import routes
+    from tests.test_a_new_core_answer_can_be_pinned import _replay
+
+    request = MagicMock()
+    request.query_params = QueryParams([("dashboard_id", str(board)), *pairs,
+                                        *(("offer", f) for f in asked.pop("offers"))])
+    with patch("core2.service.portal_replay", _replay(retail)), patch.object(routes, "_get_portal_user", return_value=user):
+        response = asyncio.run(routes.tile_splits_api(request, board, tile, **asked))
+    return response.status_code, json.loads(response.body)
+
+
+def test_the_menu_offers_only_what_splits_the_member_here(fresh_store, retail):  # noqa: F811
+    # As the chat offers only what an answer can open. Found in the portal: a level of one row ("by status code",
+    # a store's product's customer all under one status), and a menu offering what was not there.
+    user, board, tile = _board(fresh_store, retail)
+    _, top = _tiles(fresh_store, user, board, retail)
+    offers = [o["field"] for o in json.loads(top["Net amount by region"]["chart_json"])["drill_down"]["offers"]]
+    assert "time:month" in offers, "the tile offers its months"
+    status, found = _splits(fresh_store, user, board, tile, retail, [("period", "own")],
+                            member="North", field="region.name", offers=offers)
+    assert status == 200 and found["ok"]
+    assert "store" in found["offers"] and set(found["offers"]) < set(offers)
+    assert "time:month" not in found["offers"], "the tile counts April alone: one month is no trend"
+    year = [("period", "custom"), ("from", "2025-07-01"), ("to", "2026-06-30")]
+    assert "time:month" in _splits(fresh_store, user, board, tile, retail, year, member="North", field="region.name",
+                                   offers=offers)[1]["offers"], "a year holds twelve"
+    nowhere = _splits(fresh_store, user, board, tile, retail, [("period", "own")], member="Nowhere",
+                      field="region.name", offers=offers)[1]
+    assert nowhere["offers"] == [], "a member with no rows here splits into nothing"
+
+
+def test_a_member_s_months_are_drawn_as_a_line_whatever_the_tile_s_own_shape(fresh_store, retail):  # noqa: F811
+    # Found in the portal: the store tile's bars carried down to Eastview Store's months, their values run together.
+    user, board, tile = _board(fresh_store, retail)
+    fresh_store.update_dashboard_chart(board, tile, user["id"], user["account_id"], chart_type="bar")
+    year = [("period", "custom"), ("from", "2025-07-01"), ("to", "2026-06-30")]
+    page = _page(fresh_store, user, board, retail, [*year, (f"d.{tile}", "region.name:North"), (f"by.{tile}", "time:month")])[1]
+    card = next(c for c in page["charts"] if c["id"] == tile)
+    shape = json.loads(card["chart_json"])
+    assert shape["chart_type"] in ("line", "area") and card["drill"]["by"] == "month"
+    assert card["title"].endswith("by month") and "drill_down" not in shape, "a trend is the last level"
+
+
+def test_the_check_answers_only_for_a_member_of_the_tile_as_drawn(fresh_store, retail):  # noqa: F811
+    user, board, tile = _board(fresh_store, retail)
+    own = [("period", "own")]
+    assert _splits(fresh_store, user, board, tile, retail, own, member="North", field="store",
+                   offers=["product"])[0] == 400, "the field the tile is drawn by at this level"
+    drilled = [*own, (f"d.{tile}", "region.name:North"), (f"by.{tile}", "store")]
+    assert _splits(fresh_store, user, board, tile, retail, drilled, member="Eastview Store", field="store",
+                   offers=["region.name", "product"])[1]["offers"] in ([], ["product"]), "never the path's own fields"
+    deep = [*own, *((f"d.{tile}", f"f{i}.x:m") for i in range(3)), (f"by.{tile}", "store")]
+    assert _splits(fresh_store, user, board, tile, retail, deep, member="x", field="store",
+                   offers=["product"])[1]["offers"] == [], "three levels at most"
+    from tests.test_a_dashboard_has_one_date_picker_and_its_owners_filters import _owner
+    assert _splits(fresh_store, _owner(fresh_store), board, tile, retail, own, member="North", field="region.name",
+                   offers=["store"])[0] == 404, "whoever may open the dashboard alone"
+
+
 def test_the_way_back_up_is_drawn_above_the_tile(fresh_store, retail):  # noqa: F811
     user, board, tile = _board(fresh_store, retail)
     _, top = _tiles(fresh_store, user, board, retail)
@@ -270,3 +352,23 @@ def test_the_bar_goes_a_level_down_and_back_up_and_writes_it_in_the_address():
 def test_the_bar_answers_the_tiles_menu_and_its_way_back_up():
     bar = (ROOT / "frontend" / "src" / "dashboard" / "FilterBar.vue").read_text(encoding="utf-8")
     assert "addEventListener('qb-menu'" in bar and "[data-drill-keep]" in bar and "<TileMenu" in bar
+    assert "splitsUrl(" in bar, "the menu asks what splits the member before it lists it"
+    menu = (ROOT / "frontend" / "src" / "dashboard" / "TileMenu.vue").read_text(encoding="utf-8")
+    assert "ui.dash.drill.checking" in menu and "ui.dash.drill.none" in menu
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node runs the bar's own modules")
+def test_the_bar_asks_with_the_page_s_own_address():
+    module = (ROOT / "frontend" / "src" / "dashboard" / "view.js").as_uri()
+    script = f"""import {{ splitsUrl }} from '{module}';
+      console.log(splitsUrl(4, {{chart: 12, member: 'North & co', field: 'region.name',
+                                 all: [{{field: 'store'}}, {{field: 'time:month'}}]}},
+                            '?dashboard_id=4&period=last_quarter&f.store=A&member=old&offer=old'))"""
+    run = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    from urllib.parse import parse_qsl, urlsplit
+    url = urlsplit(run.stdout.strip())
+    assert url.path == "/portal/api/dashboard/4/tiles/12/splits"
+    assert parse_qsl(url.query) == [("dashboard_id", "4"), ("period", "last_quarter"), ("f.store", "A"),
+                                    ("member", "North & co"), ("field", "region.name"), ("offer", "store"),
+                                    ("offer", "time:month")]

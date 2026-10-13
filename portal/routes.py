@@ -1914,7 +1914,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         view = {**(view or {}), "members": {k: v for k, v in ((view or {}).get("members") or {}).items()
                                             if k not in through}}
         word = dashboard_view.drill_word
-        result["drill"] = {"state": drill, "top": word(top), "by": word(drill["by"]).lower(),
+        by_word = (i18n_t("ui.dash.drill.month", lang=str(user.get("lang") or "en"))
+                   if drill["by"] == dashboard_view.BY_MONTH else word(drill["by"]).lower())
+        result["drill"] = {"state": drill, "top": word(top), "by": by_word,
                            "path": [{"member": step["member"], "field": word(step["field"])}
                                     for step in drill["path"]]}
     else:
@@ -1992,6 +1994,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     result["date_badge"] = next((str((french and b.get("text_fr")) or b.get("text") or "") for b in badges
                                  if b.get("kind") == "date"), "")
     kind = str(chart.get("chart_type") or "")
+    if drill and kind != "table":
+        # The shape chosen for the tile's top level is not its levels': a member's months are a line, its stores
+        # bars, as their rows read (dashboard_view.drill_plan).
+        kind = ""
     shape = payload.get("chart")
     # A tile pinned while its title was only the measure ("Net amount") reads as its answer now does ("Net amount
     # by store"); a title the reader wrote stays as written.
@@ -2068,7 +2074,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             # on it asks (static/js/qb-charts.js). The fields the path went through are not offered again.
             depth = len((drill or {}).get("path") or [])
             done = {step["field"] for step in (drill or {}).get("path") or []} | {groups[0]}
-            offers = [b for b in breakdowns if b.get("field") not in done]
+            month = i18n_t("ui.dash.drill.month", lang=str(user.get("lang") or "en"))
+            offers = [{**b, "label": month} if b.get("field") == dashboard_view.BY_MONTH else b
+                      for b in breakdowns if b.get("field") not in done]
             if dashboard_view.drillable(plan) and depth < dashboard_view.DRILL_DEPTH and offers:
                 drawn["drill_down"] = {"offers": offers, "depth": depth, "path": (drill or {}).get("path") or []}
         # "Top 10 of 34" beside the period, when the rest were folded into one bar.
@@ -3167,6 +3175,66 @@ def _filter_values(user: dict, field: str, search: str) -> dict:
     first = (data.get("headers") or [None])[0]
     values = list(dict.fromkeys(str(r.get(first)) for r in rows if r.get(first) not in (None, "")))
     return {"ok": True, "values": values, "more": len(rows) >= FILTER_VALUES_LISTED}
+
+
+# What a member right-clicked on a tile can be broken down into, checked against the data: at most this many fields.
+TILE_SPLITS_CHECKED = 6
+
+
+@router.get("/api/dashboard/{dashboard_id}/tiles/{chart_id}/splits")
+async def tile_splits_api(request: Request, dashboard_id: int, chart_id: int, member: str = "", field: str = ""):
+    """Of the fields a tile's menu offers to break a member down by (``offer``, as many as it lists), those that split
+    it into two parts or more here: under the dashboard's dates and filters and the tile's own path, all in the
+    address as the page has them. Its months count where the period holds two of them or more. The menu shows only
+    these, as the chat offers only what an answer can open: never a level of one bar or one row. Whoever may open
+    the dashboard; counted as they may see the rows."""
+    from portal import dashboard_view
+
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    dashboard = store.get_dashboard_for_view(dashboard_id, user["id"], user["account_id"])
+    chart = next((c for c in store.list_dashboard_charts_for_view(dashboard_id, user["id"], user["account_id"])
+                  if int(c.get("id") or 0) == chart_id), None) if dashboard else None
+    plan = _pin_display_config(chart).get("core2_plan") if chart else None
+    if not plan or not dashboard_view.drillable(plan):
+        return JSONResponse({"ok": False, "error": "That chart is not on this dashboard."}, status_code=404)
+    drill = dashboard_view.read_drills(request.query_params).get(chart_id)
+    level = drill["by"] if drill else next(str(g) for g in plan.get("group_by") or [])
+    member = member.strip()[:200]
+    path = [*((drill or {}).get("path") or []), {"field": level, "member": member}]
+    if field != level or not member:
+        return JSONResponse({"ok": False, "error": "Right-click a member of the chart as it is drawn."}, status_code=400)
+    through = {step["field"] for step in path}
+    offered = list(dict.fromkeys(
+        f for f in request.query_params.getlist("offer")
+        if (dashboard_view.drillable_field(f) and f not in through)))[:TILE_SPLITS_CHECKED]
+    if len(path) > dashboard_view.DRILL_DEPTH or not offered:
+        return JSONResponse({"ok": True, "offers": []})
+    client = store.get_client(user["account_id"]) or {}
+    fiscal_start = _fiscal_start(user["account_id"], client)
+    view = dashboard_view.read_view(request.query_params, fiscal_start=fiscal_start)
+    view = {**view, "fiscal_start": fiscal_start,
+            "members": {k: v for k, v in (view.get("members") or {}).items() if k not in through}}
+
+    def parts(by: str) -> int:
+        from core2.service import portal_replay
+
+        viewed = dashboard_view.view_plan(dashboard_view.drill_plan(plan, {"path": path, "by": by}), view)[0]
+        if by != dashboard_view.BY_MONTH:
+            viewed["limit"] = 2          # two are enough to know it splits
+        data = portal_replay(user["account_id"], viewed, user, question="").get("data") or {}
+        heads = list(data.get("headers") or [])
+        return sum(1 for row in data.get("rows") or [] if any(row.get(h) is not None for h in heads[1:]))
+
+    loop = asyncio.get_running_loop()
+    counted = await asyncio.gather(
+        *(loop.run_in_executor(_TILE_POOL, functools.partial(contextvars.copy_context().run, parts, by))
+          for by in offered), return_exceptions=True)
+    for by, n in zip(offered, counted):
+        if isinstance(n, BaseException):
+            log.warning("Whether %s splits %s on tile %s could not be read: %s", by, member, chart_id, n)
+    return JSONResponse({"ok": True, "offers": [by for by, n in zip(offered, counted) if isinstance(n, int) and n >= 2]})
 
 
 def _tiles_grouped_by(dashboard_id: int, user: dict) -> set[str]:

@@ -8,7 +8,7 @@ import DatePicker from './DatePicker.vue'
 import MemberFilter from './MemberFilter.vue'
 import TileMenu from './TileMenu.vue'
 import { refreshPage } from './refresh.js'
-import { address, copy, drilledInto, drilledUp, picked, steady } from './view.js'
+import { address, copy, drilledInto, drilledUp, picked, splitsUrl, steady } from './view.js'
 
 const props = defineProps({ store: { type: Object, required: true } })
 const state = computed(() => props.store.state)
@@ -72,9 +72,36 @@ function pick(event) {
 }
 
 // A member right-clicked on a tile (static/js/qb-charts.js sends 'qb-menu'): its menu, here. Filtering is as a click
-// on it; breaking it down draws that tile a level further, the dashboard's other tiles as they were.
+// on it; breaking it down draws that tile a level further, the dashboard's other tiles as they were. Of the fields
+// the tile offers, the menu lists only those that split this member here (asked of the server as it opens, as the
+// chat offers only what an answer can open): never a level of one bar. Each answer is kept for the view it was for.
 const menu = ref(null)
-const openMenu = (event) => { menu.value = props.store.busy ? null : event.detail || null }
+const splits = new Map()
+let asking = 0
+async function openMenu(event) {
+  const detail = event.detail
+  if (props.store.busy || !detail) {
+    menu.value = null
+    return
+  }
+  const ticket = ++asking
+  const url = splitsUrl(state.value.dashboard_id, { ...detail, all: detail.offers || [] }, window.location.search)
+  menu.value = { ...detail, all: detail.offers || [], offers: splits.has(url) ? splits.get(url) : null, ticket }
+  if (splits.has(url)) return
+  let kept = detail.offers || []        // when it cannot be asked, the menu offers what the tile does, as before
+  try {
+    const response = await fetch(url, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => ({}))
+    if (body.ok) {
+      const fields = new Set(body.offers || [])
+      kept = kept.filter((offer) => fields.has(offer.field))
+      splits.set(url, kept)
+    }
+  } catch {
+    // kept as offered
+  }
+  if (menu.value && menu.value.ticket === ticket) menu.value.offers = kept
+}
 function menuFilter(ask) {
   menu.value = null
   pick({ detail: { ...ask, add: false } })

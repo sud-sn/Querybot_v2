@@ -38,6 +38,8 @@ DRILLABLE_INTENTS = ("breakdown", "rank", "share", "compare")
 _SHAPES = ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active", "on_time", "pareto",
            "funnel", "together", "target", "drivers")
 _FIELD = re.compile(r"^[A-Za-z0-9_.]{1,120}$")
+# A member's months (its trend over the tile's period) is a level too, as "North by month" is in the chat's menu.
+BY_MONTH = "time:month"
 
 # Each a window as a plan writes one, resolved by the new core from where the data ends (core2/resolve/time.py):
 # "last quarter" on data that ends in June is January to March.
@@ -258,9 +260,14 @@ def read_drills(params: Any) -> dict[int, dict]:
     out = {}
     for tile, path in paths.items():
         by = str(params.get(f"by.{tile}") or "")
-        if path and _FIELD.match(by):
+        if path and drillable_field(by):
             out[tile] = {"path": path, "by": by}
     return out
+
+
+def drillable_field(field: str) -> bool:
+    """A field a tile can be broken down by, as the address writes it: a field of the model, or its months."""
+    return bool(_FIELD.match(str(field or ""))) or field == BY_MONTH
 
 
 def drill_address(drills: dict | None) -> list[tuple[str, str]]:
@@ -280,6 +287,11 @@ def drill_plan(plan: dict, drill: dict) -> dict:
     out["filters"] = [*(out.get("filters") or []),
                       *({"field": step["field"], "op": "in", "values": [step["member"]]} for step in drill["path"])]
     out.pop("chart", None)       # the shape chosen for the top level: the level below draws as its rows read
+    if drill["by"] == BY_MONTH:
+        # Its months: a trend over the tile's own period, in order, every month (no "top 10" of months).
+        out.update(intent="trend", group_by=[], time={**(out.get("time") or {}), "grain": "month"})
+        for key in ("sort", "limit", "compare"):
+            out.pop(key, None)
     return out
 
 
@@ -323,6 +335,8 @@ def field_word(field: str) -> str:
 def drill_word(field: str) -> str:
     """A field on a drilled tile's path as its menu offered it: the attribute without its table ("Status code" for
     order_line.status_code, "Segment" for customer.segment), a member by its own name ("Region" for region.name)."""
+    if field == BY_MONTH:
+        return "Month"
     owner, _, own = str(field or "").rpartition(".")
     return field_word(own if owner and own.lower() not in (*_NAMING_WORDS, "code", "id", "key") else owner or own)
 
