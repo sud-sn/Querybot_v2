@@ -208,7 +208,8 @@
   // than left to the chart, so the formatter knows which label is shown before each one -- and so
   // where a year starts on screen.
   function periodStep(count, width, style) {
-    const each = style === 'year' ? 44 : 58;      // what a label and its gap need, in px
+    // What a label and its gap need, in px: a month is three letters ("Sep"), a year four figures.
+    const each = style === 'year' ? 44 : (String(style || '').startsWith('month') ? 42 : 58);
     const room = Math.max(120, (width || 600) - 80);
     return Math.max(0, Math.ceil(count * each / room) - 1);
   }
@@ -264,9 +265,12 @@
   // design tokens at call time. A missing key falls back to the token's value.
   function chrome() {
     const theme = (global.QB_CHART_THEME ? global.QB_CHART_THEME() : {}) || {};
+    const surface = theme.surface || '#FCFCFF';
     return {
+      // On a dark page the series take their dark steps (chart-palettes.js), and the tooltip's shadow deepens.
+      dark: luminance(surface) < 0.2,
       font: theme.font || "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif",
-      surface: theme.surface || '#FCFCFF',
+      surface,
       raised: theme.tooltipBg || '#FFFFFF',
       ink: theme.tooltipText || theme.ink || '#0D0F2E',
       ink2: theme.ink2 || '#3A475C',
@@ -277,18 +281,39 @@
       bad: theme.bad || '#B42318',
     };
   }
-  function sequentialRamp() {
+  // A colour's relative luminance (WCAG), 0 for black to 1 for white.
+  function luminance(hex) {
+    const h = String(hex || '').replace('#', '');
+    if (h.length !== 6) return 1;
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+  function sequentialRamp(c) {
+    if (c && c.dark && global.QB_SEQUENTIAL_DARK) return global.QB_SEQUENTIAL_DARK;
     return global.QB_SEQUENTIAL || ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
   }
   // White or ink on a filled cell, by the fill's luminance, so a label set
   // inside a colour always clears contrast.
+  // The page's ink is light on a dark page, so a light cell takes the light page's ink, not the page's own: a
+  // pale cell on the dark page wrote its value in near-white.
+  const INK_ON_LIGHT = '#0D0F2E';
   function inkOn(hex, c) {
+    if (String(hex || '').replace('#', '').length !== 6) return c.ink;
+    return luminance(hex) < 0.36 ? '#FFFFFF' : INK_ON_LIGHT;
+  }
+  function alpha(hex, a) {
     const h = String(hex || '').replace('#', '');
-    if (h.length !== 6) return c.ink;
-    const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
-      .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
-    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    return lum < 0.36 ? '#FFFFFF' : c.ink;
+    if (h.length !== 6) return hex;
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  // A wash under a line: its own hue at the line, fading to nothing at the axis -- about a tenth of the hue on
+  // average, so it reads as the ground under the line and never as a block.
+  function wash(color, strength, c) {
+    if (c && c.dark) strength *= 1.8;
+    return {opacity: 1, color: {type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                                colorStops: [{offset: 0, color: alpha(color, strength)}, {offset: 1, color: alpha(color, 0)}]}};
   }
   function rampColor(ramp, ratio) {
     const r = Math.max(0, Math.min(1, Number(ratio) || 0));
@@ -302,26 +327,35 @@
   // reader came for. Every label is escaped: series and category names come
   // from the warehouse.
   function tooltipBase(c) {
+    const shadow = c.dark
+      ? '0 2px 4px rgba(0,0,0,.30),0 10px 28px rgba(0,0,0,.45)'
+      : '0 1px 2px rgba(13,15,46,.06),0 8px 24px rgba(13,15,46,.12)';
     return {
       backgroundColor: c.raised,
-      borderColor: c.axis,
+      borderColor: c.grid,
       borderWidth: 1,
-      padding: [8, 10],
+      padding: [10, 12],
       confine: true,
       textStyle: {color: c.ink, fontSize: 12, fontFamily: c.font},
-      extraCssText: 'border-radius:5px;box-shadow:0 1px 2px rgba(22,30,26,.06),0 4px 14px rgba(22,30,26,.10);',
+      extraCssText: `border-radius:10px;box-shadow:${shadow};min-width:140px;`,
     };
   }
   function tipHeader(text, c) {
-    return `<div style="color:${c.ink2};font-size:12px;margin-bottom:5px">${escHtml(text)}</div>`;
+    return `<div style="color:${c.ink};font-size:12px;font-weight:600;margin-bottom:6px">${escHtml(text)}</div>`;
   }
   function tipRow(color, name, value, c, shape) {
     const key = shape === 'swatch'
-      ? `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color}"></span>`
-      : `<span style="display:inline-block;width:10px;height:2px;border-radius:1px;background:${color};vertical-align:middle"></span>`;
-    return `<div style="display:flex;align-items:center;gap:8px;line-height:18px">${key}`
+      ? `<span style="display:inline-block;flex:none;width:8px;height:8px;border-radius:2px;background:${color}"></span>`
+      : `<span style="display:inline-block;flex:none;width:12px;height:3px;border-radius:2px;background:${color}"></span>`;
+    return `<div style="display:flex;align-items:center;gap:8px;line-height:20px">${key}`
       + `<span style="color:${c.ink2};flex:1;white-space:nowrap">${escHtml(name)}</span>`
-      + `<span style="font-weight:600;color:${c.ink};font-variant-numeric:tabular-nums;margin-left:12px">${escHtml(value)}</span></div>`;
+      + `<span style="font-weight:600;color:${c.ink};font-variant-numeric:tabular-nums;margin-left:16px">${escHtml(value)}</span></div>`;
+  }
+  // A total under the rows, past a hairline: the whole a stacked bar's parts make.
+  function tipTotal(name, value, c) {
+    return `<div style="display:flex;gap:8px;line-height:20px;margin-top:4px;padding-top:4px;border-top:1px solid ${c.grid}">`
+      + `<span style="color:${c.ink2};flex:1">${escHtml(name)}</span>`
+      + `<span style="font-weight:600;color:${c.ink};font-variant-numeric:tabular-nums">${escHtml(value)}</span></div>`;
   }
 
   // ── Annotations ───────────────────────────────────────────────────────────
@@ -435,7 +469,8 @@
     return [{coord: [labels[at], values[at]], symbol: 'circle', symbolSize: 7,
              itemStyle: {color: c.surface, borderColor: c.ink2, borderWidth: 2},
              label: {show: true, position: 'top', distance: 8, align, color: c.ink2, fontSize: 12, fontWeight: 600,
-                     fontFamily: c.font, formatter: () => t('ui.chart.low_point', {value: written(values[at])})}}];
+                     fontFamily: c.font, textBorderColor: c.surface, textBorderWidth: 3,
+                     formatter: () => t('ui.chart.low_point', {value: written(values[at])})}}];
   }
   // The span the dashboard's Period filter chose, shaded on a chart over time: the periods from its start up
   // to (not including) its end.
@@ -544,6 +579,17 @@
     return Promise.all([outline, points]).catch(() => { geoStore.failed[geo.map] = true; });
   }
 
+  // A palette's colours as this page draws them: on a dark page its dark steps -- the same hues in the same
+  // order, stepped to read on the dark surface (chart-palettes.js) -- where it has them. An unknown name is the
+  // default.
+  function paletteFor(name, c) {
+    const palettes = global.QB_PALETTES || {};
+    const named = palettes[name] ? name : 'default';
+    const dark = (c || chrome()).dark ? (global.QB_PALETTES_DARK || {})[named] : null;
+    return dark || palettes[named] || palettes.default
+      || ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+  }
+
   // ── The option ────────────────────────────────────────────────────────────
   function buildOption(payload, layout) {
     let rows = Array.isArray(payload && payload.rows) ? payload.rows : [];
@@ -551,12 +597,10 @@
     const xStyle = String((payload && payload.x_style) || '');
     let yKeys = Array.isArray(payload && payload.y_keys) ? payload.y_keys.slice() : [];
 
-    const palettes = global.QB_PALETTES || {};
+    const c = chrome();
     // A palette saved with a chart wins; otherwise the reader's own (their Settings page), else the default.
     const saved = payload && payload.color_palette && payload.color_palette !== 'default' ? payload.color_palette : '';
-    const colors = palettes[saved || prefs().palette || 'default'] || palettes.default
-      || ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
-    const c = chrome();
+    const colors = paletteFor(saved || prefs().palette || 'default', c);
 
     // A series past the palette's length would repeat a colour -- two series
     // drawn identically, a legend with duplicate swatches. They are dropped
@@ -753,7 +797,7 @@
           data,
           // The 2px gap between slices is the surface showing through, which
           // is what separates them -- not a drawn outline.
-          itemStyle: {borderColor: c.surface, borderWidth: 2},
+          itemStyle: {borderColor: c.surface, borderWidth: 2, borderRadius: donut ? 4 : 0},
           label: {
             show: labelled,
             formatter: p => `{name|${String(p.name || '').slice(0, 24)}}\n{pct|${global.qbPct(Number(p.percent != null ? p.percent : share(p.value)), 1)}}`,
@@ -783,7 +827,7 @@
       const regionsOf = geo.regions || {};
       const values = rows.map(r => num(r && r[yKey])).filter(v => v != null);
       const lo = values.length ? Math.min(...values) : 0, hi = values.length ? Math.max(...values) : 1;
-      const ramp = sequentialRamp();
+      const ramp = sequentialRamp(c);
       const tip = (name, value) => tipHeader(name, c)
         + tipRow(colors[0], yLabel, value == null ? t('ui.chart.not_available') : valueFmt(value, yKey), c, 'swatch');
       const land = {areaColor: c.grid, borderColor: c.surface, borderWidth: 0.8};
@@ -848,7 +892,7 @@
       rows.forEach(r => colKeys.forEach(k => { const v = num(r[k]); if (v != null) values.push(v); }));
       const lo = values.length ? Math.min(...values) : 0;
       const hi = values.length ? Math.max(...values) : 1;
-      const ramp = sequentialRamp();
+      const ramp = sequentialRamp(c);
       const periodHeads = periodAxisFormatter(colKeys.map(String), null);
       const periodRows = rowLabels.length > 0 && rowLabels.every(v => periodParts(v));
       const rowHead = i => (periodRows ? periodLabel(rowLabels[i], true) : (rowLabels[i] || ''));
@@ -965,7 +1009,7 @@
       const meta = ['funnel_pct', 'conversion_rate', 'drop_off', 'cumulative_conversion'];
       const stageKey = xKey || Object.keys(rows[0] || {}).find(k => !meta.includes(k)) || 'stage';
       const countKey = yKey || yKeys.find(k => !meta.includes(k)) || yKeys[0];
-      const ramp = sequentialRamp().slice(2).reverse();
+      const ramp = sequentialRamp(c).slice(2).reverse();
       const data = rows.map((r, i) => {
         const fill = ramp[Math.min(i, ramp.length - 1)];
         return {
@@ -1087,7 +1131,7 @@
           {name: actualName, type: 'line', data: hist, showSymbol: hist.filter(v => v != null).length <= MARKER_MAX_POINTS,
            symbol: 'circle', symbolSize: 8, lineStyle: {width: 2, color: colors[0], cap: 'round', join: 'round'},
            itemStyle: {color: colors[0], borderColor: c.surface, borderWidth: 2},
-           areaStyle: {color: colors[0], opacity: 0.10}, connectNulls: false},
+           areaStyle: wash(colors[0], 0.2, c), connectNulls: false},
           {name: forecastName, type: 'line', data: proj, symbol: 'circle', symbolSize: 8,
            lineStyle: {width: 2, color: projColor, type: [6, 4], cap: 'round'},
            itemStyle: {color: projColor, borderColor: c.surface, borderWidth: 2}, connectNulls: true},
@@ -1242,7 +1286,8 @@
           itemStyle: {color: colors[0], opacity: 0.9, borderColor: c.surface, borderWidth: 2},
           // Two named dots side by side would print their names over each other: the later one gives way.
           labelLayout: {hideOverlap: true},
-          emphasis: {scale: 1.4},
+          emphasis: {scale: 1.4, focus: 'self'},
+          blur: {itemStyle: {opacity: 0.35}},
         }],
       });
     }
@@ -1329,6 +1374,7 @@
       // A narrow card has room for fewer amounts than the axis has ticks: one
       // that would touch its neighbour is left out, not printed over it.
       axisLabel: {color: c.muted, fontSize: 12, hideOverlap: true, formatter: v => valueFmt(v, yKey, true)},
+      splitNumber: payload && payload.tile ? 4 : undefined,
       splitLine: {lineStyle: {color: c.grid, width: 1, type: 'solid'}},
       axisLine: {show: false},
       axisTick: {show: false},
@@ -1345,7 +1391,7 @@
       yAxis: horizontal
         ? Object.assign({}, categoryAxis, {inverse: true, axisLabel: Object.assign({}, categoryAxis.axisLabel, {
             rotate: 0, interval: 0, hideOverlap: false, width: nameWidth, overflow: 'truncate', ellipsis: '…',
-            formatter: nameOf})})
+            color: c.ink2, formatter: nameOf})})
         : valueAxis,
       dataZoom: zoom ? [
         {type: 'inside', throttle: 50},
@@ -1457,10 +1503,13 @@
     function multiTip(params) {
       const arr = Array.isArray(params) ? params : [params];
       const head = arr[0] ? (arr[0].axisValue != null ? arr[0].axisValue : arr[0].name) : '';
+      const sum = stacked && arr.length > 1
+        ? tipTotal(t('ui.chart.total'), valueFmt(arr.reduce((s, p) => s + (num(p.value) || 0), 0), arr[0].seriesName), c)
+        : '';
       return tipHeader(shownLabel(head), c)
         + arr.map(p => tipRow(p.color, columnLabel(payload, p.seriesName || ''), valueFmt(p.value, p.seriesName), c,
                               type === 'bar' ? 'swatch' : 'line')).join('')
-        + drillHint;
+        + sum + drillHint;
     }
 
     // ── Line / area ────────────────────────────────────────────────────────
@@ -1500,6 +1549,23 @@
         option.legend.formatter = name => name === cmp.prior ? (cmp.prior_label || columnLabel(payload, name))
           : name === cmp.current ? (cmp.current_label || columnLabel(payload, name)) : columnLabel(payload, name);
       }
+      // Two to four lines are named at their ends as well as in the legend, where their ends lie far enough
+      // apart to tell which name is whose; where they meet, names nudged apart would leave their lines, and the
+      // legend and the tooltip name them alone.
+      const drawn = yKeys.filter(k => !isPrior(k));
+      const lastOf = k => { const v = rows.map(r => num(r && r[k])).filter(x => x != null); return v.length ? v[v.length - 1] : null; };
+      const every = [];
+      drawn.forEach(k => rows.forEach(r => { const v = num(r && r[k]); if (v != null) every.push(v); }));
+      const spread = Math.max(0, ...every) - Math.min(0, ...every);
+      const plotHeight = ((layout && layout.height) || 300) - (Number(option.grid.top) || 0) - 40;
+      const ends = drawn.map(lastOf).filter(v => v != null).sort((a, b) => a - b);
+      const apart = ends.length === drawn.length && spread > 0
+        && ends.every((v, j) => j === 0 || (v - ends[j - 1]) / spread * plotHeight >= 16);
+      const endNames = !single && drawn.length <= 4 && apart && ((layout && layout.width) || 600) >= 480;
+      if (endNames) {
+        const longest = Math.max(...drawn.map(k => String(columnLabel(payload, k)).length));
+        option.grid.right = Math.min(140, 16 + Math.min(18, longest) * 7);
+      }
       option.series = yKeys.map((k, i) => {
         const values = rows.map(r => num(r && r[k]));
         if (isPrior(k)) {
@@ -1516,10 +1582,45 @@
         // label is wider than a point's, and runs over the next point's label on the side it is aligned to
         // (both sides when centred): those points keep their value for the tooltip, not a label of their own.
         const lowAt = low.length ? labels.indexOf(low[0].coord[0]) : -1;
-        const lowRuns = low.length ? low[0].label.align : '';
-        const crowded = lowAt < 0 ? [] : lowRuns === 'left' ? [lowAt + 1] : lowRuns === 'right' ? [lowAt - 1]
-          : [lowAt - 1, lowAt + 1];
         const placed = pointLabels ? labelSides(values) : null;
+        // The low's label ("Low $18.5K") is wider than a point's: the points it runs over, on the side it is
+        // aligned to (both sides when centred), keep their value for the tooltip. How many it reaches is
+        // measured -- a label about 7px a character against the room between two points -- and only points
+        // near the low's own height are in its way.
+        // A neighbour well above the low keeps its value, its label clear of the low's; one about as low, or
+        // whose label is not above its point, gives way.
+        const crowded = [];
+        if (lowAt >= 0 && placed) {
+          const text = t('ui.chart.low_point', {value: valueFmt(values[lowAt], k, true)});
+          const plotWidth = Math.max(120, ((layout && layout.width) || 600) - 100);
+          const plotHeight = Math.max(80, ((layout && layout.height) || 300) - 80);
+          const slot = plotWidth / Math.max(1, rows.length);
+          const runs = low[0].label.align;
+          const reach = Math.max(1, Math.ceil(((runs === 'center' ? text.length * 3.5 : text.length * 7) + 26) / slot) - 1);
+          const known = values.filter(v => v != null);
+          const height = (Math.max(0, ...known) - Math.min(0, ...known)) || 1;
+          for (let d = 1; d <= reach; d++) {
+            [runs === 'right' ? null : lowAt + d, runs === 'left' ? null : lowAt - d].forEach(j => {
+              if (j == null || values[j] == null) return;
+              const above = (values[j] - values[lowAt]) / height * plotHeight;
+              if (above < 26 || placed[j] !== 'top') crowded.push(j);
+            });
+          }
+        }
+        // Every value is said (asked for), and the two a reader looks for first -- the highest and the latest --
+        // in strong ink. Each sits on a halo of the surface, so a gridline or the line itself never runs
+        // through its figures.
+        const known = values.map((v, j) => [v, j]).filter(([v]) => v != null);
+        const lastAt = known.length ? known[known.length - 1][1] : -1;
+        const highAt = known.reduce((m, [v, j]) => (m < 0 || v > values[m] ? j : m), -1);
+        // Where the line is now: its latest point a little larger, ringed in the surface, on a halo of its own
+        // hue -- the one point the eye should find first.
+        const latest = at => (at < 0 ? [] : [
+          {coord: [at, values[at]], symbol: 'circle', symbolSize: 20, itemStyle: {color: alpha(color, c.dark ? 0.3 : 0.18)},
+           label: {show: false}},
+          {coord: [at, values[at]], symbol: 'circle', symbolSize: 10,
+           itemStyle: {color, borderColor: c.surface, borderWidth: 2}, label: {show: false}},
+        ]);
         return {
           name: k, type: 'line',
           data: placed ? values.map((v, j) => (placed[j] === 'top' || placed[j] === 'none' ? v
@@ -1527,23 +1628,35 @@
           smooth: smooth ? 0.35 : false,
           smoothMonotone: smooth ? 'x' : undefined,
           label: pointLabels ? {show: true, position: 'top', distance: 6, color: c.ink2, fontSize: 12,
-                                fontFamily: c.font,
-                                formatter: p => (p.dataIndex === lowAt || crowded.includes(p.dataIndex)
-                                  || placed[p.dataIndex] === 'none' ? '' : valueFmt(p.value, k, true))} : undefined,
+                                fontFamily: c.font, textBorderColor: c.surface, textBorderWidth: 3,
+                                formatter: p => {
+                                  if (p.dataIndex === lowAt || crowded.includes(p.dataIndex)
+                                      || placed[p.dataIndex] === 'none') return '';
+                                  const said = valueFmt(p.value, k, true);
+                                  return p.dataIndex === highAt || p.dataIndex === lastAt ? `{key|${said}}` : said;
+                                },
+                                rich: {key: {color: c.ink, fontSize: 12, fontWeight: 600, fontFamily: c.font,
+                                             textBorderColor: c.surface, textBorderWidth: 3}}} : undefined,
           labelLayout: pointLabels ? {hideOverlap: true} : undefined,
-          showSymbol: rows.length <= MARKER_MAX_POINTS,
+          // Dots on a single line of a couple of dozen points carry its values; on several lines they are
+          // clutter, and the one under the pointer appears when the crosshair reaches it.
+          showSymbol: single && rows.length <= MARKER_MAX_POINTS,
           symbol: 'circle', symbolSize: 8,
           lineStyle: {width: 2, color, cap: 'round', join: 'round'},
           itemStyle: {color, borderColor: c.surface, borderWidth: 2},
           emphasis: {focus: single ? 'none' : 'series', lineStyle: {width: 2}},
-          // An area is a wash under the line, not a block; under several
-          // lines it is fainter still, or the washes tint each other into mud.
-          areaStyle: type === 'area' ? {color, opacity: single ? 0.10 : 0.06}
-            : (onTile ? {color, opacity: 0.07} : undefined),
-          // A single line says its latest value at its end.
+          // A wash under the line, never a block: a single line stands on its own ground, as on a dashboard
+          // tile; an area is a little stronger; under several lines there is none (or, for an area, fainter
+          // still), or the washes tint each other into mud.
+          areaStyle: type === 'area' ? wash(color, single ? 0.2 : 0.1, c)
+            : (single ? wash(color, 0.16, c) : undefined),
+          // A single line says its latest value at its end; two to four lines say their names there.
           endLabel: single && !pointLabels ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 6,
-                                              formatter: p => valueFmt(p.value, k, true)} : undefined,
-          markPoint: i === 0 ? {silent: true, data: marks} : undefined,
+                                              formatter: p => valueFmt(p.value, k, true)}
+            : (endNames && !isPrior(k) ? {show: true, color: c.ink2, fontSize: 12, fontFamily: c.font, distance: 8,
+                                         formatter: () => labelFmt(columnLabel(payload, k))} : undefined),
+          markPoint: marks.length || (single && lastAt >= 0) ? {silent: true, data: marks.concat(single ? latest(lastAt) : [])}
+            : undefined,
           markArea: i === 0 && band ? band : undefined,
         };
       });
@@ -1586,6 +1699,11 @@
     // A labelled bar needs room past its tip: with the axis ending exactly at
     // the largest value, that bar's label was clipped by the chart's edge.
     if (labelled) {
+      // Every bar says its value, so the value axis would only say them again: its figures and gridlines go,
+      // and the bars stand on their baseline alone.
+      const scale = horizontal ? option.xAxis : option.yAxis;
+      scale.axisLabel = Object.assign({}, scale.axisLabel, {show: false});
+      scale.splitLine = Object.assign({}, scale.splitLine, {show: false});
       // "$1.3M · 3.0%" is longer than the value alone: the axis ends far enough past the longest bar for it.
       (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, horizontal && shareOnLabel ? shareGap : '8%'];
       // A bar below zero is labelled past its own tip, at the low end of the
@@ -1619,7 +1737,7 @@
       if (stacked) {
         return {
           name: k, type: 'bar', stack: 'total', barMaxWidth: 24, data: values,
-          itemStyle: {color, borderColor: c.surface, borderWidth: 1,
+          itemStyle: {color, borderColor: c.surface, borderWidth: 2,
                       borderRadius: last ? (horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]) : 0},
           label: last && totals ? {
             show: true, position: horizontal ? 'right' : 'top', color: c.ink2, fontSize: 12,
@@ -1664,7 +1782,8 @@
           rich: shareOnLabel ? {v: {color: c.ink2, fontSize: 12, fontFamily: c.font},
                             s: {color: c.muted, fontSize: 12, fontFamily: c.font, lineHeight: 16}} : undefined,
         } : undefined,
-        emphasis: {focus: multi ? 'series' : 'none', itemStyle: {opacity: 0.9}},
+        emphasis: {focus: multi ? 'series' : 'self'},
+        blur: {itemStyle: {opacity: 0.4}, label: {opacity: 0.6}},
         animationDelay: stagger,
         markPoint: (i === 0 && !horizontal) ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
       };
@@ -1868,6 +1987,7 @@
     albersUsa: ALBERS_USA,
     _geo: geoStore,
     buildOption,
+    paletteFor,
     render,
     update,
     redrawAll,

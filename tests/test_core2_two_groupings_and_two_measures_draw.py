@@ -79,7 +79,7 @@ def test_stacked_bars_are_drawn_piled_with_their_total_at_the_end(retail):  # no
     chart = _ask(retail, BY_STORE_AND_SEGMENT)["chart"]
     series = json.loads(_build("portal_chat.html", "en", chart, """JSON.stringify(opt.series.map(s => ({
         stack: s.stack, gap: s.itemStyle.borderWidth, label: !!(s.label && s.label.show)})))"""))
-    assert all(s["stack"] == "total" and s["gap"] == 1 for s in series)
+    assert all(s["stack"] == "total" and s["gap"] == 2 for s in series), "the 2px surface gap between parts"
     assert [s["label"] for s in series] == [False, False, True], "one total per bar, at its end"
     total = json.loads(_build("portal_chat.html", "en", chart,
                               "JSON.stringify(opt.series[2].label.formatter({dataIndex: 0}))"))

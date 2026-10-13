@@ -347,10 +347,14 @@
 // here is what the chat and the dashboards draw. Invented numbers.
 (function () {
   const form = document.getElementById('chartSettings');
-  document.querySelectorAll('.settings-swatches').forEach(node => {
-    const colors = (window.QB_PALETTES || {})[node.dataset.palette] || [];
+  // In the steps the page draws them in: a dark page's own (QBCharts.paletteFor), again when the theme changes.
+  const swatches = () => document.querySelectorAll('.settings-swatches').forEach(node => {
+    const colors = window.QBCharts ? window.QBCharts.paletteFor(node.dataset.palette)
+      : (window.QB_PALETTES || {})[node.dataset.palette] || [];
     node.innerHTML = colors.slice(0, 5).map(c => `<i style="background:${c}"></i>`).join('');
   });
+  swatches();
+  window.addEventListener('qb-theme-change', swatches);
   const months = ['2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01'];
   const sales = [42, 47, 44, 53, 58, 55];
   const line = {

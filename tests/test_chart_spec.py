@@ -477,7 +477,8 @@ class ChartAnnotationTests(unittest.TestCase):
                 points = json.loads(_build(page, "en", annotated,
                                            "JSON.stringify(opt.series[0].markPoint)"))
                 self.assertTrue(points["silent"])
-                coords = [point["coord"] for point in points["data"]]
+                # The annotations, each labelled; the latest point's ring and halo (unlabelled) follow them.
+                coords = [point["coord"] for point in points["data"] if point.get("label", {}).get("show")]
                 self.assertEqual(coords, [[2, 30], [3, 40]])
                 self.assertTrue(points["data"][0]["label"]["formatter"].startswith("\u2193"))
                 # An annotated chart reserves more room above the plot than a
@@ -977,7 +978,8 @@ class ChartPaletteValidationTests(unittest.TestCase):
         # The mark specs, read off the option the shared renderer builds: bars
         # capped at 24px with a 4px rounded data end and a square baseline,
         # 2px lines with round caps and joins, 8px markers ringed in the
-        # surface colour, and a flat ~10% wash under an area -- no gradient.
+        # surface colour, and a ~10% wash under an area: its hue at the line fading to nothing at the axis (a
+        # fifth at the top, about a tenth on average). Nothing glows.
         import json
 
         from tests.test_chart_annotation_language import _build
@@ -993,7 +995,8 @@ class ChartPaletteValidationTests(unittest.TestCase):
         self.assertEqual((line["lineStyle"]["cap"], line["lineStyle"]["join"]), ("round", "round"))
         self.assertGreaterEqual(line["symbolSize"], 8)
         self.assertEqual(line["itemStyle"]["borderWidth"], 2)
-        self.assertAlmostEqual(line["areaStyle"]["opacity"], 0.10)
+        stops = line["areaStyle"]["color"]["colorStops"]
+        self.assertEqual((stops[0]["color"].split(",")[-1], stops[-1]["color"].split(",")[-1]), ("0.2)", "0)"))
         whole = _build("portal_chat.html", "en", bar, "JSON.stringify(opt)")
         self.assertNotIn("colorStops", whole)
         self.assertNotIn("shadowBlur", whole)

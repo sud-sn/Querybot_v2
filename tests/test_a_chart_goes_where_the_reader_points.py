@@ -257,9 +257,9 @@ def _axis(periods: list[str]) -> tuple[int, list[str]]:
 
 
 def test_the_year_goes_under_the_first_label_shown_in_each_year():
-    step, shown = _axis(_months((2023, 11), 36))          # three years: every fifth month is shown
-    assert step == 4
-    assert shown[:4] == ["Nov\n2023", "Apr\n2024", "Sep", "Feb\n2025"]
+    step, shown = _axis(_months((2023, 11), 36))          # three years: every third month is shown
+    assert step == 2, "a month's three letters need about 42px: twelve of them fit the 600px default"
+    assert shown[:6] == ["Nov\n2023", "Feb\n2024", "May", "Aug", "Nov", "Feb\n2025"]
     years = [label.split("\n")[1] for label in shown if "\n" in label]
     assert years == ["2023", "2024", "2025", "2026"], "every year on the axis is named once"
 

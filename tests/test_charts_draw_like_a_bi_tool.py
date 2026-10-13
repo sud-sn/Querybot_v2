@@ -185,11 +185,18 @@ class TestTheMarks:
         payload = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")
         assert opt(payload, "opt.series[0].smooth") is False
 
-    def test_the_wash_belongs_to_an_area_and_not_to_a_line(self):
+    def test_a_single_line_stands_on_a_wash_and_several_lines_do_not(self):
+        # A single line on its own ground (asked for, October 2026: lines that look good), as a dashboard tile's
+        # has been: its hue at the line fading to nothing at the axis. Under several lines the washes would
+        # tint each other into mud.
         payload = ranking([str(v) for v in MONTHS], role="temporal", chart_type="line")
-        assert opt(payload, "opt.series[0].areaStyle === undefined") is True
+        stops = opt(payload, "opt.series[0].areaStyle.color.colorStops.map(function (s) { return s.color })")
+        assert stops[0].startswith("rgba(") and stops[0].endswith(",0.16)") and stops[-1].endswith(",0)")
+        two = dict(payload, rows=[{**r, "B": 1.0} for r in payload["rows"]], y_keys=[payload["y_keys"][0], "B"])
+        assert opt(two, "opt.series.map(function (s) { return s.areaStyle === undefined })") == [True, True]
         payload["chart_type"] = "area"
-        assert opt(payload, "opt.series[0].areaStyle.opacity") == pytest.approx(0.10)
+        stops = opt(payload, "opt.series[0].areaStyle.color.colorStops.map(function (s) { return s.color })")
+        assert stops[0].endswith(",0.2)"), "an area a little stronger: about a tenth of its hue on average"
 
     def test_a_single_line_says_its_latest_value_at_its_end(self):
         # A dozen points or fewer say every value (asked for, October 2026; a reader may choose only the last on
@@ -270,8 +277,10 @@ class TestThePieAndTheDonut:
             "x_key": "CH", "y_keys": ["V"], "chart_type": "donut"}
 
     def test_slices_are_separated_by_the_surface_not_by_an_outline(self):
+        # A donut's parts rounded at their corners; a pie's wedges meet at its centre, square.
         drawn = opt(self.FOUR, "opt.series[0].itemStyle")
-        assert drawn == {"borderColor": "#fff", "borderWidth": 2}
+        assert drawn == {"borderColor": "#fff", "borderWidth": 2, "borderRadius": 4}
+        assert opt({**self.FOUR, "chart_type": "pie"}, "opt.series[0].itemStyle.borderRadius") == 0
 
     def test_nothing_glows_on_hover(self):
         assert "shadowBlur" not in _build("portal_chat.html", "en", self.FOUR, "JSON.stringify(opt)")

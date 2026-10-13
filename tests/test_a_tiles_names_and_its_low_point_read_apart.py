@@ -51,24 +51,44 @@ def _trend(values):
             "chart_spec": {"x": {"column": "MONTH", "role": "time", "grain": "month"}}}
 
 
-def test_the_lowest_point_says_its_value_once():
-    values = [21.1, 18.5, 23.2, 21.7, 20.1, 23.2, 22.9, 20.2, 24.4, 24.1, 23.6, 24.7]
-    labels = opt(_trend(values), "[" + ", ".join(
+def _labels(values):
+    return opt(_trend(values), "[" + ", ".join(
         f"opt.series[0].label.formatter({{value: {v}, dataIndex: {i}}})" for i, v in enumerate(values)) + "]",
         "portal_dashboard.html")
-    # Near the start the "Low" label runs right, over the next month's label: that one is left to the tooltip.
-    assert labels[1] == labels[2] == "" and all(labels[i] for i in range(len(values)) if i not in (1, 2))
-    low = opt(_trend(values), "opt.series[0].markPoint.data.map(p => p.label.formatter())", "portal_dashboard.html")
+
+
+def test_the_lowest_point_says_its_value_once():
+    values = [21.1, 18.5, 23.2, 21.7, 20.1, 23.2, 22.9, 20.2, 24.4, 24.1, 23.6, 24.7]
+    labels = _labels(values)
+    # The low says "Low $18.5" in its own label, never "$18.5" under it as well; its neighbours sit well above it
+    # (a fifth of the chart's height and more), their labels clear of its own, and keep their values.
+    assert labels[1] == "" and all(labels[i] for i in range(len(values)) if i != 1)
+    low = opt(_trend(values), "opt.series[0].markPoint.data.filter(p => p.label.show).map(p => p.label.formatter())",
+              "portal_dashboard.html")
     assert low == ["Low $18.5"]
 
 
-@pytest.mark.parametrize("low_at, quiet", [(1, {1, 2}), (5, {4, 5, 6}), (10, {9, 10})])
-def test_the_low_label_never_lies_over_a_neighbours_label(low_at, quiet):
-    """"Low $157.7K" was drawn over the next month's "$167.8K": the side it runs to is left without a label (both
-    sides when it is centred, the one before near the end)."""
+@pytest.mark.parametrize("low_at, scale, quiet", [(1, 1, {1, 2}), (5, 1, {4, 5, 6}), (10, 1, {9, 10}),
+                                                  (1, 4300, {1, 2, 3})])
+def test_the_low_label_never_lies_over_a_neighbours_label(low_at, scale, quiet):
+    """"Low $157.7K" was drawn over the next month's "$167.8K", and once over the month after that too: every
+    neighbour within the low label's reach (measured: about 7px a character against the room between two
+    months) and about as low as it gives way -- on the side it runs to, both sides when it is centred. A short low
+    label reaches the next month; "Low $124.7K" the two after it."""
+    values = [(30.0 + (i % 3) * 0.2) * scale for i in range(12)]
+    values[low_at] = 29.0 * scale
+    assert {i for i, label in enumerate(_labels(values)) if not label} == quiet
+
+
+def test_a_neighbour_well_above_the_low_keeps_its_value():
     values = [30.0 + (i % 3) for i in range(12)]
-    values[low_at] = 10.0
-    labels = opt(_trend(values), "[" + ", ".join(
-        f"opt.series[0].label.formatter({{value: {v}, dataIndex: {i}}})" for i, v in enumerate(values)) + "]",
-        "portal_dashboard.html")
-    assert {i for i, label in enumerate(labels) if not label} == quiet
+    values[5] = 10.0
+    assert {i for i, label in enumerate(_labels(values)) if not label} == {5}
+
+
+def test_the_highest_and_the_latest_values_are_said_in_strong_ink():
+    values = [31.1, 28.5, 33.2, 31.7, 30.1, 33.2, 32.9, 30.2, 36.4, 34.1, 33.6, 34.7]
+    labels = _labels(values)
+    assert labels[8] == "{key|$36.4}" and labels[11] == "{key|$34.7}" and labels[10] == "$33.6"
+    rich = opt(_trend(values), "opt.series[0].label.rich.key", "portal_dashboard.html")
+    assert rich["fontWeight"] == 600 and rich["textBorderWidth"] == 3

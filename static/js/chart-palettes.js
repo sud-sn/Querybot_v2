@@ -61,6 +61,21 @@ window.QB_PALETTES = {
   mono: ['#a3acb8','#8a95a3','#69748a','#556173','#3d495c','#293344','#151d2b'],
 };
 
+// The dark steps: the same hues in the same order, stepped to read on the dark page's surface (#141842) --
+// the light steps there sat outside the validator's lightness band, and the default's violet at 2:1 all but
+// vanished. Each set passes every check on the adjacent pairs in dark mode (lightness 0.48-0.67, chroma, colour-
+// blind >= 8, normal vision >= 15, contrast >= 3:1); the default's are the reference palette's own dark steps,
+// with its violet. A colour follows its series across the two modes, so the order is the light set's. A
+// palette with no dark set here (the ones readers are not offered) is drawn in its light steps.
+window.QB_PALETTES_DARK = {
+  default: ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'],
+  // Each slot's own hue (OKLCH) stepped into the band; the first six told apart in every pair (normal 15.8,
+  // colour-blind 6.5 in the floor band the legend and the table relieve, as in the light set).
+  ocean: ['#2b5fea','#0dac79','#1d9ddc','#986107','#9973ff','#d12a82','#0ca2c6','#dd2727'],
+  // The same way (Vivid): normal 15.2, colour-blind 6.5 over the first six in every pair.
+  candy: ['#8141f4','#c63d36','#bd8212','#0c74a5','#0ea975','#077836','#da2677','#205ee5'],
+};
+
 
 /*
  * Status colours for chart annotations (biggest gain / biggest drop markers).
@@ -83,6 +98,10 @@ window.QB_PALETTES = {
  * categorical set: the order IS the value, and it is never cycled.
  */
 window.QB_SEQUENTIAL = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
+// On the dark page magnitude runs the other way: the least sits nearest the surface and the most is brightest,
+// so a large value stands out of the page instead of sinking into it (steps 600 to 100, no darker than 600 on
+// the dark surface; validated as an ordinal ramp in dark mode: monotone, every gap >= 0.06, one hue).
+window.QB_SEQUENTIAL_DARK = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb'];
 
 window.QB_CHART_STATUS = function () {
   const root = getComputedStyle(document.documentElement);
