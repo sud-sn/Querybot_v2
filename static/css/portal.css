@@ -606,4 +606,114 @@ body:not(:has(.portal-app-shell)) .main {
 .notice-title { font-size: var(--font-sm); color: var(--text); overflow-wrap: anywhere; }
 .notice-body { margin-top: 2px; font-size: var(--font-sm); color: var(--text-soft); white-space: pre-line; }
 .notice-when { margin-top: 4px; font-size: var(--font-xs); color: var(--text-muted); }
-.notice-empty { margin: 0; font-size: var(--font-sm); color: var(--text-muted); }
+
+/* ── The reader's other pages in the approved design (the Data guide, notifications, settings, a password) ──
+   A page opens with its name in the display face and a line under it; a card sits on the card radius without a
+   shaded head or a shadow; buttons are pills and a set of tabs one segmented control, as Home, the chat and the
+   dashboards have them. */
+.portal-app-shell .main .btn { border-radius: var(--radius-pill); }
+.portal-app-shell .main .btn-sm { padding-inline: 12px; }
+.portal-app-shell .page-header:not(.page-header-actions):not(:has(.page-header-actions)) { display: block; }
+.portal-app-shell .page-header h1,
+.portal-app-shell .semantic-title h1 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: var(--weight-bold);
+  line-height: 1.1;
+  letter-spacing: -.025em;
+  color: var(--text-strong);
+}
+.portal-app-shell .page-header p,
+.portal-app-shell .semantic-title p { max-width: 68ch; color: var(--text-secondary); font-size: var(--font-base); line-height: 1.55; }
+.portal-app-shell .main .card {
+  border-color: var(--line-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: none;
+}
+.portal-app-shell .main .card:hover { border-color: var(--line-subtle); box-shadow: none; }
+.portal-app-shell .main .card-header { gap: 12px; padding: 18px 20px 2px; border-bottom: 0; background: none; }
+.portal-app-shell .main .card-header h2,
+.portal-app-shell .main .card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: -.01em;
+  color: var(--text-strong);
+}
+.portal-app-shell .main .card-body { padding: 14px 20px 18px; }
+.portal-app-shell .main :is(.form-input, .form-group input, .form-group select, .form-group textarea):not([type="checkbox"], [type="radio"]) {
+  border-radius: var(--radius-item);
+}
+.portal-app-shell .main .qb-tabs {
+  display: inline-flex;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-alt);
+  scrollbar-width: none;
+}
+.portal-app-shell .main .qb-tab {
+  margin: 0;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+  transition: background-color var(--t-fast), color var(--t-fast);
+}
+.portal-app-shell .main .qb-tab:hover { color: var(--text-strong); }
+.portal-app-shell .main .qb-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--text-strong); box-shadow: var(--shadow-sm); }
+.portal-app-shell .main .qb-tab:focus-visible { border-radius: var(--radius-pill); }
+
+/* A page of cards one under another, as wide as reading wants. */
+.reader-page { width: min(100%, 820px); margin: 0 auto; padding: 8px 0 32px; }
+.reader-page > .page-header { margin-bottom: 22px; }
+.reader-page > .card { margin-bottom: 16px; }
+
+/* A row in a card: what it is on the left (a name, a line under it), what to do with it on the right. */
+.reader-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0;
+  border-top: 1px solid var(--line-subtle); }
+.reader-row:first-child { border-top: 0; padding-top: 4px; }
+.reader-row-text { min-width: 0; }
+.reader-row-name { color: var(--text-strong); font-size: var(--font-base); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.reader-row-meta { margin-top: 2px; color: var(--text-muted); font-size: var(--font-sm); overflow-wrap: anywhere; }
+.reader-row form { flex: 0 0 auto; margin: 0; }
+.reader-empty { margin: 0; color: var(--text-muted); font-size: var(--font-sm); line-height: 1.55; }
+.reader-hint { margin: 0 0 8px; color: var(--text-muted); font-size: var(--font-sm); line-height: 1.55; }
+@media (max-width: 600px) {
+  .reader-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
+
+/* Questions to ask, as the design has them: a pill with an arrow, that wraps when it is long. */
+.try-questions { display: flex; flex-wrap: wrap; gap: 8px; }
+.try-question {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 100%;
+  padding: 7px 13px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+  text-align: left;
+  text-decoration: none;
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+.try-question .qb-icon { flex: 0 0 auto; margin-top: 1px; color: var(--primary); }
+.try-question:hover { border-color: var(--primary); color: var(--text-strong); text-decoration: none; transform: translateY(-1px); }
+.try-question:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (prefers-reduced-motion: reduce) { .try-question { transition: none; } .try-question:hover { transform: none; } }
+.reader-when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.reader-when select { width: auto; }
+.portal-app-shell .main .form-input-sm { border-radius: var(--radius-pill); }
+.reader-page-narrow { width: min(100%, 460px); padding-top: 24px; }
+.reader-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }

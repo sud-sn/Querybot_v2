@@ -1,7 +1,8 @@
 {% extends "portal_base.html" %}
+{% from "icons.html" import ic %}
 {% block title %}{{ t('ui.title.notifications') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block content %}
-<div style="max-width:760px;margin:0 auto">
+<div class="reader-page">
   <div class="page-header">
     <h1>{{ t('ui.notif.title') }}</h1>
     <p>{{ t('ui.notif.intro') }}</p>
@@ -11,8 +12,8 @@
   {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 
   {# What the reader was told: a dashboard shared with them, a follow's update, a refresh that failed. #}
-  <section class="card notice-list" style="margin-bottom:1.5rem" aria-labelledby="noticeRecentTitle">
-    <div class="card-header"><h2 id="noticeRecentTitle" style="font-size:var(--font-md);margin:0">{{ t('ui.notif.recent') }}</h2></div>
+  <section class="card notice-list" aria-labelledby="noticeRecentTitle">
+    <div class="card-header"><h2 id="noticeRecentTitle">{{ t('ui.notif.recent') }}</h2></div>
     <div class="card-body">
       {% if notices %}
       <ul class="notice-items">
@@ -25,21 +26,20 @@
         {% endfor %}
       </ul>
       {% else %}
-      <p class="notice-empty">{{ t('ui.notif.recent_empty') }}</p>
+      <p class="reader-empty">{{ t('ui.notif.recent_empty') }}</p>
       {% endif %}
     </div>
   </section>
 
-  <div class="card" style="margin-bottom:1.5rem">
-    <div class="card-header"><h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.your_alerts') }}</h2></div>
-    <div class="card-body" style="padding:1rem">
+  <section class="card" aria-labelledby="noticeAlertsTitle">
+    <div class="card-header"><h2 id="noticeAlertsTitle">{{ t('ui.notif.your_alerts') }}</h2></div>
+    <div class="card-body">
       {% if alerts %}
         {% for a in alerts %}
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
-            padding:.6rem 0;border-bottom:1px solid var(--border)">
-            <div>
-              <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ a.question }}</div>
-              <div style="font-size:var(--font-xs);color:var(--text-muted)">
+          <div class="reader-row">
+            <div class="reader-row-text">
+              <div class="reader-row-name">{{ a.question }}</div>
+              <div class="reader-row-meta">
                 {{ a.metric_col }} {{ enum_label('condition', a.condition) }} {{ a.threshold }}
                 {% if a.condition == 'change_pct' %}%{% endif %}
                 &middot; {{ t('ui.notif.checks_every', count=a.check_interval_minutes or 60) }}
@@ -47,8 +47,7 @@
                 {% if a.last_checked %}&middot; {{ t('ui.notif.last_checked', when=a.last_checked) }}{% endif %}
               </div>
             </div>
-            <form method="post" action="/portal/notifications/alerts/{{ a.id }}/delete"
-              style="display:inline" id="del-alert-{{ a.id }}">
+            <form method="post" action="/portal/notifications/alerts/{{ a.id }}/delete" id="del-alert-{{ a.id }}">
               <button type="submit" class="btn btn-secondary btn-sm"
                 data-confirm-title="{{ t('ui.notif.delete_alert_title') }}"
                 data-confirm="{{ t('ui.notif.delete_undone') }}"
@@ -57,32 +56,26 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--text-muted)">
-          {{ t('ui.notif.no_alerts') }}
-        </div>
+        <p class="reader-empty">{{ t('ui.notif.no_alerts') }}</p>
       {% endif %}
     </div>
-  </div>
+  </section>
 
-  <div class="card" style="margin-bottom:1.5rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-      <h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.my_reports') }}</h2>
-      <a href="/portal/reports/new" class="btn btn-primary btn-sm">+ {{ t('ui.notif.new_report') }}</a>
+  <section class="card" aria-labelledby="noticeReportsTitle">
+    <div class="card-header">
+      <h2 id="noticeReportsTitle">{{ t('ui.notif.my_reports') }}</h2>
+      <a href="/portal/reports/new" class="btn btn-primary btn-sm">{{ ic("plus", 15) }}<span>{{ t('ui.notif.new_report') }}</span></a>
     </div>
-    <div class="card-body" style="padding:1rem">
-      <div style="font-size:var(--font-xs);color:var(--text-muted);margin-bottom:.75rem">
-        {{ t('ui.notif.describe_in_chat') }}
-      </div>
+    <div class="card-body">
+      <p class="reader-hint">{{ t('ui.notif.describe_in_chat') }}</p>
       {% if my_reports %}
         {% for r in my_reports %}
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;
-            padding:.5rem 0;border-bottom:1px solid var(--border)">
-            <div>
-              <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
-              {% if r.description %}<div style="font-size:var(--font-xs);color:var(--text-muted)">{{ r.description }}</div>{% endif %}
+          <div class="reader-row">
+            <div class="reader-row-text">
+              <div class="reader-row-name">{{ r.name }}</div>
+              {% if r.description %}<div class="reader-row-meta">{{ r.description }}</div>{% endif %}
             </div>
-            <form method="post" action="/portal/reports/{{ r.id }}/delete" style="display:inline"
-              id="del-my-report-{{ r.id }}">
+            <form method="post" action="/portal/reports/{{ r.id }}/delete" id="del-my-report-{{ r.id }}">
               <button type="submit" class="btn btn-secondary btn-sm"
                 data-confirm-title="{{ t('ui.notif.delete_report_title') }}"
                 data-confirm="{{ t('ui.notif.delete_report_body') }}"
@@ -91,55 +84,50 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--text-muted)">
-          {{ t('ui.notif.no_my_reports') }}
-        </div>
+        <p class="reader-empty">{{ t('ui.notif.no_my_reports') }}</p>
       {% endif %}
     </div>
-  </div>
+  </section>
 
-  <div class="card">
-    <div class="card-header"><h2 style="font-size:var(--font-md);margin:0">{{ t('ui.notif.subscriptions') }}</h2></div>
-    <div class="card-body" style="padding:1rem">
+  <section class="card" aria-labelledby="noticeSubsTitle">
+    <div class="card-header"><h2 id="noticeSubsTitle">{{ t('ui.notif.subscriptions') }}</h2></div>
+    <div class="card-body">
       {% if reports %}
         {% for r in reports %}
           {% set sub = subscriptions.get(r.id) %}
-          <div style="padding:.75rem 0;border-bottom:1px solid var(--border)">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
-              <div>
-                <div style="font-size:var(--font-base);font-weight:var(--weight-semibold)">{{ r.name }}</div>
-                {% if r.description %}<div style="font-size:var(--font-xs);color:var(--text-muted)">{{ r.description }}</div>{% endif %}
-              </div>
+          <div class="reader-row reader-row-stack">
+            <div class="reader-row-text">
+              <div class="reader-row-name">{{ r.name }}</div>
+              {% if r.description %}<div class="reader-row-meta">{{ r.description }}</div>{% endif %}
               {% if sub %}
-                <form method="post" action="/portal/notifications/unsubscribe" style="display:inline">
-                  <input type="hidden" name="subscription_id" value="{{ sub.id }}">
-                  <button type="submit" class="btn btn-secondary btn-sm">{{ t('ui.notif.unsubscribe') }}</button>
-                </form>
-              {% endif %}
-            </div>
-            {% if sub %}
-              <div style="font-size:var(--font-xs);color:var(--text-muted);margin-top:.3rem">
+              <div class="reader-row-meta">
                 {{ t('ui.notif.subscribed') }} &middot; {{ enum_label('cadence', sub.cadence) }}
                 {% if sub.cadence == 'weekly' %}{{ t('ui.notif.on_day', day=t('ui.notif.day.' ~ sub.day_of_week)) }}{% endif %}
                 {{ t('ui.notif.at_hour', hour=sub.hour) }}
                 {% if sub.status != 'active' %}&middot; {{ enum_label('alertstatus', 'paused') }}{% endif %}
                 {% if sub.last_sent %}&middot; {{ t('ui.notif.last_sent', when=sub.last_sent) }}{% endif %}
               </div>
+              {% endif %}
+            </div>
+            {% if sub %}
+              <form method="post" action="/portal/notifications/unsubscribe">
+                <input type="hidden" name="subscription_id" value="{{ sub.id }}">
+                <button type="submit" class="btn btn-secondary btn-sm">{{ t('ui.notif.unsubscribe') }}</button>
+              </form>
             {% else %}
-              <form method="post" action="/portal/notifications/subscribe"
-                style="display:flex;gap:.5rem;align-items:center;margin-top:.5rem;flex-wrap:wrap">
+              <form method="post" action="/portal/notifications/subscribe" class="reader-when">
                 <input type="hidden" name="report_id" value="{{ r.id }}">
-                <select aria-label="{{ t('ui.notif.cadence_label') }}" name="cadence" style="width:auto">
+                <select class="form-input form-input-sm" aria-label="{{ t('ui.notif.cadence_label') }}" name="cadence">
                   {% for value in ['daily', 'weekly'] %}
                   <option value="{{ value }}">{{ enum_label('cadence', value) }}</option>
                   {% endfor %}
                 </select>
-                <select aria-label="{{ t('ui.notif.day_label') }}" name="day_of_week" style="width:auto" title="{{ t('ui.notif.day_label') }}">
+                <select class="form-input form-input-sm" aria-label="{{ t('ui.notif.day_label') }}" name="day_of_week" title="{{ t('ui.notif.day_label') }}">
                   {% for day in range(7) %}
                   <option value="{{ day }}">{{ t('ui.notif.day.' ~ day) }}</option>
                   {% endfor %}
                 </select>
-                <select aria-label="{{ t('ui.notif.hour_label') }}" name="hour" style="width:auto" title="{{ t('ui.notif.hour_label') }}">
+                <select class="form-input form-input-sm" aria-label="{{ t('ui.notif.hour_label') }}" name="hour" title="{{ t('ui.notif.hour_label') }}">
                   {% for h in range(24) %}
                     <option value="{{ h }}" {% if h == 8 %}selected{% endif %}>{{ '%02d'|format(h) }}:00</option>
                   {% endfor %}
@@ -150,12 +138,10 @@
           </div>
         {% endfor %}
       {% else %}
-        <div style="font-size:var(--font-sm);color:var(--text-muted)">
-          {{ t('ui.notif.no_reports') }}
-        </div>
+        <p class="reader-empty">{{ t('ui.notif.no_reports') }}</p>
       {% endif %}
     </div>
-  </div>
+  </section>
 </div>
 <script>
 // Each notice's time in the reader's own time zone (the server keeps UTC).

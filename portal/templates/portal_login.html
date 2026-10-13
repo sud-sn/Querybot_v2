@@ -4,7 +4,6 @@
 {% from "icons.html" import ic %}
 {% block title %}{{ t('ui.title.sign_in') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block content %}
-<h1 class="sr-only">{{ t('ui.title.sign_in') }}</h1>
 <div class="login-shell">
   <div class="login-brand-identity">
     {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark') }}
@@ -12,8 +11,9 @@
     <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
   </div>
 
-  <div class="card">
+  <div class="card login-card">
     <div class="card-body login-card-body">
+      <h1 class="login-title">{{ t('ui.auth.sign_in') }}</h1>
       {% if error %}{{ alert(error, 'error', 'x-circle') }}{% endif %}
       <form method="post" action="/portal/login" data-busy-on-submit>
         {% if workspace %}
@@ -55,30 +55,29 @@
 </div>
 
 <style>
-.login-shell{max-width:400px;margin:4rem auto}
-.login-brand-identity{display:flex;flex-direction:column;align-items:center;gap:.5rem;margin-bottom:1.6rem;text-align:center}
-.login-brand{font-size:var(--font-3xl);font-weight:var(--weight-bold);color:var(--navy);letter-spacing:-.03em;line-height:1.1}
-.login-tagline{color:var(--text-muted);font-size:var(--font-sm);margin:0;line-height:1.45}
-.login-card-body{padding:1.75rem}
-.login-mono-input{font-family:var(--font-mono);letter-spacing:.02em;font-size:var(--font-base)}
-.login-submit{width:100%;justify-content:center;padding:10px;margin-top:.25rem}
-.login-footer{text-align:center;font-size:var(--font-sm);color:var(--text-muted);margin-top:1rem}
-.login-workspace{margin:0 0 1rem;font-size:var(--font-sm);color:var(--text-muted)}
-.login-workspace code{font-family:var(--font-mono);color:var(--text)}
-
-/* Folded from production.css, which loaded after this block. */
-.login-shell {
-  width: min(100%, 400px);
-  max-width: 100%;
-  min-width: 0;
-  margin: 0 auto;
-}
+/* The sign-in page in the approved design: the mark and the name over one card on the card radius, its title in the
+   display face, fields on the item radius and a pill to sign in, as the portal's pages have them. */
+.login-shell { width: min(100%, 420px); max-width: 100%; min-width: 0; margin: clamp(24px, 9vh, 96px) auto 32px; }
+.login-brand-identity { display: flex; flex-direction: column; align-items: center; gap: .5rem; margin-bottom: 1.4rem; text-align: center; }
+.login-brand { font-size: var(--font-3xl); font-weight: var(--weight-bold); color: var(--text); line-height: 1.1; }
+.login-tagline { margin: 0; color: var(--text-secondary); font-size: var(--font-sm); line-height: 1.45; }
+.login-card { border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: var(--shadow); }
+.login-card:hover { border-color: var(--line-subtle); box-shadow: var(--shadow); }
+.login-card-body { padding: 26px 28px 28px; }
+.login-title { margin: 0 0 18px; font-family: var(--font-display); font-size: var(--font-2xl); font-weight: var(--weight-bold);
+  line-height: 1.15; letter-spacing: -.02em; color: var(--text-strong); }
+.login-card .form-group input:not([type="hidden"]) { min-height: 44px; border-radius: var(--radius-item); }
+.login-mono-input { font-family: var(--font-mono); letter-spacing: .02em; font-size: var(--font-base); }
+.login-submit { width: 100%; min-height: 46px; justify-content: center; margin-top: .35rem; border-radius: var(--radius-pill);
+  font-size: var(--font-base); }
+.login-footer { max-width: 100%; margin-top: 1rem; text-align: center; font-size: var(--font-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.login-workspace { margin: 0 0 1rem; font-size: var(--font-sm); color: var(--text-muted); }
+.login-workspace code { font-family: var(--font-mono); color: var(--text); }
 .login-shell .card,
 .login-shell form,
 .login-shell .form-group,
 .login-shell input { min-width: 0; max-width: 100%; }
-.login-brand { color: var(--text); letter-spacing: 0; }
-.login-footer { max-width: 100%; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .login-card-body { padding: 22px 18px 22px; } }
 </style>
 
 {% endblock %}
