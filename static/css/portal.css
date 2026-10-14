@@ -114,18 +114,6 @@ body:has(.portal-app-shell) {
   transition: transform var(--t-fast), background var(--t-fast);
 }
 .portal-new-thread:hover { background: var(--primary-fill-hover); color: var(--on-primary); text-decoration: none; transform: translateY(-1px); }
-.portal-thread-finder {
-  width: 46px;
-  height: 46px;
-  flex: 0 0 46px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--text);
-  color: var(--surface-raised);
-  text-decoration: none;
-}
-.portal-thread-finder:hover { background: var(--text-strong); color: var(--surface-raised); text-decoration: none; }
 
 /* The pages: the current one a white pill with a soft shadow, its icon in the accent. */
 .portal-nav { display: grid; gap: 2px; }
@@ -361,7 +349,6 @@ body:not(:has(.portal-app-shell)) .main {
 .portal-sidebar-collapsed .portal-sidebar { padding-inline: 10px; }
 .portal-sidebar-collapsed .portal-brand-word,
 .portal-sidebar-collapsed .portal-new-thread > span,
-.portal-sidebar-collapsed .portal-thread-finder,
 .portal-sidebar-collapsed .portal-nav a > span,
 .portal-sidebar-collapsed .portal-user-meta,
 .portal-sidebar-collapsed .portal-account-toggle,
@@ -380,7 +367,6 @@ body:not(:has(.portal-app-shell)) .main {
   .portal-sidebar { padding-inline: 10px; }
   .portal-brand-word,
   .portal-new-thread > span,
-  .portal-thread-finder,
   .portal-nav a > span,
   .portal-user-meta,
   .portal-account-toggle,
@@ -408,7 +394,6 @@ body:not(:has(.portal-app-shell)) .main {
   .portal-drawer-open .portal-nav a > span,
   .portal-drawer-open .portal-user-meta,
   .portal-drawer-open .portal-sidebar-context { display: flex; }
-  .portal-drawer-open .portal-thread-finder,
   .portal-drawer-open .portal-account-toggle { display: grid; }
   .portal-drawer-open .portal-theme { display: grid; }
   .portal-drawer-open .portal-user-meta { display: block; }
@@ -527,7 +512,7 @@ body:not(:has(.portal-app-shell)) .main {
 
 /* The menu, the new-thread button and the brand are touch targets too. */
 @media (pointer: coarse) {
-  .portal-nav a, .portal-new-thread, .portal-brand, .portal-thread-finder, .portal-theme button,
+  .portal-nav a, .portal-new-thread, .portal-brand, .portal-theme button,
   .portal-account-toggle { min-height: 44px; }
 }
 

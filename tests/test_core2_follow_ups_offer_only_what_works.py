@@ -83,7 +83,8 @@ def test_a_total_over_all_time_offers_no_why(retail):
     con, model = retail
     payload = _ask(con, model, {"kind": "query", "intent": "value", "measures": ["net_amount"]})
     assert not any(c.startswith("Why") for c in _chips(payload))
-    assert "Net amount by month for the last 12 months" in _chips(payload)
+    # Its months are every month: the answer had no period, and the click asks for none it did not have.
+    assert "Net amount by month" in _chips(payload)
 
 
 @pytest.mark.parametrize("reply, picked", [

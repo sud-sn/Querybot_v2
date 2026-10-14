@@ -192,8 +192,7 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 }
 .portal-thread-heading button:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
 
-/* Search sits behind the sidebar's round search button: shown when it is
-   pressed on this page, or on arrival from it (?search=1). */
+/* The conversation search, at the top of the list it searches. */
 .portal-sidebar .hp-search-wrap {
   position: relative;
   display: flex;

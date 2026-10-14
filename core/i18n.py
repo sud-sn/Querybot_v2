@@ -979,7 +979,6 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.shell.close_nav": {"en": "Close navigation", "fr": "Fermer la navigation"},
     "ui.shell.new_thread": {"en": "New chat", "fr": "Nouvelle conversation"},
     "ui.shell.home_page": {"en": "Home", "fr": "Accueil"},
-    "ui.shell.search_threads": {"en": "Search conversations", "fr": "Rechercher dans les conversations"},
     "ui.shell.appearance": {"en": "Appearance", "fr": "Apparence"},
     "ui.shell.theme_light": {"en": "Light", "fr": "Clair"},
     "ui.shell.theme_dark": {"en": "Dark", "fr": "Sombre"},
@@ -5950,7 +5949,7 @@ MESSAGES: dict[str, dict[str, str]] = {
 
     # The thread panel in the sidebar.
     "ui.chat.refresh_threads": {"en": "Refresh threads", "fr": "Actualiser les conversations"},
-    "ui.chat.search_threads": {"en": "Search threads", "fr": "Rechercher une conversation"},
+    "ui.chat.search_threads": {"en": "Search conversations", "fr": "Rechercher une conversation"},
     "ui.chat.clear_search": {"en": "Clear thread search", "fr": "Effacer la recherche"},
     "ui.chat.history_label": {"en": "Recent query history", "fr": "Historique des requêtes récentes"},
     "ui.chat.your_conversations": {"en": "Your conversations", "fr": "Vos conversations"},

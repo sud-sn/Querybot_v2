@@ -756,7 +756,7 @@ body:has(.chat-page) .main { background: var(--bg); }
       <span>{{ t('ui.chat.your_conversations') }}</span>
       <button type="button" onclick="refreshHistory()" title="{{ t('ui.chat.refresh_threads') }}" aria-label="{{ t('ui.chat.refresh_threads') }}">{{ ic("refresh", 14) }}</button>
     </div>
-    <div class="hp-search-wrap" id="historySearchWrap" hidden>
+    <div class="hp-search-wrap" id="historySearchWrap">
       {{ ic("search", 15, "hp-search-icon") }}
       <input type="search" id="historySearch" class="hp-search-input"
              placeholder="{{ t('ui.chat.search_threads') }}" autocomplete="off" spellcheck="false"
@@ -1013,19 +1013,9 @@ const _requestedNewThread = new URLSearchParams(location.search).get('new') === 
 const _questionFromUrl = (new URLSearchParams(location.search).get('ask') || '').slice(0, 500);
 // "New dashboard" on the dashboards page: the box asks the reader to describe the dashboard they want.
 const _composeDashboard = new URLSearchParams(location.search).get('compose') === 'dashboard';
-// The sidebar's round search button opens the conversation search: here, in
-// place; from another page it comes here with ?search=1.
-function _openThreadSearch() {
-  const wrap = document.getElementById('historySearchWrap');
-  if (!wrap) return false;
-  wrap.hidden = false;
-  document.getElementById('historySearch')?.focus();
-  return true;
-}
-document.querySelector('.portal-thread-finder')?.addEventListener('click', (event) => {
-  if (_openThreadSearch()) event.preventDefault();
-});
-if (new URLSearchParams(location.search).get('search') === '1') _openThreadSearch();
+// The conversation search is at the top of Your conversations. A link to it from before it moved there
+// (?search=1) puts the cursor in it.
+if (new URLSearchParams(location.search).get('search') === '1') document.getElementById('historySearch')?.focus();
 const _validThreadId = value => /^[A-Za-z0-9_-]{1,80}$/.test(value || '');
 const THREAD_ID = _requestedNewThread
   ? _createThreadId()

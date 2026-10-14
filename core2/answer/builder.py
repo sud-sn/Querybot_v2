@@ -987,6 +987,13 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             else:
                 said = f"no change for any of the {many}"
             return f"{m.label} {span} against {prior_span}: {said}."
+    if periods and len(members) == 1 and len({str(r.get(members[0].name)) for r in shown}) == 1:
+        # One member's line (a filter, or a reader who sees that member's rows alone): a series, with no one to
+        # lead it ("ARI AURON led in every month"), said with the member it is of.
+        only = shown[0].get(members[0].name)
+        if only not in (None, "") and str(only) not in lead:
+            lead = f"{lead}, for {_thing(members[0].label)} {only}"
+        members = []
     if periods and not members:
         grain = periods[0].grain or "month"
 

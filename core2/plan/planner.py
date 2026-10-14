@@ -28,7 +28,7 @@ from core2.plan.followup import (asks_series, keeps_period, measures_named, name
                                  the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
-from core2.plan.thread import kept_from_above
+from core2.plan.thread import kept_from_above, member_of
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -2093,6 +2093,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 kept = those_members(plan, model, question, before, on_screen)
                 if kept is not plan and not check(kept, model, today, shown)[0]:
                     plan = kept
+            alone = one_member_series(plan, model)
+            if alone is not plan and not check(alone, model, today, shown)[0]:
+                plan = alone
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
         tried = plan
     ways = ways_on(tried, model) or main_figures(model, question)
@@ -2504,6 +2507,23 @@ def those_members(plan: Plan, model: SemanticModel, question: str, previous: Pla
         return plan
     return plan.model_copy(update={"filters": [*plan.filters, Filter(field=field, op="in", values=members)],
                                    "group_by": group_by, "limit": None})
+
+
+def one_member_series(plan: Plan, model: SemanticModel) -> Plan:
+    """A series split by a field the plan keeps to one member of is that member's series. "Booked revenue by month
+    for "ARI AURON"", clicked on revenue by doctor, kept the split by doctor: a line per doctor for one doctor,
+    headed "ARI AURON led in every month". A ranking, a share or a comparison of members keeps its split."""
+    if plan.kind != "query" or plan.time.grain is None or not plan.group_by or plan.shaped() or plan.limit \
+            or plan.intent not in (None, "trend", "breakdown", "value", "count", "forecast"):
+        return plan
+    one = {member_of(model, f.field) for f in plan.filters if f.op in ("eq", "in") and len(f.values) == 1}
+    group_by = [g for g in plan.group_by if member_of(model, g) not in one]
+    if group_by == plan.group_by:
+        return plan
+    update: dict[str, Any] = {"group_by": group_by}
+    if not group_by and plan.intent == "breakdown":
+        update["intent"] = "trend"
+    return plan.model_copy(update=update)
 
 
 def _short(exc: Exception) -> str:

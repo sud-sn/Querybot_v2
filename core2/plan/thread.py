@@ -54,6 +54,18 @@ def _field_words(model: SemanticModel, field: str) -> set[str]:
     return {names.singular(w) for w in words if len(w) > 2} - {"name", "code", "id", "key", "the"}
 
 
+def member_of(model: SemanticModel, slug: str) -> str:
+    """The member a field names: an entity, whether by its slug, its name or its code; any other field itself."""
+    if slug in model.entities:
+        return slug
+    attribute = model.attributes.get(slug)
+    if attribute is not None:
+        for name, entity in model.entities.items():
+            if attribute.column in (entity.label_column, entity.code_column, *entity.key_columns):
+                return name
+    return slug
+
+
 def _all_of(question: str, model: SemanticModel, field: str) -> bool:
     """Does the question ask for every member of the field ("all regions", "toutes les régions")?"""
     said = {names.singular(w) for found in _ALL_OF.finditer(question)
@@ -86,8 +98,11 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     filters = list(plan.filters)
     if not _OVERALL.search(question) and not _LET_GO.search(question):
         have = {f.field for f in filters}
+        # A split by the field, by any of its names: "by doctor" after one doctor's name is every doctor.
+        split = {member_of(model, g) for g in plan.group_by}
         for f in previous.filters:
-            if f.field in have or f in filters or f.field in plan.group_by or _all_of(question, model, f.field):
+            if f.field in have or f in filters or member_of(model, f.field) in split \
+                    or _all_of(question, model, f.field):
                 continue
             trial = plan.model_copy(update={"filters": [*filters, f]})
             if answers(trial):

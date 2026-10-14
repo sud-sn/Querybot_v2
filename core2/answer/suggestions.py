@@ -93,10 +93,9 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
         if bounded:
             out.append(("why", f"Why did {words.lower} change {words.span}{words.tail}?",
                         f"Pourquoi {fr.lower} a-t-il varié {fr.span}{fr.tail} ?"))
-        out.append(("trend", (f"{words.m} by month {words.span}".strip() if bounded
-                              else f"{words.m} by month for the last 12 months") + words.tail,
-                    (f"{fr.m} par mois {fr.span}".strip() if bounded
-                     else f"{fr.m} par mois sur les 12 derniers mois") + fr.tail))
+        # Month by month over the answer's own period: all of it when it had none, never a 12 months it did not ask.
+        out.append(("trend", f"{words.m} by month {words.span}".strip() + words.tail,
+                    f"{fr.m} par mois {fr.span}".strip() + fr.tail))
 
     if len(out) < 3 and not grouped and logical.parts:
         skip = {f.field for f in plan.filters}
@@ -257,7 +256,11 @@ def drills(plan: Plan, logical: Logical, payload: dict[str, Any], model: Semanti
         return None
     long_window = bounded and (logical.window.end - logical.window.start).days > 80   # type: ignore[operator]
     if measure_dates(plan, model)[0] is not None:
-        when, quand = (w.span, fr.span) if long_window else ("for the last 12 months", "sur les 12 derniers mois")
+        # The member's months over the answer's own period: every month when it had none (revenue by doctor for all
+        # time, then a doctor by month, was the doctor's last 12 months); a period too short to hold months (a week,
+        # one month) shows the last 12.
+        short = bounded and not long_window
+        when, quand = ("for the last 12 months", "sur les 12 derniers mois") if short else (w.span, fr.span)
         item("{member} by month", f'{w.m} by month for "{{member}}" {when}'.strip() + w.tail,
              "{member} par mois", f'{fr.m} par mois pour "{{member}}" {quand}'.strip() + fr.tail)
     if word:
