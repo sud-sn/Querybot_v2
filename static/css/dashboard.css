@@ -490,7 +490,6 @@
 /* Dashboard */
 .dashboard-page {
   width: 100%;
-  max-width: 1560px;
   margin: 0 auto;
 }
 .dashboard-page .metrics {

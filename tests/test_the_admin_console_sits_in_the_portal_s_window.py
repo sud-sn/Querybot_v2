@@ -1,9 +1,10 @@
 """The admin console in the approved design: the portal's window, its sidebar panel, Light, Dark or Auto.
 
 The console was a full-bleed page with a dark-edged sidebar, small headings, cards with a grey head and a shadow,
-square buttons, uppercase table heads and number labels, and no dark theme. It now sits in the portal's window: a
-white window with large rounded corners on the periwinkle ground, the sidebar a light panel inside it (the places
-as pills, the workspaces, Appearance, who is signed in), the page scrolling on the window. A page opens with its
+square buttons, uppercase table heads and number labels, and no dark theme. It now sits in the portal's window,
+which is the whole browser window (a rounded window inset on a coloured page, capped at 1600px, left bands round it
+and cut tables off at 100% zoom): the sidebar a light panel inside it (the places as pills, the workspaces,
+Appearance, who is signed in), the page scrolling on the window and using its whole width. A page opens with its
 name in the display face; a card is on the card radius without a grey head or a shadow; buttons are pills; a table's
 head and a number's label are sentence case; the theme is the one chosen on the device, as in the portal.
 
@@ -62,11 +63,34 @@ def admin(tmp_path, monkeypatch):
         yield TestClient(app), account
 
 
+PORTAL_CSS = (ROOT / "static/css/portal.css").read_text(encoding="utf-8")
+HOME_CSS = (ROOT / "static/css/home.css").read_text(encoding="utf-8")
+DASHBOARD_CSS = (ROOT / "static/css/dashboard.css").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("css,shell,body", [(ADMIN_CSS, ".shell", "body:has(.shell)"),
+                                            (PORTAL_CSS, ".portal-app-shell", "body:has(.portal-app-shell)")])
+def test_the_console_and_the_portal_fill_the_browser_window(css, shell, body):
+    """At any screen size and any zoom: no margin round the window, no cap on its width, no rounded frame, and the
+    height of what the browser shows (100dvh, which follows a phone's browser bar)."""
+    rule = _rule(css, shell)
+    for part in ("width: 100%", "height: 100dvh", "margin: 0", "var(--window)", "display: grid"):
+        assert part in rule, part
+    for gone in ("max-width", "border-radius", "100vw", "- 32px"):
+        assert gone not in rule, gone
+    assert "var(--window)" in _rule(css, body)
+
+
+@pytest.mark.parametrize("css,selector", [(ADMIN_CSS, ".page"), (HOME_CSS, ".home"),
+                                          (DASHBOARD_CSS, ".dashboard-page")])
+def test_a_page_uses_the_whole_width_it_is_given(css, selector):
+    rule = _rule(css, selector)
+    assert not re.search(r"max-width:\s*\d", rule), rule
+
+
 def test_the_console_sits_in_the_portal_s_window():
     shell = _rule(ADMIN_CSS, ".shell")
-    for part in ("var(--window)", "var(--radius-window)", "calc(100vh - 32px)", "display: grid"):
-        assert part in shell, part
-    assert "var(--ground)" in _rule(ADMIN_CSS, "body:has(.shell)")
+    assert "var(--window)" in shell and "display: grid" in shell
     side = _rule(ADMIN_CSS, ".shell > .sidebar")
     assert "border-radius: 24px" in side and "position: relative" in side
     main = _rule(ADMIN_CSS, ".shell-main")

@@ -611,9 +611,9 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 .shell-main { background: var(--bg); }
 .page {
   width: 100%;
-  max-width: 1560px;
+  max-width: none;
   margin: 0;
-  padding: 22px 32px 40px;
+  padding: 22px clamp(16px, 2.2vw, 40px) 40px;
 }
 .admin-topbar {
   background: color-mix(in srgb, var(--surface) 96%, transparent);
@@ -664,28 +664,26 @@ body.page-bleed .page > :last-child { flex: 1 1 auto; min-height: 0; }
 }
 
 /* ── The admin console in the approved design ────────────────────────────────
-   The console sits in the portal's window: a white window with large rounded corners on the periwinkle ground,
-   the sidebar a light panel inside it (the brand, the places as pills, the workspaces, Appearance and who is
-   signed in), the page scrolling on the window's white. A page opens with its name in the display face; a card
-   sits on the card radius without a grey head or a shadow; buttons are pills; a table's head is sentence case.
-   At 860px and below the window fills the screen and the sidebar is a drawer, as before. */
-body:has(.shell) { overflow: hidden; display: flow-root; background: var(--ground); }
+   The console fills the browser window, as the portal does, at any screen size and any zoom: the sidebar a
+   light panel inside it (the brand, the places as pills, the workspaces, Appearance and who is signed in), the
+   page scrolling on the window's white and using its whole width. A page opens with its name in the display
+   face; a card sits on the card radius without a grey head or a shadow; buttons are pills; a table's head is
+   sentence case. At 860px and below the sidebar is a drawer, as before. */
+body:has(.shell) { overflow: hidden; background: var(--window); }
 .shell {
-  width: calc(100vw - 32px);
-  max-width: 1600px;
-  height: calc(100vh - 32px);
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
   min-height: 0;
-  margin: 16px auto;
+  margin: 0;
   padding: 12px;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   gap: 12px;
   background: var(--window);
-  border-radius: var(--radius-window);
-  box-shadow: var(--shadow);
   overflow: hidden;
 }
-body.page-bleed .shell { height: calc(100vh - 32px); }
+body.page-bleed .shell { height: 100vh; height: 100dvh; }
 .shell > .sidebar {
   position: relative;
   top: auto;
@@ -842,17 +840,11 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
 .shell table th { text-transform: none; letter-spacing: 0; }
 
 @media (max-width: 860px) {
-  body:has(.shell) { background: var(--window); overflow: auto; }
+  body:has(.shell) { overflow: auto; }
   .shell {
-    width: 100vw;
-    height: 100vh;
-    margin: 0;
     padding: 0;
     display: flex;
-    border-radius: 0;
-    box-shadow: none;
   }
-  body.page-bleed .shell { height: 100vh; }
   .shell > .sidebar {
     position: fixed;
     left: -280px;
@@ -861,6 +853,6 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
     border-radius: 0 24px 24px 0;
   }
   .shell > .sidebar.open { left: 0; box-shadow: 18px 0 46px color-mix(in srgb, var(--shadow-tint) 34%, transparent); }
-  .shell-main { height: 100vh; border-radius: 0; }
+  .shell-main { height: 100vh; height: 100dvh; border-radius: 0; }
   .admin-emergency-banner { border-radius: 0; margin: 0; }
 }

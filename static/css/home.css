@@ -8,7 +8,6 @@
 
 .home {
   width: 100%;
-  max-width: 1240px;
   margin: 0 auto;
   padding: 26px clamp(16px, 3vw, 40px) 40px;
   display: grid;

@@ -1125,6 +1125,11 @@ main[tabindex="-1"]:focus { outline: none; }
 .qb-table tbody tr:hover { background: var(--row-hover); }
 .qb-table tbody tr:last-child td { border-bottom: none; }
 .qb-table-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: var(--font-sm); }
+/* A narrower window (a laptop, or a large screen zoomed in): tighter cells, so a wide table fits its box rather
+   than scrolling sideways. */
+@media (max-width: 1400px) {
+  .qb-table thead th, .qb-table tbody td { padding-inline: .6rem; }
+}
 
 /* ── Pagination ── */
 .qb-pagination { display: flex; align-items: center; gap: .35rem; margin-top: .85rem; flex-wrap: wrap; }

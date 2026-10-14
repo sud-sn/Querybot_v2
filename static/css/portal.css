@@ -1,13 +1,13 @@
 /* ============================================================
    Solviz Portal — the shell and portal-wide pieces
    ------------------------------------------------------------
-   The approved prototype: the app is a white window with large
-   rounded corners on a soft periwinkle page; inside it, a light
-   sidebar panel (the brand, New chat with search beside it, the
-   pages, the reader's conversations, Appearance and the reader)
-   and the page itself. From 1100px down the sidebar is a rail of
-   icons; at 720px and below the window fills the screen and the
-   sidebar is a drawer.
+   The approved prototype's window is the whole browser window: it
+   fills the screen at any size and at any zoom the reader chooses,
+   with no frame around it. Inside it, a light sidebar panel (the
+   brand, New chat with search beside it, the pages, the reader's
+   conversations, Appearance and the reader) and the page itself.
+   From 1100px down the sidebar is a rail of icons; at 720px and
+   below the sidebar is a drawer.
    ============================================================ */
 
 body {
@@ -17,24 +17,19 @@ body {
 }
 body:has(.portal-app-shell) {
   overflow: hidden;
-  /* flow-root: the window's top margin stays inside the body instead of
-     carrying it down and baring a strip of the page above the ground. */
-  display: flow-root;
-  background: var(--ground);
+  background: var(--window);
 }
 
 .portal-app-shell {
-  width: calc(100vw - 32px);
-  max-width: 1600px;
-  height: calc(100vh - 32px);
-  margin: 16px auto;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;      /* a phone's browser bar comes and goes: the window follows the space it leaves */
+  margin: 0;
   padding: 12px;
   display: grid;
   grid-template-columns: 284px minmax(0, 1fr);
   gap: 12px;
   background: var(--window);
-  border-radius: var(--radius-window);
-  box-shadow: var(--shadow);
   overflow: hidden;
   transition: grid-template-columns var(--t-med) var(--ease-out);
 }
@@ -424,17 +419,11 @@ body:not(:has(.portal-app-shell)) .main {
   .portal-drawer-open .portal-user-card { justify-content: flex-start; padding: 6px; border-color: var(--sidebar-border); }
 }
 
-/* ── Phone: the window fills the screen; the sidebar is a drawer ── */
+/* ── Phone: the sidebar is a drawer ── */
 @media (max-width: 720px) {
-  body:has(.portal-app-shell) { background: var(--window); }
   .portal-app-shell {
-    width: 100vw;
-    height: 100vh;
-    margin: 0;
     padding: 10px 12px 0;
     grid-template-columns: minmax(0, 1fr);
-    border-radius: 0;
-    box-shadow: none;
   }
   .portal-sidebar {
     position: fixed;
