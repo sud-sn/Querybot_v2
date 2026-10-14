@@ -14,6 +14,7 @@ value of theirs for who has none: they see none of the rows it covers.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import Request
@@ -33,9 +34,19 @@ def _named(table) -> str:
     return ".".join(p for p in (table.schema_name, table.name) if p).upper()
 
 
+_NUMBERS = ("integer", "decimal", "float")
+
+
+def _words(name: str) -> str:
+    """A column's name as a label: "DOCTOR_ID" -> "Doctor ID"."""
+    return " ".join(w.upper() if w.lower() in ("id", "no", "nr") else w.capitalize()
+                    for w in name.replace("_", " ").split()) or name
+
+
 def fields_of(model) -> list[dict[str, Any]]:
-    """The fields a rule can be on: the groupings and names people read the data by, each with the table it is
-    on, as the warehouse spells them. "Store" (a store by its name), "Store › Region"."""
+    """The fields a rule can be on: the groupings and names people read the data by, and the ID columns, each with
+    the table it is on, as the warehouse spells them. "Store" (a store by its name), "Store › Region", "Store › ID"
+    (a store by its own key), "Sales › Store ID" (the key the sales rows point at it with)."""
     if model is None:
         return []
     out: dict[tuple[str, str], dict[str, Any]] = {}
@@ -48,7 +59,7 @@ def fields_of(model) -> list[dict[str, Any]]:
         key = (_named(table), column.name)
         if key not in out:
             out[key] = {"table": key[0], "field": column.name, "label": f"{owner} › {label}" if label else owner,
-                        "owner": owner, "name": label}
+                        "owner": owner, "name": label, "numeric": column.data_type in _NUMBERS}
 
     for entity in model.entities.values():
         owner = entity.business_name or entity.slug.replace("_", " ").title()
@@ -67,7 +78,32 @@ def fields_of(model) -> list[dict[str, Any]]:
                        (table.name.title() if table is not None else "")))
         add(attribute.column, attribute.business_name or attribute.slug.split(".")[-1].replace("_", " ").title(),
             owner)
+    # The ID columns. A member's own key ("Doctor › ID") narrows the members and every table linked to them; a key
+    # a table's rows point at a member with ("Revenue › Doctor ID") narrows those rows and the tables linked to
+    # them, never the list of members. Not a calendar's key, nor a key pointing at one: a date is no one's row.
+    calendars = {k for k, t in model.tables.items() if t.kind == "calendar"}
+    calendars |= {j.to_table for j in model.joins.values() if j.to_calendar}
+    to_calendar = {c for j in model.joins.values() if j.to_calendar for c in j.from_columns}
+    for entity in model.entities.values():
+        if len(entity.key_columns) == 1 and entity.table not in calendars:
+            add(entity.key_columns[0], "ID", entity.business_name or entity.slug.replace("_", " ").title())
+    pointing = {j.from_columns[0] for j in model.joins.values()
+                if len(j.from_columns) == 1 and not j.to_calendar and j.trust != "rejected"}
+    for column in model.columns.values():
+        if (column.role == "foreign_key" or column.key in pointing) and column.key not in to_calendar \
+                and column.table not in calendars and not column.parts:
+            table = model.tables.get(column.table)
+            if table is not None:
+                label = re.sub(r"\bid\b", "ID", column.business_name, flags=re.IGNORECASE) or _words(column.name)
+                add(column.key, label, table.business_name or _words(table.name))
     return sorted(out.values(), key=lambda f: (f["owner"].lower(), f["name"].lower()))
+
+
+def _number(value: Any) -> int | float | None:
+    """A typed value as the number it is, or None: "1042" -> 1042, "12.5" -> 12.5, "D-12" -> None."""
+    from core.compliance.sql_guard import as_number
+
+    return as_number(value)
 
 
 def _who(rule: dict[str, Any], groups: dict[str, str], people: dict[str, str]) -> str:
@@ -192,8 +228,16 @@ def _rule_from(data: dict[str, Any], fields: list[dict[str, Any]]) -> dict[str, 
     else:
         values = data.get("values")
         values = values if isinstance(values, list) else str(values or "").split(",")
-        condition = {"field": field["field"], "operator": "IN", "value_source": "static",
-                     "value": [str(v).strip() for v in values if str(v).strip()]}
+        typed = [str(v).strip() for v in values if str(v).strip()]
+        if field.get("numeric"):
+            # A number column compared with a word fails the whole question in most databases: said here, once.
+            wrong = next((v for v in typed if _number(v) is None), None)
+            if wrong is not None:
+                raise ValueError(f"{field['label']} holds numbers: \u201c{wrong}\u201d is not one.")
+            typed = [_number(v) for v in typed]
+        condition = {"field": field["field"], "operator": "IN", "value_source": "static", "value": typed}
+    if field.get("numeric") and sees != "every":
+        condition["numeric"] = True                     # its values compared as numbers (core/compliance/sql_guard.py)
     return {"subject_type": str(data.get("who") or ""), "subject_id": str(data.get("whom") or ""),
             "table_fqn": field["table"], "name": field["label"], "condition": condition}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -196,6 +197,20 @@ def _resolve_value(condition: dict, context: PolicyContext) -> Any:
     return condition.get("value")
 
 
+def as_number(value: Any) -> int | float | None:
+    """A value as the number it is, or None: 1042, "1042" -> 1042; "12.5" -> 12.5; "D-12", "", True -> None."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    text = str(value).strip()
+    if re.fullmatch(r"[+-]?\d+", text):
+        return int(text)
+    if re.fullmatch(r"[+-]?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?|[+-]?\d+[eE][+-]?\d+", text):
+        return float(text)
+    return None
+
+
 def _literal(value: Any) -> exp.Expression:
     if value is None:
         return exp.Null()
@@ -223,6 +238,10 @@ def _condition_expression(condition: dict, alias: str, context: PolicyContext) -
         operator = "IN"
     if operator in {"IN", "NOT IN"}:
         values = [item for item in (value if isinstance(value, list) else [value]) if item is not None and item != ""]
+        if condition.get("numeric"):
+            # An ID kept as a number, compared as one. A value that is no number ("D-12" typed as a person's own
+            # value) matches no row: compared as written, it failed every question on the database's conversion.
+            values = [n for n in (as_number(item) for item in values) if n is not None]
         if not values:
             # One of nothing: no row (a reader with no value of their own sees nothing, never everything).
             return _never() if operator == "IN" else exp.Not(this=_never())

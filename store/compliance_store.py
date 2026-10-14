@@ -431,6 +431,8 @@ def _row_rule_values(rule: dict) -> tuple[str, str, str, str, dict]:
             kept["value_source"], kept["value"] = "static", values
         else:
             raise ValueError("A rule shows some values of its field, the person's own, or every row.")
+        if condition.get("numeric") is True:
+            kept["numeric"] = True          # an ID kept as a number: its values compared as numbers (sql_guard.py)
     return subject_type, subject_id, table, str(rule.get("name") or "").strip()[:120], kept
 
 
