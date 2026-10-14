@@ -351,11 +351,18 @@
     {% endif %}
   </div>
   <div class="step-body">
+    {% if not compliance_profile_saved %}
+    <div id="profile-not-chosen" role="status" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--amber-light);border:1px solid color-mix(in srgb,var(--amber) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--amber)">
+      <strong>No industry profile chosen yet.</strong> Until one is saved, Solviz treats this workspace as regulated
+      (the strictest rules), so member names are not read for questions. Pick one and press Save industry profile:
+      Standard when the data is not banking or healthcare.
+    </div>
+    {% endif %}
     <form method="post" action="/admin/clients/{{ client.account_id }}/compliance/profile">
       <input type="hidden" name="next" value="setup">
       <div class="profile-grid" style="display:grid;grid-template-columns:repeat(3,minmax(200px,1fr));gap:.75rem">
         <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">
-          <input type="radio" name="industry" value="standard" {% if compliance_profile.industry != 'banking' and compliance_profile.industry != 'healthcare_pharmacy' %}checked{% endif %}>
+          <input type="radio" name="industry" value="standard" required {% if compliance_profile_saved and compliance_profile.industry != 'banking' and compliance_profile.industry != 'healthcare_pharmacy' %}checked{% endif %}>
           <strong> Standard</strong><p style="font-size:var(--font-sm);margin:.25rem 0 0">No regulated default-deny controls.</p>
         </label>
         <label class="profile-card" style="display:block;border:1px solid var(--border);border-radius:var(--radius);padding:.85rem;cursor:pointer">

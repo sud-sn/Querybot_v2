@@ -9834,6 +9834,8 @@ async def client_setup_page(request: Request, account_id: str):
         "graph_pending_reviews": graph_pending_reviews,
         "db_cfg":               db_cfg,
         "compliance_profile":   compliance_profile,
+        # No row yet: the page shows no profile as chosen, as the policy engine reads it (regulated, fail-closed).
+        "compliance_profile_saved": store.compliance_profile_exists(account_id),
         "masking_reviewed_at":  masking_reviewed_at,
         "schema_files":         schema_files,
         "kb_files":             kb_files,

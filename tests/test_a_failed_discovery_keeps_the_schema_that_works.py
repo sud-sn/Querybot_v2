@@ -191,3 +191,28 @@ class TestSetupLeadsWhereItSays:
                 hidden = page[start:at + tag.start()]
                 break
         assert 'name="platform_type"' in hidden and 'name="db_config_id"' not in hidden
+
+    def test_an_industry_profile_never_saved_is_shown_as_not_chosen(self, workspace):
+        # The policy engine treats a workspace with no saved profile as regulated (fail-closed); the page
+        # showed Standard as chosen, and the member-name index stayed empty until Save was pressed anyway.
+        import re
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from admin import routes
+        import store
+
+        account, _schema = workspace
+        with store.get_db() as conn:
+            conn.execute("DELETE FROM compliance_profile WHERE account_id=?", (account,))
+        app = FastAPI()
+        app.include_router(routes.router)
+
+        def standard_radio(html: str) -> str:
+            return re.search(r'<input type="radio" name="industry" value="standard"[^>]*>', html).group(0)
+
+        with patch.object(routes, "_is_auth", return_value=True):
+            html = TestClient(app).get(f"/admin/clients/{account}/setup").text
+            assert "No industry profile chosen yet." in html and "checked" not in standard_radio(html)
+            store.save_compliance_profile(account, mode="standard")
+            html = TestClient(app).get(f"/admin/clients/{account}/setup").text
+            assert "No industry profile chosen yet." not in html and "checked" in standard_radio(html)
