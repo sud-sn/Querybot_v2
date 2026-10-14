@@ -1933,11 +1933,13 @@
       if (!discResp.ok && discResp.status !== 303) {
         throw new Error(`Discovery trigger failed (HTTP ${discResp.status})`);
       }
+      let runId = '';
+      try { runId = (await discResp.json()).run || ''; } catch (_) {}
 
       // ── Step 3: poll until discovery completes ──────────────────────────────
       btn.textContent = 'Discovering…';
       statusEl.textContent = '⏳ Schema discovery running — masking fields as configured…';
-      await _pollUntilDiscoveryDone();
+      await _pollUntilDiscoveryDone(runId);
 
       // ── Step 4: show completion summary ────────────────────────────────────
       _showMaskingComplete(config);
@@ -1951,30 +1953,39 @@
     }
   };
 
-  async function _pollUntilDiscoveryDone() {
+  // Follows this run of discovery (runId) to its end: done, or failed with the reason the server kept. A
+  // server too old to name its runs is followed by the workspace's state, as before.
+  async function _pollUntilDiscoveryDone(runId) {
     const progressBar  = document.getElementById('mask-disc-fill');
     const progressText = document.getElementById('mask-disc-text');
     let   elapsed = 0;
     while (true) {
       await new Promise(r => setTimeout(r, 3000));
       elapsed += 3;
+      let d;
       try {
         const r = await fetch(`/admin/clients/${accountId}/setup/status`, {credentials:'same-origin'});
-        const d = await r.json();
-        const state = d.state || 'NEW';
-        const schemaCount = d.schema_file_count || 0;
-        // Animate a fake progress bar (discovery has no incremental events)
-        const fakeP = Math.min(95, Math.round(elapsed / 1.5));
-        if (progressBar) progressBar.style.width = fakeP + '%';
-        if (progressText) progressText.textContent = `Discovering… (${schemaCount} tables found so far)`;
-        if (state === 'SCHEMA_READY' || state === 'READY') {
+        d = await r.json();
+      } catch (_) {
+        continue;   // network hiccup: keep waiting
+      }
+      const run = d.discovery_run || {};
+      // Animate a fake progress bar (discovery has no incremental events)
+      const fakeP = Math.min(95, Math.round(elapsed / 1.5));
+      if (progressBar) progressBar.style.width = fakeP + '%';
+      if (progressText) progressText.textContent = `Discovering… reading the selected tables (${elapsed}s)`;
+      if (runId && run.id === runId) {
+        if (run.status === 'failed') throw new Error('Discovery failed: ' + (run.message || 'see the Schema step'));
+        if (run.status === 'done') {
           if (progressBar) progressBar.style.width = '100%';
-          return schemaCount;
+          return run.tables || d.schema_file_count || 0;
         }
-        if (elapsed > 300) throw new Error('Discovery timed out after 5 minutes');
-      } catch(pollErr) {
-        if (String(pollErr).includes('timed out')) throw pollErr;
-        // Network hiccup — keep waiting
+      } else if (!runId && (d.state === 'SCHEMA_READY' || d.state === 'READY')) {
+        if (progressBar) progressBar.style.width = '100%';
+        return d.schema_file_count || 0;
+      }
+      if (elapsed > 1800) {
+        throw new Error('Discovery is still running after 30 minutes. Reload this page later to see the tables.');
       }
     }
   }

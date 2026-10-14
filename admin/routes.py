@@ -10355,6 +10355,8 @@ async def admin_setup_status(request: Request, account_id: str):
         "validation": validation_summary,
         "kb_file_count": len(kb_files),
         "schema_file_count": len(schema_files),
+        # The latest discovery: {id, status: running | done | failed, message, tables}.
+        "discovery_run": state_data.get("discovery_run") or {},
         "business_desc": state_data.get("business_desc", client.get("business_desc", "")),
     })
 
@@ -10997,24 +10999,18 @@ async def admin_mask_preview(request: Request, account_id: str, fqn: str = ""):
                     conn.close()
 
             elif db_type == "snowflake":
+                from core.schema import _sf_table, sf_table_columns
+
                 tbl    = parts[-1]
-                schema = parts[-2] if len(parts) >= 2 else "PUBLIC"
-                db     = parts[0]  if len(parts) >= 3 else ""
+                schema = parts[-2] if len(parts) >= 2 else (creds.get("schema") or "PUBLIC")
+                db     = parts[0]  if len(parts) >= 3 else (creds.get("database") or "")
                 conn   = _sf_connect(creds)
                 try:
                     cur = conn.cursor()
-                    query = ("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
-                             "WHERE TABLE_NAME = %s AND TABLE_SCHEMA = %s")
-                    params: list = [tbl, schema]
-                    if db:
-                        query += " AND TABLE_CATALOG = %s"
-                        params.append(db)
-                    cur.execute(query + " ORDER BY ORDINAL_POSITION", params)
-                    col_defs = [{"name": str(r[0]).upper(), "type": r[1]} for r in cur.fetchall()]
+                    col_defs = sf_table_columns(cur, db, schema, tbl)
                     if col_defs:
                         cols_sql = ", ".join(f'"{c["name"]}"' for c in col_defs)
-                        db_prefix = f'"{db}".' if db else ""
-                        cur.execute(f'SELECT {cols_sql} FROM {db_prefix}"{schema}"."{tbl}" LIMIT 3')
+                        cur.execute(f"SELECT {cols_sql} FROM {_sf_table(db, schema, tbl)} LIMIT 3")
                         col_names = [c["name"] for c in col_defs]
                         rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
                 finally:
@@ -11189,26 +11185,15 @@ async def admin_column_sensitivity(
                         conn.close()
 
                 elif db_type == "snowflake":
-                    # parts: [DB, SCHEMA, TABLE]
+                    # parts: [DB, SCHEMA, TABLE]. Read in the table's own database, with no warehouse needed.
+                    from core.schema import sf_table_columns
+
                     tbl    = parts[-1]
-                    schema = parts[-2] if len(parts) >= 2 else "PUBLIC"
-                    db     = parts[0]  if len(parts) >= 3 else ""
+                    schema = parts[-2] if len(parts) >= 2 else (creds.get("schema") or "PUBLIC")
+                    db     = parts[0]  if len(parts) >= 3 else (creds.get("database") or "")
                     conn   = _sf_connect(creds)
                     try:
-                        cur = conn.cursor()
-                        query = (
-                            "SELECT COLUMN_NAME, DATA_TYPE "
-                            "FROM INFORMATION_SCHEMA.COLUMNS "
-                            "WHERE TABLE_NAME = %s AND TABLE_SCHEMA = %s"
-                        )
-                        params: list = [tbl, schema]
-                        if db:
-                            query += " AND TABLE_CATALOG = %s"
-                            params.append(db)
-                        query += " ORDER BY ORDINAL_POSITION"
-                        cur.execute(query, params)
-                        for row in cur.fetchall():
-                            result.append({"name": str(row[0]).upper(), "type": row[1]})
+                        result.extend(sf_table_columns(conn.cursor(), db, schema, tbl))
                     finally:
                         conn.close()
 
@@ -11427,6 +11412,15 @@ async def admin_discover_schema(
     )
     allowed_set         = set(kb_tables_selected) if kb_tables_selected else None
 
+    # This run, so the Setup page follows it to its end (done, or failed and why) rather than reading "ready" from
+    # an earlier discovery, or waiting on one that already failed.
+    run_id = secrets.token_hex(6)
+    state_data_existing["discovery_run"] = {
+        "id": run_id, "status": "running",
+        "started": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    }
+    save_state(account_id, client.get("state") or "NEW", state_data_existing)
+
     async def _do_discover():
         try:
             from core.schema import discover_and_write
@@ -11488,6 +11482,7 @@ async def admin_discover_schema(
             shutil.rmtree(staging, ignore_errors=True)
             next_state = dict(state_data_existing)
             next_state.pop("discovery_error", None)
+            next_state["discovery_run"] = {**state_data_existing["discovery_run"], "status": "done", "tables": count}
             next_state["schema_dir"] = schema_dir
             # ── Schema drift detection ─────────────────────────────────────────
             if _old_schema:
@@ -11719,6 +11714,10 @@ async def admin_discover_schema(
                     "message": _db_connection_error_message(db_type, e),
                     "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                 }
+                failed_state["discovery_run"] = {
+                    **(failed_state.get("discovery_run") or {"id": run_id}),
+                    "status": "failed", "message": failed_state["discovery_error"]["message"],
+                }
                 save_state(account_id, latest.get("state") or "NEW", failed_state)
             except Exception as _state_exc:
                 log.warning("Could not record the failed discovery for %s: %s", account_id, _state_exc)
@@ -11727,7 +11726,7 @@ async def admin_discover_schema(
     # Return JSON when called from JavaScript (AJAX), redirect otherwise
     if request.headers.get("accept", "").startswith("application/json") or \
        request.headers.get("x-requested-with") == "XMLHttpRequest":
-        return JSONResponse({"status": "ok", "message": "Discovery started"})
+        return JSONResponse({"status": "ok", "message": "Discovery started", "run": run_id})
     from urllib.parse import quote
     return RedirectResponse(
         f"/admin/clients/{account_id}/setup?saved={quote('Schema discovery started — refresh in 60 seconds')}",

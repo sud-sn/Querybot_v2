@@ -56,7 +56,8 @@ def workspace(tmp_path, monkeypatch):
     return account, schema
 
 
-def _rediscover(account: str, discover) -> None:
+def _rediscover(account: str, discover) -> str:
+    """Runs Re-discover to its end; the id of the run the route started."""
     from admin import routes
 
     def saved_connection(db_id):
@@ -71,8 +72,9 @@ def _rediscover(account: str, discover) -> None:
             patch("core.schema.discover_and_write", side_effect=discover), \
             patch.object(routes, "_profile_suggested_joins", new=AsyncMock(return_value={})), \
             patch.object(routes, "_sync_all_log_exports_bg", return_value=None):
-        asyncio.run(routes.admin_discover_schema(request, account, tasks))
+        started = json.loads(asyncio.run(routes.admin_discover_schema(request, account, tasks)).body)
         asyncio.run(tasks())
+    return started["run"]
 
 
 def _state(account: str) -> tuple[str, dict]:
@@ -216,3 +218,40 @@ class TestSetupLeadsWhereItSays:
             store.save_compliance_profile(account, mode="standard")
             html = TestClient(app).get(f"/admin/clients/{account}/setup").text
             assert "No industry profile chosen yet." not in html and "checked" in standard_radio(html)
+
+
+class TestTheSetupPageFollowsTheRun:
+    """The progress bar waited for "schema ready": a re-run read as finished at once, and a first run that failed
+    spun for five minutes and then said "timed out". It now follows the run it started to its end."""
+
+    def _status(self, account: str) -> dict:
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from admin import routes
+
+        app = FastAPI()
+        app.include_router(routes.router)
+        with patch.object(routes, "_is_auth", return_value=True):
+            return TestClient(app).get(f"/admin/clients/{account}/setup/status").json()["discovery_run"]
+
+    def test_a_failed_run_is_reported_with_its_reason(self, workspace):
+        account, _schema = workspace
+        run = _rediscover(account, lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("Warehouse 'WH' is suspended.")))
+        status = self._status(account)
+        assert status["id"] == run and status["status"] == "failed"
+        assert "Warehouse 'WH' is suspended." in status["message"]
+
+    def test_a_run_that_worked_is_done_with_its_table_count(self, workspace):
+        account, _schema = workspace
+
+        def found(creds, db_type, folder, **_kwargs):
+            (Path(folder) / "ORDERS.md").write_text("# ORDERS\n", encoding="utf-8")
+            (Path(folder) / "_schema.json").write_text(json.dumps({"ORDERS": {"columns": []}}), encoding="utf-8")
+            return 1
+
+        run = _rediscover(account, found)
+        assert self._status(account) == {**self._status(account), "id": run, "status": "done", "tables": 1}
+
+    def test_the_page_follows_the_run_it_started(self):
+        page = (Path(__file__).resolve().parents[1] / "admin/templates/client_setup.html").read_text(encoding="utf-8")
+        assert "_pollUntilDiscoveryDone(runId)" in page and "run.status === 'failed'" in page

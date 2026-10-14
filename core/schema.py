@@ -799,6 +799,31 @@ def _sf_schema_ref(schema: str, database: str = "") -> str:
     return ".".join(_sf_ident(part) for part in (database, schema) if part)
 
 
+# A Snowflake column type by its family, as INFORMATION_SCHEMA.COLUMNS names it ("VARCHAR(100)" is TEXT).
+_SF_TYPE_FAMILY = {
+    "VARCHAR": "TEXT", "CHAR": "TEXT", "CHARACTER": "TEXT", "STRING": "TEXT", "TEXT": "TEXT",
+    "NUMBER": "NUMBER", "DECIMAL": "NUMBER", "NUMERIC": "NUMBER", "INT": "NUMBER", "INTEGER": "NUMBER",
+    "BIGINT": "NUMBER", "SMALLINT": "NUMBER", "TINYINT": "NUMBER", "BYTEINT": "NUMBER",
+    "FLOAT": "FLOAT", "FLOAT4": "FLOAT", "FLOAT8": "FLOAT", "DOUBLE": "FLOAT", "REAL": "FLOAT",
+}
+
+
+def sf_table_columns(cur, database: str, schema: str, table: str) -> list[dict]:
+    """[{name, type}] of a Snowflake table or view, in its column order, names in capitals.
+
+    From DESCRIBE TABLE on its full name: no warehouse needed, and the table is found in its own database
+    whichever database the session is in (or none). INFORMATION_SCHEMA.COLUMNS needs both a running warehouse
+    and the session's current database to be the table's."""
+    columns = []
+    for row in _sf_show_rows(cur, f"DESCRIBE TABLE {_sf_table(database, schema, table)}"):
+        if str(row.get("kind") or "COLUMN").upper() != "COLUMN":
+            continue
+        declared = str(row.get("type") or "").strip().upper()
+        base = re.split(r"[(\s]", declared, maxsplit=1)[0] if declared else ""
+        columns.append({"name": str(row.get("name")).upper(), "type": _SF_TYPE_FAMILY.get(base, base)})
+    return columns
+
+
 def _fetch_pk_columns_snowflake(cur, schema: str, database: str = "") -> dict[str, list[str]]:
     """Return {TABLE_NAME_UPPER: [pk_col, ...]}: the primary keys declared in the schema (Snowflake).
 

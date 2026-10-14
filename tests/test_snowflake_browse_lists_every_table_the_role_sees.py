@@ -371,3 +371,84 @@ class TestThePickedTablesAreRead:
         assert (link["parent_table"], link["parent_col"], link["ref_table"], link["ref_col"]) == (
             "ORDERS", "CUSTOMER_ID", "CUSTOMERS", "CUSTOMER_ID")
         assert link["enforced"] is False
+
+
+# ── The masking review lists each picked table's fields ─────────────────────────────────────────────────────────
+#
+# It read INFORMATION_SCHEMA.COLUMNS unqualified: that needs a running warehouse and the session's current database
+# to be the table's, so with tables picked in two databases (or no database on the connection) every table said
+# "Could not load fields for this table." It now uses DESCRIBE TABLE on the table's full name.
+
+class _Described:
+    """A Snowflake account that answers DESCRIBE TABLE, with no warehouse and no current database."""
+
+    def __init__(self, tables: dict):
+        self.tables = tables                  # {(database, schema, table): [(name, type, kind)]}
+        self.ran: list[str] = []
+        self.rows: list[tuple] = []
+        self.description: list[tuple] = []
+
+    def cursor(self, *_):
+        return self
+
+    def execute(self, sql, *_):
+        self.ran.append(sql)
+        text = " ".join(sql.split())
+        if not text.upper().startswith("DESCRIBE TABLE "):
+            raise RuntimeError("090105 (22000): Cannot perform SELECT. This session does not have a current "
+                               "database. Call 'USE DATABASE', or use a qualified name.")
+        key = tuple(p.replace('""', '"') for p in re.findall(r'"((?:[^"]|"")+)"', text))
+        if key not in self.tables:
+            raise RuntimeError("002003 (02000): SQL compilation error: Table does not exist or not authorized.")
+        self.description = [("name",), ("type",), ("kind",), ("null?",)]
+        self.rows = [(n, t, k, "Y") for n, t, k in self.tables[key]]
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        pass
+
+
+DOCTOR = {("PK_DB", "TALEND_SCHEMA", "DIM_DOCTOR"): [
+    ("DOCTOR_ID", "NUMBER(38,0)", "COLUMN"), ("DOCTOR_NAME", "VARCHAR(200)", "COLUMN"),
+    ("NPI", "VARCHAR(10)", "COLUMN"), ("HIRED_ON", "TIMESTAMP_NTZ(9)", "COLUMN"), ("RATE", "FLOAT", "COLUMN"),
+]}
+
+
+class TestTheMaskingReviewListsTheFields:
+
+    def test_a_tables_columns_in_order_with_their_type_family(self):
+        from core.schema import sf_table_columns
+
+        account = _Described(DOCTOR)
+        assert sf_table_columns(account, "PK_DB", "TALEND_SCHEMA", "DIM_DOCTOR") == [
+            {"name": "DOCTOR_ID", "type": "NUMBER"}, {"name": "DOCTOR_NAME", "type": "TEXT"},
+            {"name": "NPI", "type": "TEXT"}, {"name": "HIRED_ON", "type": "TIMESTAMP_NTZ"},
+            {"name": "RATE", "type": "FLOAT"},
+        ]
+        assert account.ran == ['DESCRIBE TABLE "PK_DB"."TALEND_SCHEMA"."DIM_DOCTOR"']
+
+    def test_the_setup_page_lists_the_fields_of_a_table_in_another_database(self, admin, tmp_path, monkeypatch):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+
+        monkeypatch.chdir(tmp_path)
+        store = admin.store
+        store.upsert_client("acct-sf", "Pharmacy")
+        with store.get_db() as conn:
+            db_id = int(conn.execute(
+                "INSERT INTO db_config (name, db_type, credentials_encrypted) VALUES (?,?,?)",
+                ("sf", "snowflake", "read-by-the-stub")).lastrowid)
+        store.update_client_meta("acct-sf", db_config_id=db_id)
+        saved = {"id": db_id, "db_type": "snowflake", "credentials": {"account": "org-acct", "database": "REVENUE_DB"}}
+        app = FastAPI()
+        app.include_router(admin.router)
+        with patch.object(admin, "_is_auth", return_value=True), \
+                patch.object(admin.store, "get_db_config", return_value=saved), \
+                patch("core.schema._sf_connect", return_value=_Described(DOCTOR)):
+            answer = TestClient(app).get(
+                "/admin/clients/acct-sf/setup/column-sensitivity?fqn=PK_DB.TALEND_SCHEMA.DIM_DOCTOR").json()
+        assert answer["status"] == "ok"
+        assert [c["name"] for c in answer["columns"]] == ["DOCTOR_ID", "DOCTOR_NAME", "NPI", "HIRED_ON", "RATE"]
+        assert "DOCTOR_NAME" in answer["auto_masked"]
