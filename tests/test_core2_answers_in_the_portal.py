@@ -47,18 +47,17 @@ CANNED = {"type": "assistant_response", "engine": "core2", "question": "q",
 # ── the switch ─────────────────────────────────────────────────────────────
 
 
-def test_the_switch_is_set_on_the_learned_page_and_waits_for_a_model(workspace):  # noqa: F811
+def test_there_is_no_switch_the_new_core_answers_before_and_after_learn(workspace):  # noqa: F811
     store, built, schema_dir = workspace
     from admin import core2_routes
 
-    response = _post(core2_routes.learned_engine, f"/admin/clients/{ACCOUNT}/learned/engine", {"engine": "compare"})
-    assert "error=" in response.headers["location"] and store.get_query_engine(ACCOUNT) == "legacy"
+    assert not hasattr(core2_routes, "learned_engine"), "the engine is not chosen on the learned page any more"
+    assert store.get_query_engine(ACCOUNT) == "core2"
     _schema_file(built, schema_dir)
     core2_routes._run_build(ACCOUNT)
-    response = _post(core2_routes.learned_engine, f"/admin/clients/{ACCOUNT}/learned/engine", {"engine": "compare"})
-    assert "saved=engine" in response.headers["location"] and store.get_query_engine(ACCOUNT) == "compare"
-    response = _post(core2_routes.learned_engine, f"/admin/clients/{ACCOUNT}/learned/engine", {"engine": "both"})
-    assert "error=" in response.headers["location"] and store.get_query_engine(ACCOUNT) == "compare"
+    assert store.get_query_engine(ACCOUNT) == "core2"
+    with pytest.raises(ValueError):
+        store.set_query_engine(ACCOUNT, "compare")
 
 
 # ── through the portal socket ──────────────────────────────────────────────

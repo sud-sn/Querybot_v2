@@ -679,7 +679,7 @@ def source(m: Any) -> str:
     if m.provenance == "admin":
         return "Changed by an admin"
     if m.provenance == "import":
-        return "From today's setup"
+        return "From the earlier setup"
     return "Learned"
 
 

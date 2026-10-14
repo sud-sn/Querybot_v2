@@ -74,7 +74,8 @@ def _turn(typed, *, then_cancel=False, monkeypatch=None):
 
     Returns every frame the browser receives. `resolve_provider` is the
     boundary, not the code under test: a workspace with no API key makes it
-    raise for real, which is what this reproduces.
+    raise for real, which is what this reproduces. The new core, which answers
+    every question, raises there too.
     """
     import gateway.webhooks as wh
     import portal.routes as pr
@@ -92,9 +93,15 @@ def _turn(typed, *, then_cancel=False, monkeypatch=None):
     def _no_api_key(*_a, **_k):
         raise RuntimeError("No API key configured for provider 'anthropic'")
 
+    async def _new_core_down(*_a, **_k):
+        raise RuntimeError("No API key configured for provider 'anthropic'")
+
+    from gateway import core2_bridge
+
     frames = []
-    original = wh.resolve_provider
+    original, answer = wh.resolve_provider, core2_bridge._answer
     wh.resolve_provider = _no_api_key
+    core2_bridge._answer = _new_core_down          # the new core answers every question: its boundary raises too
     try:
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
         with client.websocket_connect(f"/ws/chat/{account_id}?thread_id=t1") as ws:
@@ -105,7 +112,7 @@ def _turn(typed, *, then_cancel=False, monkeypatch=None):
                 ws.send_json({"type": "cancel"})
                 frames.extend(_drain(ws))
     finally:
-        wh.resolve_provider = original
+        wh.resolve_provider, core2_bridge._answer = original, answer
         result_cache.clear(session_id)
     return frames
 

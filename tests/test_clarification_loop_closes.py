@@ -199,6 +199,7 @@ OUTCOMES = [
 ]
 
 
+@pytest.mark.old_engine
 class TestTheCardIsBackedByAPending:
 
     @pytest.mark.parametrize("outcome_fn", OUTCOMES)
@@ -246,6 +247,7 @@ class TestClickingAnOptionIsNotRefused:
 
 class TestTheConfirmedReadingIsNotReLitigated:
 
+    @pytest.mark.old_engine
     @pytest.mark.parametrize("outcome_fn", OUTCOMES)
     def test_the_retry_says_the_reader_already_confirmed(self, outcome_fn):
         """Without this the retry re-plans identical text at the same
@@ -256,6 +258,7 @@ class TestTheConfirmedReadingIsNotReLitigated:
         assert spy.calls[0]["is_clarification"] in (False, None)
         assert spy.calls[1]["is_clarification"] is True, spy.calls
 
+    @pytest.mark.old_engine
     @pytest.mark.parametrize("outcome_fn", OUTCOMES)
     def test_the_retry_carries_the_disambiguated_question(self, outcome_fn):
         """Not the chip's internal token. "result 2" and "confirm" are how the

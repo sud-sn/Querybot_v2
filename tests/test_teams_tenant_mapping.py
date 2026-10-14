@@ -251,14 +251,16 @@ class TeamsWebhookRoutingWiringTests(unittest.TestCase):
         self.assertLess(mapping_pos, bind_pos)
         self.assertLess(bind_pos, dispatch_pos)
 
-    def test_settings_tab_has_teams_integration_dropdown(self):
+    def test_settings_tab_asks_for_the_chosen_chat_apps_credentials(self):
+        """Teams is chosen on the workspace's own Settings card, which asks for its credentials and its tenant
+        (admin/channels.py), rather than picked from a list typed on another page."""
         src = (ROOT / "admin/templates/client_detail.html").read_text(encoding="utf-8")
-        self.assertIn('name="teams_platform_config_id"', src)
-        # Must be a <select>, not a free-text tenant ID input — the whole
-        # point is picking from Admin -> Platforms, not typing a raw GUID.
-        select_pos = src.index('name="teams_platform_config_id"')
-        self.assertIn("<select", src[max(0, select_pos - 60):select_pos])
+        self.assertIn('import channels_card with context %}{{ channels_card() }}', src)
+        card = (ROOT / "admin/templates/_client_channels.html").read_text(encoding="utf-8")
+        self.assertIn('name="chat_app"', card)
+        from admin.channels import CHANNELS
 
+        self.assertEqual([f["name"] for f in CHANNELS["teams"]["fields"]], ["app_id", "app_password", "tenant_id"])
     def test_client_update_route_accepts_teams_platform_config_id(self):
         src = (ROOT / "admin/routes.py").read_text(encoding="utf-8")
         anchor = "async def client_update("

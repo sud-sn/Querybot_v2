@@ -172,6 +172,7 @@ class TestInFrench:
         assert _analysis_titles(turn) == ["Pourquoi ce schéma ?"]
 
 
+@pytest.mark.old_engine
 class TestOverTheChatSocket:
     """The same conversations over /ws/chat, where the socket's own routing --
     result commands, the cached-result planner, the "why" insight -- runs

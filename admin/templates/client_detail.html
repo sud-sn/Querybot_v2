@@ -159,7 +159,7 @@
     <div class="overview-card">
       <h2>Connection details</h2>
       <table style="width:100%;font-size:var(--font-base);border-collapse:collapse">
-        <tr><td style="padding:5px 0;color:var(--text-muted);width:120px">Platform</td><td><span class="badge badge-blue">{{ client.platform_type }}</span></td></tr>
+        <tr><td style="padding:5px 0;color:var(--text-muted);width:120px">Reached through</td><td><span class="badge badge-green">Web portal</span>{% if channel is defined and channel.kind %} <span class="badge badge-blue">{{ channels[channel.kind].label }}</span>{% endif %}</td></tr>
         <tr><td style="padding:5px 0;color:var(--text-muted)">Database</td><td style="font-weight:var(--weight-semibold)">{{ db_name }}</td></tr>
         <tr><td style="padding:5px 0;color:var(--text-muted)">LLM model</td><td>{{ client.llm_model or system_model }}</td></tr>
         <tr><td style="padding:5px 0;color:var(--text-muted)">Connected</td><td>{{ client.created_at[:10] }}</td></tr>
@@ -421,43 +421,6 @@
             </span>
           </label>
         </div>
-        <div class="form-group" style="margin-top:.25rem">
-          <label class="form-switch">
-            <input type="checkbox" name="portal_only" value="1" {% if client.portal_only %}checked{% endif %}>
-            <span class="form-switch-track" aria-hidden="true"></span>
-            <span class="form-switch-copy">
-              <span class="form-switch-title">Web portal only</span>
-              <span class="form-switch-description">Users access Solviz through the internal portal without a Zoom, Teams, or Slack integration.</span>
-            </span>
-          </label>
-        </div>
-        <div class="form-grid" style="margin-top:.25rem">
-          <div class="form-group">
-            <label>Assigned Teams integration</label>
-            <select name="teams_platform_config_id">
-              <option value="">— not assigned —</option>
-              {% for tp in teams_platforms %}
-              <option value="{{ tp.id }}" {% if tp.id == client.platform_config_id %}selected{% endif %}>
-                {{ tp.name }}{% if tp.credentials.tenant_id %} (tenant {{ tp.credentials.tenant_id[:8] }}…){% endif %}
-              </option>
-              {% endfor %}
-            </select>
-            <p class="form-note">
-              {% if client.teams_tenant_id %}
-                <span class="badge badge-green" style="margin-right:.4rem">Connected</span>
-                Messages from this integration's Azure AD tenant route to this client. Choose
-                "— not assigned —" to disconnect.
-              {% else %}
-                Picks which already-registered Teams integration (Admin → Platforms) this client
-                receives messages from — the same way "Assigned database" picks a registered
-                database above. Without one assigned, Solviz only guesses correctly when exactly
-                one client is configured.
-                {% if not teams_platforms %}No Teams integrations are registered yet —
-                <a href="/admin/platforms">add one on the Platforms page</a> first.{% endif %}
-              {% endif %}
-            </p>
-          </div>
-        </div>
         <div class="form-actions" style="align-items:center;gap:.75rem">
           <button type="submit" class="btn btn-primary" id="settingsSaveBtn">Save settings</button>
           <span id="settingsDirtyMsg" class="text-sm text-muted" style="display:none">
@@ -467,6 +430,7 @@
       </form>
     </div>
   </div>
+  {% if channels is defined %}{% from "_client_channels.html" import channels_card with context %}{{ channels_card() }}{% endif %}
 </div>
 
 <script>

@@ -69,8 +69,8 @@
 {% set _menu = _shown %}
 {% set _here = (_menu | selectattr(0, 'equalto', _seg) | list | first) if _menu else none %}
 
-{% set _status = {'READY': ('Answering', 'ok'), 'SCHEMA_READY': ('Ready to learn', 'info'), 'SCHEMA_BUILDING': ('Reading the database', 'busy'),
-                  'KB_BUILDING': ('Building the knowledge base', 'busy'), 'ERROR': ('Needs attention', 'bad')}.get(client.state, ('Being set up', 'off')) %}
+{# Whether the workspace answers, as the new core stands (admin/core2_routes.py: answering_status). #}
+{% set _status = answering_status(client) if answering_status is defined else ('Being set up', 'off') %}
 
 <section class="client-workspace-nav ws-head" aria-label="Workspace">
   <nav class="ws-crumb" aria-label="You are in">

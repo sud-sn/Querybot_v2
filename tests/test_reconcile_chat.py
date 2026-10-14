@@ -21,6 +21,7 @@ import os
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 
 _tmp_db = os.path.join(tempfile.mkdtemp(), "test_reconcile.db")
@@ -105,17 +106,20 @@ class ReconcileIntentRegexTests(unittest.TestCase):
 class ReconcileChatWiringTests(unittest.TestCase):
     """Every assertion here is on a frame the handler actually sent."""
 
+    @pytest.mark.old_engine
     def test_the_handler_runs_at_all(self):
         # The control. Without it, a handler that never fires satisfies every
         # "does not say X" assertion below.
         frame = _reconcile_frame("en")
         self.assertIsNotNone(frame, "the reconcile handler never ran")
 
+    @pytest.mark.old_engine
     def test_it_needs_a_cached_result_with_sql(self):
         """Nothing to reconcile against means the card must not be offered --
         it would restate a definition it does not have."""
         self.assertIsNone(_reconcile_frame("en", cached=False))
 
+    @pytest.mark.old_engine
     def test_it_wins_over_metadata_result_routing(self):
         """"can you walk me through how you calculated this" matches the
         reconcile pattern and reads as a metadata question. It has to reach
@@ -124,6 +128,7 @@ class ReconcileChatWiringTests(unittest.TestCase):
             "en", text="can you walk me through how you calculated this")
         self.assertIsNotNone(frame)
 
+    @pytest.mark.old_engine
     def test_it_never_promises_to_explain_the_gap(self):
         """QueryBot cannot see the methodology behind an externally-known
         number. Checked in every shipped language, because a translation is
@@ -138,10 +143,12 @@ class ReconcileChatWiringTests(unittest.TestCase):
                 self.assertNotIn("j'expliquerai", body)
         self.assertIn("can't explain the", i18n.t("reply.explain.body", lang="en"))
 
+    @pytest.mark.old_engine
     def test_it_restates_the_exact_sql_not_a_vague_description(self):
         frame = _reconcile_frame("en")
         self.assertEqual(frame["secondary"], "SELECT SUM(REVENUE) FROM sales")
 
+    @pytest.mark.old_engine
     def test_it_offers_exactly_two_testable_hypotheses(self):
         chips = _reconcile_frame("en")["follow_up_suggestions"]
         self.assertEqual(len(chips), 2)
@@ -154,6 +161,7 @@ class ReconcileChatWiringTests(unittest.TestCase):
                       chips[0]["question"])
         self.assertIn("using last calendar month instead", chips[1]["question"])
 
+    @pytest.mark.old_engine
     def test_a_french_reader_gets_the_card_in_french(self):
         frame = _reconcile_frame("fr")
         self.assertIn("Ma valeur", " ".join(frame["bullets"]))
@@ -164,6 +172,7 @@ class ReconcileChatWiringTests(unittest.TestCase):
                 self.assertIn("en ", chip["label"])
                 self.assertNotEqual(chip["label"], chip["question"])
 
+    @pytest.mark.old_engine
     def test_but_the_hypotheses_still_re_plan_in_english(self):
         """The label/wire split. question_normalizer.canonicalise is a
         word-by-word lexicon, not a reverse lookup of the catalogue, so a

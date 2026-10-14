@@ -284,6 +284,7 @@ class Logical:
     share: bool = False
     having: list[Pred] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    cautions: list[str] = field(default_factory=list)  # said with the answer, not under "How it was counted"
     partial: list[dt.date] = field(default_factory=list)
     fiscal_start: int | None = None
     max_rows: int = 5000
@@ -482,6 +483,7 @@ class _PartBuilder:
         self.paths_used: dict[str, P.Path] = {}
         self.crossed: list[P.Path] = []        # paths through a bridge a grouping took (each row under each member)
         self.semi_of: dict[str, Semi] = {}     # alias inside a filter's EXISTS -> that filter
+        self.cautions: list[str] = []          # said with the answer: a route taken where another was as good
 
     def _allowed(self, table: str) -> None:
         if self.ctx.allowed_tables is not None and table not in self.ctx.allowed_tables:
@@ -509,8 +511,13 @@ class _PartBuilder:
             try:
                 path = P.best_path(self.model, self.part.table, table, through=through, skip=frozenset(skip))
             except P.Ambiguous as exc:
-                # The choice is offered by role ("Bill-to", "Ship-to"): what the plan's via names.
-                options = [", ".join(P.roles(p)) or p.describe(self.model) for p in exc.options]
+                # The choice is offered by role ("Bill-to", "Ship-to"), or by the table a route passes ("through
+                # Customer", "through Supplier"): what the plan's via names (_via).
+                options = []
+                for p in exc.options:
+                    apart = P.distinct(p, exc.options) if not P.roles(p) else None
+                    options.append(", ".join(P.roles(p)) or (f"through {self.model.tables[apart].business_name}"
+                                                            if apart else p.describe(self.model)))
                 raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be "
                                    "reached more than one way", options) from None
             repeating = [j for j in (path.joins if path else []) if self._repeats(j)]
@@ -535,7 +542,27 @@ class _PartBuilder:
                 f"{self.model.tables[self.part.table].business_name}"))
             error.unlinked = table
             raise error
+        if path.others:
+            self._other_routes(table, path, label)
         return self._walk(table, path)
+
+    def _other_routes(self, table: str, path: P.Path, label: str) -> None:
+        """Say which way a member was reached when another route was as good (a fill's formula through its batch,
+        or through its prescription), and how to ask for the other. An admin makes a route the default by naming
+        the role of the others' links."""
+        tables, routes = self.model.tables, [path, *path.others]
+        what = label or tables[table].business_name
+        rows = tables[self.part.table].business_name.lower()
+        mine = P.distinct(path, routes)
+        others = [t for t in (P.distinct(p, routes) for p in path.others) if t]
+        if not mine or not others:
+            return
+        named = " or ".join(f"the {tables[t].business_name.lower()}'s" for t in others)
+        caution = (f"{what} here is the {tables[mine].business_name.lower()}'s, for each {rows}; through "
+                   f"{' or '.join(tables[t].business_name for t in others)} it can differ: ask for {named} "
+                   f"{what.lower()} for that one.")
+        if caution not in self.cautions:
+            self.cautions.append(caution)
 
     def _crossing(self, table: str, through: str | None, skip: frozenset[str], label: str) -> P.Path | None:
         """The best path to ``table`` across one bridge, or None; two bridges equally good are asked about."""
@@ -584,8 +611,15 @@ class _PartBuilder:
         what, mine = label or tables[table].business_name, tables[start].business_name
         through = P.all_paths(self.model, start, table, repeating=True)
         rows = plural(mine).lower()
+        unknown = getattr(self.ctx.link_repeats, "unknown", None) or set()
         for path in through:
             bad = next((j for j in path.joins if P.repeats(j) or j.key in found), None)
+            if bad is not None and bad.key in unknown:
+                # The data would not say whether the link meets one row each: never followed on a guess.
+                return (f"{what} cannot split {rows} just now: the link from "
+                        f"{tables[bad.from_table].business_name.lower()} to "
+                        f"{tables[bad.to_table].business_name.lower()} could not be checked against the data, and "
+                        "it is followed only once it is known to meet one row each. Ask again in a moment")
             if bad is not None:
                 return (f"{what} cannot split {rows}: some {rows} match more than one "
                         f"{tables[bad.to_table].business_name.lower()}, so they would be counted more than once")
@@ -1285,8 +1319,10 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                      "(not a saved measure yet).")
         if _plain(d.name) in inside:
             continue
-        if len({m.table for m in of}) > 1:
-            # Each measure added up on its own table, then combined.
+        if len({home for m in of for home in _homes(model, m.table, m.expr)}) > 1:
+            # Each measure added up on its own table, then combined. A metric over two tables (sales less refunds)
+            # counts both: its own table is only the first it names, and written out on that table's rows its
+            # other table's rows would be repeated (or refused as counted once for each).
             combine(None, d.name, fmt, tree, of[0].table, [])
         else:
             chosen.append((None, _inlined(model, tree), of[0].table, d.name, fmt))
@@ -1415,6 +1451,24 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         groups.append(Group(name, band.label, "attribute", bands=band.labels))
         group_names["__band__"] = name
 
+    # One grouping or filter reached the same way by every table of the question, as a shared dimension is:
+    # a table whose own route reaches another member is sent along the first table's route (_shared_route).
+    routed: dict[str, dict[str, str]] = {}
+    cautions: list[str] = []
+    part_tables = [b.part.table for b, _ in builders]
+
+    def route(slug: str, goal: str, label: str) -> dict[str, str]:
+        if slug not in routed:
+            ways, caution = ({}, "") if plan.via.get(slug) else _shared_route(model, part_tables, goal, label)
+            routed[slug] = ways
+            if caution and caution not in cautions:
+                cautions.append(caution)
+        return routed[slug]
+
+    for slug, attribute, time_attr in wanted:
+        if attribute is not None and not time_attr:
+            route(slug, model.columns[attribute.column].table, attribute.business_name)
+
     parts: list[Part] = []
     measures_out: list[OutMeasure] = []
     component_of = {id(item[1]): (c, i) for c in composites for i, item in enumerate(c.items)}
@@ -1462,6 +1516,8 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             assert attribute is not None
             column = model.columns[attribute.column]
             through, link_role = _via(model, plan, slug)
+            if through is None and link_role is None:
+                through = route(slug, column.table, attribute.business_name).get(part.table)
             alias = _reach(builder, column.table, slug, through, link_role, attribute.business_name)
             group = PartGroup(name, alias, column.key, "attribute")
             part.groups.append(group)
@@ -1677,6 +1733,8 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 took.append(part)
                 continue
             through, link_role = _via(model, plan, f.field)
+            if through is None and link_role is None:
+                through = route(f.field, column.table, attribute.business_name).get(part.table)
             try:
                 alias = _reach(builder, column.table, f.field, through, link_role, attribute.business_name,
                                filtering=True)
@@ -1910,9 +1968,11 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not "
                          "add up across its groups (an average or a ratio): no share of a total is worked out.")
+    for b, _ in builders:
+        cautions.extend(c for c in b.cautions if c not in cautions)
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, having=having,
-                   notes=_unique(notes),
+                   notes=_unique(notes), cautions=cautions,
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
                    expected=expected, data_last=last if plan.time.grain else None, conditions=conditions,
@@ -2007,6 +2067,63 @@ def _unit_split(plan: Plan, model: SemanticModel, ctx: Context, intent: str, cho
     return None
 
 
+def _same_way(paths: list[P.Path]) -> bool:
+    """Do these routes reach one member the same way? Each ends with the steps of every shorter one: returns,
+    through their order line, reach the line's store by the line's own link; an order line's region through its
+    store and a return's through its customer are two regions."""
+    keys = [tuple(j.key for j in p.joins) for p in paths]
+    for a in keys:
+        for b in keys:
+            short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+            if short and long_[len(long_) - len(short):] != short:
+                return False
+    return True
+
+
+def _shared_route(model: SemanticModel, tables: list[str], goal: str, label: str) -> tuple[dict[str, str], str]:
+    """How every table of a question reaches one grouping or filter the same way, as a data model's shared
+    dimension: the tables to send through another (``{table: through}``), or, when they cannot meet, what the
+    answer says (each figure is by its own member).
+
+    Each table takes its own best route; when they part ways (sales by their store's region, refunds by their
+    customer's), the others are sent through the first table's route if they can follow it (through the first
+    table itself, or a table on its route)."""
+    starts = [t for t in dict.fromkeys(tables) if t != goal]
+    if len(starts) < 2:
+        return {}, ""
+    try:
+        best = {t: P.best_path(model, t, goal) for t in starts}
+    except P.Ambiguous:
+        return {}, ""                    # asked about when the question reaches it
+    if any(p is None for p in best.values()) or _same_way([p for p in best.values() if p is not None]):
+        return {}, ""                    # not reached (refused, or across a bridge: said there), or one way
+    first, main = starts[0], best[starts[0]]
+    assert main is not None
+    for through in [first, *main.tables[1:-1]]:
+        moved: dict[str, P.Path] = {}
+        for t in starts[1:]:
+            try:
+                way = P.best_path(model, t, goal, through=through) if through != t else best[t]
+            except P.Ambiguous:
+                way = None
+            if way is None:
+                break
+            moved[t] = way
+        else:
+            if _same_way([main, *moved.values()]):
+                return {t: through for t, way in moved.items() if way.joins != (best[t] or main).joins}, ""
+
+    def whose(t: str) -> str:
+        way = best[t]
+        assert way is not None
+        own = model.tables[way.tables[-2]].business_name.lower() if len(way.joins) > 1 else ""
+        rows = model.tables[t].business_name.lower()
+        return f"{rows} by {'their own' if not own else 'their ' + own + chr(39) + 's'}"
+
+    return {}, (f"{label} is not reached the same way by every figure ({'; '.join(whose(t) for t in starts)}): "
+                f"each figure is by its own {label.lower()}.")
+
+
 def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str | None]:
     """How the plan says ``slug`` is reached: through an entity's table ("the customer's home store"),
     or by the role of a link ("Bill to customer", "Ship to customer")."""
@@ -2016,6 +2133,12 @@ def _via(model: SemanticModel, plan: Plan, slug: str) -> tuple[str | None, str |
     found = find_slug(model, named)
     if found and isinstance(found[1], Entity):
         return found[1].table, None
+    if named.casefold().startswith("through "):
+        # A route chosen by the table it passes ("through Supplier"): offered when two routes tie.
+        wanted = named[len("through "):].strip().casefold()
+        table = next((k for k, t in model.tables.items() if t.business_name.casefold() == wanted), None)
+        if table is not None:
+            return table, None
     return None, named.removeprefix("role:").strip()
 
 

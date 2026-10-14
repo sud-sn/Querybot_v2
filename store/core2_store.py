@@ -234,28 +234,22 @@ def latest_core2_build(account_id: str, db_config_id: int | None) -> dict[str, A
     return dict(row) if row else None
 
 
-# ── the switch, and what the new core answered ─────────────────────────────
+# ── what the new core answered ──────────────────────────────────────────────
 
-ENGINES = ("legacy", "compare", "core2")
+# The new core answers every workspace, on every channel. The old engine and the side-by-side comparison are gone
+# from the product; a value stored in client.query_engine before is no longer read.
+ENGINES = ("core2",)
 
 
 def get_query_engine(account_id: str) -> str:
-    """Which core answers the workspace's portal questions: legacy (default), compare or core2."""
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT query_engine FROM client WHERE account_id=?", (account_id,)).fetchone()
-    except Exception:
-        return "legacy"
-    value = str((row[0] if row else "") or "legacy")
-    return value if value in ENGINES else "legacy"
+    """Which core answers the workspace's questions: the new core, always."""
+    return "core2"
 
 
 def set_query_engine(account_id: str, engine: str) -> None:
+    """Kept for callers of the old switch: only the new core can be chosen."""
     if engine not in ENGINES:
-        raise ValueError(f"unknown engine {engine!r}")
-    with get_db() as conn:
-        conn.execute("UPDATE client SET query_engine=?, updated_at=datetime('now') WHERE account_id=?",
-                     (engine, account_id))
+        raise ValueError(f"unknown engine {engine!r}: the new core answers every workspace")
 
 
 def log_core2_answer(account_id: str, *, user_id: str, mode: str, question: str, status: str, headline: str,

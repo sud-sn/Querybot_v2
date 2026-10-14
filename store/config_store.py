@@ -500,20 +500,27 @@ def update_client_meta(
     erp_packs: Optional[str] = None,
     teams_tenant_id: Optional[str] = None,
     analysis_mode: Optional[str] = None,
+    platform_type: Optional[str] = None,
+    chat_team_id: Optional[str] = None,
 ) -> None:
     """Update one or more metadata fields on a client row.
 
     Raises ValueError if teams_tenant_id is already claimed by a different
     client — the partial unique index (store/db.py) is the source of truth,
     this just turns the raw sqlite3.IntegrityError into a message an admin
-    route can show directly."""
+    route can show directly. The same for chat_team_id (a Slack workspace or
+    Zoom account). platform_config_id=0 takes the workspace's chat app away."""
     fields, params = [], []
     if client_name is not None:
         fields.append("client_name = ?"); params.append(client_name)
     if db_config_id is not None:
         fields.append("db_config_id = ?"); params.append(db_config_id)
     if platform_config_id is not None:
-        fields.append("platform_config_id = ?"); params.append(platform_config_id)
+        fields.append("platform_config_id = ?"); params.append(platform_config_id or None)
+    if platform_type is not None:
+        fields.append("platform_type = ?"); params.append(platform_type)
+    if chat_team_id is not None:
+        fields.append("chat_team_id = ?"); params.append(chat_team_id)
     if llm_provider is not None:
         fields.append("llm_provider = ?"); params.append(llm_provider)
     if llm_model is not None:
@@ -565,6 +572,10 @@ def update_client_meta(
                 raise ValueError(
                     f"Teams tenant ID \"{teams_tenant_id}\" is already assigned to another client."
                 ) from exc
+            if chat_team_id:
+                raise ValueError(
+                    f"\"{chat_team_id}\" already sends its messages to another workspace."
+                ) from exc
             raise
 
 
@@ -579,6 +590,19 @@ def get_client_by_teams_tenant_id(tenant_id: str) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM client WHERE teams_tenant_id = ?", (tenant_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_client_by_chat_team(platform_type: str, team_id: str) -> Optional[dict]:
+    """The workspace a Slack workspace (team) or Zoom account sends its messages to, or None (never for an empty
+    ID, which every workspace without a chat app shares)."""
+    team_id = (team_id or "").strip()
+    if not team_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM client WHERE platform_type = ? AND chat_team_id = ?", (platform_type, team_id),
         ).fetchone()
     return dict(row) if row else None
 

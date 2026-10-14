@@ -869,6 +869,7 @@ def _link_check(services: Services) -> Callable[[Join], bool] | None:
         return None
     account = str(getattr(warehouse, "account_id", "") or "")
     reader = str((getattr(warehouse, "user", None) or {}).get("id") or "")
+    unknown: set[str] = set()       # links the data would not check now: not followed, and said so
 
     def repeats(j: Join) -> bool:
         key = (account, model.version, j.key, tuple(j.to_columns),
@@ -879,10 +880,11 @@ def _link_check(services: Services) -> Callable[[Join], bool] | None:
                 return _LINK_REPEATS[key]
         try:
             found = bool(warehouse.query(repeats_sql(model, j, warehouse.dialect), max_rows=1).rows)
-        except Exception as exc:  # noqa: BLE001 - followed as the model has it; asked again next time
-            log.warning("core2: could not check whether the link %s of %s matches one row per key; followed as "
-                        "learned: %s", j.key, account, exc)
-            return False
+        except Exception as exc:  # noqa: BLE001 - not followed this time (it might count rows twice); asked again
+            log.warning("core2: could not check whether the link %s of %s matches one row per key; not followed "
+                        "until it can be: %s", j.key, account, exc)
+            unknown.add(j.key)
+            return True
         if found:
             log.warning("core2: the link %s of %s matches more than one row for some keys: questions do not follow "
                         "it", j.key, account)
@@ -892,6 +894,7 @@ def _link_check(services: Services) -> Callable[[Join], bool] | None:
                 _LINK_REPEATS.popitem(last=False)
         return found
 
+    repeats.unknown = unknown         # type: ignore[attr-defined] - read by the resolver's reason (_counted_twice)
     return repeats
 
 
@@ -1670,6 +1673,12 @@ def personal_columns(model: SemanticModel) -> dict[tuple[str, str], str]:
     return out
 
 
+# What a reader is told on a workspace Learn has not read yet (an admin runs it on the Setup page). The old engine
+# never answers instead: the new core is the only one.
+NOT_LEARNED = ("This workspace is still being set up: Solviz has not learned its database yet. An admin can finish "
+               "its setup, and questions are answered from then on.")
+
+
 def _portal_services(account_id: str, question: str, portal_user: dict[str, Any] | None,
                      question_id: str = "") -> tuple[Services | None, dict[str, Any] | None]:
     """The services a portal answer runs on, or the frame that says why there are none."""
@@ -1684,12 +1693,12 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     db_id = int(client.get("db_config_id") or 0)
     db_config = store.get_db_config(db_id) if db_id else None
     if not db_config:
-        return None, _frame(question, "The new core has no database for this workspace yet.")
+        return None, _frame(question, "This workspace is still being set up: it has no database connected yet. "
+                                      "An admin can finish its setup.")
     keep_decisions_current(account_id, db_id, client)
     model = answering_model(account_id, client)
     if model is None:
-        return None, _frame(question, "The new core has not learned this workspace yet: an admin can build it on "
-                                      "the What Solviz learned page.")
+        return None, _frame(question, NOT_LEARNED)
     state = store.get_client_state(account_id) or {}
     allowed = store.get_allowed_tables(portal_user) if portal_user else None
     scrub = question_scrubber(account_id)

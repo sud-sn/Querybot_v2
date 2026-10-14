@@ -4,6 +4,7 @@
 {% block title %}Setup — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block head %}
 <style>
+.setup-step[hidden]{display:none}
 .setup-step{border:1.5px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.25rem;background:var(--surface);box-shadow:var(--shadow)}
 .step-head{padding:.875rem 1.25rem;display:flex;align-items:center;gap:.75rem;
   border-bottom:1px solid var(--border);background:var(--surface-2);}
@@ -224,7 +225,9 @@
 </div>
 
 <!-- Source-system vocabulary -->
-<div class="setup-step" id="source-system-section">
+{# The source system, industry vocabulary and Knowledge Base steps were the old engine's: the new core answers every
+   workspace and reads none of them. Hidden, kept one release with the rest of that engine, then removed. #}
+<div class="setup-step" id="source-system-section" hidden>
   <div class="step-head">
     <div class="step-num {% if client_source_pack != 'other' %}done{% endif %}">
       {% if client_source_pack != 'other' %}{{ ic('check', 14) }}{% else %}{{ ic('database', 14) }}{% endif %}
@@ -293,7 +296,7 @@
 </div>
 
 <!-- Optional step: industry vocabulary -->
-<div class="setup-step" id="industry-vocabulary">
+<div class="setup-step" id="industry-vocabulary" hidden>
   <div class="step-head">
     <div class="step-num {% if client_industry_packs %}done{% endif %}">
       {% if client_industry_packs %}✓{% else %}{{ ic('sparkles', 14) }}{% endif %}
@@ -387,9 +390,9 @@
       {% if kb_table_count %}✓{% else %}2{% endif %}
     </div>
     <div>
-      <div class="step-title">Select tables for KB</div>
+      <div class="step-title">Choose the tables Solviz reads</div>
       <div style="font-size:var(--font-sm);color:var(--text-muted)">
-        Browse all schemas in your database and check exactly which tables to include
+        Browse every schema in the database and tick the tables people may ask about
       </div>
     </div>
     {% if kb_table_count %}
@@ -520,7 +523,7 @@
     <div>
       <div class="step-title">Schema discovery</div>
       <div style="font-size:var(--font-sm);color:var(--text-muted)">
-        Writes one schema file per selected table — needed before KB generation
+        Reads the chosen tables' columns and a sample of their values: what Learn works from
       </div>
     </div>
     {% if schema_files %}
@@ -626,7 +629,7 @@
 </div>
 
 <!-- Step 4: Knowledge Base Generation -->
-<div class="setup-step" id="kb-build">
+<div class="setup-step" id="kb-build" hidden>
   <div class="step-head">
     <div class="step-num {% if state == 'READY' %}done{% elif schema_files %}active{% endif %}">
       {% if state == 'READY' %}✓{% else %}4{% endif %}
@@ -1084,28 +1087,22 @@
 <div class="setup-step" id="learn">
   <div class="step-head">
     <div class="step-num {% if learned_ok %}done{% elif learn.discovered %}active{% endif %}">
-      {% if learned_ok %}✓{% else %}5{% endif %}
+      {% if learned_ok %}✓{% else %}4{% endif %}
     </div>
     <div>
-      <div class="step-title">Learn the database for the new core</div>
+      <div class="step-title">Learn the database</div>
       <div style="font-size:var(--font-sm);color:var(--text-muted)">
-        The new core studies the tables discovery found and brings over the decisions made above. It does not read the Knowledge Base.
+        Solviz studies the tables discovery found: how they link, their dates, metrics and names. Questions are answered from then on.
       </div>
     </div>
   </div>
   <div class="step-body">
     <p style="font-size:var(--font-sm);margin:0 0 .75rem">
       {% if learn.running %}Solviz is learning the database now.
-      {% elif learn.behind %}<strong>Out of date.</strong> Discovery has run since Solviz last learned (version {{ learn.version }}, {{ learn.built_at }} UTC) and found other tables, columns or masking. Learn again so the new core uses them.
-      {% elif learn.version %}Learned: version {{ learn.version }}, {{ learn.built_at }} UTC. Metrics, links and names changed in the steps above reach the new core by themselves; learn again whenever discovery runs again.
+      {% elif learn.behind %}<strong>Out of date.</strong> Discovery has run since Solviz last learned (version {{ learn.version }}, {{ learn.built_at }} UTC) and found other tables, columns or masking. Learn again so answers use them.
+      {% elif learn.version %}Learned: version {{ learn.version }}, {{ learn.built_at }} UTC. Questions are answered in the portal, Teams, Slack and Zoom. Change what it learned on the Data pages; learn again whenever discovery runs again.
       {% elif learn.failed %}The last attempt stopped: {{ learn.failed }}
-      {% else %}Not learned yet. Learn after discovery (Step 3), once the tables and masking above are set.
-      {% endif %}
-      {% if learn.version %}
-      Portal questions are answered by
-      {% if learn.engine == 'core2' %}the new core (today's pipeline takes what it cannot answer).
-      {% elif learn.engine == 'compare' %}today's pipeline, with the new core's answer shown beside it.
-      {% else %}today's pipeline; choose the new core on the What Solviz learned page.{% endif %}
+      {% else %}Not learned yet: until it is, people asking are told the workspace is being set up. It starts by itself after the first discovery (Step 3).
       {% endif %}
     </p>
     <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center">

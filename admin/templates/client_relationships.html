@@ -399,9 +399,9 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
       el('title', {}, hit).textContent = j.from_name + ' → ' + j.to_name + (j.role ? ' (' + j.role + ')' : '');
       hit.addEventListener('click', function () { select('join:' + j.key); });
       if (quiet) return;
-      // N at the many end, 1 at the one end.
-      var fromEnd = a === boxes[j.from] ? pa : pb, toEnd = fromEnd === pa ? pb : pa;
-      [[fromEnd, toEnd, j.cardinality === 'one_to_one' ? '1' : 'N'], [toEnd, fromEnd, '1']].forEach(function (m) {
+      // N at a many end, 1 at a one end, as the data showed: a link that repeats is drawn so.
+      var fromEnd = a === boxes[j.from] ? pa : pb, toEnd = fromEnd === pa ? pb : pa, mark = ends(j.cardinality);
+      [[fromEnd, toEnd, mark[0]], [toEnd, fromEnd, mark[1]]].forEach(function (m) {
         if (b.port && m[0] === pb) return;
         var len = Math.hypot(m[1].x - m[0].x, m[1].y - m[0].y) || 1, k = 13 / len;
         var g = el('g', {'class': 'card ' + tone}, marks), cx = m[0].x + (m[1].x - m[0].x) * k, cy = m[0].y + (m[1].y - m[0].y) * k;
@@ -475,7 +475,7 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
       tr.setAttribute('aria-label', 'Edit the join ' + j.from_name + ' to ' + j.to_name);
       tr.innerHTML = '<td class="nm">' + esc(j.from_name) + ' → ' + esc(j.to_name) + '</td>' +
         '<td data-label="Matched on">' + j.pairs.map(function (p) { return '<code class="rx-code">' + esc(p.from_name) + ' = ' + esc(p.to_name) + '</code>'; }).join(' ') + '</td>' +
-        '<td data-label="Rows">' + (j.cardinality === 'one_to_one' ? '1 : 1' : 'N : 1') + '</td>' +
+        '<td data-label="Rows">' + ends(j.cardinality).join(' : ') + '</td>' +
         '<td data-label="Role">' + (esc(j.role) || '<span class="rx-muted">—</span>') + '</td>' +
         '<td data-label="Condition">' + (j.conditions.length ? j.conditions.map(function (c) { return '<span class="rx-tag req">⏷ ' + esc(c.text) + '</span>'; }).join(' ') : '<span class="rx-muted">—</span>') + '</td>' +
         '<td data-label="Status"><span class="rx-tag ' + ({Confirmed: 'ok', Suggested: 'req'}[j.status] || 'off') + '">' + esc(j.status) + '</span></td>' +
@@ -568,10 +568,15 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
   function later(fn) { clearTimeout(checkTimer); checkTimer = setTimeout(fn, 450); }
 
   // A join: the columns it matches on, the rows it keeps, its conditions; checked against the data as it changes.
+  // The rows a link meets at each end ("N", "1"), from its cardinality; and the two a question may follow.
+  var CHOOSABLE = ['many_to_one', 'one_to_one'];
+  function ends(c) {
+    return [c === 'one_to_one' || c === 'one_to_many' ? '1' : 'N', c === 'one_to_many' || c === 'many_to_many' ? 'N' : '1'];
+  }
   function joinPanel(j) {
     var d = j ? {key: j.key, from: j.from, to: j.to, pairs: j.pairs.map(function (p) { return {from: p.from, to: p.to}; }),
                  conditions: j.conditions.map(function (c) { return {column: c.column, op: c.op, values: c.values.slice()}; }),
-                 role: j.role, cardinality: j.cardinality === 'one_to_one' ? 'one_to_one' : 'many_to_one', keep_unmatched: j.keep_unmatched !== false}
+                 role: j.role, cardinality: j.cardinality, keep_unmatched: j.keep_unmatched !== false}
               : {key: '', from: state.centre, to: '', pairs: [{from: '', to: ''}], conditions: [], role: '', cardinality: 'many_to_one', keep_unmatched: true};
     var result = null, off = j && !live(j);
     function ready() { return d.from && d.to && d.pairs.length && d.pairs.every(function (p) { return p.from && p.to; }); }
@@ -604,7 +609,8 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
       });
       html += '<button type="button" class="rx-addl" id="rx-add-pair"' + (F && T ? '' : ' disabled') + '>+ Match on another column too</button></div>';
       html += '<div class="rx-two"><div class="rx-f"><label for="rx-card">Rows</label><select class="form-input" id="rx-card">' +
-        opts([['many_to_one', 'Many to one'], ['one_to_one', 'One to one']], d.cardinality) + '</select></div>' +
+        opts((j && CHOOSABLE.indexOf(j.cardinality) < 0 ? [[j.cardinality, j.rows_words + ', as the data shows (not followed)']] : [])
+          .concat([['many_to_one', 'Many to one'], ['one_to_one', 'One to one']]), d.cardinality) + '</select></div>' +
         '<div class="rx-f"><label for="rx-keep">Keep ' + esc(F ? plural(F.name) : 'rows') + ' without ' + esc(T ? article(T.name) + lower(T.name) : 'a match') + '</label>' +
         '<select class="form-input" id="rx-keep">' + opts([['yes', 'Yes'], ['no', 'No']], d.keep_unmatched ? 'yes' : 'no') + '</select></div></div>';
       if (siblings || d.role) html += '<div class="rx-f"><label for="rx-role">Role, when these tables join more than one way</label>' +

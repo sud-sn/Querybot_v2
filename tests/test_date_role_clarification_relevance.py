@@ -20,6 +20,7 @@ import os
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -595,6 +596,7 @@ class TestRejectionClearsPendingState(unittest.TestCase):
             session_id=self.session_id,
         )
 
+    @pytest.mark.old_engine
     def test_dispatcher_rejection_clears_pending_and_does_not_replay(self):
         from unittest.mock import patch
         import core.dispatcher as dispatcher_module
@@ -627,6 +629,7 @@ class TestRejectionClearsPendingState(unittest.TestCase):
         self.assertEqual(adapter.prompts, [], "the same options must not be re-sent")
         self.assertTrue(adapter.messages, "the user must be told the step was cancelled")
 
+    @pytest.mark.old_engine
     def test_dispatcher_new_question_after_clarification_is_processed(self):
         """Scenario F — a genuine new question is not a malformed reply."""
         from unittest.mock import patch

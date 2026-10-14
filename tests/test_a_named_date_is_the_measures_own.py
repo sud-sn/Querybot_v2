@@ -242,6 +242,7 @@ def _said(frames):
     return json.dumps(frames, ensure_ascii=False)
 
 
+@pytest.mark.old_engine
 class TestOverTheChatSocket:
 
     def test_the_reader_is_offered_the_measures_own_dates_and_told_why(self):

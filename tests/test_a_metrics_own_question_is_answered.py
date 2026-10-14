@@ -22,6 +22,8 @@ customer data.
 
 from __future__ import annotations
 
+import pytest
+
 import contextlib
 import json
 import os
@@ -184,6 +186,7 @@ def _ask(question: str) -> tuple[list[dict], list[str], list[str]]:
             ws.send_json({"type": "message", "text": question})
             frames = drain(ws, 40, 6.0)
     return frames, calls, executed
+@pytest.mark.old_engine
 
 
 def test_the_suggested_question_for_a_count_metric_is_answered():

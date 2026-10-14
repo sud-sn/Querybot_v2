@@ -414,10 +414,10 @@ def test_the_readers_page_in_french(site):
     assert "Proposer une modification" in html and "Décrire un nouvel indicateur" in html
 
 
-def test_without_the_new_core_a_suggestion_is_not_taken(site):
-    site.store.set_query_engine(site.account, "legacy")
-    net = _measure(site.model(), "Net amount")
-    assert not site.suggest(kind="change", target_kind="measure", target_key=net.key, names="sales")["ok"]
+def test_the_old_engine_cannot_be_chosen_back_so_suggestions_always_reach_the_new_core(site):
+    with pytest.raises(ValueError):
+        site.store.set_query_engine(site.account, "legacy")
+    assert site.store.get_query_engine(site.account) == "core2"
 
 
 # ── the admin's inbox ────────────────────────────────────────────────────────

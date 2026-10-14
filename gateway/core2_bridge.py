@@ -109,13 +109,8 @@ def _line() -> _Line:
 
 
 async def engine(account_id: str) -> str:
-    import store
-
-    try:
-        return await asyncio.to_thread(store.get_query_engine, account_id)
-    except Exception as exc:     # noqa: BLE001 - the switch failing means today's pipeline, never no answer
-        log.warning("core2 engine setting unreadable for %s: %s", account_id, exc)
-        return "legacy"
+    """The new core: it answers every workspace."""
+    return "core2"
 
 
 def new_question_id() -> str:
@@ -211,8 +206,9 @@ async def _answer(account_id: str, question: str, portal_user: dict | None, sess
 
 
 def _keep(account_id: str, portal_user: dict | None, session_id: str, question: str, question_id: str,
-          payload: dict[str, Any], rows: list[dict] | None, duration_ms: int) -> int:
-    """An answer kept as today's are: its trace (history, full export, audit) and its query-log row (usage)."""
+          payload: dict[str, Any], rows: list[dict] | None, duration_ms: int, source: str = "portal") -> int:
+    """An answer kept as today's are: its trace (history, full export, audit) and its query-log row (usage).
+    ``source``: where it was asked (the portal, Teams, Slack, Zoom or the question API)."""
     import store
     from core2.service import question_scrubber
 
@@ -223,7 +219,7 @@ def _keep(account_id: str, portal_user: dict | None, session_id: str, question: 
     row_count = int(trust.get("row_count") or 0)
     user_id = int(portal_user["id"]) if portal_user and portal_user.get("id") else None
     trace_id = store.create_answer_trace(account_id=account_id, question_id=question_id, question_text=text,
-                                         portal_user_id=user_id, session_id=session_id, request_source="portal",
+                                         portal_user_id=user_id, session_id=session_id, request_source=source,
                                          route="core2")
     kept = _kept_frame(payload, text)
     store.update_answer_trace(trace_id, generated_sql=sql, db_type=str(trust.get("data_source") or ""),
@@ -955,3 +951,120 @@ async def answer_beside(adapter: Any, websocket: Any, account_id: str, question:
     # A preview's chart can be added to a dashboard as the new core's: its tile runs the preview's own plan.
     await _with_pin(account_id, portal_user, question, payload)
     await _send(adapter, websocket, payload)
+
+
+# ── Teams, Slack, Zoom and the question API ─────────────────────────────────
+
+CHANNEL_ROWS = 10       # a chat message shows the first rows; the portal has the rest, the chart and the export
+_CHANNEL_NUMBERS = {"currency", "percent", "percentage", "count", "integer", "number", "decimal", "days"}
+
+
+def _cell(value: Any, format_: str) -> str:
+    from core2.answer.builder import fmt
+
+    if value is None:
+        return ""
+    if format_ in _CHANNEL_NUMBERS and not isinstance(value, bool):
+        return fmt(value, format_)
+    return str(value).replace("|", "/").replace("\n", " ").strip()
+
+
+def channel_text(payload: dict[str, Any], *, link: str = "") -> str:
+    """A new-core answer as a chat message: its sentence, its figures as a small table (CHANNEL_ROWS at most),
+    what the rows show, what it left out, and where the rest is. Teams draws the table as a card; Slack, Zoom and
+    the question API show it as written."""
+    answer = payload.get("answer") or {}
+    headline = str(answer.get("headline") or "").strip()
+    lines = [f"**{headline}**"] if headline else []
+    data = payload.get("data") or {}
+    headers = [h for h in (data.get("headers") or []) if h]
+    rows = data.get("rows") or []
+    single = len(rows) == 1 and len(headers) == 1
+    if headers and rows and not single:
+        labels = data.get("header_labels") or {}
+        formats = data.get("column_formats") or {}
+        lines += ["", "| " + " | ".join(str(labels.get(h) or h).replace("|", "/") for h in headers) + " |",
+                  "|" + "|".join("---" for _ in headers) + "|"]
+        lines += ["| " + " | ".join(_cell(r.get(h), str(formats.get(h) or "")) for h in headers) + " |"
+                  for r in rows[:CHANNEL_ROWS]]
+    insights = [str(i).strip() for i in (payload.get("key_insights") or []) if str(i).strip()][:3]
+    if insights:
+        lines += [""] + [f"- {i}" for i in insights]
+    caveats = [str(c).strip() for c in (payload.get("coverage_caveats") or []) if str(c).strip()][:2]
+    if caveats:
+        lines += [""] + [f"_{c}_" for c in caveats]
+    total = int(data.get("total_rows") or len(rows))
+    more = total > CHANNEL_ROWS and not single
+    if more or payload.get("chart"):
+        rest = (f"The first {CHANNEL_ROWS} of {total:,} rows." if more else "")
+        what = ("The chart and every row are" if payload.get("chart") else "Every row is") if more else "The chart is"
+        where = f"{what} in Solviz: {link}" if link else ""
+        tail = " ".join(part for part in (rest, where) if part)
+        if tail:
+            lines += ["", f"_{tail}_"]
+    return "\n".join(lines).strip()
+
+
+def _conversation(event: Any) -> str:
+    """The chat a message came from: a Teams conversation, a Slack channel, a Zoom chat."""
+    channel = str(getattr(event, "channel_id", "") or "")
+    try:
+        channel = str(json.loads(channel).get("conversation_id") or channel)
+    except (ValueError, AttributeError, TypeError):
+        pass
+    return f"{getattr(event, 'platform', '') or 'channel'}:{channel}"
+
+
+async def answer_in_channel(adapter: Any, event: Any, account_id: str, question: str, portal_user: dict | None, *,
+                            conversation: str | None = None) -> str:
+    """Teams, Slack, Zoom and the question API: the new core answers, as a chat message; the text sent.
+
+    The person is the Solviz user their chat account is linked to (their roles, tables, masking and row rules),
+    or nobody for the question API, which answers as the workspace. Each chat is a conversation of its own:
+    "and by month?" follows the answer above it. The workspace's monthly limits apply; a dashboard is made in the
+    portal. ``conversation``: the conversation to follow (the question API's caller names one, or none: each
+    question on its own)."""
+    from core.mail.outbox import portal_base
+    from core2.dashboards import asked_for
+
+    source = str(getattr(event, "platform", "") or "api")
+    lang = str((portal_user or {}).get("lang") or "en")
+    question_id = new_question_id()
+    link = f"{portal_base()}/portal/chat"
+
+    async def say(text: str) -> str:
+        await adapter.send_message(event, text)
+        return text
+
+    try:
+        over = await asyncio.to_thread(_over_limit, account_id, lang)
+    except Exception as exc:     # noqa: BLE001 - an unreadable limit does not stop the question
+        log.warning("core2 could not read the limits of %s: %s", account_id, exc)
+        over = ""
+    if over:
+        return await say(over)
+    if asked_for(question) is not None:
+        return await say(f"Dashboards are made in the Solviz portal: {link}")
+    thread = conversation if conversation is not None else _conversation(event)
+    key = _session_key(account_id, portal_user, f"{source}:{thread or question_id}")
+    start = time.perf_counter()
+    status, payload = await _answer(account_id, question, portal_user, key, "core2", question_id)
+    if payload is None:
+        return await say(str(_could_not(question, status, question_id, beside=False)["answer"]["headline"]))
+    if payload.get("type") == "dashboard_built":     # never asked for here; said, never saved
+        return await say(f"Dashboards are made in the Solviz portal: {link}")
+    rows = payload.pop("export_rows", None)
+    try:
+        await asyncio.to_thread(_keep, account_id, portal_user, thread, question, question_id, payload, rows,
+                                int((time.perf_counter() - start) * 1000), source)
+    except Exception as exc:     # noqa: BLE001 - the answer stands; its history and usage row are logged as lost
+        log.warning("core2 answer could not be kept in history and usage for %s: %s", account_id, exc)
+    clarify = payload.get("clarify") or {}
+    options = [str(o) for o in (clarify.get("options") or []) if o]
+    ask_back = getattr(adapter, "send_clarification_prompt", None)
+    if options and callable(ask_back):
+        # A question back: a button per option where the chat has buttons (a tap sends the option's words).
+        await ask_back(event, str(clarify.get("question") or (payload.get("answer") or {}).get("headline") or ""),
+                       [{"id": o, "label": o} for o in options])
+        return str((payload.get("answer") or {}).get("headline") or "")
+    return await say(channel_text(payload, link=link))

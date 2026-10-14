@@ -258,7 +258,8 @@ class TestTheQuestionApi:
 
         app = FastAPI()
         app.include_router(webhooks.router)
-        with patch.object(webhooks, "handle_query") as pipeline:
+        # The new core answers the question API (gateway/core2_bridge.py).
+        with patch.object(webhooks.core2_bridge, "answer_in_channel") as pipeline:
             response = TestClient(app).post("/api/ask", json=body)
         return response, pipeline
 

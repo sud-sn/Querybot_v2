@@ -10,13 +10,18 @@ From a measure's table to the table holding an attribute:
 
 When two different direct links tie (a requester and an approver both pointing
 at the people table), the rule does not guess: the question must say which,
-or an admin's default decides.
+or an admin's default decides. Two longer paths that tie on everything but
+their keys (a fill's formula through its batch, or through its prescription)
+may be different answers: as a governed model's active relationship, the first
+is taken, and the answer names the others (``Path.others``, ``distinct``) and
+how to ask for one. A route whose links carry a role name is never the
+default, so an admin decides by naming the role of the route not wanted.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core2.model.schema import Join, SemanticModel
 
@@ -27,6 +32,8 @@ MAX_STEPS = 4
 @dataclass
 class Path:
     joins: list[Join]
+    # Routes as good as this one that reach the member another way (best_path): the answer says so.
+    others: list["Path"] = field(default_factory=list, compare=False, repr=False)
 
     @property
     def tables(self) -> list[str]:
@@ -142,7 +149,28 @@ def best_path(model: SemanticModel, start: str, goal: str, *, through: str | Non
         if len(plain) == 1:
             return plain[0]
         raise Ambiguous(direct)
+    if not direct:
+        # No link of its own: two longer routes as good as each other (the same trust, match and steps) may reach
+        # different members. A route of links without a role is the table's own when it is the only one; routes
+        # that all carry roles are asked about, as two direct links are; of several without, the first is taken
+        # (its key decides, so always the same one) and carries the others, for the answer to name.
+        tied = [p for p in paths if p.score[:4] == paths[0].score[:4]]
+        if len(tied) > 1:
+            plain = [p for p in tied if not roles(p)]
+            if not plain:
+                raise Ambiguous(tied)
+            plain[0].others = plain[1:]
+            return plain[0]
     return paths[0]
+
+
+def distinct(path: Path, others: list[Path]) -> str | None:
+    """The table that sets ``path`` apart from the other routes (its customer, theirs the supplier): the first it
+    passes that some other does not."""
+    for table in path.tables[1:-1]:
+        if any(table not in other.tables for other in others if other is not path):
+            return table
+    return None
 
 
 def reverse(j: Join) -> Join:

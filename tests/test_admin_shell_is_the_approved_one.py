@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -105,10 +106,27 @@ def test_a_workspace_page_says_where_it_is_and_whether_the_workspace_answers(adm
     assert re.findall(r'>([^<>]+)</a>', trail) == ["Workspaces", "Demo", "Data", "Metrics"]
 
 
-def test_the_status_reads_in_words():
-    for state, words in [("READY", "Answering"), ("KB_BUILDING", "Building the knowledge base"), ("ERROR", "Needs attention"),
-                         ("NEW", "Being set up")]:
-        assert re.search(rf'class="ws-status [a-z]+">{words}<', _nav("", state)), state
+def test_the_status_reads_in_words(admin):
+    """As the new core stands, whatever today's pipeline's state says (READY or not)."""
+    from admin.core2_routes import answering_status
+
+    _client, account, store = admin
+    assert answering_status(store.get_client(account)) == ("Being set up", "off"), "no database yet"
+    assert answering_status({"account_id": "x", "state": "READY"}) == ("Being set up", "off")
+    db_id = store.save_db_config("azure_sql", "invented", {"server": "invented", "user": "u", "password": "p"})
+    other = f"pill-{uuid.uuid4().hex[:6]}"
+    store.upsert_client(other, "zoom")
+    store.update_client_meta(other, db_config_id=db_id)
+    store.update_client_state(other, "READY", {})
+    assert answering_status(store.get_client(other))[0] == "Being set up", "today's READY is not answering"
+    started = store.start_core2_build(other, db_id)
+    assert answering_status(store.get_client(other)) == ("Learning the database", "busy")
+    store.finish_core2_build(other, db_id, started, status="failed", message="no warehouse")
+    assert answering_status(store.get_client(other)) == ("Needs attention", "bad")
+    store.save_core2_model(other, db_id, "{}")
+    assert answering_status(store.get_client(other)) == ("Answering", "ok")
+    nav = _nav("", "READY")
+    assert re.search(r'class="ws-status [a-z]+">Being set up<', nav), "a page drawn without the helper"
 
 
 def test_a_top_level_page_has_no_workspace_header_and_no_trail_of_one(admin):

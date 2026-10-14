@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import store
 # The pages are registered on the admin console's own router (admin/routes.py
 # imports this module at its end), so every /admin page sits on one router.
-from admin.routes import _is_auth, _resp, router
+from admin.routes import _is_auth, _resp, router, templates
 
 log = logging.getLogger("querybot.core2")
 
@@ -104,8 +104,8 @@ async def learned_page(request: Request, account_id: str):
         "interrupted": _interrupted(build),
         "build_lines": _lines(build),
         "build_left_out": sum(" Left out " in line for line in _lines(build)),
-        "decisions": [d for d in decisions if d["author"] != "import"],
-        "brought_over": [d for d in decisions if d["author"] == "import"],
+        "decisions": [d for d in decisions if d["author"] not in ("import", "adopted")],
+        "brought_over": [d for d in decisions if d["author"] in ("import", "adopted")],
         "imported": imported,
         "problem": problem,
         "has_database": bool(db_id),
@@ -127,6 +127,58 @@ def _run_build(account_id: str, started: str | None = None) -> None:
         build_workspace(account_id, started)
     except Exception:  # noqa: BLE001 - recorded in the build log by build_workspace, shown on the page
         pass
+
+
+def answering_status(client: dict[str, Any]) -> tuple[str, str]:
+    """The workspace header's pill, as the new core stands (it answers every workspace): answering once learned,
+    learning or reading the database while that runs, and being set up before. The words, and their tone."""
+    account_id, db_id = str(client.get("account_id") or ""), client.get("db_config_id")
+    if not account_id or not db_id:
+        return "Being set up", "off"
+    try:
+        state = json.loads(client.get("state_data") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    if ((state or {}).get("discovery_run") or {}).get("status") == "running":
+        return "Reading the database", "busy"
+    try:
+        build = store.latest_core2_build(account_id, db_id)
+        if _running(build):
+            return "Learning the database", "busy"
+        if store.list_core2_model_versions(account_id, db_id):
+            return "Answering", "ok"
+        if (build or {}).get("status") == "failed":
+            return "Needs attention", "bad"
+    except Exception as exc:  # noqa: BLE001 - the pill is a courtesy; the page stands without it
+        log.warning("core2: the status of %s could not be read: %s", account_id, exc)
+    return "Being set up", "off"
+
+
+templates.env.globals["answering_status"] = answering_status
+
+
+def learn_after_first_discovery(account_id: str) -> bool:
+    """A workspace's first discovery is followed by its first Learn; True when Learn was started.
+
+    The new core is the only engine, and an unlearned workspace tells its readers it is being set up: a new one
+    is learned without an admin having to find the button. A later discovery only marks what was learned out of
+    date (the setup page says so), since learning again replaces it. SOLVIZ_LEARN_AFTER_DISCOVERY=0 turns this
+    off (the test suite does: a Learn running beside an unrelated test)."""
+    import os
+    import threading
+
+    if os.getenv("SOLVIZ_LEARN_AFTER_DISCOVERY", "1").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    client = store.get_client(account_id) or {}
+    db_id = client.get("db_config_id")
+    if not db_id or store.list_core2_model_versions(account_id, db_id):
+        return False
+    if _running(store.latest_core2_build(account_id, db_id)):
+        return False
+    started = store.start_core2_build(account_id, db_id)
+    threading.Thread(target=_run_build, args=(account_id, started), name=f"learn-{account_id}", daemon=True).start()
+    log.info("core2: %s discovered for the first time; Learn started", account_id)
+    return True
 
 
 @router.post("/clients/{account_id}/learned/build")
@@ -254,22 +306,3 @@ async def learned_import(request: Request, account_id: str):
         return _back(account_id, error="Today's decisions could not be brought over: " + str(report["error"])[:200])
     return _back(account_id, saved="imported")
 
-
-@router.post("/clients/{account_id}/learned/engine")
-async def learned_engine(request: Request, account_id: str, engine: str = Form(...)):
-    """Who answers the workspace's portal questions: today's pipeline, both side by side, or the new core."""
-    if not _is_auth(request):
-        return RedirectResponse("/admin/login", status_code=303)
-    client = store.get_client(account_id)
-    if not client:
-        return RedirectResponse("/admin/clients", status_code=303)
-    if engine not in store.core2_store.ENGINES:
-        return _back(account_id, error="Choose one of the three ways to answer.")
-    if engine != "legacy":
-        from core2.bootstrap.service import load_model
-
-        if load_model(account_id, client.get("db_config_id")) is None:
-            return _back(account_id, error="Solviz has to learn this database before the new core can answer.")
-    store.set_query_engine(account_id, engine)
-    log.info("core2: %s now answers with %s", account_id, engine)
-    return _back(account_id, saved="engine")

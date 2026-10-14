@@ -377,6 +377,7 @@ def _ask_why_after_a_reload(monkeypatch, *, kb_docs, retrieval_raises=False):
     return card, seen, retriever
 
 
+@pytest.mark.old_engine
 class TestWhyAfterAReload:
     """The failure a real reader actually hits, and the only one of the six
     that is fixed rather than merely confessed."""

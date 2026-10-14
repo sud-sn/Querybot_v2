@@ -701,12 +701,14 @@ class TestTheInvestigationCallsTools:
         assert "valeurs de REVENUE sur 12 se démarquent" in outcome.synthesis
 
 
-# ── The socket's trail names a tool step by its tool ───────────────────────
+# ── An investigation asked in the chat goes to the new core ───────────────
 
 
 class TestTheTrail:
 
-    def test_each_step_is_recorded_under_what_it_was(self, monkeypatch):
+    def test_an_investigation_in_the_chat_is_answered_by_the_new_core(self, monkeypatch):
+        """The new core is the only engine: "investigate ..." is a question for it like any other (its drivers
+        answer "why"), and today's investigation loop never runs, so it records no trail of its own."""
         from starlette.testclient import TestClient
         from fastapi import FastAPI
 
@@ -716,39 +718,26 @@ class TestTheTrail:
         store.update_client_meta(account_id, chat_ui_enabled=1, enable_llm_audit=1)
         user_id, _ = store.create_user(account_id, "Ada", f"{os.urandom(4).hex()}@x.com", password="a-password-they-chose")
 
-        async def _fake_loop(**kwargs):
-            return InvestigationOutcome(objective="x", phrasing="template", synthesis="Done.", steps=[
-                InvestigationStep(1, "revenue by month", ToolResult(ok=True, kind="query", question="revenue by month")),
-                InvestigationStep(2, "Forecast of step 1, 3 period(s) ahead",
-                                  ToolResult(ok=True, kind="forecast", question="Forecast of step 1, 3 period(s) ahead")),
-                InvestigationStep(3, "anomalies", ToolResult(ok=False, kind="anomalies", question="anomalies",
-                                                             error="That tool needs step.")),
-                InvestigationStep(4, "revenue by region", ToolResult(ok=True, kind="query", question="revenue by region")),
-            ])
+        async def _never(**kwargs):
+            raise AssertionError("today's investigation loop answered in the new core's place")
 
-        monkeypatch.setattr(investigation_planner, "run_investigation", _fake_loop)
+        monkeypatch.setattr(investigation_planner, "run_investigation", _never)
         monkeypatch.setattr(wh, "resolve_provider", lambda *a, **k: ("test", "test", "k", {}))
         app = FastAPI()
         app.include_router(wh.router)
         client = TestClient(app)
         client.cookies.set(pr._COOKIE, pr._sign_session_value(user_id))
-        run_id = ""
+        answer = None
         with client.websocket_connect(f"/ws/chat/{account_id}") as ws:
             ws.receive_json()
             ws.send_json({"type": "message", "text": "investigate revenue by month"})
             for _ in range(20):
                 frame = ws.receive_json()
-                run_id = run_id or str(frame.get("run_id") or "")
-                if frame.get("type") == "message" and frame.get("content"):
+                if frame.get("type") == "assistant_response" or frame.get("type") == "message" and frame.get("content"):
+                    answer = frame
                     break
-        steps = store.list_agent_steps(account_id=account_id, portal_user_id=user_id, run_id=run_id)
-        assert [(s["tool_name"], s["status"]) for s in steps[1:]] == [
-            ("forecast", "completed"), ("anomalies", "failed"), ("query_data", "completed"),
-        ]
-        assert [s["detail"] for s in steps[1:]] == [
-            "Analysing: Forecast of step 1, 3 period(s) ahead", "Analysing: anomalies",
-            "Asking: revenue by region",
-        ]
+        assert answer is not None and answer.get("engine") == "core2", answer
+        assert answer["answer"]["headline"].startswith("This workspace is still being set up"), answer["answer"]
 
 
 def test_the_registry_offers_exactly_these_tools():

@@ -180,19 +180,11 @@ class TestSetupLeadsWhereItSays:
             html = TestClient(app).get(f"/admin/clients/{account}/setup").text
         assert f'href="/admin/clients/{account}/settings" class="btn btn-secondary btn-sm"' in html
 
-    def test_web_portal_only_hides_the_chat_platform_not_the_database(self):
-        import re
-
+    def test_a_new_workspace_chooses_its_database_and_no_chat_platform(self):
+        """The chat platform is chosen on the workspace's Settings page, with its credentials (admin/channels.py)."""
         page = (Path(__file__).resolve().parents[1] / "admin/templates/client_new.html").read_text(encoding="utf-8")
-        # The whole element the switch hides: from its opening tag to the </div> that closes it.
-        start = page.index('id="platform-section"')
-        depth, at = 1, page.index(">", start) + 1
-        for tag in re.finditer(r"<(/?)div\b", page[at:]):
-            depth += -1 if tag.group(1) else 1
-            if depth == 0:
-                hidden = page[start:at + tag.start()]
-                break
-        assert 'name="platform_type"' in hidden and 'name="db_config_id"' not in hidden
+        assert 'name="db_config_id"' in page
+        assert 'name="platform_type"' not in page and 'name="portal_only"' not in page
 
     def test_an_industry_profile_never_saved_is_shown_as_not_chosen(self, workspace):
         # The policy engine treats a workspace with no saved profile as regulated (fail-closed); the page

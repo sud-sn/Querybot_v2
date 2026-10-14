@@ -602,9 +602,11 @@ async def api_ask(request: Request):
     )
     adapter = _CaptureAdapter()
 
-    # Run the full pipeline synchronously — portal_user=None gives admin-level
-    # table access (no per-user restrictions), which is correct for system callers.
-    await handle_query(account_id, event, adapter, question, portal_user=None)
+    # The new core answers (gateway/core2_bridge.py), as the workspace: no person, so no per-user restriction,
+    # which is what a system caller is. A caller that names a conversation gets follow-ups ("and by month?")
+    # read against the answer before; without one, each question stands alone.
+    conversation = str(body.get("conversation_id") or "").strip()[:120]
+    await core2_bridge.answer_in_channel(adapter, event, account_id, question, None, conversation=conversation)
 
     answer = "\n\n".join(adapter.messages) if adapter.messages else "No answer generated."
     return {
@@ -665,12 +667,50 @@ def _load_teams_adapter(body: bytes):
     return _load_adapter("teams")
 
 
+def _chat_team(platform_type: str, body: bytes) -> str:
+    """The Slack workspace (team) or Zoom account a message comes from, read before its signature is checked: it
+    says whose credentials check it."""
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    if platform_type == "slack":
+        return str(payload.get("team_id") or (payload.get("team") or {}).get("id") or "").strip()
+    return str((payload.get("payload") or {}).get("accountId") or "").strip()
+
+
+def _load_chat_adapter(platform_type: str, body: bytes):
+    """Slack or Zoom, with the credentials of the workspace the message is for (its chat app, chosen on its
+    Settings page: admin/channels.py); the first registered ones when no workspace names its team."""
+    team = _chat_team(platform_type, body)
+    client = store.get_client_by_chat_team(platform_type, team) or (store.get_client(team) if team else None)
+    platform_id = (client or {}).get("platform_config_id")
+    if platform_id:
+        platform = store.get_platform(int(platform_id))
+        if platform and platform.get("platform_type") == platform_type and platform.get("is_active"):
+            return get_adapter(platform_type, platform["credentials"])
+    return _load_adapter(platform_type)
+
+
+def _to_workspace(platform_type: str, event) -> None:
+    """A Slack or Zoom message goes to the workspace whose chat app names its team or account; a workspace whose
+    own ID is the team's (as before chat apps were chosen per workspace) keeps receiving it."""
+    if store.get_client(event.account_id):
+        return
+    mapped = store.get_client_by_chat_team(platform_type, event.account_id)
+    if mapped:
+        log.info("%s: mapped %s to workspace %s", platform_type, event.account_id, mapped["account_id"])
+        event.account_id = mapped["account_id"]
+
+
 @router.post("/webhook/zoom")
 async def webhook_zoom(request: Request, bg: BackgroundTasks):
     body = await request.body()
     headers = dict(request.headers)
     try:
-        adapter = _load_adapter("zoom")
+        adapter = _load_chat_adapter("zoom", body)
     except HTTPException:
         return {"status": "not_configured"}
     try:
@@ -689,6 +729,7 @@ async def webhook_zoom(request: Request, bg: BackgroundTasks):
     if is_duplicate_event(event):
         return {"status": "duplicate"}
     remember_event(event)
+    _to_workspace("zoom", event)
     await dispatch(event.account_id, event, adapter, bg)
     return {"status": "ok"}
 
@@ -762,7 +803,7 @@ async def webhook_teams(request: Request, bg: BackgroundTasks):
 async def webhook_slack(request: Request, bg: BackgroundTasks):
     body = await request.body()
     headers = dict(request.headers)
-    adapter = _load_adapter("slack")
+    adapter = _load_chat_adapter("slack", body)
     try:
         payload = json.loads(body)
         if payload.get("type") == "url_verification":
@@ -779,6 +820,7 @@ async def webhook_slack(request: Request, bg: BackgroundTasks):
     if is_duplicate_event(event):
         return {"status": "duplicate"}
     remember_event(event)
+    _to_workspace("slack", event)
     # Serialize dispatch() per (platform, account, user) -- see the
     # matching comment in webhook_teams above.
     async with get_user_serialization_lock(event):

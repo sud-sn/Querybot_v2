@@ -4444,9 +4444,11 @@ async def portal_answer_feedback(request: Request, question_id: str):
         log.error("portal_answer_feedback: %s", exc)
         raise HTTPException(status_code=500, detail="Could not save feedback")
 
+    # Said as it is: a thumbs-down puts the answer, with the note, before the workspace's admin (Questions →
+    # Flagged answers), who can correct what Solviz learned. Nothing learns from it by itself.
     message = (
         "Thanks — glad that was helpful!" if rating == 1
-        else "Thanks for the correction — we'll use it to improve."
+        else "Thanks — the answer is flagged for your admin to check, with your note."
     )
     return JSONResponse({"ok": True, "message": message, "rating": rating})
 
@@ -4545,9 +4547,9 @@ async def portal_chat(request: Request):
         # The first four are the ones on screen; the rest wait behind Refresh.
         _record_suggestions_displayed(user, suggestions[:4])
 
-    # Build the list of schemas the user has access to — used for the schema
-    # selector tab bar in the chat UI.
-    available_schemas = _get_available_schemas(user)
+    # No schema picker: the new core answers every question across the tables the person may read, in every
+    # schema; the picker only steered today's pipeline, which no longer answers (gateway/core2_bridge.py).
+    available_schemas: list[dict] = []
     query_status = _query_limit_status(user["account_id"], _request_language(request))
     token_usage = _store.get_monthly_token_usage(user["account_id"], user.get("id"))
     token_usage["total_label"] = _compact_number(token_usage.get("total_tokens"))

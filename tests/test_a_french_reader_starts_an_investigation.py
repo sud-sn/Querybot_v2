@@ -25,6 +25,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+
+pytestmark = pytest.mark.old_engine
 # The store is conftest's scratch database for the run (tests/conftest.py);
 # nothing here repoints or re-imports it, so modules imported before this one
 # keep the same store object as every test after it.

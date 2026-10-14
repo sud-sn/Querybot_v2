@@ -1,0 +1,114 @@
+{# How people reach this workspace (admin/channels.py): the web portal, always, and one chat app whose credentials
+   are asked for here when it is chosen. Shown in the Settings tab of client_detail.html, imported with its context
+   (admin.routes._channel_view gives the values). #}
+{% from "macros.html" import alert %}
+{% from "icons.html" import ic %}
+{% macro channels_card() %}
+{% set _id = client.account_id %}
+{% set _chosen = channel_chosen or channel.kind %}
+<div class="card ch-card" id="channels">
+  <div class="card-header">
+    <div>
+      <h2>How people reach this workspace</h2>
+      <p class="text-sm text-muted" style="margin:.25rem 0 0">The web portal is always on. Add a chat app and people can ask there too, with the same answers and the same access.</p>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if saved == "channel" %}{{ alert(message="Saved. " ~ ("People can ask in " ~ channels[channel.kind].label ~ " and in the web portal." if channel.kind else "People reach this workspace through the web portal."), type="success", icon_name="check-circle") }}{% endif %}
+    {% if channel_error %}{{ alert(message=channel_error, type="error", icon_name="x-circle") }}{% endif %}
+
+    <section class="ch-row" aria-labelledby="ch-portal">
+      <div class="ch-head"><strong id="ch-portal">Web portal</strong><span class="badge badge-green">Always on</span></div>
+      <dl class="ch-facts">
+        <dt>Sign-in address</dt>
+        <dd class="ch-copy"><code class="ch-code" id="chSignIn">{{ channel_sign_in }}</code>
+            <button type="button" class="btn btn-secondary btn-xs" data-copy="chSignIn">{{ ic("copy", 13) }} Copy</button></dd>
+        <dt>Who can sign in</dt>
+        <dd>The people added on <a href="/admin/clients/{{ _id|urlencode }}/users">People</a>, each with their email and a password (leave it empty and a temporary one is made, to be changed at first sign-in).</dd>
+        <dt>What they need</dt>
+        <dd>A browser, their email and password. Nothing to install.</dd>
+      </dl>
+      {% if channel_local %}
+      <p class="form-note ch-warn">This server calls itself <code>{{ channel_base }}</code>. Set <code>PORTAL_BASE_URL</code> on the server to the address people open, so the links in emails and chat messages reach it.</p>
+      {% endif %}
+    </section>
+
+    <form method="post" action="/admin/clients/{{ _id|urlencode }}/channel" class="ch-row" id="channelForm" aria-labelledby="ch-chat">
+      <div class="ch-head"><strong id="ch-chat">Chat app</strong>
+        {% if channel.kind %}<span class="badge badge-blue">{{ channels[channel.kind].label }}</span>{% else %}<span class="badge badge-gray">None</span>{% endif %}</div>
+      <div class="form-group ch-pick">
+        <label for="chApp">People can also ask in</label>
+        <select id="chApp" name="chat_app">
+          <option value="">No chat app: the web portal alone</option>
+          {% for kind, spec in channels.items() %}
+          <option value="{{ kind }}" {% if _chosen == kind %}selected{% endif %}>{{ spec.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% for kind, spec in channels.items() %}
+      <fieldset class="ch-fields" data-app="{{ kind }}" {% if _chosen != kind %}hidden disabled{% endif %}>
+        <legend>What {{ spec.label }} needs</legend>
+        <p class="ch-paste">Paste this address into {{ spec.paste }}:
+          <code class="ch-code" id="chEndpoint_{{ kind }}">{{ channel_base }}/{{ spec.endpoint }}</code>
+          <button type="button" class="btn btn-secondary btn-xs" data-copy="chEndpoint_{{ kind }}">{{ ic("copy", 13) }} Copy</button></p>
+        <div class="form-grid">
+          {% for f in spec.fields %}
+          {% set _mine = channel.kind == kind %}
+          <div class="form-group">
+            <label for="ch_{{ kind }}_{{ f.name }}">{{ f.label }} <span class="text-danger">*</span></label>
+            {% if f.secret %}
+            <input type="password" id="ch_{{ kind }}_{{ f.name }}" name="{{ f.name }}" autocomplete="new-password"
+                   placeholder="{% if _mine and f.name in channel.saved %}Saved: leave empty to keep it{% endif %}">
+            {% else %}
+            <input type="text" id="ch_{{ kind }}_{{ f.name }}" name="{{ f.name }}" autocomplete="off" spellcheck="false"
+                   value="{{ channel.shown.get(f.name, '') if _mine else '' }}">
+            {% endif %}
+            <p class="form-note">{{ f.hint }}</p>
+          </div>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+      <p class="form-note">Someone who asks in a chat app is answered as the Solviz person their chat account is linked to (on People): their role, tables and row rules apply there too. An account linked to nobody is asked to register first.</p>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">Save how people reach it</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  var pick = document.getElementById('chApp');
+  if (pick) pick.addEventListener('change', function () {
+    document.querySelectorAll('#channelForm .ch-fields').forEach(function (set) {
+      var on = set.getAttribute('data-app') === pick.value;
+      set.hidden = !on;
+      set.disabled = !on;
+    });
+  });
+  document.querySelectorAll('#channels [data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var text = (document.getElementById(button.getAttribute('data-copy')) || {}).textContent || '';
+      if (navigator.clipboard) navigator.clipboard.writeText(text.trim()).catch(function () {});
+    });
+  });
+})();
+</script>
+<style>
+.ch-card { margin-top: 1rem; }
+.ch-row { padding: .9rem 0; }
+.ch-row + .ch-row { border-top: 1px solid var(--border); }
+.ch-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; font-size: var(--font-base); }
+.ch-facts { display: grid; grid-template-columns: minmax(110px, max-content) 1fr; gap: .45rem 1rem; margin: 0; font-size: var(--font-sm); }
+.ch-facts dt { color: var(--text-muted); }
+.ch-facts dd { margin: 0; min-width: 0; }
+.ch-facts dd.ch-copy { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.ch-code { font-family: var(--font-mono); font-size: var(--font-sm); background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 2px 8px; overflow-wrap: anywhere; min-width: 0; }
+.ch-warn { margin-top: .6rem; }
+.ch-pick { max-width: 420px; }
+.ch-fields { border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem 1rem; margin: .4rem 0 .8rem; min-width: 0; }
+.ch-fields legend { padding: 0 .4rem; font-weight: var(--weight-semibold); font-size: var(--font-sm); }
+.ch-paste { font-size: var(--font-sm); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .2rem 0 .8rem; }
+@media (max-width: 640px) { .ch-facts { grid-template-columns: 1fr; } .ch-facts dt { margin-top: .3rem; } }
+</style>
+{% endmacro %}

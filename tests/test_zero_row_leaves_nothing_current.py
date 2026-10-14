@@ -266,6 +266,7 @@ def _rows_in(frames):
 
 class TestAFollowUpDoesNotSilentlyActOnTheOlderAnswer:
 
+    @pytest.mark.old_engine
     def test_the_old_behaviour_really_did_transform_the_previous_result(self):
         """The bug, reproduced. Without the marker "just the top 3" comes back
         as a table -- three rows of the answer before last."""
@@ -275,6 +276,7 @@ class TestAFollowUpDoesNotSilentlyActOnTheOlderAnswer:
         assert rows is not None, [f.get("type") for f in frames]
         assert len(rows) == 3, rows
 
+    @pytest.mark.old_engine
     def test_it_now_refuses_instead(self):
         frames, _rid = _follow_up_after_an_empty_answer("just the top 3")
         assert _rows_in(frames) is None, (
@@ -282,6 +284,7 @@ class TestAFollowUpDoesNotSilentlyActOnTheOlderAnswer:
         assert any(f.get("type") == "assistant_error" for f in frames), \
             [f.get("type") for f in frames]
 
+    @pytest.mark.old_engine
     def test_the_refusal_says_the_last_question_found_nothing(self):
         """Not "that result is no longer available": nothing expired, and a
         query did run. execute_result_command only sees an absent snapshot, so

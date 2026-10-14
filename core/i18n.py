@@ -1908,6 +1908,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "*État :* {state}\n*Base de données :* {database}\n*Requêtes ce mois-ci :* {used}/{limit}\n*Utilisateur :* {user}",
     },
     "dispatch.status.no_database": {"en": "not configured", "fr": "non configurée"},
+    "dispatch.status.ready": {"en": "ready: questions are answered", "fr": "prêt : les questions ont une réponse"},
+    "dispatch.status.being_set_up": {"en": "being set up: Solviz has not learned the database yet",
+                                     "fr": "en cours de configuration : Solviz n'a pas encore appris la base"},
     "dispatch.status.no_user": {"en": "not registered", "fr": "non inscrit"},
 
     # ── Failure and zero-row cards (core/failure_messages.py) ────────────────

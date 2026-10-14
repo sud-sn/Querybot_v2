@@ -1440,6 +1440,10 @@ def _run_migrations() -> None:
         # belongs to, instead of the "exactly one configured client" auto-map
         # heuristic that breaks as soon as a second client is configured.
         ("client", "teams_tenant_id", "TEXT NOT NULL DEFAULT ''"),
+        # The Slack workspace (team) ID or Zoom account ID whose messages come to this workspace: chosen with the
+        # workspace's chat app on its Settings page (admin/channels.py). Before, a Slack or Zoom workspace was
+        # reached only when its own account ID happened to be the chat's.
+        ("client", "chat_team_id", "TEXT NOT NULL DEFAULT ''"),
         # Admin query-log/overview surfacing: the validator/execution failure
         # classification code, so the admin UI can render the same
         # business-readable translate_failure() message chat gets instead of
@@ -1821,6 +1825,10 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_core2_request_account ON core2_request (account_id, status, created_at);
         """
     )
+    # The new core is the only engine: decisions brought over from the earlier setup are its own (adopted), so
+    # nothing taken out of the earlier setup's pages and stores takes them back (core2/model/imports.py: adopt).
+    conn.execute("UPDATE core2_override SET author='adopted', note=REPLACE(note, 'today''s setup', 'the earlier setup') "
+                 "WHERE author='import'")
 
 
 def _ensure_join_types_are_sql(conn: sqlite3.Connection) -> None:
@@ -2924,6 +2932,14 @@ def _post_migration_indexes(conn: sqlite3.Connection) -> None:
         )
     except Exception as e:
         log.debug("client teams_tenant_id unique index skipped: %s", e)
+    # One Slack workspace or Zoom account maps to exactly one workspace, as a Teams tenant does.
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_client_chat_team_id "
+            "ON client(platform_type, chat_team_id) WHERE chat_team_id != ''"
+        )
+    except Exception as e:
+        log.debug("client chat_team_id unique index skipped: %s", e)
 
 
 def _ensure_metric_version_table(conn: sqlite3.Connection) -> None:

@@ -411,12 +411,15 @@ def _took(began: float) -> str:
 
 def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client: dict[str, Any], *,
                report: Report | None = None) -> dict[str, Any]:
-    """Today's admin decisions as this model's overrides (core2.model.imports); never fails the build."""
+    """The earlier setup's admin decisions as this model's overrides (core2.model.imports), adopted at once as the
+    new core's own (the old engine is switched off; nothing in its setup changes them again); never fails the
+    build."""
     import store
-    from core2.model.imports import import_approvals
+    from core2.model.imports import adopt, import_approvals
 
     try:
         done = import_approvals(account_id, db_id, model, str(_state(client).get("kb_dir") or ""), report=report)
+        done["adopted"] = adopt(account_id, db_id)
     except Exception as exc:  # noqa: BLE001 - the model stands without them; the page says so
         log.warning("core2: today's decisions for %s could not be brought over: %s", account_id, exc, exc_info=True)
         done = {"error": str(exc)}
@@ -424,42 +427,11 @@ def bring_over(account_id: str, db_id: int | None, model: SemanticModel, client:
     return done
 
 
-DECISIONS_EVERY = 10.0       # seconds: how often answers look for decisions made in today's setup since
-_LOOKED: dict[tuple[str, int], float] = {}
-_LOOKING = threading.Lock()
-
-
 def keep_decisions_current(account_id: str, db_id: int | None, client: dict[str, Any]) -> bool:
-    """Bring today's decisions over again when they changed since they last came over.
-
-    A metric added or a link confirmed in today's setup after Learn reached the new
-    core only when an admin pressed "Bring them over again" or learned again. Before
-    an answer, at most every DECISIONS_EVERY seconds per workspace, today's setup is
-    read and compared with what came over; a change (one undone included) is brought
-    over for this answer. True when something came over. Never fails the answer.
-    """
-    from core2.model.imports import changes, decisions, read_legacy
-
-    key = (account_id, int(db_id or 0))
-    now = time.monotonic()
-    with _LOOKING:
-        if now - _LOOKED.get(key, float("-inf")) < DECISIONS_EVERY:
-            return False
-        _LOOKED[key] = now
-    try:
-        model = learned_model(account_id, db_id)
-        if model is None:
-            return False
-        report = decisions(model, read_legacy(account_id, str(_state(client).get("kb_dir") or "")))
-        if not changes(account_id, db_id, report):
-            return False
-    except Exception as exc:  # noqa: BLE001 - the decisions already brought over answer; tried again next time
-        log.warning("core2: could not look for new decisions in today's setup for %s: %s", account_id, exc,
-                    exc_info=True)
-        return False
-    log.info("core2: today's setup changed for %s; bringing its decisions over", account_id)
-    bring_over(account_id, db_id, model, client, report=report)
-    return True
+    """Nothing to bring over: the new core is the only engine, and the earlier setup's decisions came over at Learn
+    as its own (``bring_over``); no page changes them in the earlier setup any more. It used to look, before an
+    answer, for decisions made there since. Kept for its callers; always False."""
+    return False
 
 
 def learned_model(account_id: str, db_id: int | None) -> SemanticModel | None:

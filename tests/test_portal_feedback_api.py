@@ -127,7 +127,7 @@ class TestPortalFeedbackApi(unittest.TestCase):
         ):
             data = json.loads(self._call(req).body)
 
-        self.assertIn("improve", data["message"].lower())
+        self.assertIn("flagged for your admin", data["message"].lower())
 
     # ── Auth / feature-flag guards ─────────────────────────────────────────────
 

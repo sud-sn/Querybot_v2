@@ -27,6 +27,12 @@ _MESSAGE_URL = "https://api.zoom.us/v2/im/chat/messages"
 _FILE_URL    = "https://file.zoom.us/v2/im/chat/messages/files"
 
 
+def _zoom_account(event: PlatformEvent) -> str:
+    """The Zoom account a reply goes to: the one the message came from, kept in the event as Zoom sent it
+    (event.account_id is the Solviz workspace the message was routed to, gateway/webhooks.py)."""
+    return str(((event.raw or {}).get("payload") or {}).get("accountId") or event.account_id)
+
+
 class ZoomAdapter(PlatformAdapter):
 
     platform_type = "zoom"
@@ -135,7 +141,7 @@ class ZoomAdapter(PlatformAdapter):
             "robot_jid":           self._bot_jid,
             "to_jid":              event.channel_id,
             "user_jid":            event.channel_id,
-            "account_id":          event.account_id,
+            "account_id":          _zoom_account(event),
             "is_markdown_support": True,
             "content": {
                 "head": {"text": "Query Bot"},
@@ -176,7 +182,7 @@ class ZoomAdapter(PlatformAdapter):
                         data={
                             "robot_jid":  self._bot_jid,
                             "to_jid":     event.channel_id,
-                            "account_id": event.account_id,
+                            "account_id": _zoom_account(event),
                         },
                         files={"file": (filename, f, mime_type)},
                         timeout=20,

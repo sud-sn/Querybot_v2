@@ -127,15 +127,41 @@ async def relationships_save_link(request: Request, account_id: str):
     conditions = [c.model_dump(mode="json") for c in spec.conditions]
     if existing is not None and links.same_link(existing, spec):
         key = existing.key
-        if [c.model_dump(mode="json") for c in existing.conditions] != conditions:
+        new_conditions = [c.model_dump(mode="json") for c in existing.conditions] != conditions
+        # The two kinds a question may follow (many to one, one to one) an admin may choose between. A link the
+        # data showed repeating (one to many, many to many) is called many to one only when the data now shows one
+        # row each: the page used to save every link it edited as many to one, and the next question counted its
+        # rows once for each match.
+        choosable = existing.cardinality in ("many_to_one", "one_to_one")
+        new_cardinality = spec.cardinality != existing.cardinality
+        measured: dict[str, Any] | None = None
+        if new_conditions or (new_cardinality and not choosable):
+            # A condition decides how many rows the link meets (a "current row" one keeps one per member): what it
+            # meets is measured again, or a condition taken away would count every version of a member.
+            warehouse = _warehouse(account_id, client)
+            measured = links.check_link(model, spec, warehouse) if warehouse is not None else {}
+            if measured.get("problem") or "most" not in measured:
+                return _refused("The change was not saved: it has to be checked against the data first, and "
+                                + (measured.get("problem") or "this workspace has no database to check against")
+                                .rstrip(".") + ".")
+            most = float(measured.get("most") or 0)
+            for field, value in (("max_fanout", max(most, 1.0)), ("to_unique", most <= 1), ("target_checked", True)):
+                store.set_core2_override(account_id, db_id, target("join", key), field, value)
+            if not choosable and most <= 1 and new_cardinality:
+                store.set_core2_override(account_id, db_id, target("join", key), "cardinality", spec.cardinality)
+        if new_conditions:
             store.set_core2_override(account_id, db_id, target("join", key), "conditions", conditions)
-        if existing.cardinality != spec.cardinality:
+        if new_cardinality and choosable:
             store.set_core2_override(account_id, db_id, target("join", key), "cardinality", spec.cardinality)
         if existing.keep_unmatched != spec.keep_unmatched:
             store.set_core2_override(account_id, db_id, target("join", key), "keep_unmatched", spec.keep_unmatched)
         if existing.trust not in ("admin",):
             store.set_core2_override(account_id, db_id, target("join", key), "trust", "admin")
-        return JSONResponse({"ok": True, "key": key})
+        out: dict[str, Any] = {"ok": True, "key": key}
+        if measured is not None:
+            out["repeats"] = float(measured.get("most") or 0) > 1
+            out["words"] = measured.get("words") or []
+        return JSONResponse(out)
     key = links.key_for(model, spec)
     if key in model.joins and existing is None:
         return _refused("These tables are already linked on these columns: pick that link to change it.")

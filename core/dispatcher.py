@@ -75,9 +75,8 @@ _ABOUT = (
     "  • Compare values across products, regions, customers, or teams\n"
     "  • Calculate KPIs and business metrics (margin %, days to pay, etc.)\n"
     "  • Rank and filter — top 10 customers, lowest performing products\n"
-    "  • Produce KPI cards, charts, and tables automatically\n"
-    "  • Create named dashboards and add or arrange governed visuals\n"
-    "  • Refine recent results and change their presentation\n\n"
+    "  • Follow up on an answer — \"and by month?\", \"just the top 5\"\n"
+    "  • Charts and dashboards in the Solviz portal\n\n"
     "*Example questions:*\n"
     "  • _What is our gross margin percentage this year?_\n"
     "  • _Show revenue and COGS by customer_\n"
@@ -1624,9 +1623,10 @@ async def dispatch(
     # We keep a fast-path for when state is not yet READY (NEW/KB_BUILDING):
     # in those states client_row exists but the pipeline can't answer data
     # questions anyway, so the static _ABOUT response is still appropriate.
+    # A chat (Teams, Slack, Zoom) gets the same reply in every workspace: the new core answers its questions.
     if (
         (text.lower() == "help" or _ABOUT_RE.search(text))
-        and get_state(account_id).get("state") not in ("READY",)
+        and (event.platform != "web" or get_state(account_id).get("state") not in ("READY",))
     ):
         await adapter.send_message(event, _ABOUT); return
 
@@ -1650,17 +1650,43 @@ async def dispatch(
         return
 
     if text.lower() == "status":
+        from core2.bootstrap.service import answering_model
+
         client = store.get_client(account_id) or {}
         db_cfg = get_client_db(account_id)
         used   = store.get_monthly_query_count(account_id)
         limit  = client.get("query_limit_monthly", 500)
         pu     = portal_user or (store.get_user_by_platform_id(account_id, event.user_id) if event.user_id else None)
+        try:
+            learned = answering_model(account_id, client) is not None
+        except Exception as exc:     # noqa: BLE001 - status reports what it can
+            log.warning("status could not read whether %s is learned: %s", account_id, exc)
+            learned = False
         await adapter.send_message(event, _t(
             "dispatch.status",
-            state=get_state(account_id)["state"],
+            state=_t("dispatch.status.ready") if learned else _t("dispatch.status.being_set_up"),
             database=db_cfg["name"] if db_cfg else _t("dispatch.status.no_database"),
             used=used, limit=limit,
             user=pu["name"] if pu else _t("dispatch.status.no_user")))
+        return
+
+    if event.platform != "web":
+        # Teams, Slack, Zoom and the question API are answered by the new core, as the portal is
+        # (gateway/core2_bridge.py): the person is the Solviz user their chat account is linked to, with their
+        # roles, tables, masking and row rules. A workspace the new core has not learned says it is being set up.
+        # What follows in this function is today's pipeline: the portal reaches the new core before it ever
+        # calls dispatch(), so nothing below answers a question any more. It is kept one release, then deleted.
+        if portal_user is None and event.user_id:
+            portal_user = store.get_user_by_platform_id(account_id, event.user_id)
+            if not portal_user:
+                await handle_unregistered_user(account_id, event.user_id, event, adapter)
+                return
+        if isinstance(portal_user, dict) and not can_do(portal_user, "ask"):
+            await adapter.send_message(event, role_refusal("ask", portal_user.get("lang")))
+            return
+        from gateway import core2_bridge
+
+        await core2_bridge.answer_in_channel(adapter, event, account_id, text, portal_user)
         return
 
     state = get_state(account_id).get("state", "NEW")

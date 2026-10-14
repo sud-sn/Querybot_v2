@@ -82,6 +82,23 @@ def pytest_configure(config):
     import store.passwords
 
     store.passwords.ITERATIONS = 1_000
+    # A workspace's first discovery starts Learn in the background (admin/core2_routes.py); a test of discovery
+    # does not want a Learn running beside it. A test of that start turns it back on.
+    os.environ["SOLVIZ_LEARN_AFTER_DISCOVERY"] = "0"
+    config.addinivalue_line("markers", f"old_engine: {OLD_ENGINE}")
+
+
+# The new core answers every question (store.core2_store.ENGINES): what today's pipeline did in the chat -- its
+# investigations, reconcile cards, clarification loop, why drill-downs, commands on a cached result -- no question
+# reaches any more. Its tests stay, marked, until its code is deleted with them.
+OLD_ENGINE = ("drives the old engine through the chat, which the new core replaced for every question; "
+              "deleted with the old engine's code")
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if item.get_closest_marker("old_engine"):
+            item.add_marker(pytest.mark.skip(reason=OLD_ENGINE))
 
 
 @pytest.fixture(autouse=True)

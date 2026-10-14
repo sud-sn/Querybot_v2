@@ -102,7 +102,7 @@ table.ms-l .act{width:48px;text-align:right}
   <span class="ms-shows" role="group" aria-label="Show">
     <button type="button" class="ms-show" data-source="" aria-pressed="true">All {{ rows | rejectattr("hidden") | list | length }}</button>
     {% for label, words in [("Learned", "Learned"), ("Added by an admin", "Added by admins"), ("Changed by an admin", "Changed by admins"),
-                            ("From today's setup", "From today's setup"), ("Hidden", "Hidden")] if count.get(label) %}
+                            ("From the earlier setup", "From the earlier setup"), ("Hidden", "Hidden")] if count.get(label) %}
     <button type="button" class="ms-show" data-source="{{ label }}" aria-pressed="false">{{ words }} {{ count[label] }}</button>
     {% endfor %}
   </span>
@@ -124,7 +124,7 @@ table.ms-l .act{width:48px;text-align:right}
     <td data-label="From">{{ r.from | join(" + ") }}</td>
     <td data-label="Default date">{{ r.date or "—" }}</td>
     <td class="n" data-label="Asked, 30 days">{{ "{:,}".format(r.asked) if r.asked else "—" }}</td>
-    <td data-label="Source"><span class="ms-tag {{ {'Added by an admin': 'admin', 'Changed by an admin': 'changed', "From today's setup": 'setup', 'Hidden': 'off'}.get(r.source, '') }}">{{ r.source }}</span></td>
+    <td data-label="Source"><span class="ms-tag {{ {'Added by an admin': 'admin', 'Changed by an admin': 'changed', "From the earlier setup": 'setup', 'Hidden': 'off'}.get(r.source, '') }}">{{ r.source }}</span></td>
     <td class="act"><a class="ms-edit" href="{{ href }}" aria-label="Edit {{ r.name }}">{{ ic("pencil", 16) }}</a></td>
   </tr>
   {% endfor %}

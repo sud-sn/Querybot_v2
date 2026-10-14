@@ -2211,23 +2211,22 @@ async def client_create(
     business_desc: str = Form(""),
     portal_only:   str = Form(""),
 ):
-    """Create a client row (state = NEW) and redirect to the setup page."""
+    """Create a client row (state = NEW) and redirect to the setup page.
+
+    A workspace is created with no chat app: people reach it through the web portal, and a chat app (Teams,
+    Slack, Zoom) is added on its Settings page with the credentials it needs (admin/channels.py). A form that
+    still names a platform here gets none: it is chosen there, with its credentials."""
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
 
     from urllib.parse import quote
     account_id    = account_id.strip()
     client_name   = client_name.strip()
-    is_portal_only = bool(portal_only)
+    is_portal_only = True
 
     if not account_id or not client_name:
         return RedirectResponse(
-            f"/admin/clients/new?error={quote('Account ID and client name are required')}",
-            status_code=303)
-
-    if not is_portal_only and platform_type not in ("zoom", "teams", "slack"):
-        return RedirectResponse(
-            f"/admin/clients/new?error={quote('Select a platform or enable web-portal-only mode')}",
+            f"/admin/clients/new?error={quote('A workspace name and ID are required')}",
             status_code=303)
 
     if store.get_client(account_id):
@@ -2235,11 +2234,10 @@ async def client_create(
             f"/admin/clients/new?error={quote('A client with this account ID already exists')}",
             status_code=303)
 
-    # portal-only clients have no chat platform. We store 'web' in the code
-    # but must satisfy the existing DB CHECK constraint (zoom|teams|slack) on
-    # older databases. Use 'zoom' as a neutral placeholder — platform_config_id
-    # is NULL so platform_type is never used for portal-only clients anyway.
-    effective_platform = "zoom" if is_portal_only else platform_type
+    # A new workspace has no chat platform. We must satisfy the existing DB
+    # CHECK constraint (zoom|teams|slack) on older databases: 'zoom' is a
+    # neutral placeholder -- platform_config_id is NULL, so it names no chat app.
+    effective_platform = "zoom"
     form = await request.form()
     selected_packs = [str(value).strip() for value in form.getlist("erp_packs") if str(value).strip()]
     valid_packs = {
@@ -2268,7 +2266,7 @@ async def client_create(
     log.info("Admin registered new client %s (%s, portal_only=%s)",
              account_id, client_name, is_portal_only)
     return RedirectResponse(
-        f"/admin/clients/{account_id}/setup?saved={quote('Client registered — run schema discovery to continue')}",
+        f"/admin/clients/{account_id}/setup?saved={quote('Workspace added: connect its database to continue')}",
         status_code=303)
 
 
@@ -2420,7 +2418,25 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "latest_sql_pass_rate": latest_sql_pass_rate,
         "teams_platforms": store.list_platforms("teams"),
         "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
+        **_channel_view(request, client),
     })
+
+
+def _channel_view(request: Request, client: dict) -> dict:
+    """The "How people reach this workspace" card (admin/channels.py, _client_channels.html)."""
+    from admin.channels import CHANNELS, channel_of
+
+    base = (os.getenv("PORTAL_BASE_URL") or str(request.base_url)).rstrip("/")
+    chosen = str(request.query_params.get("channel") or "")
+    return {
+        "channels": CHANNELS,
+        "channel": channel_of(client),
+        "channel_chosen": chosen if chosen in CHANNELS else "",
+        "channel_error": request.query_params.get("channel_error") or "",
+        "channel_base": base,
+        "channel_local": any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0")),
+        "channel_sign_in": f"{base}/portal/login?workspace={quote(str(client['account_id']))}",
+    }
 
 
 # ── Workspace destinations that share the client page ────────────────────────
@@ -2665,8 +2681,8 @@ async def client_update(
     enable_python_analysis: str = Form(""),
     allow_user_python:   str = Form(""),
     sql_accuracy_target_pct: str = Form("85"),
-    portal_only:         str = Form(""),
-    teams_platform_config_id: str = Form(""),
+    portal_only:         str | None = Form(None),
+    teams_platform_config_id: str | None = Form(None),
     analysis_mode:       str = Form("always"),
 ):
     if not _is_auth(request):
@@ -2687,7 +2703,9 @@ async def client_update(
     _pack_ids = [str(p).strip() for p in form.getlist("erp_packs") if str(p).strip()]
     _valid_packs = {m["pack_id"] for m in _list_erp_packs() if m.get("status") != "stub"}
     _pack_ids = [p for p in _pack_ids if p in _valid_packs]
-    is_portal_only = 1 if portal_only else 0
+    # How people reach the workspace (the portal, a chat app) is saved by its own card on this page
+    # (admin/channels.py): the settings form leaves it as it is unless it posts these fields itself.
+    is_portal_only = None if portal_only is None else (1 if portal_only else 0)
 
     # Teams integration is assigned by picking an already-registered platform
     # (Admin -> Platforms), the same way "Assigned database" picks an
@@ -2695,9 +2713,11 @@ async def client_update(
     # tenant ID that actually drives webhook routing (client.teams_tenant_id)
     # is derived from whatever tenant_id was saved on that platform, not
     # re-entered here.
-    teams_platform_config_id = teams_platform_config_id.strip()
+    teams_platform_config_id = None if teams_platform_config_id is None else teams_platform_config_id.strip()
     _teams_kwargs: dict = {}
-    if teams_platform_config_id:
+    if teams_platform_config_id is None:
+        pass
+    elif teams_platform_config_id:
         platform = store.get_platform(int(teams_platform_config_id))
         if not platform or platform.get("platform_type") != "teams":
             return RedirectResponse(
@@ -11701,6 +11721,12 @@ async def admin_discover_schema(
             except Exception as _mex:
                 log.warning("Business meaning proposals after discovery failed for %s: %s",
                             account_id, _mex)
+            # ── A new workspace's first discovery: Learn follows ─────────
+            try:
+                from admin.core2_routes import learn_after_first_discovery
+                await asyncio.to_thread(learn_after_first_discovery, account_id)
+            except Exception as _lex:
+                log.warning("Learn could not be started after the first discovery of %s: %s", account_id, _lex)
             import threading as _threading
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
@@ -13194,6 +13220,7 @@ from admin import core2_metrics as _core2_metrics  # noqa: E402,F401
 from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
 from admin import row_access as _row_access  # noqa: E402,F401
+from admin import channels as _channels  # noqa: E402,F401
 from admin import email_routes as _email_routes  # noqa: E402,F401
 # Named admins: signing in, your own account, invitations, and who may open which workspace (admin/access.py).
 from admin import admin_accounts as _admin_accounts  # noqa: E402

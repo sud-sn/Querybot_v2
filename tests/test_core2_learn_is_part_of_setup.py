@@ -1,7 +1,8 @@
 """Learning the database is setup's last step, and says when discovery has moved on.
 
-* The setup page ends with "Learn the database for the new core": not learned
-  yet, learned (which version, who answers the portal), or out of date.
+* The setup page ends with "Learn the database": not learned yet (people are told
+  the workspace is being set up), learned (which version, where it answers), or
+  out of date.
 * Discovery run again with other tables, columns or masking marks Learn out of
   date, on the setup page and on the learned page, until Solviz learns again.
   A model learned before masking was part of the fingerprint is not called out
@@ -70,17 +71,15 @@ def _customers(schema) -> dict:
 def test_setup_ends_with_learning_the_database(workspace):  # noqa: F811
     store, built, schema_dir = workspace
     page = _setup_page()
-    assert "Learn the database for the new core" in page and "Not learned yet" in page
+    assert "Learn the database</div>" in page and "Not learned yet" in page and "being set up" in page
     assert "Learn this database</button>" not in page, "nothing to learn from before discovery"
     _schema_file(built, schema_dir)
     from admin import core2_routes
 
     core2_routes._run_build(ACCOUNT)
-    page = _setup_page()
+    page = " ".join(_setup_page().split())
     assert "Learned: version 1" in page and "Out of date" not in page
-    assert "today's pipeline; choose the new core" in page
-    store.set_query_engine(ACCOUNT, "core2")
-    assert "answered by the new core" in " ".join(_setup_page().split())
+    assert "answered in the portal, Teams, Slack and Zoom" in page and "today's pipeline" not in page
 
 
 def test_discovery_run_again_marks_learn_out_of_date_until_it_learns_again(learned):

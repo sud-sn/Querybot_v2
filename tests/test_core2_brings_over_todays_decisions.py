@@ -1,5 +1,8 @@
 """What an admin already decided in today's setup is what the new core uses (DESIGN §12.4).
 
+Since the new core became the only engine, what comes over at Learn is adopted as its own: the earlier setup's
+pages are hidden, and nothing done in its stores afterwards changes the new core.
+
 Links confirmed or rejected, the default date of a fact table, metrics built in
 today's metric builder, descriptions, display names, synonyms and confirmed
 meanings come over as overrides authored "import". Names are matched by the
@@ -316,13 +319,17 @@ def test_a_build_brings_todays_setup_over_and_answers_by_it(workspace, tmp_path)
     assert float(got) == pytest.approx(float(want))
 
     page = _page()
-    assert "Brought over from today's setup" in page and "the metric Delivered sales from today's setup" in page
+    assert "Brought over from the earlier setup" in page and "the metric Delivered sales from the earlier setup" in page
     assert "metrics added" in page and "links rejected" in page and "default dates" in page
+    # What came over is the new core's own now (the old engine is off): nothing to bring over again.
+    assert "Bring them over again" not in page
+    assert {o["author"] for o in store.list_core2_overrides(ACCOUNT, db_id)} == {"adopted"}
 
-    # Today's setup changes (the metric is deleted); "Bring them over again" follows it.
+    # The earlier setup's stores change (the metric is retired there): the new core keeps its own decision, even
+    # when an import is asked for again, until the earlier setup's pages and stores are removed altogether.
     with __import__("store.db", fromlist=["get_db"]).get_db() as conn:
         conn.execute("UPDATE metric_registry SET is_active=0, metric_status='deprecated' WHERE account_id=?",
                      (ACCOUNT,))
     response = _post(core2_routes.learned_import, f"/admin/clients/{ACCOUNT}/learned/import", {})
-    assert response.status_code == 303 and "saved=imported" in response.headers["location"]
-    assert not any(m.business_name == "Delivered sales" for m in load_model(ACCOUNT, db_id).measures.values())
+    assert response.status_code == 303
+    assert any(m.business_name == "Delivered sales" for m in load_model(ACCOUNT, db_id).measures.values())

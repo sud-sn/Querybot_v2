@@ -248,7 +248,9 @@ def test_the_check_is_asked_once_and_an_unmeasured_link_that_finds_one_row_is_fo
     assert len(service._LINK_REPEATS) >= 2
 
 
-def test_a_check_the_warehouse_refuses_leaves_the_link_followed_and_is_logged(learned, caplog):
+def test_a_check_the_warehouse_refuses_stops_the_link_and_is_logged(learned, caplog):
+    """Never followed on a guess: a link that might count rows twice waits until the data can say (and is asked
+    again next time, not remembered as repeating)."""
     con, model = learned
     old = _as_before(model)
     old.version = 55555
@@ -262,8 +264,9 @@ def test_a_check_the_warehouse_refuses_leaves_the_link_followed_and_is_logged(le
     check = _link_check(Services(model=old, warehouse=Refusing(con), complete=lambda s, t: "",
                                  index=MemberIndex(), today=TODAY))
     with caplog.at_level("WARNING", logger="querybot.core2"):
-        assert check(_join(old, "orders", "stores")) is False
-    assert "could not check" in caplog.text
+        assert check(_join(old, "orders", "stores")) is True
+    assert "could not check" in caplog.text and "not followed" in caplog.text
+    assert _join(old, "orders", "stores").key in check.unknown
 
 
 # ── an admin's condition, and today's setup ───────────────────────────────

@@ -114,8 +114,9 @@ def test_a_condition_saved_on_a_link_is_used_by_the_next_answer(page):
             "conditions": [{"column": segment, "op": "eq", "values": ["Wholesale"]}]}
     checked = client.post(f"/admin/clients/{account}/relationships/check-link", json=body).json()
     assert checked["ok"] and 0 < checked["match"] < 1 and checked["without"]["match"] == 1.0
-    assert client.post(f"/admin/clients/{account}/relationships/save-link", json=body).json() == {"ok": True,
-                                                                                                  "key": link.key}
+    saved = client.post(f"/admin/clients/{account}/relationships/save-link", json=body).json()
+    # Measured again on the data as it is saved (tests/test_a_link_edit_is_measured_again.py): one customer each.
+    assert saved["ok"] and saved["key"] == link.key and saved["repeats"] is False
     rows = _answer(_model(store, account), warehouse, {"intent": "breakdown", "measures": ["net_amount"],
                                                        "group_by": ["customer.segment"], "time": H1})
     assert {r["customer_segment"] for r in rows} == {"Wholesale", None}

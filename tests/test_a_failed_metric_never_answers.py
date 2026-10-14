@@ -430,6 +430,7 @@ def _reader_socket(account_id, text, *, patch_module, patch_name, monkeypatch):
     return given
 
 
+@pytest.mark.old_engine
 class TestBuildingInChatOffersOnlyTheMetricThatAnswers:
 
     def test_a_report_planned_in_chat(self, account, monkeypatch):

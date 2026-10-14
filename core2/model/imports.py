@@ -41,6 +41,7 @@ from core2.model.schema import AggExpr, ColumnFilter, Join, Measure, MeasureExpr
 log = logging.getLogger("querybot.core2")
 
 AUTHOR = "import"
+ADOPTED = "adopted"       # brought over once, then the new core's own (adopt)
 _AGGS = {"SUM": "sum", "AVG": "avg", "COUNT": "count", "COUNT_DISTINCT": "count_distinct",
          "COUNTDISTINCT": "count_distinct", "DISTINCT_COUNT": "count_distinct", "MIN": "min", "MAX": "max"}
 _OPS = {"equals": "eq", "not_equals": "ne", "greater_than": "gt", "greater_or_equal": "gte", "less_than": "lt",
@@ -135,7 +136,7 @@ def decisions(model: SemanticModel, legacy: Legacy) -> Report:
     _metrics(model, legacy, names, report, add_synonyms)
     _descriptions(model, legacy, names, report, add_synonyms)
     for object_key, words in synonyms.items():
-        report.decisions.append(Decision(object_key, "synonyms", {"en": words}, "synonyms from today's setup"))
+        report.decisions.append(Decision(object_key, "synonyms", {"en": words}, "synonyms from the earlier setup"))
     return report
 
 
@@ -222,16 +223,16 @@ def _date_roles(model: SemanticModel, legacy: Legacy, names: _Names, report: Rep
             cleared.add(table)
         elif dr.get("is_default"):
             report.decisions.append(Decision(f"date_role:{role.key}", "is_default", True,
-                                             f"{role.name} is the default date (today's setup)"))
+                                             f"{role.name} is the default date (the earlier setup)"))
             report.count("default dates")
         name = str(dr.get("name") or "").strip()
         if name and name != role.name:
-            report.decisions.append(Decision(f"date_role:{role.key}", "name", name, "named in today's setup"))
+            report.decisions.append(Decision(f"date_role:{role.key}", "name", name, "named in the earlier setup"))
         add_synonyms(f"date_role:{role.key}", _split(dr.get("synonyms")))
     for table in sorted(cleared):
         current = model.date_roles.get(model.tables[table].default_date or "")
         if current is not None:
-            report.missed.append(f"{model.tables[table].business_name} has no default date in today's setup; the "
+            report.missed.append(f"{model.tables[table].business_name} has no default date in the earlier setup; the "
                                  f"new core counts it by {current.name} until you choose on this page")
 
 
@@ -304,7 +305,7 @@ def _metrics(model: SemanticModel, legacy: Legacy, names: _Names, report: Report
         if same is not None:
             if name and name != same.business_name:
                 report.decisions.append(Decision(f"measure:{same.key}", "business_name", name,
-                                                 "the metric's name in today's setup"))
+                                                 "the metric's name in the earlier setup"))
                 words = [same.business_name, *words]
             add_synonyms(f"measure:{same.key}", words)
             report.count("metrics matched")
@@ -319,7 +320,7 @@ def _metrics(model: SemanticModel, legacy: Legacy, names: _Names, report: Report
             default_date=_metric_date(metric, legacy, model, names, table), kind="import", provenance="admin",
             status="approved")
         report.decisions.append(Decision(f"measure:{measure.key}", "define", measure.model_dump(mode="json"),
-                                         f"the metric {name} from today's setup"))
+                                         f"the metric {name} from the earlier setup"))
         report.count("metrics added")
 
 
@@ -424,7 +425,7 @@ def _descriptions(model: SemanticModel, legacy: Legacy, names: _Names, report: R
             continue
         text = str(entry.get("description") or "").strip()
         if text:
-            report.decisions.append(Decision(f"table:{table}", "description", text, "described in today's setup"))
+            report.decisions.append(Decision(f"table:{table}", "description", text, "described in the earlier setup"))
             report.count("descriptions")
         add_synonyms_to = entry.get("column_synonym_map") or {}
         for column_name, words in add_synonyms_to.items():
@@ -441,9 +442,9 @@ def _descriptions(model: SemanticModel, legacy: Legacy, names: _Names, report: R
         if column is None:
             continue
         if str(prop.get("role") or "").lower() == "ignore":
-            report.decisions.append(Decision(f"column:{column}", "hidden", True, "ignored in today's setup"))
+            report.decisions.append(Decision(f"column:{column}", "hidden", True, "ignored in the earlier setup"))
         _name_column(column, str(prop.get("display_name") or "").strip(), _split(prop.get("synonyms")),
-                     "named in today's setup", targets, report, add_synonyms)
+                     "named in the earlier setup", targets, report, add_synonyms)
     codes = 0
     for meaning in legacy.meanings:
         if meaning.get("status") != "confirmed":
@@ -527,6 +528,19 @@ def write(account_id: str, db_id: int | None, report: Report) -> int:
     for (object_key, field_name), d in wanted.items():
         store.set_core2_override(account_id, db_id, object_key, field_name, d.value, author=AUTHOR, note=d.note)
     return len(wanted)
+
+
+def adopt(account_id: str, db_id: int | None) -> int:
+    """The decisions brought over from the earlier setup, as the new core's own: authored "adopted", they are never
+    taken back when the earlier setup's pages and stores go (the old engine is switched off; its pages are hidden,
+    then removed), and a later import never overwrites them. How many."""
+    import store
+
+    held = [o for o in store.list_core2_overrides(account_id, db_id) if o["author"] == AUTHOR]
+    for o in held:
+        store.set_core2_override(account_id, db_id, o["object_key"], o["field"], o["value"], author=ADOPTED,
+                                 note=o.get("note") or "")
+    return len(held)
 
 
 def changes(account_id: str, db_id: int | None, report: Report) -> bool:

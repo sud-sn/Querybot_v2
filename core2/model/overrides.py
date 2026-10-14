@@ -19,7 +19,10 @@ ALLOWED = {
               "readers_may_include", "grain_text"},
     "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity",
                "value_names", "personal", "age"},
-    "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality"},
+    # How many target rows a source row meets (max_fanout, to_unique, target_checked) is measured, never typed:
+    # measured again when an admin changes a link's conditions (admin/core2_relationships.py).
+    "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality", "max_fanout", "to_unique",
+             "target_checked"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
                 "filters", "default_date", "expr", "table", "better"},

@@ -589,7 +589,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
             display[c.name] = {"type": "date", "style": _PERIOD_STYLE.get(c.grain, "iso_date")}
 
     partial = {d.isoformat() for d in logical.partial}
-    caveats: list[str] = []
+    caveats: list[str] = list(getattr(logical, "cautions", []) or [])      # the resolver's, said first
     if partial and cols.of("period"):
         grain = cols.of("period")[0].grain or "month"
         days = sorted(dt.date.fromisoformat(p) for p in partial)

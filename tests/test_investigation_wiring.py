@@ -90,6 +90,7 @@ def _reply(frames):
 
 class TestTheTriggerReachesTheLoop:
 
+    @pytest.mark.old_engine
     def test_the_synthesis_is_sent_as_the_final_message(self, monkeypatch):
         account_id, user_id = _reader()
         outcome = InvestigationOutcome(
@@ -120,6 +121,7 @@ class TestTheTriggerReachesTheLoop:
         assert "agent_run_started" in types
         assert "agent_run_finished" in types
 
+    @pytest.mark.old_engine
     def test_the_objective_the_loop_receives_is_the_readers_own_text(self, monkeypatch):
         account_id, user_id = _reader()
         seen = {}
@@ -135,6 +137,7 @@ class TestTheTriggerReachesTheLoop:
         assert seen["objective"] == "investigate scrap rate at the Lyon plant"
         assert seen["max_steps"] == wh._INVESTIGATION_MAX_STEPS
 
+    @pytest.mark.old_engine
     def test_a_regulated_tenant_is_refused_through_the_real_loop(self):
         """No monkeypatch on the loop itself: the real gate, the real socket.
         run_query_tool is spied only to prove it is never reached."""
