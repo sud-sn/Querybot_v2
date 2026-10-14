@@ -523,6 +523,13 @@
     {% endif %}
   </div>
   <div class="step-body">
+    {% if discovery_error %}
+    <div id="discovery-error" role="alert" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--red-light);border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--red)">
+      <strong>The last discovery failed</strong> ({{ discovery_error.at }}): {{ discovery_error.message }}
+      {% if schema_files %}<br>Nothing was changed: the tables below, and the answers, still come from the discovery before it.
+      Fix the cause, then press Re-discover.{% else %}<br>Fix the cause, then press Discover schema again.{% endif %}
+    </div>
+    {% endif %}
     {% if kb_table_count %}
     <div id="discovery-scope-hint" style="margin-bottom:.75rem;padding:.65rem .875rem;background:var(--blue-light);border:1px solid color-mix(in srgb,var(--blue) 28%,transparent);border-radius:var(--radius);font-size:var(--font-sm);color:var(--blue)">
       Will discover <strong>{{ kb_table_count }}</strong> selected table{{ "s" if kb_table_count != 1 else "" }} only.

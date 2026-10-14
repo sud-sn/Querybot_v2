@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -9847,6 +9848,7 @@ async def client_setup_page(request: Request, account_id: str):
         "egress_summary":       egress_summary,
         "saved_masking_config": saved_masking_config,  # for JS init
         "schema_drift":         schema_drift,           # populated after re-discovery
+        "discovery_error":      state_data.get("discovery_error") or {},   # the last discovery, when it failed
         "saved":                request.query_params.get("saved"),
         "error":                request.query_params.get("error"),
     })
@@ -11434,16 +11436,13 @@ async def admin_discover_schema(
                     _old_schema = json.loads(_old_schema_path.read_text(encoding="utf-8"))
                 except Exception:
                     pass
-            # Clean the schema dir so tables removed from the source DB don't
-            # linger on disk from a previous discovery run.
+            # Read into a folder of its own and put the result in place only when it worked: a discovery that
+            # fails (a password changed, a warehouse suspended, a timeout) used to empty the schema folder first,
+            # and every answer then failed on tables that were no longer there, with nothing on screen to say so.
             sp = Path(schema_dir)
-            if sp.exists():
-                for f in sp.iterdir():
-                    if f.is_file():
-                        try:
-                            f.unlink()
-                        except Exception:
-                            pass
+            staging = sp.with_name(sp.name + ".discovering")
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True, exist_ok=True)
             _masking_config = state_data_existing.get("masking_config") or None
             _discover_industry = store.get_compliance_profile(account_id).get("industry", "")
             # Under THIS tenant's vocabulary. Discovery builds the join map
@@ -11457,14 +11456,32 @@ async def admin_discover_schema(
 
             _discovery_vocab_token = activate_vocab(vocab_for_account(account_id))
             try:
-                count = discover_and_write(creds, db_type, schema_dir,
-                                           allowed_tables=allowed_set,
-                                           masking_config=_masking_config,
-                                           seed_key=account_id,
-                                           industry=_discover_industry)
+                # In a worker thread (it carries the vocabulary set above): a discovery reads every table and
+                # can take minutes, and on the event loop it froze every other page and question meanwhile.
+                count = await asyncio.to_thread(discover_and_write, creds, db_type, str(staging),
+                                                allowed_tables=allowed_set,
+                                                masking_config=_masking_config,
+                                                seed_key=account_id,
+                                                industry=_discover_industry)
             finally:
                 deactivate_vocab(_discovery_vocab_token)
+            if not count:
+                raise RuntimeError(
+                    "Discovery found none of the selected tables." if allowed_set else
+                    "Discovery found no tables in the connection's database and schema.")
+            # It worked: the new files replace the old ones, so a table no longer there does not linger.
+            sp.mkdir(parents=True, exist_ok=True)
+            for f in sp.iterdir():
+                if f.is_file():
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+            for f in staging.iterdir():
+                f.replace(sp / f.name)
+            shutil.rmtree(staging, ignore_errors=True)
             next_state = dict(state_data_existing)
+            next_state.pop("discovery_error", None)
             next_state["schema_dir"] = schema_dir
             # ── Schema drift detection ─────────────────────────────────────────
             if _old_schema:
@@ -11657,7 +11674,7 @@ async def admin_discover_schema(
                         "Entity graph pruned for %s to current schema scope: %s",
                         account_id, _pruned,
                     )
-                _ent, _rel = _auto_populate_entity_graph(account_id, schema_dir)
+                _ent, _rel = await asyncio.to_thread(_auto_populate_entity_graph, account_id, schema_dir)
                 log.info(
                     "Entity graph auto-populated for %s: %d entities, %d relationships (suggested)",
                     account_id, _ent, _rel,
@@ -11687,6 +11704,18 @@ async def admin_discover_schema(
             _threading.Thread(target=_sync_all_log_exports_bg, daemon=True).start()
         except Exception as e:
             log.error("Admin schema discovery failed for %s: %s", account_id, e)
+            shutil.rmtree(Path(schema_dir).with_name(Path(schema_dir).name + ".discovering"), ignore_errors=True)
+            # Kept for the Setup page: the tables shown (and answered from) are the last discovery that worked.
+            try:
+                latest = store.get_client(account_id) or {}
+                failed_state = json.loads(latest.get("state_data") or "{}")
+                failed_state["discovery_error"] = {
+                    "message": _db_connection_error_message(db_type, e),
+                    "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                }
+                save_state(account_id, latest.get("state") or "NEW", failed_state)
+            except Exception as _state_exc:
+                log.warning("Could not record the failed discovery for %s: %s", account_id, _state_exc)
 
     bg.add_task(_do_discover)
     # Return JSON when called from JavaScript (AJAX), redirect otherwise
