@@ -162,6 +162,7 @@ def _fr(key, **kw):
     return t(key, "fr", **kw)
 
 
+@pytest.mark.old_engine
 class TestACourtesyIsAnsweredByTheCardItself:
 
     def test_thanks_reaches_neither_the_planner_nor_a_model(self):
@@ -220,6 +221,7 @@ class TestACourtesyIsAnsweredByTheCardItself:
         assert analyst.calls and analyst.calls[0]["question"] == "thanks, now what is the total?"
 
 
+@pytest.mark.old_engine
 class TestTheConversationFollowsTheCard:
 
     def test_the_memory_follows_the_card_a_transform_produced(self):
@@ -259,6 +261,7 @@ class TestTheConversationFollowsTheCard:
         assert remembered[-1] == {"question": "thanks", "reply": _en("reply.thanks")}
 
 
+@pytest.mark.old_engine
 class TestABlockedPlanIsExplainedForTheReader:
 
     def _blocked(self, *a, **k):

@@ -2417,9 +2417,21 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "latest_sql_eval": latest_sql_eval,
         "latest_sql_pass_rate": latest_sql_pass_rate,
         "teams_platforms": store.list_platforms("teams"),
+        "llm_audit_forced": _audit_forced(account_id),
         "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
         **_channel_view(request, client),
     })
+
+
+def _audit_forced(account_id: str) -> bool:
+    """Is every AI call of this workspace kept, whatever its audit switch says? Yes under compliance
+    (core/llm_audit.py::record_llm_call)."""
+    try:
+        from core.compliance.policy_engine import under_compliance
+
+        return under_compliance(account_id)
+    except Exception:  # noqa: BLE001 - the page says what the switch says
+        return False
 
 
 def _channel_view(request: Request, client: dict) -> dict:
@@ -3466,7 +3478,7 @@ async def compliance_page(request: Request, account_id: str):
         "decision_counts": store.get_policy_decision_counts(account_id, days=30),
         "egress_summary": store.get_kb_egress_summary(account_id),
         "egress_rows": egress_rows,
-        "llm_audit_enabled": bool(client.get("enable_llm_audit")),
+        "llm_audit_enabled": bool(client.get("enable_llm_audit")) or _audit_forced(account_id),
         "egress": _egress_describe(account_id),
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
@@ -9941,6 +9953,14 @@ def _kb_built_tables(account_id: str) -> set[str]:
     return built
 
 
+# The earlier engine's knowledge-base build and its table-description suggestions sent sampled rows and that
+# knowledge base's text to the AI, outside the new core's masking and compliance rules. Learn builds what answers
+# read, and sends the AI no data values where the workspace keeps them back.
+_EARLIER_SETUP_OFF = ("The earlier knowledge-base build and its suggestions are switched off: they sent sampled "
+                      "rows to the AI. Learn builds what answers read, and each table's description is edited "
+                      "on the Knowledge base page.")
+
+
 @router.post("/clients/{account_id}/setup/table-description/suggest")
 async def admin_suggest_table_description(request: Request, account_id: str):
     """Ask the model to propose a description and terms for one table.
@@ -9959,6 +9979,10 @@ async def admin_suggest_table_description(request: Request, account_id: str):
     client = store.get_client(account_id)
     if not client:
         return JSONResponse({"status": "error", "detail": "Client not found"}, status_code=404)
+    if store.get_query_engine(account_id) == "core2":
+        # Switched off with the earlier engine: the proposal sent that engine's knowledge-base text, which
+        # carries sampled values, to the AI outside the new core's masking and compliance rules.
+        return JSONResponse({"status": "error", "detail": _EARLIER_SETUP_OFF}, status_code=410)
     try:
         body = await request.json()
     except Exception:
@@ -11839,6 +11863,10 @@ async def admin_build_kb(
         return RedirectResponse("/admin/clients", status_code=303)
     from urllib.parse import quote
 
+    if store.get_query_engine(account_id) == "core2":
+        return RedirectResponse(f"/admin/clients/{account_id}/learned?error={quote(_EARLIER_SETUP_OFF)}",
+                                status_code=303)
+
     if not business_desc.strip():
         return RedirectResponse(
             f"/admin/clients/{account_id}/setup?error={quote('Business description is required')}",
@@ -13221,6 +13249,7 @@ from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
 from admin import row_access as _row_access  # noqa: E402,F401
 from admin import channels as _channels  # noqa: E402,F401
+from admin import ai_calls as _ai_calls  # noqa: E402,F401
 from admin import email_routes as _email_routes  # noqa: E402,F401
 # Named admins: signing in, your own account, invitations, and who may open which workspace (admin/access.py).
 from admin import admin_accounts as _admin_accounts  # noqa: E402

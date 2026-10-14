@@ -134,6 +134,10 @@ class Column(Belief):
     # (contact, birth date, national ID). Never sent to the AI; where the workspace is under compliance,
     # shown masked to a reader who has not signed the confidentiality attestation.
     personal: Literal["none", "name", "detail"] = "none"
+    # A number that identifies a record about a person, as a prescription's (Rx) number does (core2/bootstrap/
+    # personal.py): shown and linked as any key, but its values are never listed, indexed or sent to the AI, and
+    # where the workspace is under compliance Learn proposes it as PHI.
+    record_number: bool = False
     # A birth date read only as an age (core2/resolve/age.py): Learn proposes it, an admin confirms it on the
     # Knowledge base page. The date itself stays a personal detail: never shown, sorted, filtered or sent.
     age: Literal["none", "proposed", "confirmed"] = "none"

@@ -82,6 +82,7 @@ def model(monkeypatch):
     return seen
 
 
+@pytest.mark.old_engine
 class TestTheCardAnswersAQuestionItCannotQuery:
 
     @pytest.mark.parametrize("typed", CONVERSATIONAL)
@@ -190,6 +191,7 @@ class TestTheReplyIsInTheReadersLanguage:
         assert "en français" not in system
 
 
+@pytest.mark.old_engine
 class TestACommandIsStillACommand:
     """The conversational reply runs last, and only when nothing else could
     answer. A question the cache engine handles must never reach a model."""
@@ -241,6 +243,7 @@ class TestWhenTheModelSaysNothing:
         assert not any("ANSWER THE READER" in c for c in calls), calls
 
 
+@pytest.mark.old_engine
 class TestTheHintFinallyHasSuggestionsInIt:
     """`_rc_stats` was declared empty and never filled, and the suggestions
     are built from it -- which columns are numeric, which are text, what
@@ -289,6 +292,7 @@ class TestTheHintFinallyHasSuggestionsInIt:
             suggestions
 
 
+@pytest.mark.old_engine
 class TestTheEgressIsAudited:
     """A path that sends a tenant's figures to a model has to leave a record,
     and a path that REFUSES to has to leave one too.
@@ -442,6 +446,7 @@ class TestTheProviderIsToldWhereToGo:
         assert "azure_endpoint" not in seen
 
 
+@pytest.mark.old_engine
 class TestItAnswersAboutTheCardThatWasAsked:
     """A reader can type into the chat panel of an older card that is still on
     screen. adapter.last_result is the NEWEST answer in the thread, not that

@@ -221,6 +221,7 @@ class TestAKnowledgeBaseAnotherReleaseBuilt:
         scratch.update_client_state(ACCOUNT, "SCHEMA_READY", {"schema_dir": "schema"})
         assert kb_rebuild_needed(scratch.get_client(ACCOUNT)) is None
 
+    @pytest.mark.old_engine
     def test_a_build_under_this_release_clears_it(self, scratch):
         """From the build route to the notice, with nothing handed between."""
         from admin.inbox import build_inbox
@@ -261,6 +262,7 @@ class TestAKnowledgeBaseAnotherReleaseBuilt:
         for table in ("ORDERS", "CUSTOMERS"):
             assert f"format {release.KB_FORMAT}." in (kb / f"{table}_kb.md").read_text(encoding="utf-8")
 
+    @pytest.mark.old_engine
     def test_accepting_a_blocked_build_after_an_upgrade_keeps_the_release_that_built_it(self, scratch, monkeypatch):
         """A build blocked at 82% of its examples, the server upgraded, then
         the admin accepts: the documents are the earlier release's, and the

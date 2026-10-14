@@ -223,6 +223,23 @@ _VALUE_BEARING_MARKERS: tuple[tuple[str, str], ...] = (
     # marker, so the manifest does not claim egress that did not happen.
     # Detection stays exact in both directions, which is the whole design.
     ("VERIFIED EXAMPLES —", "past_sql_examples"),
+    # The new core (core2/). Each heading is written only when what follows it holds the data's values; where
+    # member values are withheld the same sections are written under another heading, or not at all.
+    # core2/plan/planner.py::question_tail -- members the question names, as stored.
+    ("VALUE MATCHES (member names found in the question; use these exact values):", "member_matches"),
+    # core2/plan/planner.py::_plan_line -- the plan behind the answer above, its member values as stored.
+    ("(member values as stored): {", "previous_plan_values"),
+    # core2/plan/catalog.py::catalog_text -- fields' common values and ranges, measures' filter values.
+    ("LISTED VALUES: common values", "catalog_values"),
+    # core2/answer/summary.py::material -- the answer's rows, as the reader sees them.
+    ("THE ANSWER AS SHOWN", "answer_rows"),
+    # core2/answer/notes.py::_given -- facts worked out from the answer's rows.
+    ("Facts:\n- [", "answer_facts"),
+    # core2/bootstrap/labels.py::table_brief -- a column's common values and its range, for Learn to name it.
+    ('"common_values": [', "profile_values"),
+    ('"range": [', "profile_ranges"),
+    # core2/model/authoring.py::describe_prompt -- a field's common values, for a metric written from words.
+    ("| common values: ", "field_values"),
 )
 
 _CONTENT_MARKERS: tuple[tuple[str, str], ...] = (
@@ -309,9 +326,12 @@ def sanitize_payload_preview(system: str, user: str) -> str:
     return preview
 
 
+def _payload_text(system: str, user: str) -> str:
+    return f"[SYSTEM]\n{system}\n\n[USER]\n{user}"
+
+
 def _payload_hash(system: str, user: str) -> str:
-    raw = f"[SYSTEM]\n{system}\n\n[USER]\n{user}".encode("utf-8", errors="ignore")
-    return hashlib.sha256(raw).hexdigest()
+    return hashlib.sha256(_payload_text(system, user).encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _response_hash(response: str) -> str:
@@ -329,12 +349,16 @@ def record_llm_call(
     response: str = "",
 ) -> None:
     scope = _AUDIT_SCOPE.get()
-    if not scope or not scope.get("enabled") or not scope.get("account_id"):
+    if not scope or not scope.get("account_id"):
+        return
+    whole = _kept_whole(scope["account_id"])
+    if not scope.get("enabled") and not whole:
         return
 
     try:
         import store
 
+        sealed = (_seal(_payload_text(system, user)), _seal(response) if response else "") if whole else ("", "")
         store.log_llm_call(
             account_id=scope["account_id"],
             question_id=str(scope.get("question_id") or scope.get("request_id") or ""),
@@ -358,9 +382,66 @@ def record_llm_call(
             egress_manifest=_json.dumps(
                 build_egress_manifest(system, user, scope), separators=(",", ":")
             ),
+            payload_sealed=sealed[0],
+            response_sealed=sealed[1],
         )
     except Exception as exc:
         log.warning("LLM audit write failed: %s", exc)
+
+
+# A workspace under compliance (core.compliance.policy_engine.under_compliance) keeps every AI call, whatever its
+# "LLM audit logging" switch says, with the exact prompt and response encrypted beside the fingerprints: what an
+# auditor checks the claim "no personal data reached the AI" against. Elsewhere only the sanitized preview is kept.
+
+
+def _kept_whole(account_id: str) -> bool:
+    try:
+        from core.compliance.policy_engine import under_compliance
+
+        return under_compliance(account_id)
+    except Exception as exc:  # noqa: BLE001 - kept whole when unsure: more evidence, never less
+        log.warning("LLM audit: could not read the compliance profile of %s; the call is kept whole: %s",
+                    account_id, exc)
+        return True
+
+
+def _seal(text: str) -> str:
+    try:
+        from store.crypto import encrypt
+
+        return encrypt(text or "")
+    except Exception as exc:  # noqa: BLE001 - the record stands with its fingerprint; it says so on the page
+        log.warning("LLM audit: the prompt could not be encrypted, so only its fingerprint is kept: %s", exc)
+        return ""
+
+
+def open_llm_call(account_id: str, call_id: int) -> dict | None:
+    """A kept AI call as it was sent and received, and whether it matches the fingerprints recorded with it.
+
+    None for a call of another workspace or none at all; ``prompt`` is "" for a call kept by fingerprint only.
+    """
+    import store
+
+    row = store.get_llm_call(account_id, call_id)
+    if row is None:
+        return None
+    prompt = response = ""
+    problem = ""
+    try:
+        from store.crypto import decrypt
+
+        prompt = decrypt(row["payload_sealed"]) if row.get("payload_sealed") else ""
+        response = decrypt(row["response_sealed"]) if row.get("response_sealed") else ""
+    except Exception as exc:  # noqa: BLE001 - a key that changed: the page says the text cannot be read
+        log.warning("LLM audit: call %s of %s could not be decrypted: %s", call_id, account_id, exc)
+        problem = "The kept text cannot be read with this server's key."
+    digest = lambda text: hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()  # noqa: E731
+    if not problem and row.get("response_hash") and not response:
+        problem = "The response was not kept with this call: only its fingerprint is."
+    # Both halves kept and both matching their fingerprints; a response recorded but not kept is not a match.
+    matches = bool(prompt) and digest(prompt) == row.get("payload_hash") and (
+        digest(response) == row.get("response_hash") if row.get("response_hash") else not response)
+    return {"row": row, "prompt": prompt, "response": response, "matches": matches, "problem": problem}
 
 
 def audit_scope_account_id() -> str:

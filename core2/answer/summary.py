@@ -71,7 +71,8 @@ def material(payload: dict[str, Any], question: str) -> str:
     data = payload.get("data") or {}
     labels = data.get("header_labels") or {}
     headers = list(data.get("headers") or [])
-    parts = [f"Question: {question}", f"Answer: {answer.get('headline') or ''}"]
+    # The heading tells the AI egress log that the answer, rows and all, was sent (core/llm_audit.py).
+    parts = ["THE ANSWER AS SHOWN", f"Question: {question}", f"Answer: {answer.get('headline') or ''}"]
     if answer.get("comparison"):
         parts.append(f"Compared: {answer.get('short_value') or ''} {answer['comparison']}".strip())
     findings = [str(f) for f in payload.get("key_insights") or [] if f]

@@ -43,6 +43,21 @@ def is_regulated(account_id: str) -> bool:
     return store.get_compliance_profile(account_id).get("mode") == "regulated"
 
 
+def under_compliance(account_id: str) -> bool:
+    """
+    Does this tenant keep its people's data from the AI? Regulated (or never
+    provisioned, see is_regulated), or any compliance mode but standard.
+
+    The rule the new core already used for scrubbing questions and withholding
+    member values (core2.service.question_scrubber); the AI egress log keeps
+    every call of these tenants whole (core.llm_audit.record_llm_call). It may
+    widen, never narrow.
+    """
+    if is_regulated(account_id):
+        return True
+    return str(store.get_compliance_profile(account_id).get("mode") or "standard").lower() != "standard"
+
+
 def result_llm_features_allowed(account_id: str) -> bool:
     """
     False for any regulated tenant, unconditionally.

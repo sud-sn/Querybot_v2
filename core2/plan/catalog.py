@@ -205,7 +205,11 @@ def _listed(p: ColumnProfile, limit: int) -> list[str]:
 def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_values_up_to: int = 12,
                  personal_shown: bool = False) -> str:
     """The planner's view of ``model``: stable for a model version (no clock, no question)."""
-    lines: list[str] = ["DATA CATALOG", "Use only these names (slugs), exactly as written.", ""]
+    # Whether the data's own values are written below. The AI egress log reads the first line as values sent
+    # (core/llm_audit.py), so it is written only where they may be.
+    lines: list[str] = ["DATA CATALOG", "Use only these names (slugs), exactly as written.",
+                        "LISTED VALUES: common values and ranges are written as the data holds them." if values_allowed
+                        else "LISTED VALUES: none; the data's values are withheld and only counted.", ""]
 
     # What can be measured, by subject (the table the measure counts), with its dates.
     measure_tables = sorted({m.table for m in model.measures.values() if not m.hidden},
@@ -235,7 +239,9 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
     lines.append("DATES (slug | name | what it records | data range)")
     for r in sorted((r for r in model.date_roles.values() if r.kind != "audit" and r.table in measure_tables),
                     key=lambda r: (model.tables[r.table].business_name, r.slug)):
-        span = f"{r.first or '?'} to {r.last or '?'}" if (r.first or r.last) else "range unknown"
+        # The years alone where the data's values are withheld: a day is a value of the data (a fill's, a visit's).
+        first, last = (r.first, r.last) if values_allowed else (str(r.first or "")[:4] or None, str(r.last or "")[:4] or None)
+        span = f"{first or '?'} to {last or '?'}" if (first or last) else "range unknown"
         grain = "monthly" if r.granularity == "month" else ("date and time" if r.granularity == "timestamp" else "daily")
         lines.append(f"- {r.slug} | {r.name} | {r.kind}, {grain}, on {model.tables[r.table].business_name} | "
                      f"{span}{_synonyms(r.synonyms)}")

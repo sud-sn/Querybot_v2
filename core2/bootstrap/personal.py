@@ -19,6 +19,7 @@ from core2.bootstrap.profiler import TableProfile
 
 PII = "pii"                # never shown, listed, filtered on or sent
 NAME = "name"              # a person's name: shown in answers, never sent to the AI
+RECORD = "record"          # a record's number about a person (an Rx number): shown and linked, never listed or sent
 
 SHAPES = {"email", "phone", "street", "national_id"}
 # Each word as written and as warehouses abbreviate it (EML, PHN, STRT_ADDR). Listed, never guessed: a loose
@@ -69,6 +70,16 @@ def is_last_name(name: str) -> bool:
 
 # A person's other names, written alone in a table about people (MIDDLE, MAIDEN).
 _OTHER_NAMES = {"middle", "maiden", "mname", "middlename", "maidenname"}
+# The numbers HIPAA's Safe Harbor names that a pharmacy or a clinic keeps: a medical record number (MRN), a
+# health-plan beneficiary number (Medicare's MBI, the older HICN), a patient's own number or account number.
+NUMBER_WORDS = {"number", "no", "num", "nbr", "nmbr"}
+_MEDICAL_RECORD = {"mrn", "mbi", "hicn"}
+_BENEFICIARY = {"beneficiary", "medicare", "medicaid"}
+_PATIENT = {"patient", "ptnt", "pat"}
+# A prescription's number (RX_NUMBER, PRESCRIPTION_NO, RXNBR, ORIG_RX_NUMBER): Safe Harbor counts it as an identifier.
+_PRESCRIPTION = {"rx", "prescription", "script"}
+_RX_GLUED = {"rxno", "rxnbr", "rxnum", "rxnumber", "rxid"}
+_RX_QUALIFIERS = {"orig", "original", "pharmacy", "new", "old", "prior", "previous", "parent", "source", "refill"}
 # A driver's licence number, written alone or with a number word (DRIVERS, DL_NO, LICENSE_NUMBER).
 _LICENCE = {"drivers", "driver", "licence", "license", "lic", "dl"}
 # Where someone lives, as coordinates (LAT, LON) in a table about people.
@@ -84,6 +95,31 @@ def is_contact(name: str, pattern: str | None) -> bool:
 
 def _says(name: str, *words: str) -> bool:
     return set(words) <= _tokens(name)
+
+
+def is_health_record(name: str, people: bool = False) -> bool:
+    """A patient's medical record number, health-plan beneficiary number, or own number: a personal detail.
+    ``people``: the table is about people, where PT_NO is a patient's number (elsewhere a part's or a point's)."""
+    t = _tokens(name)
+    if t & _MEDICAL_RECORD or {"medical", "record"} <= t or {"med", "rec"} <= t or {"medical", "rec"} <= t:
+        return True
+    if "mr" in t and t & NUMBER_WORDS and t <= {"mr"} | NUMBER_WORDS:
+        return True             # MR_NO, MRNumber: a medical record number
+    if t & _BENEFICIARY and t & (NUMBER_WORDS | {"id", "identifier"}):
+        return True
+    # A patient's number or account number, never the patient_id a warehouse keys its rows by.
+    patient = _PATIENT | ({"pt"} if people else set())
+    return bool(t & patient and t & NUMBER_WORDS and t <= patient | NUMBER_WORDS | {"account", "acct"})
+
+
+def is_prescription_number(name: str) -> bool:
+    """A prescription's number (RX_NUMBER, RX_ID, PRESCRIPTION_NO, RXNBR, ORIG_RX_NUMBER); never a column called
+    just RX (whether a sale was a prescription's), nor the PRESCRIPTION_ID a warehouse keys its rows by."""
+    t = _tokens(name)
+    if t & _RX_GLUED and t <= _RX_GLUED | _RX_QUALIFIERS:
+        return True
+    return bool(t & _PRESCRIPTION and t <= _PRESCRIPTION | NUMBER_WORDS | {"id"} | _RX_QUALIFIERS
+                and (t & NUMBER_WORDS or "rx" in t and "id" in t))
 
 
 def about_people(table: InvTable) -> bool:
@@ -104,6 +140,10 @@ def read_table(table: InvTable, profile: TableProfile) -> dict[str, str]:
         words = _tokens(column.name)
         if column.data_type == "text" and is_contact(column.name, p.pattern if p else None):
             out[column.name] = PII
+        elif column.data_type in ("text", "integer") and is_health_record(column.name, people):
+            out[column.name] = PII      # an MRN, a Medicare number, a patient's own number
+        elif column.data_type in ("text", "integer") and is_prescription_number(column.name):
+            out[column.name] = RECORD   # an Rx number: the key a fill and a claim link by, never listed
         elif column.data_type in ("date", "timestamp") and _like(words, BIRTH_WORDS):
             out[column.name] = PII
         elif column.data_type == "text" and (is_first_name(column.name) or is_last_name(column.name)) and (

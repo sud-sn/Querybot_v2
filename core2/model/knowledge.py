@@ -147,6 +147,8 @@ def field_changes(model: SemanticModel, column_key: str, data: dict[str, Any]) -
             raise KnowledgeError("Choose whether it holds people's names, their details, or neither.")
         if reading != column.personal:
             changes["personal"] = reading
+        if reading == "none" and column.record_number:
+            changes["record_number"] = False     # "Not people's data": a record number Learn read is released too
     if "age" in data:
         reading = str(data.get("age") or "")
         if reading not in ("none", "proposed", "confirmed"):

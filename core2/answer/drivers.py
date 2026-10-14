@@ -217,7 +217,7 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
     for e in model.entities.values():
         label = model.columns.get(e.label_column or "")
         if e.slug in skip or e.table == table or not 2 <= (e.members or 0) <= 2000 \
-                or label is not None and label.personal != "none":
+                or label is not None and (label.personal != "none" or label.record_number):
             continue          # people (patients, customers by name) are never ranked as a change's drivers
         n = hops(e.table)
         if n is None or n > 2:
@@ -227,7 +227,7 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
         column = model.columns[a.column]
         members = a.members or (column.profile.distinct if column.profile else 0)
         if a.slug in skip or column.key in names_or_keys or column.hidden or column.sensitivity != "none" \
-                or column.personal != "none" or not 2 <= members <= 50 or _a_flag(column) \
+                or column.personal != "none" or column.record_number or not 2 <= members <= 50 or _a_flag(column) \
                 or a.kind in ("number", "text"):       # a price or a note explains no change
             continue
         n = hops(column.table)

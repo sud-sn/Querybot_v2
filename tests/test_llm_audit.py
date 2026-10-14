@@ -147,8 +147,11 @@ class LlmAuditTests(unittest.TestCase):
         self.assertEqual(kwargs["response_preview_sanitized"], "")
 
     def test_llm_complete_skips_logging_when_scope_disabled(self):
+        # A standard workspace: one under compliance keeps every call whatever the switch says
+        # (tests/test_a_compliance_workspace_keeps_every_ai_call_whole.py).
         async def _run():
             with patch("core.llm._openai_complete", new=AsyncMock(return_value=("ok", 1, 1))), \
+                 patch("core.llm_audit._kept_whole", return_value=False), \
                  patch("store.log_llm_call") as log_call:
                 with llm_audit_scope(
                     account_id="acct_3",

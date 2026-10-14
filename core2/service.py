@@ -43,8 +43,8 @@ from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words, plan_question, stands_for
 from core2.plan.thread import kept_parts
-from core2.plan.values import (Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed,
-                                quoted_spans, which_end)
+from core2.plan.values import (Masked, MemberIndex, ValueMatch, about_people, build_index, listable, normalise,
+                                people_column, placed, quoted_spans, which_end, slugs_in)
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.resolve.time import Range, label as period_label, periods
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
@@ -694,6 +694,14 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     return payload
 
 
+def _marked(payload: dict[str, Any], plan: Plan, model: SemanticModel) -> dict[str, Any]:
+    """An answer grouped by, filtered on or counted for a person or their records ("sales for the first one", a
+    prescription's number) is marked as naming people: neither it nor its headline reaches the AI's summary."""
+    if any(about_people(model, slug) for slug in slugs_in(plan.model_dump(mode="json", exclude_defaults=True))):
+        payload["personal"] = True
+    return payload
+
+
 def _shown_title(payload: dict[str, Any]) -> str:
     """What an answer that drew rows shows, as its dashboard tile is called ("Net amount by region"); "" when it
     drew none (a refusal, a question back), so "this" never means it."""
@@ -721,9 +729,11 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
                            "out per member, in ranges or over a running series is not worked out yet: ask for the "
                            "figure itself")
     if plan.intent == "drivers":
-        return answer_drivers(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
+        return _marked(answer_drivers(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started,
+                                      **common), plan, model)
     if plan.intent == "forecast":
-        return answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started, **common)
+        return _marked(answer_forecast(question, plan, model=model, warehouse=warehouse, ctx=ctx, started=started,
+                                       **common), plan, model)
     logical = resolve(plan, model, replace(ctx, split_units=services.split_units))
     if logical.people:
         _age_limits(plan, logical, services, ctx, warehouse)
@@ -740,9 +750,12 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
         payload["beyond_data"] = logical.beyond.isoformat()     # the period asked for starts after the data ends
     if logical.share:
         _share_of_the_whole(plan, logical, payload, model, ctx, warehouse)
-    if logical.people or any(g.column and g.column in model.columns and model.columns[g.column].personal != "none"
-                             for part in logical.parts for g in part.groups):
+    columns = [*(g.column for part in logical.parts for g in part.groups),
+               *(p.column for part in logical.parts for p in part.preds),
+               *(p.column for part in logical.parts for semi in part.semis for p in semi.preds)]
+    if logical.people or any(people_column(model.columns.get(c)) for c in columns if c):
         payload["personal"] = True      # its rows name people, or count them by age: no written summary by the AI
+    _marked(payload, plan, model)
     if shown is not None:
         shown.extend(_members_shown(logical, payload))
     if periods is not None:
@@ -1643,23 +1656,93 @@ def _allowed_model_tables(model: SemanticModel, allowed: set[str] | None) -> set
     return out
 
 
-def question_scrubber(account_id: str) -> Callable[[str], str] | None:
+def question_scrubber(account_id: str, model: SemanticModel | None = None) -> Callable[[str], str] | None:
     """Personal data out of a question, for a tenant under compliance; None for one that is not.
 
     The agent runtime's rule (core/agent_runtime.py): regulated, unprovisioned, or any
     mode but standard. It may widen, never narrow. The same tenants keep member values
-    from the AI.
+    from the AI. Emails, phone numbers and social security numbers; a person's name by the
+    optional NER library when it is installed, in every industry; and a name-shaped phrase
+    that is not the workspace's own words (``model``, the answering one when not given)
+    whether or not it is.
     """
     import store
-    from core.compliance.policy_engine import is_regulated
+    from core.compliance.policy_engine import under_compliance
 
-    profile = store.get_compliance_profile(account_id) or {}
-    if not (is_regulated(account_id) or str(profile.get("mode") or "standard").lower() != "standard"):
+    if not under_compliance(account_id):
         return None
-    from core.masking import scrub_question_pii
+    from core.masking import scrub_person_names_ner, scrub_question_pii, scrub_typed_names
 
-    industry = str(profile.get("industry") or "")
-    return lambda text: scrub_question_pii(text, industry)[0]
+    industry = str((store.get_compliance_profile(account_id) or {}).get("industry") or "")
+    read: list[tuple[frozenset[str], frozenset[str]]] = []
+
+    def vocabulary() -> tuple[frozenset[str], frozenset[str]]:
+        """The workspace's own words and member names, read the first time a question is scrubbed (a caller that
+        only asks whether the workspace is under compliance reads no model)."""
+        if not read:
+            given = model
+            if given is None:
+                from core2.bootstrap.service import answering_model
+
+                try:
+                    given = answering_model(account_id, store.get_client(account_id) or {})
+                except Exception as exc:  # noqa: BLE001 - names are still scrubbed, with fewer words known to be safe
+                    log.warning("core2: the scrubber of %s reads no model, so knows fewer of its words: %s",
+                                account_id, exc)
+            read.append(_vocabulary(given) if given is not None else (frozenset(), frozenset()))
+        return read[0]
+
+    def scrub(text: str) -> str:
+        said = scrub_question_pii(text, industry)[0]
+        if industry not in ("banking", "healthcare_pharmacy"):
+            said = scrub_person_names_ner(said)     # a no-op where the library is not installed
+        known, phrases = vocabulary()
+        return scrub_typed_names(said, known, phrases)
+
+    return scrub
+
+
+_VOCABULARIES: OrderedDict[int, tuple[SemanticModel, tuple[frozenset[str], frozenset[str]]]] = OrderedDict()
+_VOCABULARIES_LOCK = threading.Lock()
+
+
+def _vocabulary(model: SemanticModel) -> tuple[frozenset[str], frozenset[str]]:
+    """The workspace's own words, in lower case (what its tables, fields, metrics and dates are called), and the whole
+    names of the members it may list (never a person's), kept per model: each question is scrubbed several times."""
+    with _VOCABULARIES_LOCK:
+        kept = _VOCABULARIES.get(id(model))
+        if kept is not None and kept[0] is model:
+            _VOCABULARIES.move_to_end(id(model))
+            return kept[1]
+    words: set[str] = set()
+    phrases: set[str] = set()
+
+    def add(*texts: object) -> None:
+        for text in texts:
+            words.update(w.casefold() for w in re.findall(r"[^\W\d_][\w'’\-]*", str(text or "")))
+
+    for t in model.tables.values():
+        add(t.name, t.business_name)
+    for c in model.columns.values():
+        add(c.name, c.business_name, *[w for ws in c.synonyms.values() for w in ws])
+        if not people_column(c) and c.values_allowed and c.profile and c.profile.top:
+            for v in c.profile.top:
+                if isinstance(v.value, str):
+                    # The member's name, and each run of its words ("Northline Distribution" of "... 58").
+                    phrases.update(" ".join(w.casefold() for w in run.split())
+                                   for run in [v.value, *re.split(r"[^\w\s'’\-]|\d+", v.value)] if run.strip())
+    for m in model.measures.values():
+        add(m.slug, m.business_name, *[w for ws in m.synonyms.values() for w in ws])
+    for e in model.entities.values():
+        add(e.business_name)
+    for r in model.date_roles.values():
+        add(r.name)
+    out = (frozenset(words), frozenset(phrases))
+    with _VOCABULARIES_LOCK:
+        _VOCABULARIES[id(model)] = (model, out)
+        while len(_VOCABULARIES) > 16:
+            _VOCABULARIES.popitem(last=False)
+    return out
 
 
 def personal_columns(model: SemanticModel) -> dict[tuple[str, str], str]:
@@ -1701,7 +1784,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         return None, _frame(question, NOT_LEARNED)
     state = store.get_client_state(account_id) or {}
     allowed = store.get_allowed_tables(portal_user) if portal_user else None
-    scrub = question_scrubber(account_id)
+    scrub = question_scrubber(account_id, model=model)
     warehouse = GovernedWarehouse(account_id, portal_user, db_config,
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
                                   allowed_tables=allowed, personal=personal_columns(model) if scrub else {})
@@ -1719,7 +1802,9 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         index = MemberIndex()
     return Services(
         model=model, warehouse=warehouse,
-        complete=workspace_planner(account_id, client, question=question, question_id=question_id),
+        # The AI call log keeps the question as the AI was given it: scrubbed, where the workspace scrubs.
+        complete=workspace_planner(account_id, client, question=scrub(question) if scrub else question,
+                                   question_id=question_id),
         index=index, today=dt.date.today(),
         values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
         data_source=str(db_config.get("db_type") or ""), scrub=scrub,
@@ -1747,6 +1832,8 @@ def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, q
     if not eligible(payload, values_allowed=values_allowed):
         return None
     asked = scrub(question) if scrub else question
+    if not _answers_may_reach_ai(account_id, asked, "core2_summary"):
+        return None
     complete = summary_writer(account_id, client, question=asked, question_id=question_id)
     return write(payload, asked, complete)
 
@@ -1760,7 +1847,7 @@ def portal_note(account_id: str, question: str, payload: dict[str, Any], *, ques
     facts name no member. Otherwise the note is the facts' own sentences."""
     import store
     from core.value_index import value_index_enabled
-    from core2.answer.notes import write
+    from core2.answer.notes import names_members, write
     from core2.bootstrap.ai import summary_writer
 
     reading = payload.get("reading")
@@ -1769,9 +1856,33 @@ def portal_note(account_id: str, question: str, payload: dict[str, Any], *, ques
     client = store.get_client(account_id) or {}
     scrub = question_scrubber(account_id)
     values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
-    complete = summary_writer(account_id, client, question=scrub(question) if scrub else question,
-                              question_id=question_id)
-    return write(reading, complete, lang=lang, values_allowed=values_allowed, personal=bool(payload.get("personal")))
+    personal = bool(payload.get("personal"))
+    asked = scrub(question) if scrub else question
+    # A regulated workspace's answers never reach the AI: the note is the facts' own sentences. Its refusal is
+    # recorded only for a note the AI would have been asked to write.
+    would_ask = not personal and (values_allowed or not names_members(reading))
+    complete = summary_writer(account_id, client, question=asked, question_id=question_id) \
+        if would_ask and _answers_may_reach_ai(account_id, asked, "core2_summary") else None
+    return write(reading, complete, lang=lang, values_allowed=values_allowed, personal=personal)
+
+
+def _answers_may_reach_ai(account_id: str, question: str, component: str) -> bool:
+    """May an answer (its rows, its figures, its headline) be sent to the workspace's AI? Never for a regulated
+    workspace (core/compliance/policy_engine.py::result_llm_features_allowed): the AI writes the plan and never sees
+    an answer. A refusal is recorded on the AI egress log, as the old engine's were."""
+    from core.compliance.policy_engine import result_llm_features_allowed
+    from core.llm_audit import llm_audit_scope, record_llm_blocked
+
+    try:
+        allowed = result_llm_features_allowed(account_id)
+    except Exception as exc:  # noqa: BLE001 - refused when the policy cannot be read
+        log.warning("core2: could not read whether %s may send answers to the AI; it does not: %s", account_id, exc)
+        allowed = False
+    if not allowed:
+        with llm_audit_scope(account_id=account_id, question=question, enabled=True, component=component):
+            record_llm_blocked(component, "A regulated workspace's answers never reach the AI: the summary is left "
+                                          "out and the analyst note is written from the facts alone.")
+    return allowed
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,

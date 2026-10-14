@@ -3769,8 +3769,10 @@ function answerCardHtml(msg, ids, env) {
       </div>`
     : '';
 
-  // One row of actions. Add to dashboard is the one labelled button; copy,
-  // the verdict and asking about the answer are icons with their names.
+  // One row of actions. Add to dashboard is the one labelled button; copy
+  // and the verdict are icons with their names. The card has no chat of its
+  // own: a question about the answer is asked in the box below, where the new
+  // core reads the answer above (the card chat was the earlier engine's).
   const hasVisual = !!(msg.chart || msg.kpi || tiles.length || ((msg.data || {}).rows || []).length);
   const pinHtml = (ids.pinToken && hasVisual)
     ? `<button class="btn btn-sm" type="button" data-pin="chart">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.chart.pin'))}</button>` : '';
@@ -3781,7 +3783,6 @@ function answerCardHtml(msg, ids, env) {
     + iconBtn('data-copy="result"', 'copy', t('ui.chat.card.copy_result'))
     + (feedbackOn ? iconBtn('data-feedback="up"', 'thumbs-up', t('ui.chat.feedback.up'))
                     + iconBtn('data-feedback="down"', 'thumbs-down', t('ui.chat.feedback.not_helpful')) : '')
-    + (ids.rcId ? iconBtn(`data-rc-toggle="${ids.rcId}" aria-expanded="false" data-icon-only`, 'chat', t('ui.chat.followup.open')) : '')
     + `<span class="answer-grow"></span>`
     // A reply about a dashboard, or a request to change the data, counted nothing: no "How it was counted".
     + (['dashboard_talk', 'dashboard_refused', 'changes_data'].includes(msg.kind) ? '' : `<button type="button" class="btn btn-link btn-sm" data-open-how aria-expanded="false">${escHtml(t('ui.chat.trust.how_counted'))}${qbIcon('chevron-right', 14)}</button>`)
@@ -3811,17 +3812,6 @@ function answerCardHtml(msg, ids, env) {
       + follow.map(c => `<button class="follow-up-chip${c.setting ? ' is-setting' : ''}" type="button" data-question="${escHtml(c.question)}" data-follow-up="${escHtml(c.label)}" title="${escHtml(c.question)}">${escHtml(c.label)}</button>`).join('')
       + `</div>`
     : '';
-  const rcHtml = ids.rcId
-    ? `<div class="rc-panel" id="${ids.rcId}">
-        <div class="rc-hint">${t('ui.chat.followup.hint')}</div>
-        <div class="rc-thread" id="${ids.rcId}-thread"></div>
-        <div class="rc-input-row">
-          <textarea class="rc-input" id="${ids.rcId}-input" rows="1" spellcheck="true" autocomplete="off"
-            aria-label="${escHtml(t('ui.chat.followup.placeholder'))}" placeholder="${escHtml(t('ui.chat.followup.placeholder'))}"></textarea>
-          <button class="rc-send" type="button" id="${ids.rcId}-send">${escHtml(t('ui.chat.followup.ask'))}</button>
-        </div>
-      </div>`
-    : '';
 
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
     + _followingHtml(msg)
@@ -3832,7 +3822,7 @@ function answerCardHtml(msg, ids, env) {
     + visualHtml + bodyHtml + (_analystNoteHtml(msg) || (_answerSummaryHtml(msg.summary) + insightsHtml))
     + actionsHtml + feedbackPanelHtml
     + _answerHowHtml(msg, env)
-    + rcHtml + chipsHtml
+    + chipsHtml
     + `</article>`;
 }
 

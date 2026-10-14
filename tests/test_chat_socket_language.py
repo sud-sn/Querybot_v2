@@ -238,6 +238,7 @@ class TestTheGreetingArrivesTranslated:
         assert "`help`" in self._greeting("fr")["content"]
 
 
+@pytest.mark.old_engine
 class TestTheResultChatReadsTheCanonicalQuestion:
     """The enabling half of the "cannot generate" hint.
 

@@ -302,6 +302,7 @@ class TestAFollowUpDoesNotSilentlyActOnTheOlderAnswer:
                    for f in frames)
 
 
+@pytest.mark.old_engine
 class TestTheInCardConversationIsAddressedByIdAndSurvives:
 
     def _ask_the_card(self, typed, *, mark=True, use_id=True):

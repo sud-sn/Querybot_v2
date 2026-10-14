@@ -6689,6 +6689,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The last question found no matching records, so there is nothing to narrow. Try broadening the filter, or ask a fresh question.",
         "fr": "La dernière question n'a trouvé aucun enregistrement correspondant : il n'y a donc rien à affiner. Élargissez le filtre ou posez une nouvelle question.",
     },
+    "reply.result.card_chat_off": {
+        "en": "Ask about this answer in the box below: the next question carries on from it.",
+        "fr": "Posez votre question sur cette réponse dans la zone ci-dessous : la question suivante en reprend le fil.",
+    },
     "reply.result.none_cached": {
         "en": "No cached result found. Please run a query first.",
         "fr": "Aucun résultat en cache. Veuillez d'abord exécuter une requête.",

@@ -102,7 +102,8 @@ def calls_section(account_id: str, days: int) -> dict:
     cutoff = _cutoff(days)
     with store.get_db() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT status, component, llm_provider, llm_model, egress_manifest "
+            "SELECT status, component, llm_provider, llm_model, egress_manifest, "
+            "(payload_sealed != '') AS kept_whole "
             "FROM llm_call_log WHERE account_id=? AND created_at >= ?",
             (account_id, cutoff),
         ).fetchall()]
@@ -141,6 +142,9 @@ def calls_section(account_id: str, days: int) -> dict:
             without_values += 1
 
     sent = with_values + without_values
+    # How many of the calls can be checked against their fingerprint (their exact prompt kept, encrypted), and how
+    # many are kept by fingerprint only (a standard workspace, or a key that could not encrypt): said, never implied.
+    kept_whole = sum(1 for row in rows if row["status"] != "blocked" and row.get("kept_whole"))
 
     # An empty log is not evidence that nothing happened. `enable_llm_audit`
     # is `INTEGER NOT NULL DEFAULT 0` (store/db.py:93), so on a workspace that
@@ -154,6 +158,10 @@ def calls_section(account_id: str, days: int) -> dict:
     audit_enabled = _audit_is_enabled(account_id)
     if sent:
         statement = f"{without_values} of {sent} model calls carried no data value."
+        if kept_whole:
+            statement += (f" The exact prompt of {kept_whole} of them is kept, encrypted, and can be checked against "
+                          f"its fingerprint" + ("." if kept_whole >= sent else
+                                                f"; {sent - kept_whole} are kept by fingerprint only."))
     elif audit_enabled:
         statement = "No model calls were made in this period."
     else:
@@ -180,6 +188,7 @@ def calls_section(account_id: str, days: int) -> dict:
             "sources": value_sources,
         },
         "attestable": bool(audit_enabled),
+        "kept_whole": kept_whole,
         "statement": statement,
     }
 
@@ -193,8 +202,11 @@ def _audit_is_enabled(account_id: str) -> bool:
     import store
 
     try:
+        from core.compliance.policy_engine import under_compliance
+
+        # A workspace under compliance keeps every call whatever its switch says (core/llm_audit.py).
         client = store.get_client(account_id) or {}
-        return bool(client.get("enable_llm_audit"))
+        return bool(client.get("enable_llm_audit")) or under_compliance(account_id)
     except Exception:
         log.warning("Could not read enable_llm_audit for %s; reporting the "
                     "calls section as not attestable", account_id, exc_info=True)

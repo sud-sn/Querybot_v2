@@ -443,6 +443,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 values_allowed=f.values_allowed(key, column.name) and held is None,
                 sensitivity="pii" if held == personal.PII else "none",
                 personal="detail" if held == personal.PII else "name" if held == personal.NAME else "none",
+                record_number=held == personal.RECORD,
                 # People's values are not kept in the model: the catalog and the member list never see them,
                 # nor its first and last (two people's birth dates, two emails).
                 profile=p.model_copy(update={"top": None, "min": None, "max": None, "min_num": None, "max_num": None,
@@ -534,12 +535,16 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
     for key, held in people.items():
         if not held or key not in model.tables:
             continue
-        said = {kind: [names.readable(c) for c, k in held.items() if k == kind] for kind in (personal.NAME, personal.PII)}
+        said = {kind: [names.readable(c) for c, k in held.items() if k == kind]
+                for kind in (personal.NAME, personal.PII, personal.RECORD)}
         parts = []
         if said[personal.NAME]:
             parts.append(f"{', '.join(said[personal.NAME])}: people's names, shown in answers but never sent to the AI")
         if said[personal.PII]:
             parts.append(f"{', '.join(said[personal.PII])}: personal details, never shown, listed or filtered on")
+        if said[personal.RECORD]:
+            parts.append(f"{', '.join(said[personal.RECORD])}: record numbers, shown and linked but never sent to "
+                         "the AI")
         model.review.append(ReviewItem(
             key=f"personal:{key}", object=key,
             question=f"{model.tables[key].business_name} holds people's data. " + "; ".join(parts) + ".",
@@ -897,6 +902,8 @@ def _attribute_kind(column: InvColumn, col: Column, kind: str) -> str | None:
         return None
     if col.role in ("status", "flag"):
         return "group"
+    if col.record_number:
+        return "identifier"     # a prescription's number names it, however its values were cleared from the profile
     people = col.personal != "none" or col.sensitivity != "none"
     if col.role == "text":
         return "text" if kind != "bridge" and not people else None

@@ -444,13 +444,55 @@ def which_end(question: str, shown: list[Shown], taken: list[ValueMatch]) -> tup
     return None
 
 
+def people_column(column: object) -> bool:
+    """A column whose values are people or their records: a name, a contact detail, an Rx number, anything marked
+    sensitive. Its values never reach the AI, in any workspace."""
+    return column is not None and (getattr(column, "personal", "none") != "none" or bool(getattr(column, "record_number", False))
+                                   or getattr(column, "sensitivity", "none") != "none")
+
+
+def about_people(model: SemanticModel | None, slug: object) -> bool:
+    """Is ``slug`` a field whose members are people or their records: an attribute on such a column, or an entity
+    named, coded or keyed by one ("patient", "prescription")?"""
+    if model is None:
+        return False
+    key = str(slug)
+    attribute = model.attributes.get(key)
+    if attribute is not None:
+        columns = [attribute.column]
+    elif key in model.entities:
+        entity = model.entities[key]
+        columns = [c for c in (entity.label_column, entity.code_column, *entity.key_columns) if c]
+    else:
+        return False
+    return any(people_column(model.columns.get(c)) for c in columns)
+
+
+def slugs_in(data: object) -> Iterable[str]:
+    """Every field a plan (as JSON) groups, filters or counts by: its group_by, and each "field", "of" and "per"
+    however deep (filters, rates' conditions, who-didn't's list and activity)."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key in ("field", "of", "per") and isinstance(value, str):
+                yield value
+            elif key == "group_by" and isinstance(value, list):
+                yield from (v for v in value if isinstance(v, str))
+            else:
+                yield from slugs_in(value)
+    elif isinstance(data, list):
+        for value in data:
+            yield from slugs_in(value)
+
+
 def listable(model: SemanticModel) -> list[str]:
     """The attributes whose member names may be read: text, not hidden, not sensitive, values allowed. Never a
     document's number or free text: a question names those in quotes, and there are too many to read."""
     out = []
     for slug, attribute in model.attributes.items():
         column = model.columns[attribute.column]
-        if column.data_type == "text" and not column.hidden and column.sensitivity == "none" and column.values_allowed \
+        # Never people's names or record numbers, whatever values_allowed says: an admin may mark a column as
+        # people's after Learn allowed its values.
+        if column.data_type == "text" and not column.hidden and column.values_allowed and not people_column(column) \
                 and attribute.kind not in ("identifier", "text"):
             out.append(slug)
     return out

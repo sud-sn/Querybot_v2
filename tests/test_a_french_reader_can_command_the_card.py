@@ -103,6 +103,7 @@ class TestTheVerbsDoNotEatTheNouns:
         assert canonical_question(french, "fr") == expected
 
 
+@pytest.mark.old_engine
 class TestTheCardObeysOverTheSocket:
     """One French command, end to end: the frame a browser sends for a French
     reader, and the rows that come back."""

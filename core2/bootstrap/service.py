@@ -252,7 +252,7 @@ def propose_classifications(account_id: str, model: SemanticModel) -> int:
     written = 0
     for column in model.columns.values():
         table = model.tables.get(column.table)
-        if column.personal == "none" or column.parts or table is None:
+        if column.personal == "none" and not column.record_number or column.parts or table is None:
             continue
         fqn = ".".join(p for p in (table.database, table.schema_name, table.name) if p)
         tail = f".{table.name}.{column.name}".upper()
@@ -262,6 +262,8 @@ def propose_classifications(account_id: str, model: SemanticModel) -> int:
             continue
         said = classify_column(column.name, industry)
         tags = said["tags"] if set(said["tags"]) & {"PII", "PHI"} else sorted({*said["tags"], "PII"})
+        if column.record_number:
+            tags = sorted({*tags, "PHI"})      # an Rx number identifies a patient's prescription
         try:
             store.save_classification(
                 account_id, fqn, column.name, sensitivity="RESTRICTED", identifiability="DIRECT", tags=tags,

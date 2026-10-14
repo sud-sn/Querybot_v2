@@ -107,6 +107,9 @@ class TheProofPackOnlyClaimsWhatItCanEvidence(unittest.TestCase):
         self.account = f"acct_proof_pack_{self.id().rsplit('.', 1)[-1]}"
         store.upsert_client(self.account, "web")
         store.update_client_meta(self.account, enable_llm_audit=0)
+        # A standard workspace: one under compliance keeps every call whatever the switch says
+        # (tests/test_a_compliance_workspace_keeps_every_ai_call_whole.py).
+        store.save_compliance_profile(self.account, mode="standard", industry="standard")
 
     def tearDown(self):
         import store

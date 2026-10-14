@@ -61,7 +61,7 @@ from store.config_store import (
     log_query, logged_sql, get_query_stats, get_recent_queries, get_monthly_breakdown,
     search_recent_queries_referencing,
     get_suggestions,
-    log_llm_call, get_recent_llm_calls, purge_old_llm_calls, purge_old_kb_egress,
+    log_llm_call, get_llm_call, get_recent_llm_calls, purge_old_llm_calls, purge_old_kb_egress,
     get_llm_trust_summary, RESULT_LLM_COMPONENTS, get_kb_table_doc_audit,
 )
 from store.sign_in_throttle import (
@@ -251,7 +251,7 @@ __all__ = [
     "log_query","logged_sql","get_query_stats","get_recent_queries","get_monthly_breakdown",
     "search_recent_queries_referencing",
     "get_suggestions",
-    "log_llm_call","get_recent_llm_calls","purge_old_llm_calls","purge_old_kb_egress",
+    "log_llm_call","get_llm_call","get_recent_llm_calls","purge_old_llm_calls","purge_old_kb_egress",
     "get_llm_trust_summary","RESULT_LLM_COMPONENTS","get_kb_table_doc_audit",
     "create_group","list_groups","get_group","update_group","delete_group","search_people_and_groups",
     "set_group_tables","get_group_tables",

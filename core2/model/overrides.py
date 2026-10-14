@@ -18,7 +18,7 @@ ALLOWED = {
     "table": {"business_name", "description", "kind", "default_date", "hidden", "default_filters",
               "readers_may_include", "grain_text"},
     "column": {"business_name", "description", "role", "format", "unit", "synonyms", "hidden", "sensitivity",
-               "value_names", "personal", "age"},
+               "value_names", "personal", "age", "record_number"},
     # How many target rows a source row meets (max_fanout, to_unique, target_checked) is measured, never typed:
     # measured again when an admin changes a link's conditions (admin/core2_relationships.py).
     "join": {"trust", "role", "conditions", "keep_unmatched", "cardinality", "max_fanout", "to_unique",

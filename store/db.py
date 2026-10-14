@@ -217,6 +217,11 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     -- sanitized preview is good forensics but cannot answer "were any data
     -- values sent?" without a human reading it; this can. See core/llm_audit.py.
     egress_manifest           TEXT    NOT NULL DEFAULT '',
+    -- The exact prompt and response, encrypted with the server's key: kept for
+    -- a workspace under compliance only, so payload_hash can be checked against
+    -- what was sent (core/llm_audit.py::open_llm_call).
+    payload_sealed            TEXT    NOT NULL DEFAULT '',
+    response_sealed           TEXT    NOT NULL DEFAULT '',
     created_at                TEXT    DEFAULT (datetime('now'))
 );
 
@@ -1435,6 +1440,9 @@ def _run_migrations() -> None:
         ("llm_call_log", "response_hash",              "TEXT DEFAULT ''"),
         ("llm_call_log", "response_preview_sanitized", "TEXT DEFAULT ''"),
         ("llm_call_log", "response_chars",             "INTEGER DEFAULT 0"),
+        # The exact prompt and response of a workspace under compliance, encrypted (core/llm_audit.py).
+        ("llm_call_log", "payload_sealed",             "TEXT NOT NULL DEFAULT ''"),
+        ("llm_call_log", "response_sealed",            "TEXT NOT NULL DEFAULT ''"),
         # v35: per-client Teams tenant mapping — lets the shared Teams bot
         # registration route an incoming Azure AD tenant to the ONE client it
         # belongs to, instead of the "exactly one configured client" auto-map

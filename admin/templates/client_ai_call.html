@@ -1,0 +1,67 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb %}
+{# One AI call as it was sent and received (admin/ai_calls.py), for a workspace under compliance. #}
+{% block title %}AI call {{ call.id }} — {{ client.client_name or client.account_id }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard",  "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "AI egress log", "href": "/admin/clients/" ~ client.account_id ~ "/egress"},
+    {"label": "Call " ~ call.id, "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+.aic{display:flex;flex-direction:column;gap:1rem}
+.aic-head h1{font-size:var(--font-xl);font-weight:var(--weight-bold);margin:0}
+.aic-head p{color:var(--text-muted);margin:.35rem 0 0;max-width:820px;line-height:1.55}
+.aic-facts{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:.35rem 1rem;font-size:var(--font-sm);margin:0}
+.aic-facts dt{color:var(--text-muted)}
+.aic-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.aic-text{font-family:var(--font-mono);font-size:var(--font-xs);white-space:pre-wrap;overflow-wrap:anywhere;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:.75rem;margin:0;
+  max-height:70vh;overflow:auto}
+.aic-ok{color:var(--success);font-weight:var(--weight-semibold)}
+.aic-bad{color:var(--danger);font-weight:var(--weight-semibold)}
+@media (max-width:640px){.aic-facts{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="aic">
+  <div class="aic-head">
+    <h1>AI call {{ call.id }}</h1>
+    <p>Exactly what this workspace sent to the AI and what came back, kept encrypted because the workspace is under
+      compliance. The fingerprints were recorded when the call was made; they are recomputed here from the kept text.</p>
+  </div>
+
+  <div class="card"><div class="card-body">
+    <dl class="aic-facts">
+      <dt>When</dt><dd>{{ call.created_at }}</dd>
+      <dt>Step</dt><dd>{{ call.component }}</dd>
+      <dt>Model</dt><dd>{{ call.llm_provider }} · {{ call.llm_model }}</dd>
+      <dt>Question</dt><dd>{{ call.question or "—" }}</dd>
+      <dt>Data values</dt><dd>{% if egress.values_sent %}Sent, via {{ egress.value_sources|join(", ") }}{% else %}None sent{% endif %}</dd>
+      <dt>Fingerprint</dt><dd><code>{{ call.payload_hash }}</code></dd>
+      <dt>Check</dt>
+      <dd>{% if opened.problem %}<span class="aic-bad">{{ opened.problem }}</span>
+        {% elif not opened.prompt %}<span class="aic-bad">Only the fingerprint was kept for this call.</span>
+        {% elif opened.matches %}<span class="aic-ok">✓ The kept text matches the fingerprint recorded with the call.</span>
+        {% else %}<span class="aic-bad">✗ The kept text does not match the fingerprint recorded with the call.</span>{% endif %}</dd>
+    </dl>
+  </div></div>
+
+  {% if opened.prompt %}
+  <div class="card">
+    <div class="card-header"><h2 style="margin:0">Sent to the AI · {{ opened.prompt|length }} characters</h2></div>
+    <div class="card-body"><pre class="aic-text">{{ opened.prompt }}</pre></div>
+  </div>
+  {% endif %}
+  {% if opened.response %}
+  <div class="card">
+    <div class="card-header"><h2 style="margin:0">Received · {{ opened.response|length }} characters</h2></div>
+    <div class="card-body"><pre class="aic-text">{{ opened.response }}</pre></div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

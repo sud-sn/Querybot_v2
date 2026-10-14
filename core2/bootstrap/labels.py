@@ -76,8 +76,10 @@ def table_brief(model: SemanticModel, table_key: str) -> dict[str, Any]:
             if p.rows:
                 entry["empty"] = f"{1 - p.non_null / p.rows:.0%}"
             if column.data_type in ("integer", "decimal", "float", "date", "timestamp") and p.min is not None \
-                    and not mine:
-                entry["range"] = [p.min, p.max]      # a birth date's first and last are two people's
+                    and column.values_allowed and not mine:
+                # Where values may reach the AI, as common values: a birth date's first and last are two people's,
+                # and a fill date's first and last are two prescriptions'.
+                entry["range"] = [p.min, p.max]
             if column.values_allowed and p.top and column.data_type in ("text", "integer", "boolean") and not mine:
                 entry["common_values"] = [t.value for t in p.top[:8]]
             if p.avg_len:

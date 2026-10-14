@@ -302,6 +302,146 @@ def scrub_question_pii(text: str, industry: str = "") -> tuple[str, bool]:
     return t, t != text
 
 
+# A person's name the reader typed, found without the optional NER library: a run of capitalised words that are not
+# the workspace's own words. Every word below may open or sit inside a question in capitals without naming anyone.
+_NOT_A_NAME = frozenset("""
+a an and any are as at be by can could did do does each every for from give had has have how i if in is it its
+last list me more most my next no not of on or our per please previous show so tell than that the their them these
+this those to top bottom total us vs versus was we were what when where which who whom whose why will with would you
+your compare break down give find get let make plot chart graph table see versus between since until during
+year years quarter quarters month months week weeks day days today yesterday tomorrow ytd mtd qtd fy q1 q2 q3 q4
+january february march april may june july august september october november december
+jan feb mar apr jun jul aug sep sept oct nov dec
+monday tuesday wednesday thursday friday saturday sunday
+north south east west northeast northwest southeast southwest central
+""".split())
+# Words of a business question that are never a person's name, whatever the workspace calls its fields: a phrase
+# made of these ("Customer Lifetime Value", "Net Sales Growth Rate") is the question's, not a person.
+_COMMON = frozenset("""
+average avg mean median growth rate rates ratio value values size basket lifetime trend trends count counts number
+numbers amount amounts revenue revenues sales sale cost costs margin margins profit profits share shares percent
+percentage change changes total totals sum gross net new old active inactive current prior first second third best
+worst highest lowest high low daily weekly monthly quarterly yearly annual overall summary report reports dashboard
+breakdown forecast target targets budget actual actuals variance units unit quantity qty price prices order orders
+customer customers product products item items store stores region regions category categories segment segments
+channel channels type types status group groups level levels performance kpi kpis metric metrics rank ranking mix
+volume volumes hours minutes inventory stock fill fills prescription prescriptions patient patients claim claims
+account accounts invoice invoices supplier suppliers vendor vendors brand brands department departments branch
+branches location locations site sites warehouse warehouses city cities state states country countries county
+""".split())
+# Places a question names in capitals that are no one's name (more than one word, or a state beside another).
+_PLACES = frozenset(p.strip().casefold() for p in """
+alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|
+indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|
+nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|
+pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|
+west virginia|wisconsin|wyoming|district of columbia|puerto rico|los angeles|san francisco|san diego|san jose|
+san antonio|las vegas|new orleans|salt lake city|st louis|saint louis|kansas city|oklahoma city|fort worth|el paso|
+new york city|united states|united kingdom|new zealand|south africa|saudi arabia|hong kong|british columbia|
+nova scotia|new brunswick|prince edward island|newfoundland and labrador|ontario|quebec|alberta|manitoba|saskatchewan
+""".replace("\n", "").split("|"))
+_TITLES = frozenset({"mr", "mrs", "ms", "miss", "mx", "dr", "prof", "sir", "madam"})
+_WORD = re.compile(r"[^\W\d_](?:[^\W_]|['’\-])*")
+
+
+def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
+                      phrases: set[str] | frozenset[str] = frozenset()) -> str:
+    """
+    Replace the names of people a reader typed with [PERSON], without an NER model.
+
+    A name is a run of two or more capitalised words ("John Smith", "Mary-Jane O'Neil's", "JOHN SMITH", "John Q.
+    Smith", "J. Smith"), a title and a name ("Dr Patel"), or "Smith, John". The run's own words of the question are
+    set aside first: a word the workspace knows (``known``: what its fields, metrics and tables are called, in lower
+    case, singular or plural), a common word of business questions, a month, a day or a question word. What is left
+    is a name unless it is a member the workspace may list (``phrases``: the member's whole name, in lower case) or a
+    place ("New York"). One word of a member does not make a name safe: "Mary Franklin" is withheld though a store
+    is called Franklin. A word with a digit is no name's.
+
+    Best effort, as NER is. It misses a name typed in lower case, or one surname alone ("Smith's refills"): the
+    optional NER library, when installed, catches some of those. A phrase it wrongly withholds is a word the planner
+    could not have filtered on anyway (only a quoted member, matched before scrubbing, is), but it is lost from the
+    question as kept in history.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    words = [(m.start(), m.end(), m.group(0)) for m in _WORD.finditer(text)]
+
+    def bare(word: str) -> str:
+        return re.sub(r"['’]s$", "", word)
+
+    def lowered(word: str) -> str:
+        return bare(word).casefold()
+
+    def initial(word: str) -> bool:
+        return len(word) == 1 and word.isupper()
+
+    def capital(word: str) -> bool:
+        base = bare(word)
+        if any(c.isdigit() for c in base) or len(base) < 2 or not base[0].isupper():
+            return False
+        if base.isupper():        # a name in capitals; a code has no vowel or fewer than three letters (NDC, OH)
+            return len(base) >= 3 and any(c in "AEIOUY" for c in base.upper())
+        return any(c.islower() for c in base[1:])
+
+    def own_word(word: str) -> bool:
+        w = lowered(word)
+        forms = {w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("es") else w}
+        return bool(forms & (_NOT_A_NAME | _COMMON | set(known))) or w in _TITLES
+
+    def joined(i: int, j: int) -> bool:
+        """Words i and j (j = i + 1) are one run: only spaces between them, or an initial's full stop."""
+        gap = text[words[i][1]:words[j][0]]
+        return gap.strip() == "" or (initial(words[i][2]) and gap.strip() == ".")
+
+    def safe(run: list[int]) -> bool:
+        """Every word of the run is the question's own, or part of a member's or a place's whole name."""
+        said = [lowered(words[k][2]) for k in run]
+        at = 0
+        while at < len(said):
+            longest = next((n for n in range(min(5, len(said) - at), 0, -1)
+                            if " ".join(said[at:at + n]) in phrases or " ".join(said[at:at + n]) in _PLACES), 0)
+            if longest:
+                at += longest
+            elif own_word(words[run[at]][2]):
+                at += 1
+            else:
+                return False
+        return True
+
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(words):
+        word = words[i][2]
+        titled = lowered(word).rstrip(".") in _TITLES and i + 1 < len(words) and capital(words[i + 1][2]) \
+            and text[words[i][1]:words[i + 1][0]].strip(" .") == ""
+        if not (titled or capital(word) or initial(word)):
+            i += 1
+            continue
+        j = i + 1 if titled else i
+        while j + 1 < len(words) and (capital(words[j + 1][2]) or initial(words[j + 1][2])) and joined(j, j + 1):
+            j += 1
+        run = list(range(i + 1 if titled else i, j + 1))
+        # The question's own words at either end of the run are the question's ("Avery Quill Sales").
+        while run and own_word(words[run[0]][2]) and not titled:
+            run.pop(0)
+        while run and own_word(words[run[-1]][2]):
+            run.pop()
+        names = [k for k in run if capital(words[k][2])]
+        if titled and names:
+            spans.append((words[i][0], words[run[-1]][1]))
+        elif len(run) >= 2 and names and not safe(run):
+            spans.append((words[run[0]][0], words[run[-1]][1]))
+        elif len(run) == 1 and names and j + 1 < len(words) and capital(words[j + 1][2]) \
+                and text[words[j][1]:words[j + 1][0]] == ", " and not safe([run[0]]) and not safe([j + 1]):
+            spans.append((words[run[0]][0], words[j + 1][1]))      # "Smith, John"
+            j += 1
+        i = j + 1
+    for start, end in reversed(spans):
+        tail = re.search(r"['’]s$", text[start:end])
+        text = text[:start] + "[PERSON]" + (tail.group(0) if tail else "") + text[end:]
+    return text
+
+
 def scrub_unmasked_free_text(
     rows: list[dict],
     columns: list[dict],

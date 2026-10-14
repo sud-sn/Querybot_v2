@@ -196,11 +196,16 @@ async def measure_describe(request: Request, account_id: str):
     description = " ".join(str((await _body(request)).get("description") or "").split())[:1000]
     if not description:
         return _refused("Say what the metric counts, in a sentence.")
+    from core2.service import question_scrubber
+
+    # Under compliance the admin's words reach the AI as a reader's question would: personal data scrubbed.
+    scrub = question_scrubber(account_id, model=model)
+    said = scrub(description) if scrub else description
     try:
-        complete = metric_writer(account_id, client, description=description)
+        complete = metric_writer(account_id, client, description=said)
     except Exception as exc:  # noqa: BLE001 - a workspace with no AI configured is told so
         return _refused(f"The AI is not set up for this workspace: {str(exc)[:200]}")
-    return JSONResponse({"ok": True, **authoring.describe(model, description, complete)})
+    return JSONResponse({"ok": True, **authoring.describe(model, said, complete)})
 
 
 @router.post("/clients/{account_id}/measures/api/save")

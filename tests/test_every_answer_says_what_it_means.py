@@ -216,6 +216,17 @@ def _summarised(account: str, payload: dict, *, scrub) -> tuple[str | None, list
     return said, asked
 
 
+def _standard_workspace() -> str:
+    """A workspace set up for compliance in standard mode: its answers may reach the AI. One never set up counts
+    as regulated (core/compliance/policy_engine.py::is_regulated), and a regulated workspace's never do."""
+    import store
+
+    account_id = f"acct{os.urandom(4).hex()}"
+    store.upsert_client(account_id, "Test Ltd")
+    store.save_compliance_profile(account_id, mode="standard", industry="standard")
+    return account_id
+
+
 def test_the_summary_is_asked_for_in_sentences_and_shown_without_json():
     """The real call, to the model layer: the planner's calls end "Answer with one JSON object.", and a
     summary asked that way came back as {"summary": "..."} and was shown with its braces."""
@@ -232,7 +243,7 @@ def test_the_summary_is_asked_for_in_sentences_and_shown_without_json():
             patch("core.llm.resolve_provider", return_value=("anthropic", "m", "k", {})), \
             patch("core.llm.llm_complete", model), \
             patch("core.value_index.value_index_enabled", return_value=True):
-        said = service.portal_summary("acct-none", "net sales by store", BY_STORE, question_id="c2-x")
+        said = service.portal_summary(_standard_workspace(), "net sales by store", BY_STORE, question_id="c2-x")
     assert said == told
     assert sent and "JSON" not in sent[0], sent
 
@@ -252,14 +263,15 @@ def test_under_compliance_an_answer_naming_members_never_reaches_the_ai():
     assert said is None and asked == []
 
 
-def test_under_compliance_an_answer_of_numbers_alone_is_summarised_with_the_question_scrubbed():
+def test_under_compliance_even_an_answer_of_numbers_alone_never_reaches_the_ai():
+    """It was summarised with the question scrubbed; its headline still spelled out the answer's filters. A
+    regulated (or never set up) workspace's answers never reach the AI."""
     said, asked = _summarised("acct-none", MONTHLY, scrub=lambda text: text.replace("Jane Doe", "[name]"))
-    assert said == "The leaders make most of it; watch them."
-    assert "[name]" in asked[0] and "Jane Doe" not in asked[0]
+    assert said is None and asked == []
 
 
 def test_without_compliance_every_answer_with_rows_is_summarised():
-    said, asked = _summarised("acct-none", BY_STORE, scrub=None)
+    said, asked = _summarised(_standard_workspace(), BY_STORE, scrub=None)
     assert said and "Old Town Store" in asked[0]
 
 

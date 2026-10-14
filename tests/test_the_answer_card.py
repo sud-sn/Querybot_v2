@@ -235,8 +235,7 @@ def test_one_row_of_actions():
              if e["tag"] == "button" and e in shown.found[shown.found.index(row):]
              and (e["attrs"].get("data-pin") or e["attrs"].get("data-copy") or e["attrs"].get("data-feedback")
                   or e["attrs"].get("data-rc-toggle") or "data-open-how" in e["attrs"])]
-    assert names == ["Add to dashboard", "Copy result", "Yes, correct answer", "Not helpful",
-                     "Ask about this result", "How it was counted"]
+    assert names == ["Add to dashboard", "Copy result", "Yes, correct answer", "Not helpful", "How it was counted"]
 
 
 def test_no_pin_without_a_token_and_no_thumbs_without_feedback():

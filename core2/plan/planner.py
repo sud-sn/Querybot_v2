@@ -29,7 +29,7 @@ from core2.plan.followup import (asks_series, keeps_period, measures_named, name
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
 from core2.plan.thread import kept_from_above, member_of
-from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
+from core2.plan.values import Masked, ValueMatch, about_people, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
 
@@ -523,22 +523,25 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
             if shown is not None and shown.plan is not None and (masked is None or shown.masked is not None):
                 earlier = shown.masked.question if masked is not None and shown.masked is not None else shown.question
                 lines.append(f"EARLIER QUESTION: {clean(earlier)}")
-                lines.append("EARLIER PLAN: " + _plan_shown(shown.plan, model, masked))
+                lines.append(_plan_line("EARLIER PLAN", shown.plan, model, masked))
         if masked is None or last.masked is not None:
             asked = last.masked.question if masked is not None and last.masked is not None else last.question
             said = f" (not answered: {last.unanswered})" if last.unanswered else ""
             lines.append(f"PREVIOUS QUESTION{said}: {clean(asked)}")
         if last.plan is not None:
-            lines.append(("PREVIOUS PLAN (not answered): " if last.unanswered else "PREVIOUS PLAN: ")
-                         + _plan_shown(last.plan, model, masked))
+            lines.append(_plan_line("PREVIOUS PLAN (not answered)" if last.unanswered else "PREVIOUS PLAN",
+                                    last.plan, model, masked))
         if reading == "refine" and last.plan is not None:
             lines.append('READING: this question changes the answer above: return the previous plan with what '
                          'the question changes, and follow_up "refine". Keep its time, durations, derived measures '
                          'and filters unless the question changes them.')
     if matches:
-        lines.append("VALUE MATCHES (member names found in the question; use these exact values):")
+        # The heading says which: the AI egress log reads the stored values' one as values sent (core/llm_audit.py).
+        lines.append("VALUE MATCHES (member names found in the question, as placeholders; use these exact "
+                     "placeholders):" if masked else
+                     "VALUE MATCHES (member names found in the question; use these exact values):")
         for m in matches:
-            shown = next((t for t, v in masked.values.items() if v == m.value), m.text) if masked else m.text
+            shown = placeholder(m.value, masked.values) if masked else m.text     # never the name, masked
             stored = shown if masked else m.value
             lines.append(f'- "{shown}" -> {m.attribute} = "{stored}"')
     if model is not None:
@@ -1861,21 +1864,38 @@ def _reaching(model: SemanticModel, table: str, question: str) -> str:
             " (a name in VALUE MATCHES can also be what a measure measures), use that measure instead.")
 
 
+def _member_filters(data: dict[str, Any], model: SemanticModel | None) -> list[dict[str, Any]]:
+    """A dumped plan's conditions on members (a customer, a region): not amounts, dates or numbers."""
+    durations = {str(d.get("name", "")).casefold() for d in data.get("durations", [])}
+    absent = data.get("absent") or {}
+    out = []
+    for f in [*data.get("filters", []), *absent.get("without", []), *absent.get("had", [])]:
+        if model is not None and not about_people(model, f.get("field")) and (
+                f.get("field") in model.measures or f.get("field") in model.date_roles
+                or getattr(model.attributes.get(f.get("field")), "kind", "") == "number"):
+            continue      # amounts, dates and numbers ("3 days in transit"), not member values; never a person's
+        if str(f.get("field", "")).casefold() in durations:
+            continue      # numbers of days
+        out.append(f)
+    return out
+
+
 def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) -> str:
     """A plan as the AI may see it: member values as placeholders when values are withheld."""
     if masked is None:
         return plan.model_dump_json(exclude_defaults=True)
     data = plan.model_dump(mode="json", exclude_defaults=True)
-    durations = {str(d.get("name", "")).casefold() for d in data.get("durations", [])}
-    absent = data.get("absent") or {}
-    for f in [*data.get("filters", []), *absent.get("without", []), *absent.get("had", [])]:
-        if model is not None and (f.get("field") in model.measures or f.get("field") in model.date_roles
-                                  or getattr(model.attributes.get(f.get("field")), "kind", "") == "number"):
-            continue      # amounts, dates and numbers ("3 days in transit"), not member values
-        if str(f.get("field", "")).casefold() in durations:
-            continue      # numbers of days
+    for f in _member_filters(data, model):
         f["values"] = [placeholder(v, masked.values) for v in f.get("values", [])]
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+
+def _plan_line(label: str, plan: Plan, model: SemanticModel | None, masked: Masked | None) -> str:
+    """``label: plan`` for the tail; a plan that shows member values as stored says so in its heading, which the AI
+    egress log reads as values sent (core/llm_audit.py)."""
+    stored = masked is None and any(f.get("values") for f in _member_filters(
+        plan.model_dump(mode="json", exclude_defaults=True), model))
+    return f"{label}{' (member values as stored)' if stored else ''}: {_plan_shown(plan, model, masked)}"
 
 
 def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
@@ -1951,8 +1971,13 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     # got no answer may have none, and "<v1>" must still mean the same member.
     known = next((t.masked.values for t in reversed(history) if t.masked is not None), None)
     # Every member name the question writes is withheld from the AI, quoted or not; only the quoted ones
-    # (``matches``) are offered to it as names to filter on.
-    masked = None if values_allowed else mask(question, [*matches, *(hidden or [])], known=known)
+    # (``matches``) are offered to it as names to filter on. A person's name or record number is withheld in every
+    # workspace: one the question points at on the answer on screen ("the first one"), or one a plan of the
+    # conversation filters on, makes the whole question go to the AI with placeholders.
+    people = any(about_people(model, m.attribute) for m in [*matches, *(hidden or [])]) or any(
+        t.plan is not None and any(about_people(model, f.get("field")) and f.get("values") for f in _member_filters(
+            t.plan.model_dump(mode="json", exclude_defaults=True), model)) for t in history)
+    masked = None if values_allowed and not people else mask(question, [*matches, *(hidden or [])], known=known)
     # A workspace under compliance (its questions scrubbed) shows people's details masked, never refuses them.
     stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
@@ -1979,9 +2004,11 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 and matches and len({m.text.casefold() for m in matches}) == len(matches):
             # "How many items do we hold from the first supplier on that list?" was asked back ("which supplier
             # do you mean?") with the row it points at in VALUE MATCHES: the question is planned for it.
+            # Named as VALUE MATCHES names it: by its placeholder where values are withheld.
             problems, hint = ["The question names the member it means: " + "; ".join(
-                f'"{m.text}" is in VALUE MATCHES ({m.attribute})' for m in matches) + ". Plan the question for "
-                "it, filtering on that value, rather than asking which one."], ""
+                f'"{placeholder(m.value, masked.values) if masked else m.text}" is in VALUE MATCHES ({m.attribute})'
+                for m in matches) + ". Plan the question for it, filtering on that value, rather than asking which "
+                "one."], ""
             continue
         previous = before
         if plan.kind == "clarify" and plan.clarify is not None and previous is not None \

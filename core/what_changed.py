@@ -83,7 +83,7 @@ def _figure(account_id: str, user: dict, tile: dict) -> Optional[dict]:
     return {"title": title, "value": str(answer.get("short_value") or ""), "comparison": str(answer["comparison"]),
             "direction": "up" if change > 0 else ("down" if change < 0 else "flat"),
             "grouping": word, "leaders": leaders,
-            "sentence": str(answer.get("headline") or "")}
+            "sentence": str(answer.get("headline") or ""), "personal": bool(payload.get("personal"))}
 
 
 def _facts(figures: list[dict]) -> list[str]:
@@ -117,6 +117,8 @@ def _summary(account_id: str, user: dict, dashboard_id: int, figures: list[dict]
             for f in figures]
     payload: dict[str, Any] = {
         "engine": "core2",
+        # A tile about a person or their records (one patient's fills): its words never reach the AI's summary.
+        "personal": any(f.get("personal") for f in figures),
         "answer": {"headline": " ".join(f["sentence"] for f in figures if f["sentence"])},
         "key_insights": facts, "coverage_caveats": [],
         "data": {"headers": headers, "header_labels": {h: h.replace("_", " ") for h in headers}, "rows": rows,

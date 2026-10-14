@@ -127,6 +127,7 @@ def _reply(frames):
     return {}
 
 
+@pytest.mark.old_engine
 class TestTheCardAnswersWhatItUnderstands:
     """Every one of these questions crashed before the reply was built."""
 

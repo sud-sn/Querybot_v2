@@ -96,9 +96,15 @@ def _hint(column: Column) -> str:
         return f"{first[:10]} to {last[:10]}" if first and last else ""
     if kind == "number" and p.min_num is not None and p.max_num is not None:
         return f"{p.min_num:,.2f} to {p.max_num:,.2f}"
-    if column.values_allowed and p.top and column.sensitivity == "none":
+    if column.values_allowed and p.top and not _peoples(column):
         return "e.g. " + ", ".join(str(v.value) for v in p.top[:3] if v.value is not None)
     return ""
+
+
+def _peoples(column: Column) -> bool:
+    """People's values or their records' (a name, an Rx number, anything sensitive): never an example, even where an
+    admin marked the column as people's after Learn allowed its values."""
+    return column.sensitivity != "none" or column.personal != "none" or column.record_number
 
 
 def _kind_words(column: Column, money: bool) -> str:
@@ -126,7 +132,7 @@ def _stats(column: Column) -> str:
 def _examples(column: Column) -> list[str]:
     """The field's common values, to pick a condition's value from: only where values may be shown."""
     p = column.profile
-    if p is None or not p.top or not column.values_allowed or column.sensitivity != "none":
+    if p is None or not p.top or not column.values_allowed or _peoples(column):
         return []
     return [str(v.value) for v in p.top[:12] if v.value is not None]
 
@@ -591,9 +597,11 @@ def describe_prompt(model: SemanticModel) -> str:
         if f["sensitive"]:
             continue
         hint = f["description"] or ""
+        line = f"[{f['ref']}] | {f['kind']}" + (f" | {hint}" if hint else "")
         if f["hint"] and f["hint"].startswith("e.g."):
-            hint = f"{hint} {f['hint']}".strip()
-        lines.append(f"[{f['ref']}] | {f['kind']}" + (f" | {hint}" if hint else ""))
+            # Under its own heading: the AI egress log reads it as values sent (core/llm_audit.py).
+            line += f" | common values: {f['hint'][len('e.g.'):].strip()}"
+        lines.append(line)
     lines += ["", "METRICS (name | how it is counted):"]
     lines += [f"[{m['ref']}] | {m['definition']}" for m in metrics(model)]
     return "\n".join(lines)

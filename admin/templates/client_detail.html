@@ -390,7 +390,7 @@
             <span class="form-switch-track" aria-hidden="true"></span>
             <span class="form-switch-copy">
               <span class="form-switch-title">Enable per-query LLM audit logging</span>
-              <span class="form-switch-description">Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.</span>
+              <span class="form-switch-description">Stores a sanitized preview of each prompt sent to the LLM, grouped by request ID and component.{% if llm_audit_forced %} <strong>Always on for this workspace:</strong> it is under compliance, so every AI call is kept, with its exact prompt encrypted, whatever this says.{% endif %}</span>
             </span>
           </label>
         </div>
@@ -605,14 +605,16 @@
           Every prompt sent to the LLM for this client, with literals and identifiers sanitized. Showing up to the 100 most recent calls matching the current filters.
         </p>
       </div>
-      {% if client.enable_llm_audit %}
+      {% if llm_audit_forced %}
+      <span class="badge badge-green" title="This workspace is under compliance: every AI call is kept, with its exact prompt encrypted">Always on</span>
+      {% elif client.enable_llm_audit %}
       <span class="badge badge-green">Enabled</span>
       {% else %}
       <span class="badge badge-gray">Disabled</span>
       {% endif %}
     </div>
 
-    {% if not client.enable_llm_audit %}
+    {% if not client.enable_llm_audit and not llm_audit_forced %}
     <div class="card-body" style="color:var(--text-muted)">
       LLM audit logging is currently off for this client. Turn on <strong>Enable per-query LLM audit logging</strong> in Settings to capture future prompts.
     </div>
@@ -807,6 +809,9 @@
                 {% if call.payload_hash %}sent {{ call.payload_hash[:16] }}…{% endif %}
                 {% if call.response_hash %} · recv {{ call.response_hash[:16] }}…{% endif %}
               </div>
+              {% endif %}
+              {% if call.payload_sealed %}
+              <div style="margin-top:.35rem;font-size:var(--font-xs)"><a href="/admin/clients/{{ client.account_id|urlencode }}/ai-calls/{{ call.id }}">Open the exact prompt and check its fingerprint</a></div>
               {% endif %}
               {% if call.error_msg %}
               <div style="margin-top:.35rem;font-size:var(--font-xs);color:var(--red)">{{ call.error_msg }}</div>

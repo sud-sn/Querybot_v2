@@ -972,6 +972,8 @@ def log_llm_call(
     response_preview_sanitized: str = "",
     response_chars: int = 0,
     egress_manifest: str = "",
+    payload_sealed: str = "",
+    response_sealed: str = "",
 ) -> None:
     with get_db() as conn:
         conn.execute(
@@ -981,8 +983,8 @@ def log_llm_call(
                  llm_provider, llm_model, status, payload_hash,
                  payload_preview_sanitized, prompt_chars, error_msg,
                  response_hash, response_preview_sanitized, response_chars,
-                 egress_manifest)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 egress_manifest, payload_sealed, response_sealed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account_id,
@@ -1001,8 +1003,18 @@ def log_llm_call(
                 response_preview_sanitized,
                 response_chars,
                 egress_manifest,
+                payload_sealed,
+                response_sealed,
             ),
         )
+
+
+def get_llm_call(account_id: str, call_id: int) -> dict | None:
+    """One AI call of ``account_id`` by its id, or None (another workspace's call is never returned)."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM llm_call_log WHERE id=? AND account_id=?",
+                           (int(call_id), account_id)).fetchone()
+    return dict(row) if row else None
 
 
 def get_recent_llm_calls(
@@ -1044,15 +1056,28 @@ def get_recent_llm_calls(
     where_clause = " AND ".join(where)
 
     with get_db() as conn:
-        # Fetch flat matching rows, ordered oldest-first within each group
+        # The newest ``limit`` questions, then their calls, oldest-first within each. Never the kept prompt and
+        # response themselves (megabytes for a workspace under compliance): only whether they were kept.
         rows = conn.execute(
             f"""
-            SELECT *
+            WITH picked AS (
+                SELECT COALESCE(NULLIF(question_id, ''), request_id) AS qid, MIN(created_at) AS first_at
+                  FROM llm_call_log
+                 WHERE {where_clause}
+                 GROUP BY qid
+                 ORDER BY first_at DESC
+                 LIMIT ?
+            )
+            SELECT id, account_id, question_id, request_id, question, component, llm_provider, llm_model, status,
+                   payload_hash, payload_preview_sanitized, prompt_chars, response_hash, response_preview_sanitized,
+                   response_chars, error_msg, egress_manifest, created_at,
+                   (payload_sealed != '') AS payload_sealed
               FROM llm_call_log
              WHERE {where_clause}
+               AND COALESCE(NULLIF(question_id, ''), request_id) IN (SELECT qid FROM picked)
              ORDER BY question_id, created_at ASC, id ASC
             """,
-            tuple(params),
+            (*params, int(limit), *params),
         ).fetchall()
 
     if not rows:
@@ -1134,7 +1159,10 @@ def get_kb_table_doc_audit(account_id: str, table_name: str) -> dict | None:
     with get_db() as conn:
         row = conn.execute(
             """
-            SELECT * FROM llm_call_log
+            SELECT id, account_id, question_id, request_id, question, component, llm_provider, llm_model, status,
+                   payload_hash, payload_preview_sanitized, prompt_chars, response_hash, response_preview_sanitized,
+                   response_chars, error_msg, egress_manifest, created_at
+              FROM llm_call_log
              WHERE account_id = ? AND component = 'kb_table_doc' AND question = ?
              ORDER BY created_at DESC, id DESC
              LIMIT 1
@@ -1154,6 +1182,8 @@ RESULT_LLM_COMPONENTS: tuple[str, ...] = (
     "analysis", "analysis_narrative", "drilldown_planner", "diagnose",
     "compare_prior", "result_narration", "followup_suggestions",
     "result_exclusion", "result_command",
+    # The new core's written summary and analyst note (core2/service.py portal_summary, portal_note).
+    "core2_summary",
 )
 
 

@@ -3219,6 +3219,19 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                     })
                 continue
 
+            # The card's own chat is the earlier engine's: it answered from a result that engine cached, with
+            # AI calls of its own (writing SQL against the database among them) outside the new core's masking
+            # and compliance rules. The new core caches no such result, so on its cards the chat only ever said
+            # "No cached result found". A question about an answer is asked in the box below, where the new
+            # core reads the answer above.
+            if msg_type == "result_chat" and await core2_bridge.engine(account_id) == "core2":
+                await websocket.send_json({
+                    "type": "result_chat_error",
+                    "result_id": _ws_text_value(data.get("result_id"), "id", "value"),
+                    "content": _t("reply.result.card_chat_off"),
+                })
+                continue
+
             if msg_type == "result_chat":
                 rc_question = _ws_text_value(
                     data.get("question"), "question", "text", "value", "label"
@@ -4277,6 +4290,13 @@ async def ws_chat(websocket: WebSocket, account_id: str):
                         await _deliver_report_via_adapter(account_id, portal_user, report, adapter.make_event(""), adapter)
                     else:
                         await websocket.send_json({"type": "system", "content": _t("reply.report.skipped")})
+                    continue
+
+                # Every other clarification was asked by the earlier engine, and answering it would run that
+                # engine (and its AI calls) again. The new core asks with buttons that send a question.
+                if await core2_bridge.engine(account_id) == "core2":
+                    clear_pending(account_id, zoom_user_id, session_id=adapter.session_id)
+                    await websocket.send_json({"type": "error", "content": _t("reply.clarify.expired")})
                     continue
 
                 # ── Outright rejection of the offered options ────────────────

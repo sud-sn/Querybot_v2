@@ -89,10 +89,11 @@ def pytest_configure(config):
 
 
 # The new core answers every question (store.core2_store.ENGINES): what today's pipeline did in the chat -- its
-# investigations, reconcile cards, clarification loop, why drill-downs, commands on a cached result -- no question
-# reaches any more. Its tests stay, marked, until its code is deleted with them.
-OLD_ENGINE = ("drives the old engine through the chat, which the new core replaced for every question; "
-              "deleted with the old engine's code")
+# investigations, reconcile cards, clarification loop, why drill-downs, commands on a cached result, the chat inside
+# each answer card -- no question reaches any more, and its knowledge-base build is switched off with it. Its tests
+# stay, marked, until its code is deleted with them.
+OLD_ENGINE = ("drives the old engine (its chat, its card chat, its knowledge-base build), which the new core "
+              "replaced; deleted with the old engine's code")
 
 
 def pytest_collection_modifyitems(config, items):

@@ -129,6 +129,7 @@ def _ask_the_card(lang, typed, *, model_replies):
     return reply, seen
 
 
+@pytest.mark.old_engine
 class TestTheConversationalReply:
 
     def test_the_provenance_note_is_french(self):
@@ -160,6 +161,7 @@ class TestTheConversationalReply:
         assert conversational and "en français" not in conversational[0]
 
 
+@pytest.mark.old_engine
 class TestTheHintWhenNothingCanAnswer:
 
     def test_the_suggestions_are_french(self):
