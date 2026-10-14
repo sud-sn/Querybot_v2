@@ -334,6 +334,9 @@
               {% for provider, model, label in query_models %}
               <option value="{{ model }}" {% if model == client.llm_model %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
+              {% if client.llm_model and client.llm_model not in query_models | map(attribute=1) | list %}
+              <option value="{{ client.llm_model }}" selected>{{ client.llm_model }} (saved)</option>
+              {% endif %}
             </select>
             <p class="form-note">Overrides the system default for this workspace only. Other workspaces are unaffected.</p>
           </div>

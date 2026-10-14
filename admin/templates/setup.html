@@ -50,7 +50,7 @@
             <label>Query model</label>
             <select name="default_model">
               {% for provider, model, label in query_models %}
-              <option value="{{ model }}" {% if model == "claude-sonnet-4-6" %}selected{% endif %}>{{ label }}</option>
+              <option value="{{ model }}" {% if model == recommended.query %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
             </select>
             <p class="form-note">Used for every SQL query</p>
@@ -60,7 +60,7 @@
           <label>KB generation model</label>
           <select name="kb_model">
             {% for provider, model, label in kb_models %}
-            <option value="{{ model }}" {% if model == "claude-opus-4-5" %}selected{% endif %}>{{ label }}</option>
+            <option value="{{ model }}" {% if model == recommended.kb %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
           <p class="form-note">Used once per workspace to enrich the knowledge base</p>

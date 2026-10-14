@@ -4,54 +4,47 @@
 {% block title %}System — Solviz Admin{% endblock %}
 {% block head %}
 <style>
-.provider-panel{display:none}
-.provider-panel.active{display:block}
-.llm-setup-progress{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden;margin-bottom:1rem}
-.llm-progress-step{display:flex;align-items:center;gap:.7rem;padding:.85rem 1rem;border-right:1px solid var(--border);min-width:0}
-.llm-progress-step:last-child{border-right:0}
-.llm-progress-dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);font-size:var(--font-xs);font-weight:var(--weight-bold)}
-.llm-progress-copy{min-width:0}
-.llm-progress-copy strong{display:block;font-size:var(--font-sm);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.llm-progress-copy span{display:block;margin-top:2px;font-size:var(--font-2xs);color:var(--text-muted)}
-.llm-progress-step.complete .llm-progress-dot{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 38%,var(--border));color:var(--success)}
-.llm-progress-step.active{background:var(--primary-soft)}
-.llm-progress-step.active .llm-progress-dot{background:var(--primary-fill);border-color:var(--primary-fill);color:var(--on-primary)}
-.llm-stage-heading{display:flex;align-items:flex-start;gap:.75rem;min-width:0}
-.llm-stage-number{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;background:var(--primary-fill);color:var(--on-primary);font-size:var(--font-sm);font-weight:var(--weight-bold)}
-.llm-stage-title{font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text)}
-.llm-stage-description{font-size:var(--font-xs);color:var(--text-muted);margin-top:3px;line-height:1.5}
-.llm-stage-status{margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:.35rem;padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:var(--font-2xs);font-weight:var(--weight-bold);color:var(--text-muted);white-space:nowrap}
-.llm-stage-status.configured{background:var(--success-soft);border-color:color-mix(in srgb,var(--success) 35%,var(--border));color:var(--success)}
-.llm-provider-change{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--warning) 45%,var(--border));border-radius:var(--radius-sm);background:var(--warning-soft);color:var(--text);font-size:var(--font-sm);line-height:1.5;margin-bottom:1rem}
-.llm-provider-change[hidden]{display:none}
-.llm-provider-name{display:inline-flex;align-items:center;gap:.45rem;font-size:var(--font-sm);font-weight:var(--weight-bold);color:var(--primary);padding:5px 9px;border-radius:999px;background:var(--primary-soft);border:1px solid color-mix(in srgb,var(--primary) 24%,var(--border))}
-.llm-azure-model-note{display:none;padding:.8rem .9rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-2);font-size:var(--font-sm);color:var(--text-muted);line-height:1.5}
-.llm-azure-model-note.visible{display:block}
-.provider-panel.is-dirty .provider-test-row{background:var(--warning-soft);border-radius:var(--radius-sm);padding:.75rem}
-.credential-dirty-note{display:none;font-size:var(--font-xs);color:var(--warning);font-weight:var(--weight-bold)}
-.provider-panel.is-dirty .credential-dirty-note{display:inline}
-.provider-panel.is-dirty .provider-test-result{display:none}
+/* ── AI provider tabs: the shared segmented tabs (base.css .qb-tabs), one panel each ── */
+.ai-in-use{display:flex;align-items:flex-start;gap:.5rem;margin:0 0 1rem;font-size:var(--font-sm);color:var(--text-secondary);line-height:var(--line-normal)}
+.ai-in-use .qb-icon{flex-shrink:0;margin-top:2px;color:var(--primary)}
+.ai-in-use code{font-size:var(--font-xs)}
+.ai-provider-tabs{margin-bottom:1rem}
+.ai-tab-state{display:inline-flex;color:var(--text-muted)}
+.ai-tab-state.is-connected{color:var(--success)}
+.ai-tab-note{font-size:var(--font-2xs);font-weight:var(--weight-bold);letter-spacing:.04em;text-transform:uppercase;color:var(--primary-ink)}
+.ai-tab-unsaved{font-size:var(--font-2xs);font-weight:var(--weight-bold);color:var(--warning-strong)}
+.ai-tab-unsaved[hidden]{display:none}
+.ai-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:1.1rem 1.15rem}
+.ai-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem 1rem;flex-wrap:wrap;margin-bottom:1rem}
+.ai-panel-head h3{margin:0;font-size:var(--font-md);font-weight:var(--weight-bold);color:var(--text)}
+.ai-panel-head .form-note{margin:.2rem 0 0;max-width:62ch}
+.ai-panel-status{display:flex;gap:.4rem;flex-wrap:wrap}
+.ai-subhead{margin:1.25rem 0 .35rem;font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text)}
+.ai-load-row{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap}
+.ai-load-status{font-size:var(--font-sm);color:var(--text-muted)}
+.ai-load-status.ok{color:var(--success)}
+.ai-load-status.err{color:var(--danger)}
+.ai-manual{margin-top:.75rem}
+.ai-manual>summary{font-size:var(--font-sm);color:var(--primary-ink);cursor:pointer}
+.ai-manual[open]>summary{margin-bottom:.4rem}
+.ai-panel.is-dirty .provider-test-row{background:var(--warning-soft);border-radius:var(--radius-sm);padding:.75rem}
+.credential-dirty-note{display:none;font-size:var(--font-xs);color:var(--warning-strong);font-weight:var(--weight-bold)}
+.ai-panel.is-dirty .credential-dirty-note{display:inline}
+.ai-panel.is-dirty .provider-test-result{display:none}
 .llm-save-row{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;margin-top:1rem}
 .llm-save-row .form-note{margin:0}
-@media(max-width:760px){
-  .llm-setup-progress{grid-template-columns:1fr}
-  .llm-progress-step{border-right:0;border-bottom:1px solid var(--border)}
-  .llm-progress-step:last-child{border-bottom:0}
-  .llm-stage-status{display:none}
-  #llm-default-grid,#standard-model-selects{grid-template-columns:1fr}
-  #standard-model-selects{grid-column:1/-1!important}
+@media(max-width:600px){
+  /* Four tabs do not fit a phone's width on one track: two rows of two. */
+  .ai-provider-tabs{display:grid;grid-template-columns:1fr 1fr;border-radius:var(--radius)}
+  .ai-provider-tabs .qb-tab{justify-content:center;flex-wrap:wrap;row-gap:1px;padding:6px 8px;border-radius:var(--radius-sm);white-space:normal;text-align:center}
+  /* "In use" and "Unsaved" go on a line of their own under the provider's name; the connection icon is left
+     out (the panel's own status says it), so the name keeps its line. */
+  .ai-provider-tabs .ai-tab-note,.ai-provider-tabs .ai-tab-unsaved{flex-basis:100%}
+  .ai-provider-tabs .ai-tab-state{display:none}
+  .ai-panel{padding:.9rem .85rem}
 }
 
 /* Azure deployment picker */
-.az-steps{display:flex;flex-direction:column;gap:1.25rem}
-.az-step{display:flex;gap:.875rem;align-items:flex-start}
-.az-step-num{width:26px;height:26px;border-radius:50%;background:var(--blue);color:var(--on-primary);font-size:var(--font-sm);font-weight:var(--weight-bold);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
-.az-step-body{flex:1;min-width:0}
-.az-step-title{font-size:var(--font-base);font-weight:var(--weight-bold);color:var(--text);margin-bottom:.5rem}
-.az-fetch-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.az-fetch-row input{flex:1;min-width:180px}
-@keyframes spin{to{transform:rotate(360deg)}}
-
 #az-fetch-status{font-size:var(--font-sm);margin-top:.5rem}
 #az-fetch-status.ok{color:var(--green)}
 #az-fetch-status.err{color:var(--red)}
@@ -72,20 +65,12 @@
 .az-selected-summary strong{color:var(--text)}
 .az-empty{text-align:center;padding:1.5rem;color:var(--text-muted);font-size:var(--font-sm);border:1.5px dashed var(--border);border-radius:8px;margin-top:.5rem}
 
-/* ── Provider extras ── */
-.provider-ext-link {
-  font-size: var(--font-sm);
-  color: var(--primary);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  text-decoration: none;
-}
-.provider-ext-link:hover { text-decoration: underline; }
+/* ── Test connection ── */
 .provider-test-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   margin-top: .75rem;
   padding-top: .75rem;
   border-top: 1px solid var(--border);
@@ -163,9 +148,8 @@
 
 {% if saved %}
   {% set saved_messages = {
-      'defaults': "Default provider saved. Continue with the matching credentials below.",
-      'credentials': "Credentials saved. Verify the saved connection before a workspace uses it.",
-      'database': "Database settings saved.",
+      'ai': ai_labels.get(ai_tab, "The provider") ~ " saved.",
+      'ai-use': ai_labels.get(ai_tab, "The provider") ~ " now answers new questions. A workspace’s own model still comes first.",
       'password': "Admin password changed. Every other admin session is signed out.",
       'prices': "Price saved. New AI calls are costed at it." ~ ((" " ~ costed ~ " call" ~ ("" if costed == "1" else "s") ~ " made before the price was set " ~ ("is" if costed == "1" else "are") ~ " now costed too.") if costed and costed != "0" else ""),
       'price-removed': "Price removed.",
@@ -183,380 +167,261 @@
     title="Safe to update at any time"
 ) }}
 
-<form method="post" action="/admin/system" id="system-form">
-  {% set saved_provider = cfg.get('default_llm_provider') or 'anthropic' %}
-  {% set anthropic_configured = cfg.get('anthropic_api_key') %}
-  {% set openai_configured = cfg.get('openai_api_key') %}
-  {% set azure_configured = cfg.get('azure_openai_api_key') and cfg.get('azure_openai_endpoint') %}
-  {% set provider_configured = (saved_provider == 'anthropic' and anthropic_configured) or (saved_provider == 'openai' and openai_configured) or (saved_provider == 'azure_openai' and azure_configured) %}
-  {% set azure_model_configured = cfg.get('azure_query_deployment_name') and cfg.get('azure_kb_deployment_name') %}
-  {% set model_configured = azure_model_configured if saved_provider == 'azure_openai' else (cfg.get('default_llm_model') and cfg.get('kb_llm_model')) %}
-  {% set llm_ready = provider_configured and model_configured %}
-
-  <div class="llm-setup-progress" aria-label="LLM setup progress">
-    <div class="llm-progress-step complete" id="llm-progress-provider">
-      <span class="llm-progress-dot">{{ ic("check-circle", 13) }}</span>
-      <span class="llm-progress-copy"><strong>1. Select provider</strong><span>System default saved</span></span>
-    </div>
-    <div class="llm-progress-step {{ 'complete' if provider_configured else 'active' }}">
-      <span class="llm-progress-dot">{% if provider_configured %}{{ ic("check-circle", 13) }}{% else %}2{% endif %}</span>
-      <span class="llm-progress-copy"><strong>2. Verify credentials</strong><span>{{ 'Connection details saved' if provider_configured else 'Required next' }}</span></span>
-    </div>
-    <div class="llm-progress-step {{ 'complete' if llm_ready else ('active' if provider_configured else '') }}">
-      <span class="llm-progress-dot">{% if llm_ready %}{{ ic("check-circle", 13) }}{% else %}3{% endif %}</span>
-      <span class="llm-progress-copy"><strong>3. Confirm models</strong><span>{{ 'Models selected' if llm_ready else 'Complete after verification' }}</span></span>
-    </div>
+{#- One tab per AI provider (admin/ai_providers.py builds ai_tabs). A tab's selects list only its own
+    provider's models, drawn here from the catalogue; each tab is its own form, so saving one never
+    posts another provider's fields. -#}
+{% macro model_select(t, purpose, label) -%}
+{%- set options = t[purpose ~ '_options'] -%}
+<div class="form-group">
+  <label for="ai-{{ t.key }}-{{ purpose }}-model">{{ label }}</label>
+  <select id="ai-{{ t.key }}-{{ purpose }}-model" name="{{ purpose }}_model" data-ai-models>
+    {% for o in options if not o.older %}<option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>
+    {% endfor %}
+    {%- set older = options | selectattr('older') | list %}
+    {% if older %}<optgroup label="Older models">
+      {% for o in older %}<option value="{{ o.id }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>
+      {% endfor %}</optgroup>{% endif %}
+  </select>
+</div>
+{%- endmacro %}
+{% macro key_field(t, name, cfg_key, placeholder, note) -%}
+<div class="form-group">
+  <label for="{{ name }}">API key</label>
+  <div class="input-reveal-wrap">
+    <input type="password" id="{{ name }}" name="{{ name }}" value="{{ cfg.get(cfg_key, '') }}"
+           placeholder="{{ placeholder }}" autocomplete="off" spellcheck="false" data-ai-cred>
+    <button type="button" class="input-reveal-btn" data-qb-reveal="{{ name }}" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
   </div>
+  <p class="form-note">{{ note }} Leave blank to keep the saved key.</p>
+</div>
+{%- endmacro %}
+{% set ai_about = {
+    'azure_openai': "Your own Azure OpenAI resource. It answers through the model deployments you made on it.",
+    'anthropic': "Claude models through Anthropic's API.",
+    'openai': "GPT models through OpenAI's API.",
+    'local': "A model running on your own hardware. Nothing leaves your network; set a workspace's egress posture to air-gapped to enforce that.",
+} %}
+<div class="card" id="ai-providers">
+  <div class="card-header">
+    <h2>AI provider</h2>
+    <span class="text-xs text-muted">Pick a provider to add its key and choose its models</span>
+  </div>
+  <div class="card-body">
+    <p class="ai-in-use">
+      {{ ic("sparkles", 15) }}
+      <span>New questions use <strong>{{ ai_in_use.label }}</strong>{% if ai_in_use.query %}:
+        <code>{{ ai_in_use.query }}</code> for questions{% if ai_in_use.kb %} and <code>{{ ai_in_use.kb }}</code> for knowledge-base builds{% endif %}{% endif %}.
+        A workspace’s own model still comes first.</span>
+    </p>
+    {% if ai_in_use.problem %}{{ alert(message=ai_in_use.problem, type="warning", icon_name="alert-triangle") }}{% endif %}
 
-  <div class="card" id="llm-default-stage">
-    <div class="card-header">
-      <div class="llm-stage-heading">
-        <span class="llm-stage-number">1</span>
-        <div>
-          <div class="llm-stage-title">Choose the platform default</div>
-          <div class="llm-stage-description">This provider handles new queries unless a workspace has its own.</div>
-        </div>
-        <span class="llm-stage-status configured" id="default-provider-status">{{ ic("check-circle", 12) }} Saved</span>
-      </div>
+    <div class="qb-tabs ai-provider-tabs" role="tablist" aria-label="AI providers" data-qb-tabs>
+      {% for t in ai_tabs %}
+      <button type="button" class="qb-tab" role="tab" id="ai-tab-{{ t.key }}" data-tab="{{ t.key }}"
+              aria-controls="ai-panel-{{ t.key }}" aria-selected="{{ 'true' if t.key == ai_tab else 'false' }}"
+              tabindex="{{ '0' if t.key == ai_tab else '-1' }}">
+        <span class="ai-tab-state{% if t.connected %} is-connected{% endif %}" title="{{ 'Connected' if t.connected else 'Not connected' }}">{{ ic('check-circle' if t.connected else 'plug', 14) }}<span class="sr-only">{{ 'Connected' if t.connected else 'Not connected' }}:</span></span>
+        <span>{{ t.label }}</span>
+        {% if t.in_use %}<span class="ai-tab-note">In use</span>{% endif %}
+        <span class="ai-tab-unsaved" data-ai-unsaved hidden>Unsaved</span>
+      </button>
+      {% endfor %}
     </div>
-    <div class="card-body">
-      <div class="form-grid" id="llm-default-grid">
-        <div class="form-group">
-          <label for="default-provider">Default provider</label>
-          <select name="default_provider" id="default-provider" data-saved-provider="{{ saved_provider }}">
-            <option value="anthropic" {% if saved_provider == 'anthropic' %}selected{% endif %}>Anthropic</option>
-            <option value="openai" {% if saved_provider == 'openai' %}selected{% endif %}>OpenAI</option>
-            <option value="azure_openai" {% if saved_provider == 'azure_openai' %}selected{% endif %}>Azure OpenAI</option>
-            <option value="local" {% if saved_provider == 'local' %}selected{% endif %}>Local model (self-hosted)</option>
-          </select>
-          <p class="form-note">Save this choice before adding credentials. Existing provider keys remain stored.</p>
-        </div>
-        <div id="standard-model-selects" class="form-grid" style="grid-column:span 1;margin:0">
-          <div class="form-group">
-            <label>Default query model</label>
-            <select name="default_model">
-              {% for provider, model, label in query_models %}
-              <option value="{{ model }}" data-provider="{{ provider }}" {% if cfg.get('default_llm_model') == model %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
+
+    {% for t in ai_tabs %}
+    <section class="ai-panel" role="tabpanel" id="ai-panel-{{ t.key }}" aria-labelledby="ai-tab-{{ t.key }}"{% if t.key != ai_tab %} hidden{% endif %}>
+      <form method="post" action="/admin/system" data-ai-form="{{ t.key }}" data-ai-label="{{ t.label }}">
+        <input type="hidden" name="provider" value="{{ t.key }}">
+        <div class="ai-panel-head">
+          <div>
+            <h3>{{ t.label }}</h3>
+            <p class="form-note">{{ ai_about[t.key] }}</p>
           </div>
-          <div class="form-group">
-            <label>KB generation model</label>
-            <select name="kb_model">
-              {% for provider, model, label in kb_models %}
-              <option value="{{ model }}" data-provider="{{ provider }}" {% if cfg.get('kb_llm_model') == model %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-      </div>
-      <div class="llm-azure-model-note" id="azure-model-note">
-        {{ ic("info", 14) }} Azure OpenAI uses deployment names rather than public model IDs. You will select the query and KB deployments after credentials are verified.
-      </div>
-      <div class="llm-save-row">
-        <button type="submit" class="btn btn-primary" name="save_section" value="defaults">{{ ic("chevron-right", 14) }} Save selection and continue</button>
-        <span class="form-note">A workspace’s own model still takes priority.</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="llm-provider-change" id="provider-change-notice" hidden>
-    {{ ic("alert-triangle", 16) }}
-    <span><strong>Save the provider selection first.</strong> Credential fields are intentionally tied to the saved system default so keys cannot be entered for the wrong provider.</span>
-  </div>
-
-  <div id="provider-configuration-stage">
-  <!-- ── Local model ────────────────────────────────────────────────────── -->
-  <div class="card provider-panel {{ 'active' if saved_provider == 'local' else '' }}" data-provider-panel="local">
-    <div class="card-header">
-      <div class="llm-stage-heading">
-        <span class="llm-stage-number">2</span>
-        <div>
-          <div class="llm-stage-title">Connect a local model</div>
-          <div class="llm-stage-description">A model running on your own hardware. Nothing leaves your network — set the workspace's egress posture to <strong>air-gapped</strong> to enforce that.</div>
-        </div>
-        <span class="llm-stage-status {{ 'configured' if cfg.get('local_llm_base_url') else '' }}">{{ ic('check-circle', 12) if cfg.get('local_llm_base_url') else ic('key', 12) }} {{ 'Configured' if cfg.get('local_llm_base_url') else 'Not configured' }}</span>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="form-group">
-        <label for="local_base_url">Model server base URL</label>
-        <input type="text" id="local_base_url" name="local_base_url" placeholder="http://localhost:11434/v1" value="{{ cfg.get('local_llm_base_url', '') }}">
-        <p class="form-note">Any OpenAI-compatible endpoint: Ollama (<code>http://localhost:11434/v1</code>), vLLM, llama.cpp's server, or LM Studio.</p>
-      </div>
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="local_model">Query model name</label>
-          <input type="text" id="local_model" name="local_model" placeholder="llama3.1:8b" value="{{ cfg.get('local_llm_model', '') }}">
-          <p class="form-note">Exactly as your server names it. Takes priority over the dropdown above.</p>
-        </div>
-        <div class="form-group">
-          <label for="local_kb_model">KB generation model name</label>
-          <input type="text" id="local_kb_model" name="local_kb_model" placeholder="llama3.1:70b" value="{{ cfg.get('local_kb_model', '') }}">
-          <p class="form-note">Leave blank to use the query model for knowledge-base builds too.</p>
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="local_api_key">Shared secret <span class="form-note-inline">(optional)</span></label>
-        <div class="input-reveal-wrap">
-          <input type="password" id="local_api_key" name="local_api_key" value="{{ cfg.get('local_llm_api_key', '') }}">
-          <button type="button" class="input-reveal-btn" data-qb-reveal="local_api_key" aria-pressed="false" data-label-show="Show secret" data-label-hide="Hide secret" aria-label="Show secret">{{ ic("eye", 15) }}</button>
-        </div>
-        <p class="form-note">Most local runtimes ignore this. Set it only if you have put a reverse proxy in front of the model server.</p>
-      </div>
-      <div class="llm-save-row">
-        <button type="submit" class="btn btn-primary" name="save_section" value="credentials">{{ ic("check", 14) }} Save local model settings</button>
-      </div>
-    </div>
-  </div>
-
-
-  <!-- ── Anthropic ──────────────────────────────────────────────────────── -->
-  <div class="card provider-panel {{ 'active' if saved_provider == 'anthropic' else '' }}" data-provider-panel="anthropic">
-    <div class="card-header">
-      <div class="llm-stage-heading">
-        <span class="llm-stage-number">2</span>
-        <div><div class="llm-stage-title">Connect Anthropic</div><div class="llm-stage-description">Save the API key, then verify it with a live provider request.</div></div>
-        <span class="llm-stage-status {{ 'configured' if anthropic_configured else '' }}">{{ ic('check-circle', 12) if anthropic_configured else ic('key', 12) }} {{ 'Configured' if anthropic_configured else 'Not configured' }}</span>
-      </div>
-      <a href="https://console.anthropic.com" target="_blank" class="provider-ext-link">console.anthropic.com {{ ic("external-link", 12) }}</a>
-    </div>
-    <div class="card-body">
-      <div class="form-group">
-        <label for="anthropic_key">Anthropic API key</label>
-        <div class="input-reveal-wrap">
-          <input type="password" id="anthropic_key" name="anthropic_key"
-                 value="{{ cfg.get('anthropic_api_key','') }}" placeholder="sk-ant-api03-…">
-          <button type="button" class="input-reveal-btn" data-qb-reveal="anthropic_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
-        </div>
-        <p class="form-note">Leave blank to keep existing key. Changing only affects future queries.</p>
-      </div>
-      <div class="llm-save-row">
-        <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
-      </div>
-      <div class="provider-test-row">
-        <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('anthropic')" {% if not anthropic_configured %}disabled{% endif %}>
-          {{ ic("refresh", 13) }} Verify saved connection
-        </button>
-        <span class="credential-dirty-note">Save changes before testing.</span>
-        <span class="provider-test-result" id="test-result-anthropic"></span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── OpenAI ────────────────────────────────────────────────────────── -->
-  <div class="card provider-panel {{ 'active' if saved_provider == 'openai' else '' }}" data-provider-panel="openai">
-    <div class="card-header">
-      <div class="llm-stage-heading">
-        <span class="llm-stage-number">2</span>
-        <div><div class="llm-stage-title">Connect OpenAI</div><div class="llm-stage-description">Save the API key, then verify access to the provider model catalog.</div></div>
-        <span class="llm-stage-status {{ 'configured' if openai_configured else '' }}">{{ ic('check-circle', 12) if openai_configured else ic('key', 12) }} {{ 'Configured' if openai_configured else 'Not configured' }}</span>
-      </div>
-      <a href="https://platform.openai.com" target="_blank" class="provider-ext-link">platform.openai.com {{ ic("external-link", 12) }}</a>
-    </div>
-    <div class="card-body">
-      <div class="form-group">
-        <label for="openai_key">OpenAI API key</label>
-        <div class="input-reveal-wrap">
-          <input type="password" id="openai_key" name="openai_key"
-                 value="{{ cfg.get('openai_api_key','') }}" placeholder="sk-…">
-          <button type="button" class="input-reveal-btn" data-qb-reveal="openai_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
-        </div>
-        <p class="form-note">Required for GPT-4o or GPT-4o-mini. Leave blank to keep existing key.</p>
-      </div>
-      <div class="llm-save-row">
-        <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
-      </div>
-      <div class="provider-test-row">
-        <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('openai')" {% if not openai_configured %}disabled{% endif %}>
-          {{ ic("refresh", 13) }} Verify saved connection
-        </button>
-        <span class="credential-dirty-note">Save changes before testing.</span>
-        <span class="provider-test-result" id="test-result-openai"></span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Azure OpenAI ──────────────────────────────────────────────────── -->
-  <div class="card provider-panel {{ 'active' if saved_provider == 'azure_openai' else '' }}" data-provider-panel="azure_openai">
-    <div class="card-header">
-      <div class="llm-stage-heading">
-        <span class="llm-stage-number">2</span>
-        <div><div class="llm-stage-title">Connect Azure OpenAI</div><div class="llm-stage-description">Save the resource credentials before testing or fetching deployments.</div></div>
-        <span class="llm-stage-status {{ 'configured' if azure_configured else '' }}">{{ ic('check-circle', 12) if azure_configured else ic('key', 12) }} {{ 'Configured' if azure_configured else 'Not configured' }}</span>
-      </div>
-      <a href="https://oai.azure.com" target="_blank" style="font-size:var(--font-sm);color:var(--blue)">Azure OpenAI Studio ↗</a>
-    </div>
-    <div class="card-body">
-
-      <div class="az-steps">
-
-        <!-- Credentials -->
-        <div class="az-step">
-          <div class="az-step-num">2</div>
-          <div class="az-step-body">
-            <div class="az-step-title">Enter your Azure credentials</div>
-            <div class="form-group" style="margin-bottom:.75rem">
-              <label for="azure_openai_key">API key</label>
-              <div class="input-reveal-wrap">
-                <input type="password" id="azure_openai_key" name="azure_openai_key"
-                  value="{{ cfg.get('azure_openai_api_key','') }}"
-                  placeholder="Your Azure OpenAI resource key">
-                <button type="button" class="input-reveal-btn" data-qb-reveal="azure_openai_key" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
-              </div>
-              <p class="form-note">Azure Portal → Your OpenAI resource → Keys and Endpoint. Leave blank to keep existing.</p>
-            </div>
-            <div class="form-grid" style="margin-bottom:0">
-              <div class="form-group" style="margin-bottom:0">
-                <label>Endpoint URL</label>
-                <input type="text" name="azure_openai_endpoint" id="az-endpoint-input"
-                  value="{{ cfg.get('azure_openai_endpoint','') }}"
-                  placeholder="https://yourresource.openai.azure.com">
-                <p class="form-note">Must include https:// — no trailing slash.</p>
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label>API version</label>
-                <input type="text" name="azure_api_version"
-                  value="{{ cfg.get('azure_openai_api_version','2024-02-01') }}"
-                  placeholder="2024-02-01">
-                <p class="form-note">Leave as <code>2024-02-01</code> unless Azure requires a newer version.</p>
-              </div>
-            </div>
+          <div class="ai-panel-status">
+            {% if t.connected %}<span class="status-pill ok"><span class="status-dot"></span>Connected</span>
+            {% else %}<span class="status-pill neutral"><span class="status-dot"></span>Not connected</span>{% endif %}
+            {% if t.in_use %}<span class="status-pill brand"><span class="status-dot"></span>In use for new questions</span>{% endif %}
           </div>
         </div>
 
-            <div class="llm-save-row">
-              <button type="submit" class="btn btn-primary btn-sm" name="save_section" value="credentials">{{ ic("check-circle", 13) }} Save credentials</button>
-            </div>
-            <div class="provider-test-row" style="margin-top:.5rem">
-              <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('azure_openai')" {% if not azure_configured %}disabled{% endif %}>
-                {{ ic("refresh", 13) }} {{ 'Test deployments' if (cfg.get('azure_query_deployment_name') or cfg.get('azure_kb_deployment_name')) else 'Verify saved credentials' }}
-              </button>
-              <span class="credential-dirty-note">Save changes before testing.</span>
-              <span class="provider-test-result" id="test-result-azure_openai"></span>
-            </div>
-
-        <!-- Step 3: Fetch & pick deployments -->
-        <div class="az-step">
-          <div class="az-step-num">3</div>
-          <div class="az-step-body">
-            <div class="az-step-title">Fetch and select deployments</div>
-            <p style="font-size:var(--font-sm);color:var(--text-muted);margin-bottom:.65rem;line-height:1.55">
-              Save your credentials first, then click the button to pull the list of model deployments
-              directly from your Azure resource. No guessing — pick from what's actually deployed.
-            </p>
-            <button type="button" class="btn btn-primary" id="az-fetch-btn" onclick="fetchAzureDeployments()" {% if not azure_configured %}disabled{% endif %}>
-              {{ ic("refresh", 14) }} Fetch deployments from Azure
-            </button>
-            <div id="az-fetch-status"></div>
-            <div id="az-deploy-list"></div>
-
-            <!-- Hidden inputs updated by JS -->
-            <input type="hidden" name="azure_query_deployment" id="az-query-deploy-val"
-              value="{{ cfg.get('azure_query_deployment_name','') }}">
-            <input type="hidden" name="azure_kb_deployment" id="az-kb-deploy-val"
-              value="{{ cfg.get('azure_kb_deployment_name','') }}">
-
-            <!-- Summary of current selection (always visible) -->
-            <div class="az-selected-summary" id="az-selected-summary">
-              {% set qd = cfg.get('azure_query_deployment_name','') %}
-              {% set kd = cfg.get('azure_kb_deployment_name','') %}
-              {% if qd or kd %}
-                <strong>Currently saved:</strong>
-                Query → <strong>{{ qd or '(none)' }}</strong> &nbsp;·&nbsp;
-                KB → <strong>{{ kd or '(none)' }}</strong>
-              {% else %}
-                No deployments selected yet. Fetch from Azure to pick one.
-              {% endif %}
-            </div>
-          </div>
+        {% if t.key == 'anthropic' %}
+        {{ key_field(t, 'anthropic_key', 'anthropic_api_key', 'sk-ant-api03-…', 'From console.anthropic.com.') }}
+        <div class="form-grid">
+          {{ model_select(t, 'query', 'Model for questions') }}
+          {{ model_select(t, 'kb', 'Model for knowledge-base builds') }}
         </div>
-
-        <!-- Step 3: Manual override (collapsed) -->
-        <div class="az-step">
-          <div class="az-step-num" style="background:var(--text-muted)">3</div>
-          <div class="az-step-body">
-            <div class="az-step-title" style="color:var(--text-muted)">
-              Or type deployment names manually
-              <span style="font-weight:var(--weight-regular);font-size:var(--font-xs)">(only if fetch doesn't work)</span>
-            </div>
-            <details style="margin-top:.4rem">
-              <summary style="font-size:var(--font-sm);color:var(--blue);cursor:pointer">Show manual fields</summary>
-              <div class="form-grid" style="margin-top:.65rem">
-                <div class="form-group" style="margin-bottom:0">
-                  <label>Query deployment name</label>
-                  <input type="text" id="az-query-manual"
-                    value="{{ cfg.get('azure_query_deployment_name','') }}"
-                    placeholder="e.g. gpt-4o-prod"
-                    oninput="document.getElementById('az-query-deploy-val').value=this.value;updateSummary()">
-                  <p class="form-note">Must match exact name shown in Azure OpenAI Studio → Deployments.</p>
-                </div>
-                <div class="form-group" style="margin-bottom:0">
-                  <label>KB generation deployment name</label>
-                  <input type="text" id="az-kb-manual"
-                    value="{{ cfg.get('azure_kb_deployment_name','') }}"
-                    placeholder="e.g. gpt-4o-prod"
-                    oninput="document.getElementById('az-kb-deploy-val').value=this.value;updateSummary()">
-                  <p class="form-note">Can be the same as the query deployment.</p>
-                </div>
-              </div>
-            </details>
-          </div>
+        {% elif t.key == 'openai' %}
+        {{ key_field(t, 'openai_key', 'openai_api_key', 'sk-…', 'From platform.openai.com.') }}
+        <div class="form-grid">
+          {{ model_select(t, 'query', 'Model for questions') }}
+          {{ model_select(t, 'kb', 'Model for knowledge-base builds') }}
         </div>
-
-      </div><!-- /az-steps -->
-    </div>
-  </div>
-
-  </div><!-- /provider-configuration-stage -->
-
-  <!-- ── Database Backend ─────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="card-header">
-      <h2>Database backend</h2>
-      {% if restart_needed %}
-      <span class="badge" style="background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning);font-size:var(--font-xs)">Restart required</span>
-      {% endif %}
-    </div>
-    <div class="card-body">
-
-      <!-- Currently active -->
-      <div class="db-active-status">
-        <span class="dot {{ active_backend }}"></span>
-        Currently running:
-        <strong>{% if active_backend == 'postgres' %}PostgreSQL{% else %}SQLite{% endif %}</strong>
-        {% if active_backend == 'postgres' and active_pg_host %}
-        — <code>{{ active_pg_host }}</code>
-        {% elif active_backend == 'sqlite' %}
-        — <code>data/querybot.db</code>
         {% endif %}
-      </div>
 
-      {# Which database Solviz keeps its own records in is a deployment
-         setting, not a click: DATABASE_URL in the service's environment
-         (unset is SQLite). The page says what is running. #}
-      <p class="form-note">Set by the deployment: <code>DATABASE_URL</code> in the service's environment
-        (unset means SQLite). A restart applies a change.</p>
+        {% if t.key in ('anthropic', 'openai') %}
+        <div class="ai-load-row">
+          <button type="button" class="btn btn-secondary btn-sm" data-ai-load="{{ t.key }}"{% if not t.connected %} disabled{% endif %}>
+            {{ ic("refresh", 13) }} Load the models this key can use
+          </button>
+          <span class="ai-load-status" data-ai-load-status role="status">{% if not t.connected %}Save the key first to load its models.{% endif %}</span>
+        </div>
+        {% endif %}
 
-      <!-- Restart notice (shown when saved ≠ active) -->
-      {% if restart_needed %}
-      <div class="db-restart-notice" id="restart-notice">
-        {{ ic("info", 14) }}
-        <span>
-          The saved backend differs from what's currently running.
-          <strong>Restart the application</strong> to activate the change.
-        </span>
-        <button type="button" class="btn btn-warning btn-sm" id="restart-btn" onclick="triggerRestart()">
-          ⟳ Restart now
+        {% if t.key == 'azure_openai' %}
+        {{ key_field(t, 'azure_openai_key', 'azure_openai_api_key', 'Your Azure OpenAI resource key', 'Azure Portal → your OpenAI resource → Keys and Endpoint.') }}
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="az-endpoint-input">Endpoint URL</label>
+            <input type="text" name="azure_openai_endpoint" id="az-endpoint-input" data-ai-cred
+                   value="{{ cfg.get('azure_openai_endpoint','') }}" placeholder="https://yourresource.openai.azure.com">
+            <p class="form-note">Starts with https://.</p>
+          </div>
+          <div class="form-group">
+            <label for="az-api-version">API version</label>
+            <input type="text" name="azure_api_version" id="az-api-version" data-ai-cred
+                   value="{{ cfg.get('azure_openai_api_version','2024-02-01') }}" placeholder="2024-02-01">
+            <p class="form-note">Leave as <code>2024-02-01</code> unless Azure asks for a newer one.</p>
+          </div>
+        </div>
+
+        <h4 class="ai-subhead">Deployments</h4>
+        <p class="form-note">Save the key and endpoint, load the deployments on your resource, then pick one for
+          questions and one for knowledge-base builds. They can be the same.</p>
+        <button type="button" class="btn btn-secondary btn-sm" id="az-fetch-btn" onclick="fetchAzureDeployments()"{% if not t.connected %} disabled{% endif %}>
+          {{ ic("refresh", 13) }} Load the deployments
         </button>
-      </div>
-      <div class="restart-strip" id="restart-status" style="display:none"></div>
-      {% endif %}
+        <div id="az-fetch-status" role="status"></div>
+        <div id="az-deploy-list"></div>
 
-    </div>
+        <input type="hidden" name="azure_query_deployment" id="az-query-deploy-val" value="{{ t.query }}">
+        <input type="hidden" name="azure_kb_deployment" id="az-kb-deploy-val" value="{{ t.kb }}">
+        <div class="az-selected-summary" id="az-selected-summary">
+          {% if t.query or t.kb %}
+            <strong>Saved:</strong> questions → <strong>{{ t.query or '(none)' }}</strong> &nbsp;·&nbsp;
+            knowledge base → <strong>{{ t.kb or '(none)' }}</strong>
+          {% else %}
+            No deployments picked yet.
+          {% endif %}
+        </div>
+        <details class="ai-manual">
+          <summary>Type the deployment names instead</summary>
+          <p class="form-note">Only if loading them does not work. Names exactly as Azure AI Foundry shows them.</p>
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="az-query-manual">Deployment for questions</label>
+              <input type="text" id="az-query-manual" value="{{ t.query }}" placeholder="e.g. gpt-4o-prod"
+                     oninput="document.getElementById('az-query-deploy-val').value=this.value;updateSummary()">
+            </div>
+            <div class="form-group">
+              <label for="az-kb-manual">Deployment for knowledge-base builds</label>
+              <input type="text" id="az-kb-manual" value="{{ t.kb }}" placeholder="e.g. gpt-4o-prod"
+                     oninput="document.getElementById('az-kb-deploy-val').value=this.value;updateSummary()">
+            </div>
+          </div>
+        </details>
+        {% endif %}
+
+        {% if t.key == 'local' %}
+        <div class="form-group">
+          <label for="local_base_url">Model server address</label>
+          <input type="text" id="local_base_url" name="local_base_url" placeholder="http://localhost:11434/v1"
+                 value="{{ cfg.get('local_llm_base_url', '') }}" data-ai-cred>
+          <p class="form-note">Any OpenAI-compatible server: Ollama (<code>http://localhost:11434/v1</code>), vLLM, llama.cpp's server or LM Studio.</p>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="local_model">Model for questions</label>
+            <input type="text" id="local_model" name="local_model" placeholder="{{ t.query_example }}" value="{{ t.query }}">
+            <p class="form-note">Exactly as your server names it. Blank uses <code>{{ t.query_example }}</code>.</p>
+          </div>
+          <div class="form-group">
+            <label for="local_kb_model">Model for knowledge-base builds</label>
+            <input type="text" id="local_kb_model" name="local_kb_model" placeholder="{{ t.kb_example }}" value="{{ t.kb }}">
+            <p class="form-note">Blank uses the model for questions.</p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="local_api_key">Shared secret <span class="form-note-inline">(optional)</span></label>
+          <div class="input-reveal-wrap">
+            <input type="password" id="local_api_key" name="local_api_key" value="{{ cfg.get('local_llm_api_key', '') }}" autocomplete="off">
+            <button type="button" class="input-reveal-btn" data-qb-reveal="local_api_key" aria-pressed="false" data-label-show="Show secret" data-label-hide="Hide secret" aria-label="Show secret">{{ ic("eye", 15) }}</button>
+          </div>
+          <p class="form-note">Most local servers ignore this. Set it only if a reverse proxy in front of the server asks for one.</p>
+        </div>
+        {% endif %}
+
+        <div class="llm-save-row">
+          <button type="submit" class="btn btn-primary" name="action" value="save">{{ ic("check", 14) }} Save</button>
+          {% if not t.in_use %}
+          <button type="submit" class="btn btn-secondary" name="action" value="use">Use for new questions</button>
+          <span class="form-note">{% if t.missing %}To use it, {{ t.missing }}.{% else %}Saves this tab and switches new questions to it.{% endif %}</span>
+          {% else %}
+          <span class="form-note">Saving changes the models new questions use.</span>
+          {% endif %}
+        </div>
+
+        {% if t.key != 'local' %}
+        <div class="provider-test-row">
+          <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('{{ t.key }}')"{% if not t.connected %} disabled{% endif %}>
+            {{ ic("refresh", 13) }}
+            {%- if t.key == 'azure_openai' %} {{ 'Test deployments' if (t.query or t.kb) else 'Verify saved credentials' }}{% else %} Test connection{% endif %}
+          </button>
+          <span class="credential-dirty-note">Save changes before testing.</span>
+          <span class="provider-test-result" id="test-result-{{ t.key }}" role="status"></span>
+        </div>
+        {% endif %}
+      </form>
+    </section>
+    {% endfor %}
   </div>
+</div>
 
-</form>
+<!-- ── Database Backend ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header">
+    <h2>Database backend</h2>
+    {% if restart_needed %}
+    <span class="badge" style="background:var(--warning-soft);border:1px solid color-mix(in srgb,var(--warning) 35%,transparent);color:var(--warning);font-size:var(--font-xs)">Restart required</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+
+    <!-- Currently active -->
+    <div class="db-active-status">
+      <span class="dot {{ active_backend }}"></span>
+      Currently running:
+      <strong>{% if active_backend == 'postgres' %}PostgreSQL{% else %}SQLite{% endif %}</strong>
+      {% if active_backend == 'postgres' and active_pg_host %}
+      — <code>{{ active_pg_host }}</code>
+      {% elif active_backend == 'sqlite' %}
+      — <code>data/querybot.db</code>
+      {% endif %}
+    </div>
+
+    {# Which database Solviz keeps its own records in is a deployment
+       setting, not a click: DATABASE_URL in the service's environment
+       (unset is SQLite). The page says what is running. #}
+    <p class="form-note">Set by the deployment: <code>DATABASE_URL</code> in the service's environment
+      (unset means SQLite). A restart applies a change.</p>
+
+    <!-- Restart notice (shown when saved ≠ active) -->
+    {% if restart_needed %}
+    <div class="db-restart-notice" id="restart-notice">
+      {{ ic("info", 14) }}
+      <span>
+        The saved backend differs from what's currently running.
+        <strong>Restart the application</strong> to activate the change.
+      </span>
+      <button type="button" class="btn btn-warning btn-sm" id="restart-btn" onclick="triggerRestart()">
+        ⟳ Restart now
+      </button>
+    </div>
+    <div class="restart-strip" id="restart-status" style="display:none"></div>
+    {% endif %}
+
+  </div>
+</div>
+
 
 <!-- ── AI prices ────────────────────────────────────────────────────────── -->
 {% macro usd(x) -%}
@@ -565,7 +430,8 @@
 {%- else -%}${{ ("%.4f" | format(x)).rstrip("0") }}
 {%- endif -%}
 {%- endmacro %}
-{% set show_azure_prices = saved_provider == 'azure_openai' or azure_configured or azure_deployments %}
+{% set azure_tab = ai_tabs | selectattr('key', 'equalto', 'azure_openai') | first %}
+{% set show_azure_prices = ai_in_use.provider == 'azure_openai' or (azure_tab and azure_tab.connected) or azure_deployments %}
 <div class="card" id="ai-prices">
   <div class="card-header">
     <h2>AI prices</h2>
@@ -695,7 +561,7 @@
     <div class="ai-azure-prices" id="ai-azure-prices">
       <h3>Azure OpenAI deployments</h3>
       <p class="form-note">Calls go to a deployment by its name; the price is the model it runs, at your resource's
-        deployment type. Fetching deployments in the Azure step above fills the models in.</p>
+        deployment type. Loading the deployments on the Azure OpenAI tab above fills the models in.</p>
       <form method="post" action="/admin/system/azure-pricing">
         <div class="form-group ai-azure-type">
           <label for="azure-deployment-type">Deployment type</label>
@@ -826,69 +692,105 @@
 
 <script>
 (function(){
-  /* ── Governed provider setup ──────────────────────────────────────────── */
-  function ready(fn){
-    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',fn); else fn();
-  }
-  function syncProviderChoice(provider){
-    provider=provider||'anthropic';
-    const ps=document.querySelector('select[name="default_provider"]');
-    filterModelSelect(document.querySelector('select[name="default_model"]'),provider);
-    filterModelSelect(document.querySelector('select[name="kb_model"]'),provider);
-    const azure = provider === 'azure_openai';
-    const standardModels = document.getElementById('standard-model-selects');
-    const azureNote = document.getElementById('azure-model-note');
-    if(standardModels) standardModels.style.display = azure ? 'none' : '';
-    if(azureNote) azureNote.classList.toggle('visible',azure);
+  /* ── AI provider tabs ─────────────────────────────────────────────────── */
+  /* qb-ui.js runs the tabs themselves (role=tab, arrows, Home/End). Each tab is
+     its own form: typing in one marks it unsaved, which disables its tests (they
+     use what is saved) and, since a save reloads the page, a save on another tab
+     asks first. */
+  var aiDirty = {}, aiLabels = {};
 
-    const changed = !!ps && provider !== ps.dataset.savedProvider;
-    const savedStatus = document.getElementById('default-provider-status');
-    if(savedStatus){
-      savedStatus.classList.toggle('configured',!changed);
-      savedStatus.textContent = changed ? 'Unsaved change' : 'Saved';
-    }
-    const notice = document.getElementById('provider-change-notice');
-    const stage = document.getElementById('provider-configuration-stage');
-    if(notice) notice.hidden = !changed;
-    if(stage) stage.hidden = changed;
-    const progress = document.getElementById('llm-progress-provider');
-    if(progress){
-      progress.classList.toggle('complete',!changed);
-      progress.classList.toggle('active',changed);
-      const note = progress.querySelector('.llm-progress-copy span');
-      if(note) note.textContent = changed ? 'Save the new selection' : 'System default saved';
+  function markAiDirty(form, field){
+    var name = form.getAttribute('data-ai-form');
+    aiDirty[name] = true;
+    var panel = form.closest('.ai-panel');
+    if(panel) panel.classList.add('is-dirty');
+    form.querySelectorAll('.provider-test-button').forEach(function(b){ b.disabled = true; });
+    var flag = document.querySelector('#ai-tab-' + name + ' [data-ai-unsaved]');
+    if(flag) flag.hidden = false;
+    // Loading models or deployments uses the saved key: not a key typed and not saved yet.
+    if(field && field.hasAttribute && field.hasAttribute('data-ai-cred')){
+      form.querySelectorAll('[data-ai-load], #az-fetch-btn').forEach(function(b){ b.disabled = true; });
+      var said = form.querySelector('[data-ai-load-status]');
+      if(said){ said.className = 'ai-load-status'; said.textContent = 'Save the key first to load its models.'; }
     }
   }
-  function filterModelSelect(select,provider){
-    if(!select) return;
-    let vis=false, first=null;
-    Array.from(select.options).forEach(function(o){
-      const p=o.dataset.provider||'';
-      const show=!p||p===provider;
-      o.hidden=!show; o.disabled=!show;
-      if(show && !first) first=o;
-      if(show && o.selected) vis=true;
-    });
-    if(!vis && first) first.selected=true;
-  }
-  ready(function(){
-    const ps=document.querySelector('select[name="default_provider"]');
-    syncProviderChoice((ps && ps.value)||'anthropic');
-    if(ps) ps.addEventListener('change',function(){ syncProviderChoice(ps.value); });
-    const activePanel = document.querySelector('.provider-panel.active');
-    if(activePanel){
-      activePanel.querySelectorAll('input:not([type="hidden"])').forEach(function(input){
-        input.addEventListener('input',function(){ markProviderDirty(activePanel); });
+
+  document.querySelectorAll('form[data-ai-form]').forEach(function(form){
+    var name = form.getAttribute('data-ai-form');
+    aiLabels[name] = form.getAttribute('data-ai-label') || name;
+    form.addEventListener('input', function(e){ markAiDirty(form, e.target); });
+    form.addEventListener('change', function(e){ markAiDirty(form, e.target); });
+    form.addEventListener('submit', function(e){
+      if(form.getAttribute('data-ai-confirmed') === '1'){ form.removeAttribute('data-ai-confirmed'); return; }
+      var others = aiUnsavedElsewhere(name, aiDirty, aiLabels);
+      if(!others.length || typeof window.qbConfirm !== 'function') return;
+      e.preventDefault();
+      var submitter = e.submitter || null;
+      window.qbConfirm({
+        title: 'Changes on another tab are not saved',
+        body: others.join(' and ') + (others.length > 1 ? ' have' : ' has') + ' changes that are not saved yet. '
+          + 'Saving ' + aiLabels[name] + ' reloads the page, and those changes are lost.',
+        confirm: 'Save ' + aiLabels[name],
+        cancel: 'Go back',
+        variant: 'warning',
+        onConfirm: function(){
+          form.setAttribute('data-ai-confirmed', '1');
+          if(submitter) form.requestSubmit(submitter); else form.requestSubmit();
+        }
       });
-    }
+    });
   });
 
-  function markProviderDirty(panel){
-    if(!panel) return;
-    panel.classList.add('is-dirty');
-    panel.querySelectorAll('.provider-test-button').forEach(function(button){ button.disabled=true; });
-    const fetchButton=panel.querySelector('#az-fetch-btn');
-    if(fetchButton) fetchButton.disabled=true;
+  document.querySelectorAll('[data-ai-load]').forEach(function(button){
+    button.addEventListener('click', function(){ loadProviderModels(button); });
+  });
+
+  function loadProviderModels(button){
+    var provider = button.getAttribute('data-ai-load');
+    var form = button.form;
+    var said = form.querySelector('[data-ai-load-status]');
+    if(button.getAttribute('aria-busy') === 'true') return;
+    button.setAttribute('aria-busy', 'true');
+    said.className = 'ai-load-status';
+    said.textContent = 'Asking ' + (aiLabels[provider] || provider) + '…';
+    fetch('/admin/system/provider-models?provider=' + encodeURIComponent(provider))
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        button.removeAttribute('aria-busy');
+        if(!data.ok){
+          said.className = 'ai-load-status err';
+          said.textContent = data.error || 'The models could not be loaded.';
+          return;
+        }
+        var models = data.models || [];
+        if(!models.length){
+          said.className = 'ai-load-status err';
+          said.textContent = 'This key can use no chat models. The list is unchanged.';
+          return;
+        }
+        form.querySelectorAll('select[data-ai-models]').forEach(function(select){
+          fillModelSelect(select, aiModelOptions(models, select.value));
+        });
+        said.className = 'ai-load-status ok';
+        said.textContent = models.length + ' model' + (models.length === 1 ? '' : 's')
+          + ' this key can use, newest first. Pick one, then save.';
+      })
+      .catch(function(){
+        button.removeAttribute('aria-busy');
+        said.className = 'ai-load-status err';
+        said.textContent = 'The request failed. Is the server running?';
+      });
+  }
+
+  function fillModelSelect(select, options){
+    while(select.firstChild) select.removeChild(select.firstChild);
+    options.forEach(function(o){
+      var option = document.createElement('option');
+      option.value = o.value;
+      option.textContent = o.label;
+      option.selected = o.selected;
+      select.appendChild(option);
+    });
   }
 
   /* ── Azure deployment fetcher ─────────────────────────────────────────── */
@@ -922,7 +824,7 @@
           return;
         }
         status.className = 'ok';
-        status.textContent = '✓ Found ' + deploys.length + ' deployment' + (deploys.length!==1?'s':'') + ' in your Azure resource.';
+        status.textContent = '✓ Found ' + deploys.length + ' deployment' + (deploys.length!==1?'s':'') + ' on your Azure resource. Pick one for each, then save.';
         renderDeployments(deploys);
       })
       .catch(function(err){
@@ -953,13 +855,13 @@
             'id="btn-query-' + escHtml(d.name) + '" ' +
             'onclick="selectDeployment(\'query\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
-            (isQuery ? '✓ Query' : 'Use for Query') +
+            (isQuery ? '✓ Questions' : 'Use for questions') +
           '</button>' +
           '<button type="button" class="btn btn-secondary btn-xs" aria-pressed="' + (isKb ? 'true' : 'false') + '" ' +
             'id="btn-kb-' + escHtml(d.name) + '" ' +
             'onclick="selectDeployment(\'kb\',' + escHtml(JSON.stringify(d.name)) + ')" ' +
             (d.status!=='succeeded'?'disabled title="Deployment not ready"':'') + '>' +
-            (isKb ? '✓ KB' : 'Use for KB') +
+            (isKb ? '✓ Knowledge base' : 'Use for knowledge base') +
           '</button>' +
         '</div>';
       container.appendChild(card);
@@ -975,7 +877,7 @@
       document.querySelectorAll('[id^="btn-query-"]').forEach(function(b){
         const isThis = b.id === 'btn-query-' + name;
         b.setAttribute('aria-pressed', isThis ? 'true' : 'false');
-        b.textContent = isThis ? '✓ Query' : 'Use for Query';
+        b.textContent = isThis ? '✓ Questions' : 'Use for questions';
       });
     } else {
       _selectedKb = name;
@@ -985,10 +887,11 @@
       document.querySelectorAll('[id^="btn-kb-"]').forEach(function(b){
         const isThis = b.id === 'btn-kb-' + name;
         b.setAttribute('aria-pressed', isThis ? 'true' : 'false');
-        b.textContent = isThis ? '✓ KB' : 'Use for KB';
+        b.textContent = isThis ? '✓ Knowledge base' : 'Use for knowledge base';
       });
     }
-    markProviderDirty(document.querySelector('.provider-panel.active'));
+    var form = document.querySelector('form[data-ai-form="azure_openai"]');
+    if(form) markAiDirty(form, null);
     updateSummary();
   };
 
@@ -996,8 +899,8 @@
     const q = document.getElementById('az-query-deploy-val').value || '(none)';
     const k = document.getElementById('az-kb-deploy-val').value    || '(none)';
     const s = document.getElementById('az-selected-summary');
-    if(s) s.innerHTML = '<strong>Selected:</strong> Query → <strong>' + escHtml(q) +
-      '</strong> &nbsp;·&nbsp; KB → <strong>' + escHtml(k) + '</strong>';
+    if(s) s.innerHTML = '<strong>Picked, not saved yet:</strong> questions → <strong>' + escHtml(q) +
+      '</strong> &nbsp;·&nbsp; knowledge base → <strong>' + escHtml(k) + '</strong>';
   };
 
   // Complete, apostrophe included: a deployment's name is also handed to an
@@ -1008,7 +911,30 @@
   }
 })();
 
-/* ── API key reveal toggle ─────────────────────────────────────────────── */
+/* ── AI provider tabs: what a loaded model list offers ─────────────────────
+   The models the key can use, the saved one selected; a saved model the list
+   does not name stays, selected, rather than being dropped. */
+function aiModelOptions(models, saved) {
+  var out = [], found = false;
+  for (var i = 0; i < models.length; i++) {
+    var on = models[i].id === saved;
+    if (on) found = true;
+    out.push({value: models[i].id, label: models[i].label || models[i].id, selected: on});
+  }
+  if (saved && !found) out.push({value: saved, label: saved + ' (saved)', selected: true});
+  else if (!saved && out.length) out[0].selected = true;
+  return out;
+}
+
+/* The other tabs whose unsaved changes a save on this one would lose. */
+function aiUnsavedElsewhere(current, dirty, labels) {
+  var out = [];
+  for (var name in dirty) {
+    if (name !== current && dirty[name]) out.push(labels[name] || name);
+  }
+  return out;
+}
+
 /* ── Test connection ───────────────────────────────────────────────────── */
 /* One line per deployment tested, when the answer lists them (Azure tests the
    deployment each purpose will really call); otherwise one line. */

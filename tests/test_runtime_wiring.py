@@ -462,21 +462,23 @@ class RouteRegistrationTests(unittest.TestCase):
         self.assertIn("pending Semantic Layer review", detail_html)
         self.assertIn("99+", base_html)
 
-    def test_admin_system_provider_setup_is_progressive(self):
-        """System setup should save a provider before exposing its credentials."""
+    def test_admin_system_offers_a_tab_per_provider(self):
+        """System shows one tab per AI provider, each its own form; no step saves a provider first.
+
+        What each tab lists and saves is tested on the rendered page in
+        tests/test_ai_provider_tabs.py; this pins the wiring the page's script relies on.
+        """
         system_html = _read("admin/templates/system.html")
 
-        self.assertIn("llm-setup-progress", system_html)
-        self.assertIn('data-saved-provider="{{ saved_provider }}"', system_html)
-        self.assertIn("Save selection and continue", system_html)
-        self.assertIn("provider-change-notice", system_html)
-        self.assertIn("provider-configuration-stage", system_html)
-        self.assertIn('data-provider-panel="azure_openai"', system_html)
-        self.assertIn("syncProviderChoice", system_html)
-        self.assertIn("markProviderDirty", system_html)
-        self.assertIn("Verify saved connection", system_html)
-        self.assertIn("filterModelSelect", system_html)
-        self.assertIn('data-provider="{{ provider }}"', system_html)
+        self.assertIn("data-qb-tabs", system_html)               # the shared tab component (qb-ui.js)
+        self.assertIn('role="tabpanel"', system_html)
+        self.assertIn('data-ai-form="{{ t.key }}"', system_html)
+        self.assertIn('name="provider" value="{{ t.key }}"', system_html)
+        self.assertIn("Use for new questions", system_html)
+        self.assertIn("Load the models this key can use", system_html)
+        self.assertIn("Save changes before testing", system_html)
+        for gone in ("Save selection and continue", "provider-change-notice", "filterModelSelect"):
+            self.assertNotIn(gone, system_html)
 
     def test_portal_semantic_review_live_update_wiring(self):
         """Portal Semantic Layer should update in place after admin review."""

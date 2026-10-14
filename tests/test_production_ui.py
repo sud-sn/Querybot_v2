@@ -284,15 +284,14 @@ def test_login_and_chat_use_query_lens_motion_states():
     assert "BRAND_STAGE_STATES" in chat
 
 
-def test_system_llm_setup_is_saved_and_verified_in_order():
+def test_system_llm_setup_is_saved_then_verified():
     template = _read("admin/templates/system.html")
     routes = _read("admin/routes.py")
 
-    assert "llm-setup-progress" in template
-    assert "Save selection and continue" in template
-    assert "provider-change-notice" in template
+    # Each provider's tab saves its own key and models, then tests what was saved.
+    assert "Use for new questions" in template
     assert "Save changes before testing" in template
-    assert "Verify saved connection" in template
+    assert "Test connection" in template
     assert '"verification": "model"' in routes
     assert '"verification": "credentials"' in routes
     assert "endpoint reachability alone is never called" in routes

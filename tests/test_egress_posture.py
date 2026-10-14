@@ -476,15 +476,8 @@ fields = json.loads(sys.argv[2])
 req = MagicMock()
 req.query_params = {}
 with patch.object(routes, "_is_auth", return_value=True):
-    asyncio.run(routes.system_save(
-        req,
-        anthropic_key="", openai_key="", azure_openai_key="",
-        azure_openai_endpoint="", azure_api_version="",
-        azure_query_deployment="", azure_kb_deployment="",
-        default_provider="local", default_model="", kb_model="",
-        database_backend="", database_url="", save_section="credentials",
-        **fields,
-    ))
+    # The Local model tab's "Use for new questions".
+    asyncio.run(routes.system_save(req, provider="local", action="use", **fields))
 
 # Nothing handed across this line -- resolve_provider must find what the route
 # wrote, through the real system-key allow-list and the real cipher.
@@ -549,8 +542,8 @@ class TestTheLocalModelSettingsRoundTrip(unittest.TestCase):
         self.assertEqual(out["provider"], "local")
         self.assertEqual(out["api_key"], "")
 
-    def test_clearing_the_model_name_falls_back_to_the_dropdown(self):
-        # Blank means "use the dropdown", not "keep the old value" -- a free
+    def test_clearing_the_model_name_falls_back_to_the_default_name(self):
+        # Blank means "use the default name", not "keep the old value" -- a free
         # text field that cannot be emptied is a field that traps a typo.
         out = _roundtrip(local_model="")
         self.assertEqual(out["stored_model"], "")

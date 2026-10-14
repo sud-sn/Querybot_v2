@@ -58,6 +58,11 @@ SYSTEM_KEYS = {
     "default_llm_provider",        # "anthropic" | "openai" | "azure_openai" | "local"
     "default_llm_model",           # model name or Azure deployment name
     "kb_llm_model",                # used once for KB generation
+    # Each hosted provider's own model choice on its Admin → System tab, kept while
+    # another provider is in use; copied into the two above when it is made the
+    # default (admin/ai_providers.py).
+    "anthropic_query_model", "anthropic_kb_model",
+    "openai_query_model", "openai_kb_model",
     "admin_password_hash",
     # A number admin session cookies carry. A password change bumps it, which
     # ends every admin session issued before (admin/credentials.py).

@@ -42,9 +42,10 @@ from fastapi.templating import Jinja2Templates
 import store
 from admin import credentials as admin_credentials
 from admin import access as admin_access
+from admin import ai_providers
 from core import web_security
 from store.db import get_db as _get_db
-from store.database import DATABASE_URL, get_saved_pg_url, save_pg_url
+from store.database import DATABASE_URL, get_saved_pg_url
 from store.config_store import get_db_config
 from core.pipeline_context import save_state
 from core.process_secrets import env_secret_or_random
@@ -161,30 +162,11 @@ templates.env.globals["admin_emergency_needs_account"] = lambda: not store.count
 _COOKIE = "querybot_session"
 
 # ── LLM choices shown in dropdowns ───────────────────────────────────────────
-QUERY_MODELS = [
-    ("anthropic",    "claude-sonnet-4-6", "Claude Sonnet 4.6 — recommended"),
-    ("anthropic",    "claude-haiku-4-5",  "Claude Haiku 4.5 — fast & cheap"),
-    ("anthropic",    "claude-opus-4-6",   "Claude Opus 4.6 — most capable"),
-    ("openai",       "gpt-4o",            "GPT-4o (OpenAI)"),
-    ("openai",       "gpt-4o-mini",       "GPT-4o Mini (OpenAI) — cheapest"),
-    ("azure_openai", "gpt-4o",            "GPT-4o (Azure OpenAI) — use your deployment name"),
-    ("azure_openai", "gpt-4o-mini",       "GPT-4o Mini (Azure OpenAI) — use your deployment name"),
-    ("azure_openai", "gpt-35-turbo",      "GPT-3.5 Turbo (Azure OpenAI)"),
-    # A local runtime serves whatever the operator pulled, so these are
-    # starting points rather than a catalogue -- the free-text model field on
-    # the local panel is what actually decides, and it wins over this list.
-    ("local",        "llama3.1:8b",       "Llama 3.1 8B (local)"),
-    ("local",        "qwen2.5:14b",       "Qwen 2.5 14B (local)"),
-    ("local",        "mistral-small",     "Mistral Small (local)"),
-]
-KB_MODELS = [
-    ("anthropic",    "claude-opus-4-5",  "Claude Opus 4.5 — best quality (recommended)"),
-    ("anthropic",    "claude-sonnet-4-6","Claude Sonnet 4.6"),
-    ("openai",       "gpt-4o",           "GPT-4o (OpenAI)"),
-    ("azure_openai", "gpt-4o",           "GPT-4o (Azure) — use your deployment name"),
-    ("local",        "llama3.1:70b",     "Llama 3.1 70B (local)"),
-    ("local",        "qwen2.5:32b",      "Qwen 2.5 32B (local)"),
-]
+# (provider, model, label) for the pages that list every provider's models in one
+# select (first-run setup, a workspace's model override), from the one catalogue the
+# System page's provider tabs draw on (admin/ai_providers.py).
+QUERY_MODELS = ai_providers.legacy_choices("query")
+KB_MODELS = ai_providers.legacy_choices("kb")
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -661,6 +643,7 @@ async def setup_page(request: Request):
         "error": None,
         "query_models": QUERY_MODELS,
         "kb_models": KB_MODELS,
+        "recommended": ai_providers.RECOMMENDED["anthropic"],
     })
 
 @router.post("/setup")
@@ -670,8 +653,8 @@ async def setup_submit(
     anthropic_key:  str = Form(""),
     openai_key:     str = Form(""),
     default_provider: str = Form("anthropic"),
-    default_model:  str = Form("claude-sonnet-4-6"),
-    kb_model:       str = Form("claude-opus-4-5"),
+    default_model:  str = Form(ai_providers.RECOMMENDED["anthropic"]["query"]),
+    kb_model:       str = Form(ai_providers.RECOMMENDED["anthropic"]["kb"]),
 ):
     # Setup runs once. Only the GET used to check, so anyone who could reach
     # the server could POST here and replace the admin password.
@@ -681,6 +664,7 @@ async def setup_submit(
         return _resp(request, "setup.html", {
             "error": "Password must be at least 8 characters",
             "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
+            "recommended": ai_providers.RECOMMENDED["anthropic"],
         })
     if not admin_credentials.claim_first(admin_password):
         # Another request finished setup between the check above and here.
@@ -751,9 +735,16 @@ def _summed_stats(parts: list[dict]) -> dict:
 async def system_page(request: Request):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
+    return _resp(request, "system.html", _system_context(request))
+
+
+def _system_context(request, *, error: str | None = None) -> dict:
+    """What system.html draws: the settings with every key masked, the AI provider tabs, the database
+    and the prices. ``error`` replaces the one the page was redirected with."""
     cfg = store.get_all_system()
     masked = {k: (store.mask(v) if "key" in k or "password" in k else v)
               for k, v in cfg.items()}
+    asked_tab = str(request.query_params.get("tab") or "")
 
     # Database backend state
     saved_pg_url  = get_saved_pg_url()
@@ -769,13 +760,16 @@ async def system_page(request: Request):
         m = _re.search(r"@([^/]+)", url)
         return m.group(1) if m else url[:40]
 
-    return _resp(request, "system.html", {
+    return {
         "cfg": masked,
-        "query_models":   QUERY_MODELS,
-        "kb_models":      KB_MODELS,
+        # One tab per AI provider; the page opens on the one its own redirect names, else the one in use.
+        "ai_tabs":        ai_providers.provider_tabs(cfg),
+        "ai_tab":         asked_tab if asked_tab in ai_providers.PROVIDERS else ai_providers.in_use_provider(cfg),
+        "ai_in_use":      ai_providers.in_use_summary(cfg),
+        "ai_labels":      ai_providers.LABELS,
         "saved":          request.query_params.get("saved"),
         "costed":         request.query_params.get("costed", ""),
-        "error":          request.query_params.get("error"),
+        "error":          error if error is not None else request.query_params.get("error"),
         # database backend
         "active_backend":  active_backend,
         "saved_backend":   saved_backend,
@@ -783,7 +777,7 @@ async def system_page(request: Request):
         "active_pg_host":  _pg_host(active_pg_url) if active_pg_url else "",
         "restart_needed":  restart_needed,
         **_ai_prices_context(cfg),
-    })
+    }
 
 
 # ── AI prices ─────────────────────────────────────────────────────────────────
@@ -976,7 +970,7 @@ async def azure_deployments_api(request: Request):
                 return JSONResponse({"ok": False, "error": f"Could not reach Azure: {exc}"}, status_code=400)
 
             if resp.status_code == 401:
-                return JSONResponse({"ok": False, "error": "API key rejected (401) — check your Azure OpenAI key in Step 1."}, status_code=400)
+                return JSONResponse({"ok": False, "error": "API key rejected (401) — check the Azure OpenAI key and save it again."}, status_code=400)
 
             # Fix 3 — 403 is a permissions/firewall issue, not a version issue; stop immediately
             if resp.status_code == 403:
@@ -1050,11 +1044,26 @@ async def azure_deployments_api(request: Request):
         "ok": False,
         "error": (
             f"Could not list deployments automatically. {detail_hint} "
-            "Use Step 3 below to type the deployment name manually — "
+            "Type the deployment names by hand below — "
             "find it in Azure AI Foundry (ai.azure.com) → Models + endpoints. "
             f"(Last error: {last_error})"
         ),
     }, status_code=400)
+
+
+@router.get("/system/provider-models")
+async def provider_models_api(request: Request, provider: str = ""):
+    """The chat models the saved Anthropic or OpenAI key can use, newest first, for that provider's tab.
+
+    The key is read from the saved settings, never taken from the browser; a failure is a sentence.
+    """
+    if not _is_auth(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        models = await ai_providers.account_models(provider, store.get_all_system())
+    except ai_providers.ModelListError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "models": models})
 
 
 def _azure_refusal(resp) -> str:
@@ -1094,7 +1103,7 @@ async def test_llm_connection(request: Request, provider: str = ""):
     if provider == "anthropic":
         api_key = (cfg.get("anthropic_api_key") or "").strip()
         if not api_key:
-            return JSONResponse({"ok": False, "error": "No API key saved — enter it in Step 1 and save."})
+            return JSONResponse({"ok": False, "error": "No API key saved — add it on this tab and save."})
         try:
             async with httpx.AsyncClient(timeout=12) as client:
                 resp = await client.post(
@@ -1129,7 +1138,7 @@ async def test_llm_connection(request: Request, provider: str = ""):
     if provider == "openai":
         api_key = (cfg.get("openai_api_key") or "").strip()
         if not api_key:
-            return JSONResponse({"ok": False, "error": "No API key saved — enter it in Step 1 and save."})
+            return JSONResponse({"ok": False, "error": "No API key saved — add it on this tab and save."})
         try:
             async with httpx.AsyncClient(timeout=12) as client:
                 resp = await client.get(
@@ -1333,65 +1342,90 @@ async def system_restart(request: Request):
 @router.post("/system")
 async def system_save(
     request: Request,
+    provider:                str = Form(""),
+    action:                  str = Form("save"),
     anthropic_key:           str = Form(""),
     openai_key:              str = Form(""),
+    query_model:             str = Form(""),
+    kb_model:                str = Form(""),
     azure_openai_key:        str = Form(""),
     azure_openai_endpoint:   str = Form(""),
     azure_api_version:       str = Form(""),
     azure_query_deployment:  str = Form(""),
     azure_kb_deployment:     str = Form(""),
-    default_provider:        str = Form(""),
-    default_model:           str = Form(""),
-    kb_model:                str = Form(""),
     local_base_url:          str = Form(""),
     local_api_key:           str = Form(""),
     local_model:             str = Form(""),
     local_kb_model:          str = Form(""),
-    database_backend:        str = Form(""),
-    database_url:            str = Form(""),
-    save_section:            str = Form(""),
 ):
+    """Save one AI provider's tab: its key or keys and its models; with action=use, also make it the
+    provider new questions use. Only the named provider's fields are read, so a save never touches
+    another provider's key. A blank or masked key keeps the saved one."""
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
-    # Only update keys if they were actually changed (not blank or masked)
-    if anthropic_key and not anthropic_key.startswith("•"):
-        store.set_system("anthropic_api_key", anthropic_key)
-    if openai_key and not openai_key.startswith("•"):
-        store.set_system("openai_api_key", openai_key)
-    if azure_openai_key and not azure_openai_key.startswith("•"):
-        store.set_system("azure_openai_api_key", azure_openai_key)
-    if azure_openai_endpoint.strip():
-        store.set_system("azure_openai_endpoint", azure_openai_endpoint.strip())
-    if azure_api_version.strip():
-        store.set_system("azure_openai_api_version", azure_api_version.strip())
-    if azure_query_deployment.strip():
-        store.set_system("azure_query_deployment_name", azure_query_deployment.strip())
-    if azure_kb_deployment.strip():
-        store.set_system("azure_kb_deployment_name", azure_kb_deployment.strip())
-    if default_provider:
-        store.set_system("default_llm_provider", default_provider)
-    if default_model:
-        store.set_system("default_llm_model", default_model)
-    if kb_model:
-        store.set_system("kb_llm_model", kb_model)
-    if local_base_url.strip():
-        store.set_system("local_llm_base_url", local_base_url.strip())
-    if local_api_key and not local_api_key.startswith("•"):
-        store.set_system("local_llm_api_key", local_api_key)
-    # Blank clears these deliberately: a local server's model name is free
-    # text, and an operator who empties the field means "fall back to the
-    # dropdown", not "keep whatever was there".
-    store.set_system("local_llm_model", local_model.strip())
-    store.set_system("local_kb_model", local_kb_model.strip())
-    # Database backend: write to data/pg_url (empty = SQLite, URL = PostgreSQL)
-    if database_backend == "sqlite":
-        save_pg_url("")
-    elif database_backend == "postgres" and database_url.strip() and not database_url.startswith("•"):
-        save_pg_url(database_url.strip())
-    saved_section = save_section if save_section in {"defaults", "credentials", "database"} else "settings"
-    anchor = "provider-configuration-stage" if saved_section in {"defaults", "credentials"} else ""
-    suffix = f"#{anchor}" if anchor else ""
-    return RedirectResponse(f"/admin/system?saved={saved_section}{suffix}", status_code=303)
+    if provider not in ai_providers.PROVIDERS:
+        return _ai_tab_redirect("", error="Choose a provider's tab, then save it.")
+    label = ai_providers.LABELS[provider]
+
+    def typed_key(value: str) -> str:
+        # The page shows a saved key masked ("•••…abcd"); posted back unchanged, it is not a new key.
+        return value if value and not value.startswith("•") else ""
+
+    changes: dict[str, str] = {}
+    if provider in ai_providers.HOSTED:
+        models = {"query": query_model.strip(), "kb": kb_model.strip()}
+        for purpose, model in models.items():
+            problem = ai_providers.model_problem(provider, model, purpose)
+            if problem:
+                return _ai_tab_redirect(provider, error=problem)
+        key = typed_key(anthropic_key if provider == "anthropic" else openai_key)
+        if key:
+            changes[f"{provider}_api_key"] = key
+        for purpose, model in models.items():
+            changes[ai_providers.OWN_MODEL_KEYS[(provider, purpose)]] = model
+    elif provider == "azure_openai":
+        if typed_key(azure_openai_key):
+            changes["azure_openai_api_key"] = azure_openai_key
+        for key, value in (("azure_openai_endpoint", azure_openai_endpoint),
+                           ("azure_openai_api_version", azure_api_version),
+                           ("azure_query_deployment_name", azure_query_deployment),
+                           ("azure_kb_deployment_name", azure_kb_deployment)):
+            if value.strip():
+                changes[key] = value.strip()
+    else:
+        if local_base_url.strip():
+            changes["local_llm_base_url"] = local_base_url.strip()
+        if typed_key(local_api_key):
+            changes["local_llm_api_key"] = local_api_key
+        # Blank clears these deliberately: a local server's model name is free text, and an operator
+        # who empties the field means "use the default name", not "keep whatever was there".
+        changes["local_llm_model"] = local_model.strip()
+        changes["local_kb_model"] = local_kb_model.strip()
+    for key, value in changes.items():
+        store.set_system(key, value)
+
+    cfg = store.get_all_system()
+    if action == "use":
+        missing = ai_providers.missing_for_use(provider, cfg)
+        if missing:
+            return _ai_tab_redirect(provider, error=f"{label} can't answer new questions yet: {missing}.")
+        store.set_system("default_llm_provider", provider)
+    elif ai_providers.in_use_provider(cfg) != provider:
+        return _ai_tab_redirect(provider, saved="ai")
+    # The provider in use: new questions use the models on its tab.
+    for key, value in ai_providers.default_models(provider, cfg).items():
+        store.set_system(key, value)
+    return _ai_tab_redirect(provider, saved="ai-use" if action == "use" else "ai")
+
+
+def _ai_tab_redirect(provider: str, **query: str) -> RedirectResponse:
+    """Back to System, on the tab just saved."""
+    from urllib.parse import urlencode
+
+    if provider:
+        query["tab"] = provider
+    return RedirectResponse(f"/admin/system?{urlencode(query)}#ai-providers", status_code=303)
+
 
 @router.post("/system/password")
 async def system_password(
@@ -1402,15 +1436,9 @@ async def system_password(
 ):
     if not _is_auth(request):
         return RedirectResponse("/admin/login", status_code=303)
-    cfg = store.get_all_system()
-    masked = {k: (store.mask(v) if "key" in k or "password" in k else v)
-              for k, v in cfg.items()}
 
     def refuse(message: str):
-        return _resp(request, "system.html", {
-            "cfg": masked, "query_models": QUERY_MODELS, "kb_models": KB_MODELS,
-            "error": message,
-        })
+        return _resp(request, "system.html", _system_context(request, error=message))
 
     # A session alone is not enough to change the password: a borrowed or
     # stolen one could otherwise lock the real admin out.
