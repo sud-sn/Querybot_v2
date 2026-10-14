@@ -3693,11 +3693,15 @@ function _wireOwnMetric(root) {
   }));
 }
 
-// A follow-up answer says which answer it changed; asking it on its own is one click (sent as "New question: ...").
+// A follow-up answer says which answer it changed and what it kept from it ("Region is North; in 2025"); asking
+// it on its own is one click (sent as "New question: ...").
 function _followingHtml(msg) {
   const following = msg.following;
   if (!following || !following.question) return '';
+  const kept = Array.isArray(following.kept) && following.kept.length
+    ? `<span class="answer-following-text">${escHtml(t('ui.chat.following.kept', {kept: following.kept.join('; ')}))}</span>` : '';
   return `<p class="answer-following"><span class="answer-following-text">${escHtml(t('ui.chat.following', {question: following.question}))}</span>`
+    + kept
     + (following.ask_new ? `<button type="button" class="follow-up-chip" data-question="${escHtml(following.ask_new)}">${escHtml(t('ui.chat.following.ask_new'))}</button>` : '')
     + `</p>`;
 }

@@ -25,7 +25,7 @@ threads:
       - {q: "annual plans only", label: refine, kind: filter, keeps: [measures, group_by, window]}
       - {q: "compare with a year earlier", label: refine, kind: compare, keeps: [measures, group_by, filters]}
       - {q: "the Growth Annual plan, by customer", label: refine, kind: filter, keeps: [measures, window]}
-      - {q: "How many seats?", label: unclear, kind: bare}
+      - {q: "How many seats?", label: refine, kind: subject, keeps: [filters]}
   - id: s04
     turns:
       - {q: "Tax amount by country this year"}
@@ -65,7 +65,7 @@ threads:
       - {q: "Starter only", label: refine, kind: filter, keeps: [measures, window]}
       - {q: "what about seats?", label: refine, kind: measure, keeps: [group_by, filters, window]}
       - {q: "Tax amount on invoices in 2025", label: new, kind: restate, drops: [filters]}
-      - {q: "How many invoices?", label: unclear, kind: bare}
+      - {q: "How many invoices?", label: refine, kind: subject, keeps: [window]}
   - id: s09
     turns:
       - {q: "MRR by country at the end of last month"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Seats by segment at the end of March", label: new, kind: restate, drops: [filters]}
       - {q: "Tax amount by month this year", label: new, kind: switch, drops: [group_by]}
       - {q: "How many subscriptions were cancelled in 2025?", label: new, kind: switch, drops: [group_by]}
+  - id: s10
+    turns:
+      - {q: "MRR by plan at the end of last month"}
+      - {q: "for \"Mid-market\" customers", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many seats?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "Which customers signed up last week?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "Tax amount by country this year", label: new, kind: switch, drops: [filters]}
+      - {q: "et hors \"USA\" ?", label: refine, kind: exclude, keeps: [measures, group_by, window]}

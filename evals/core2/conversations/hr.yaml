@@ -33,7 +33,7 @@ threads:
       - {q: "compare with May 2025", label: refine, kind: compare, keeps: [measures, group_by, filters]}
       - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters]}
       - {q: "the largest one, by department", label: refine, kind: reference, keeps: [measures]}
-      - {q: "How many people?", label: unclear, kind: bare}
+      - {q: "How many people?", label: refine, kind: subject, keeps: [filters]}
   - id: h05
     turns:
       - {q: "Overtime hours by department last quarter"}
@@ -65,7 +65,7 @@ threads:
       - {q: "and Toronto", label: refine, kind: filter, keeps: [measures, window]}
       - {q: "what about FTE?", label: refine, kind: measure, keeps: [filters, window]}
       - {q: "Net pay by department last month", label: new, kind: restate, drops: [filters]}
-      - {q: "What is total gross pay?", label: unclear, kind: bare}
+      - {q: "What is total gross pay?", label: refine, kind: subject, keeps: [window]}
   - id: h09
     turns:
       - {q: "Headcount by location at the end of last month"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Overtime hours by week last quarter", label: new, kind: switch, drops: [filters]}
       - {q: "FTE by employment type at the end of May", label: new, kind: restate, drops: [filters]}
       - {q: "How many employees left the company in 2025?", label: new, kind: switch, drops: [filters, group_by]}
+  - id: h10
+    turns:
+      - {q: "Gross pay by department in 2025"}
+      - {q: "only \"Toronto\"", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "what about overtime hours?", label: refine, kind: measure, keeps: [group_by, filters, window]}
+      - {q: "How many employees are at job level L5?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "Overtime hours by department last quarter", label: new, kind: restate, drops: [filters]}
+      - {q: "pour \"Toronto\" seulement ?", label: refine, kind: filter, keeps: [measures, group_by, window]}

@@ -24,9 +24,11 @@ from pydantic import ValidationError
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
-from core2.plan.followup import asks_series, keeps_period, measures_named, points_at_period, the_period
+from core2.plan.followup import (asks_series, keeps_period, measures_named, names_own_period, points_at_period,
+                                 the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
+from core2.plan.thread import kept_from_above
 from core2.plan.values import Masked, ValueMatch, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -132,19 +134,27 @@ How to plan:
    "Forecast X", "predict X", "X for the next N months", "where will X be" -> intent forecast with
    forecast.periods N (3 when unsaid) and time.grain (month when unsaid); a window only when the question
    limits the history to use.
-11. Follow-ups: PREVIOUS PLAN is the plan behind the last answer. When the new question changes it ("by
-   week instead", "only for X", "what about returns", "top 5 of those"), return the whole new plan with
-   follow_up "refine"; a question about something else is follow_up "new". "Those", "them", "the same
-   customers" are the members of the answer on screen, whose names you are not given: never filter on a
-   name that is not in VALUE MATCHES or a previous plan, and never a filter with no values: to answer for
-   them, keep the previous plan's group_by, sort and limit. "The first one", "the lowest one", "that
-   division" are in VALUE MATCHES when the member they point at is known: filter on its value. Never put
-   such words themselves ("lowest", "that division") in a filter; when they are not matched, ask (clarify). To follow them into another period ("how did those
-   same customers do in 2025?"), keep the previous plan's group_by, sort, limit and time.window, and put the
-   other period in time.compare, with intent "compare".
-   When it could be either (a short, complete question after an answer narrowed to a member or a period,
-   as "how many orders?" after net sales for North in March), plan it as a new question with follow_up
-   "unsure": the reader is asked which they meant. When READING says how the question was read, follow it.
+11. Follow-ups: PREVIOUS PLAN is the plan behind the last answer. Read the question as a person reading the
+   conversation would, and decide; never ask which was meant.
+   It is a follow-up (follow_up "refine") when it points at the answer ("it", "they", "those", "the first one"),
+   changes it ("by week instead", "only for X", "top 5 of those", "what about returns"), or goes on with the same
+   subject without a scope of its own: another figure of the same records or a new split of them, with no period
+   or member named ("how many orders?" after net sales for North in March is the orders of North in March).
+   Return the whole new plan with follow_up "refine", and keep the previous plan's filters and time (window,
+   date) unless the question names its own.
+   It is new (follow_up "new") when it is about something else: other records ("which managers have the most
+   direct reports?" after payroll by month), a list of another kind of thing, a question about the data itself;
+   or it states its whole scope itself ("net sales by region in 2025", "across all stores", "overall"). A new
+   question keeps nothing of the previous plan. When it could be either, a question about the same records that
+   names no period and no member of its own is a follow-up.
+   "Those", "them", "the same customers" are the members of the answer on screen, whose names you are not given:
+   never filter on a name that is not in VALUE MATCHES or a previous plan, and never a filter with no values: to
+   answer for them, keep the previous plan's group_by, sort and limit. "The first one", "the lowest one", "that
+   division" are in VALUE MATCHES when the member they point at is known: filter on its value. Never put such
+   words themselves ("lowest", "that division") in a filter; when they are not matched, ask (clarify). To follow
+   them into another period ("how did those same customers do in 2025?"), keep the previous plan's group_by, sort,
+   limit and time.window, and put the other period in time.compare, with intent "compare". When READING says how
+   the question was read, follow it. A question in French follows these rules the same way.
 12. notes: one short line for each assumption the user did not state.
 13. chart: only when the question says how to show it ("as a pie", "as a donut" or "ring" -> "donut",
    "bar chart", "stacked bars" -> "stacked", "as a heatmap" or "grid" -> "heatmap", "as a scatter" or
@@ -167,6 +177,10 @@ class Turn:
     shown: list[tuple] = field(default_factory=list)   # the answer's members in order: (attribute, value, number)
     periods: list[str] = field(default_factory=list)   # the answer's periods in order, by their first day (ISO)
     title: str = ""                     # what the answer shows ("Net amount by region"): "this" in "add this ..."
+    # Why the turn got no answer, in a few fixed words ("it was refused", "no answer came back"); "" for an answered
+    # turn. A turn that went unanswered stays in the conversation by its words alone, with no plan: "and 2025?"
+    # right after it still means its question, and nothing it tried is carried.
+    unanswered: str = ""
 
 
 @dataclass
@@ -502,11 +516,21 @@ def question_tail(question: str, *, today: dt.date, history: list[Turn], matches
         lines.append(fiscal)
     if history:
         last = history[-1]
+        if last.unanswered:
+            # The question before was never planned (the AI was not reached): the answer before it is what was on
+            # screen, and the unanswered question says what the reader went on to ask.
+            shown = next((t for t in reversed(history[:-1]) if t.plan is not None and not t.unanswered), None)
+            if shown is not None and shown.plan is not None and (masked is None or shown.masked is not None):
+                earlier = shown.masked.question if masked is not None and shown.masked is not None else shown.question
+                lines.append(f"EARLIER QUESTION: {clean(earlier)}")
+                lines.append("EARLIER PLAN: " + _plan_shown(shown.plan, model, masked))
         if masked is None or last.masked is not None:
             asked = last.masked.question if masked is not None and last.masked is not None else last.question
-            lines.append(f"PREVIOUS QUESTION: {clean(asked)}")
+            said = f" (not answered: {last.unanswered})" if last.unanswered else ""
+            lines.append(f"PREVIOUS QUESTION{said}: {clean(asked)}")
         if last.plan is not None:
-            lines.append("PREVIOUS PLAN: " + _plan_shown(last.plan, model, masked))
+            lines.append(("PREVIOUS PLAN (not answered): " if last.unanswered else "PREVIOUS PLAN: ")
+                         + _plan_shown(last.plan, model, masked))
         if reading == "refine" and last.plan is not None:
             lines.append('READING: this question changes the answer above: return the previous plan with what '
                          'the question changes, and follow_up "refine". Keep its time, durations, derived measures '
@@ -1662,15 +1686,16 @@ def _snapshot(plan: Plan, model: SemanticModel) -> bool:
     return bool(found) and len(found) == len(set(plan.measures)) and all(m.additivity == "semi_additive" for m in found)
 
 
-def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow_up: bool) -> Plan:
+def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow_up: bool,
+            question: str = "") -> Plan:
     """The plan with what it plainly means filled in, before it is checked:
 
     * a ranking sorted by a measure the plan does not show shows it ("rank the items by back-orders" sorted by
       a measure it left out, and was refused);
     * a stock compared between two dates written as one span ("on hand between 27 May and 17 August", as
       27 May-17 August against itself, or against 27 May) is the later date against the earlier one;
-    * a plan that says nothing of the answer above, for the same measure right after it, follows it
-      ("show the returns by warehouse" after the returns of Q1).
+    * a plan that says nothing of the answer above, for the same measure, a filter or the period right after it,
+      follows it ("show the returns by warehouse" after the returns of Q1).
     """
     if plan.kind != "query":
         return plan
@@ -1694,8 +1719,13 @@ def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow
         update["time"] = time.model_copy(update={
             "window": Window(kind="between", start=last, end=last, fiscal=time.window.fiscal),
             "compare": time.compare.model_copy(update={"window": Window(kind="between", start=first, end=first)})})
+    # A plan that says nothing of the answer above but keeps its figure, a filter of it or its period follows it
+    # ("how many orders?" planned with North and March and no word of follow-up): rule 11 reads it so.
+    window = plan.time.window
     if not said_follow_up and previous is not None and previous.kind == "query" \
-            and set(plan.measures) & set(previous.measures):
+            and (set(plan.measures) & set(previous.measures)
+                 or not names_own_period(question) and (any(f in previous.filters for f in plan.filters)
+                                                        or window.kind != "all" and window == previous.time.window)):
         update["follow_up"] = "refine"
     return plan.model_copy(update=update) if update else plan
 
@@ -1881,6 +1911,23 @@ def _members_compared(question: str, hidden: list[ValueMatch], model: SemanticMo
     return found[0] if len(found) == 1 else None
 
 
+def last_plan(history: list[Turn]) -> Plan | None:
+    """The plan a question follows: the last answered turn's (or the question asked back); a turn that got no answer
+    has none, and the one before it is what was on screen."""
+    return next((turn.plan for turn in reversed(history) if turn.plan is not None and not turn.unanswered), None)
+
+
+# A question back about the conversation itself: "What about the answer above: change the time period, ...?"
+_WHICH_WAY = re.compile(r"\b(?:answer\s+above|previous\s+answer|previous\s+question|r[ée]ponse\s+ci-dessus|"
+                        r"follow[-\s]?up|new\s+question)\b", re.IGNORECASE)
+
+
+def _asks_which_way(clarify: Clarify) -> bool:
+    """A question back about the conversation itself, not which member, link, date or figure ("which store from the
+    answer above do you mean?" is a fair question)."""
+    return clarify.about == "follow_up" or clarify.about == "other" and bool(_WHICH_WAY.search(clarify.question or ""))
+
+
 def plan_question(model: SemanticModel, question: str, complete: Complete, *, today: dt.date,
                   history: list[Turn] | None = None, matches: list[ValueMatch] | None = None,
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
@@ -1890,7 +1937,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
-    the plan is marked so, whatever the AI said. None: the AI reads it, and may say "unsure".
+    the plan is marked so, whatever the AI said. None: the AI reads it with the conversation in view and decides
+    (never asked back); a follow-up then keeps the filters and the period from above (core2/plan/thread.py).
     ``on_screen``: the members of the answer the question follows, in the order shown (attribute slug, value, ...).
     ``written``: every member name the question writes, quoted or not (two compared: "actual and budget").
     ``defined``: the figures the conversation's plans worked out (gross profit), oldest first: definitions only,
@@ -1898,7 +1946,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     """
     matches = matches or []
     history = history or []
-    known = history[-1].masked.values if history and history[-1].masked is not None else None
+    before = last_plan(history)
+    # The placeholders the conversation already used for member values, from the last turn that had any: a turn that
+    # got no answer may have none, and "<v1>" must still mean the same member.
+    known = next((t.masked.values for t in reversed(history) if t.masked is not None), None)
     # Every member name the question writes is withheld from the AI, quoted or not; only the quoted ones
     # (``matches``) are offered to it as names to filter on.
     masked = None if values_allowed else mask(question, [*matches, *(hidden or [])], known=known)
@@ -1932,7 +1983,15 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 f'"{m.text}" is in VALUE MATCHES ({m.attribute})' for m in matches) + ". Plan the question for "
                 "it, filtering on that value, rather than asking which one."], ""
             continue
-        previous = history[-1].plan if history else None
+        previous = before
+        if plan.kind == "clarify" and plan.clarify is not None and previous is not None \
+                and previous.kind == "query" and _asks_which_way(plan.clarify):
+            # "What about the answer above: change the time period, add a breakdown ...?" (asked of a French reader,
+            # in English): whether a question follows the answer above is decided, never asked.
+            problems, hint = ["Do not ask whether or how the question is about the answer above: decide as rule 11 "
+                              "says (a follow-up keeps the previous plan's filters and time; a question about "
+                              "something else is new) and return the plan."], ""
+            continue
         if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
                 and on_screen and previous is not None and previous.kind == "query" and previous.limit \
                 and _THOSE.search(question) and str(on_screen[0][0]) in model.attributes:
@@ -1983,9 +2042,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             # figure is asked back, with the data's main figures to pick from.
             plan = Plan(kind="clarify", clarify=Clarify(about="other", question=_WHICH_FIGURES,
                                                         options=main_figures(model, question)))
-        plan = fill_in(plan, model, history[-1].plan if history and reading is None else None,
-                        '"follow_up"' in text)
-        plan = carried(plan, history[-1].plan if history else None, reading)
+        plan = fill_in(plan, model, before if history and reading is None else None,
+                        '"follow_up"' in text, question)
+        plan = carried(plan, before, reading)
         plan = late_asked(plan, question)
         plan = pointed_in(plan, model, matches, question, on_screen)
         plan = ratio_alone(plan, model, question)
@@ -2008,19 +2067,30 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                 plan = ruled
         problems, hint = check(plan, model, today, shown)
         if not problems:
-            twin = named_twin(plan, model, question, history[-1].plan if history else None)
+            twin = named_twin(plan, model, question, before)
             if twin is not plan and not check(twin, model, today, shown)[0]:
                 plan = twin
             if reading in ("refine", "new") and plan.kind == "query":
                 plan = plan.model_copy(update={"follow_up": reading})
-            settled = settle(plan, model, question, history[-1].plan if history else None)
+            if plan.kind == "query" and plan.follow_up == "unsure":
+                # Could be either: a question about the same records with no scope of its own goes on with the
+                # answer above (rule 11), its scope kept and said on the answer, a new question one click away.
+                follows = before is not None and before.kind == "query"
+                plan = plan.model_copy(update={"follow_up": "refine" if follows else "new"})
+            settled = settle(plan, model, question, before)
             if settled is not plan and not check(settled, model, today, shown)[0]:
                 plan = settled
             explained = why_periods(plan, model, question, history)
             if explained is not plan and not check(explained, model, today, shown)[0]:
                 plan = explained
+            # The thread rule: a follow-up keeps the filters from above that it does not replace, a new question
+            # none it does not write (core2/plan/thread.py).
+            threaded = kept_from_above(plan, model, question, before,
+                                       lambda tried_plan: not check(tried_plan, model, today, shown)[0])
+            if threaded is not plan and not check(threaded, model, today, shown)[0]:
+                plan = threaded
             if plan.follow_up == "refine":
-                kept = those_members(plan, model, question, history[-1].plan if history else None, on_screen)
+                kept = those_members(plan, model, question, before, on_screen)
                 if kept is not plan and not check(kept, model, today, shown)[0]:
                     plan = kept
             return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
@@ -2034,7 +2104,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         tried=tried)
 
 
-def _period_words(window: Window) -> str:
+def period_words(window: Window) -> str:
     """A window as a question writes it: "in 2025", "from 1 Mar 2025 to 31 May 2025", "in the last 3 months"."""
     if window.kind == "between" and window.start and window.end:
         if (window.start.month, window.start.day, window.end.month, window.end.day) == (1, 1, 12, 31) \
@@ -2082,7 +2152,7 @@ def ways_on(tried: Plan | None, model: SemanticModel) -> list[str]:
         return []
     from core2.resolve.resolver import find_slug
 
-    period = _period_words(tried.time.window)
+    period = period_words(tried.time.window)
     split = ""
     for slug in tried.group_by[:1]:
         found = find_slug(model, slug)

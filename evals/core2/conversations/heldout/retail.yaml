@@ -9,7 +9,7 @@ threads:
       - {q: "ok and april?", label: refine, kind: period}
       - {q: "pls break it down by category", label: refine, kind: drill}
       - {q: "Give me the number of returns by reason for the whole of 2025", label: new, kind: switch}
-      - {q: "how many returns", label: unclear, kind: bare}
+      - {q: "how many returns", label: refine, kind: subject, keeps: [window]}
   - id: hr02
     turns:
       - {q: "Top 10 customers by gross sales last quarter"}

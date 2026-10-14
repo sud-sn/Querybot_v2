@@ -25,7 +25,7 @@ threads:
       - {q: "as a line chart", label: refine, kind: chart, keeps: [measures, filters]}
       - {q: "and for expense accounts?", label: refine, kind: filter, keeps: [measures]}
       - {q: "break that down by cost centre", label: refine, kind: drill, keeps: [measures, filters]}
-      - {q: "How many journal lines?", label: unclear, kind: bare}
+      - {q: "How many journal lines?", label: refine, kind: subject, keeps: [filters]}
   - id: f04
     turns:
       - {q: "Debit amount by account for Plant North in May"}
@@ -57,7 +57,7 @@ threads:
       - {q: "as a share of the total", label: refine, kind: share, keeps: [measures, group_by, filters, window]}
       - {q: "Q2 instead", label: refine, kind: period, keeps: [measures, group_by, filters]}
       - {q: "Debit and credit amounts by division for 2025", label: new, kind: restate, drops: [filters]}
-      - {q: "What is total debit?", label: unclear, kind: bare}
+      - {q: "What is total debit?", label: refine, kind: subject, keeps: [window]}
   - id: f08
     turns:
       - {q: "Journals entered by month"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Credit amount by account type in 2025", label: new, kind: restate, drops: [filters]}
       - {q: "Journals posted per week this quarter", label: new, kind: switch, drops: [group_by]}
       - {q: "Debit amount for People Services last month", label: new, kind: restate, drops: [group_by]}
+  - id: f10
+    turns:
+      - {q: "Net amount by division in Q1 2026"}
+      - {q: "for \"Plant North\" only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many journal lines?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "debit and credit by account type?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "What is our budget by cost centre this quarter?", label: new, kind: switch, drops: [filters]}
+      - {q: "et le trimestre précédent ?", label: refine, kind: period, keeps: [measures, group_by]}

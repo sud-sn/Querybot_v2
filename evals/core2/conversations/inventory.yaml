@@ -41,7 +41,7 @@ threads:
       - {q: "which warehouse has the most allocated?", label: refine, kind: sort, keeps: [group_by]}
       - {q: "that warehouse by item group", label: refine, kind: reference}
       - {q: "On-hand value by item for Riverside Hub", label: new, kind: restate}
-      - {q: "How many items?", label: unclear, kind: bare}
+      - {q: "How many items?", label: refine, kind: subject, keeps: [filters]}
   - id: i06
     turns:
       - {q: "Stock movement quantity by status this year"}
@@ -65,7 +65,7 @@ threads:
       - {q: "now by item group", label: refine, kind: regroup, keeps: [measures]}
       - {q: "only Depot warehouses", label: refine, kind: filter, keeps: [measures, group_by]}
       - {q: "how about Paint?", label: refine, kind: filter, keeps: [measures]}
-      - {q: "How many movements?", label: unclear, kind: bare}
+      - {q: "How many movements?", label: refine, kind: subject, keeps: [filters]}
   - id: i09
     turns:
       - {q: "On-hand quantity by warehouse today"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Closing value by warehouse at the end of March", label: new, kind: restate, drops: [filters]}
       - {q: "Adjustment movements by week this quarter", label: new, kind: switch, drops: [group_by]}
       - {q: "Average unit cost of Paint items received in 2025", label: new, kind: switch, drops: [group_by, window]}
+  - id: i10
+    turns:
+      - {q: "Received quantity by warehouse this year"}
+      - {q: "for \"Riverside Hub\" only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "and issued quantity by item group?", label: refine, kind: regroup, keeps: [filters, window]}
+      - {q: "how many movements?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "What is the average unit cost by supplier country?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "et seulement \"Paint\" ?", label: refine, kind: filter, keeps: [measures, group_by]}

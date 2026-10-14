@@ -4,8 +4,7 @@ The answer's note and headline were French on a French screen, while the buttons
 change in Dec 2025?", "Forecast net amount for the next 3 months", "Median instead", "Including Cancelled" -- the
 date badge ("by order date") and the chart's click menu were English, and a click sent the English words. Each now
 comes with its French twin: the page shows it and a click sends it. A chip that changes one setting finds its plan
-by either wording, with no AI; "about the answer above" or "a new question" is read in French too. The data's own
-names (a figure, a store) stay as they are.
+by either wording, with no AI. The data's own names (a figure, a store) stay as they are.
 
 The invented retail shop and home-services firm of the test domains.
 """
@@ -20,7 +19,7 @@ import pytest
 from core2.plan.chips import french
 from core2.plan.ir import Plan
 from core2.plan.values import MemberIndex
-from core2.service import ABOVE, AFRESH, Services, Session, _answer_question, answer_question, which_way
+from core2.service import Services, Session, _answer_question, answer_question
 from core2.warehouse.runner import DuckDBWarehouse
 from evals.core2 import domains
 from evals.core2.compile_eval import learn
@@ -108,12 +107,6 @@ def test_a_french_click_on_a_setting_chip_runs_its_plan_with_no_ai():
     every = built.con.execute("SELECT COUNT(*) FROM bookings b JOIN calendar c ON b.booked_date_key = c.date_key "
                               "WHERE c.full_date BETWEEN '2025-01-01' AND '2025-12-31'").fetchone()[0]
     assert second["data"]["rows"] == [{"number_of_bookings": every}] and len(asked) == calls
-
-
-def test_about_the_answer_above_or_a_new_question_is_read_in_french():
-    assert which_way("À propos de la réponse ci-dessus", [ABOVE, AFRESH]) == "refine"
-    assert which_way("Une nouvelle question", [ABOVE, AFRESH]) == "new"
-    assert which_way("A new question", [ABOVE, AFRESH]) == "new"
 
 
 def _page(msg: dict, lang: str) -> str:

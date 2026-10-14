@@ -41,7 +41,8 @@ from core2.plan.chips import french as chip_french, offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
-from core2.plan.planner import Complete, Outcome, Turn, plan_question, stands_for
+from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words, plan_question, stands_for
+from core2.plan.thread import kept_parts
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, build_index, listable, normalise, placed,
                                 quoted_spans, which_end)
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
@@ -51,13 +52,9 @@ from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
 log = logging.getLogger("querybot.core2")
 
 HISTORY = 3          # turns of the conversation the planner sees
-FOLLOW_UP = "follow_up"                                   # Pending.field: is it about the answer above, or new?
 END = "end"                                               # Pending.field: "the worst one": which end of the answer
-ABOVE, AFRESH = "About the answer above", "A new question"
 LEFT_OUT_CHIP = {"label": "Include the rows left out", "question": "Include the rows left out by default",
                  "label_fr": "Inclure les lignes écartées", "question_fr": "Inclure les lignes écartées par défaut"}
-# The two buttons of a question that could go either way, in French: a click on either is read as its English twin.
-_EITHER_FR = {ABOVE: "À propos de la réponse ci-dessus", AFRESH: "Une nouvelle question"}
 MAX_ROWS = 5000
 
 
@@ -84,10 +81,10 @@ class Pending:
     """A question back that code completes: the plan waiting for the link the reader names."""
 
     plan: Plan
-    field: str                       # the slug whose link the reply names (plan.via), "time.date", or FOLLOW_UP
+    field: str                       # the slug whose link the reply names (plan.via), "time.date", or END
     options: list[str]
     masked: Masked | None = None
-    question: str = ""               # FOLLOW_UP: the question waiting to be read one way or the other
+    question: str = ""               # END: the question waiting for the end of the answer it means
     phrase: str = ""                 # END: the words that point at an end of the answer ("the worst one")
 
 
@@ -111,12 +108,6 @@ def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
 
 
-def _english_either(reply: str) -> str:
-    """A French click on "about the answer above" or "a new question", read as its English twin."""
-    said = _plain(reply)
-    return next((en for en, fr in _EITHER_FR.items() if _plain(fr) == said), reply)
-
-
 def choose(reply: str, options: list[str]) -> str | None:
     """The option a reply picks: its name, its number ("2", "the second one"), or a start only it has."""
     text = _plain(reply)
@@ -137,31 +128,6 @@ def choose(reply: str, options: list[str]) -> str | None:
         return starts[0]
     inside = [o for o, p in zip(options, plain) if p and re.search(rf"\b{re.escape(p)}\b", text)]
     return inside[0] if len(inside) == 1 else None
-
-
-_AFRESH_WORDS = {"new", "fresh", "afresh", "separate", "different", "another", "scratch", "own"}
-_ABOVE_WORDS = {"above", "same", "previous", "follow", "follows", "following", "continue", "continues", "keep",
-                "refine", "earlier"}
-# A reply made only of these says which way; any other word ("same for South", "last year") is a question.
-_REPLY_WORDS = _AFRESH_WORDS | _ABOVE_WORDS | _FILLER | {
-    "about", "answer", "question", "one", "as", "to", "of", "on", "from", "start", "over", "that", "this",
-    "please", "yes", "ask", "its", "s", "so", "just", "with", "for"}
-
-
-def which_way(reply: str, options: list[str]) -> str | None:
-    """"refine" or "new": what a reply to "about the answer above, or a new question?" says. None: neither
-    (a question of its own, read as it is)."""
-    picked = choose(_english_either(reply), options)
-    if picked is not None:
-        return "refine" if picked == options[0] else "new"
-    words = _plain(reply).split()
-    if not words or any(w not in _REPLY_WORDS for w in words):
-        return None
-    afresh = any(w in _AFRESH_WORDS for w in words) or "start" in words
-    above = any(w in _ABOVE_WORDS for w in words)
-    if afresh == above:
-        return None
-    return "new" if afresh else "refine"
 
 
 def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
@@ -203,19 +169,13 @@ def _which_end(question: str, phrase: str, first: str, last: str) -> dict[str, A
                   follow_up_suggestions=[{"label": o, "question": o} for o in (first, last)])
 
 
-def _which_question(question: str, last: Turn) -> dict[str, Any]:
-    """Asked when a question could go either way: two buttons, each answering it."""
-    text = f'Is "{question}" about the answer above ("{last.question}"), or a new question?'
-    return _frame(question, text, kind="follow_up_or_new",
-                  clarify={"about": FOLLOW_UP, "question": text, "options": [ABOVE, AFRESH]},
-                  follow_up_suggestions=[{"label": o, "question": o, "label_fr": _EITHER_FR[o],
-                                          "question_fr": _EITHER_FR[o]} for o in (ABOVE, AFRESH)])
-
-
 def _read(question: str, last: Turn | None, model: SemanticModel, found: list[ValueMatch]) -> Reading:
     """How the question relates to the answer on screen, by its words (core2/plan/followup.py)."""
     if last is not None and last.plan is not None and last.plan.kind == "clarify":
         return Reading("open", "it may answer the question asked back")
+    if last is not None and last.unanswered:
+        # "and 2025? split both years" right after "fee income in 2024" was refused: read with that question.
+        return Reading("open", "the question before it was not answered")
     return read_turn(question, previous=last.plan if last is not None else None, model=model,
                      members=[m.text for m in found])
 
@@ -306,9 +266,50 @@ def _considered(plan: Plan | None, model: SemanticModel) -> list[dict[str, str]]
     return rows
 
 
+REFUSED, NOT_REACHED = "it was refused", "no answer came back"     # why a turn got no answer, in fixed words
+
+
+def _unanswered(session: Session, question: str, why: str, masked: Masked | None = None) -> None:
+    """The question kept in the conversation though it got no answer: its words and why not, never a plan (nothing
+    it tried is carried). Only the latest one is kept, after the answers it follows."""
+    session.turns = [t for t in session.turns if not t.unanswered]
+    session.turns.append(Turn(question, None, masked, unanswered=why))
+    del session.turns[:-(HISTORY + 1)]
+
+
+def _keep(session: Session, turn: Turn) -> None:
+    """A turn kept in the conversation; a question that got no answer before it has been followed or passed by."""
+    session.turns = [t for t in session.turns if not t.unanswered]
+    session.turns.append(turn)
+    del session.turns[:-HISTORY]
+
+
+def _kept_said(plan: Plan, previous: Plan | None, question: str, model: SemanticModel) -> list[str]:
+    """What a follow-up's answer kept from the answer above that its question did not say, in the reader's words:
+    "Region is North", "in Q1 2026" -- each one said, so a scope kept is never a surprise."""
+    filters, window = kept_parts(plan, previous, question)
+    said = []
+    for f in filters:
+        found = find_slug(model, f.field)
+        thing = found[1] if found is not None else None
+        name = getattr(thing, "business_name", "") or getattr(thing, "name", "") or f.field.split(".")[-1].replace("_", " ")
+        values = ", ".join(str(v) for v in f.values)
+        said.append(f"{name} {_OPS.get(f.op, f.op)} {values}".strip())
+    if window is not None:
+        words = period_words(window)
+        if words:
+            said.append(words)
+    return said
+
+
 def _refused(question: str, text: str, plan: Plan | None, services: Services, stopped: str,
-             **extra: Any) -> dict[str, Any]:
-    """A refusal, with what was considered and why it stopped under "How this answer was produced"."""
+             session: Session | None = None, masked: Masked | None = None, **extra: Any) -> dict[str, Any]:
+    """A refusal, with what was considered and why it stopped under "How this answer was produced".
+
+    ``session``: the conversation, which keeps the question as an unanswered turn: the next question may go on with
+    it ("and 2025?"), never with the answer before it as if it had not been asked."""
+    if session is not None:
+        _unanswered(session, question, REFUSED, masked)
     trust = {"engine": "core2", "considered": _considered(plan, services.model), "stopped": stopped,
              "model_version": services.model.version, "data_source": services.data_source,
              **extra.pop("trust", {})}
@@ -397,8 +398,17 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         session.own = {**kept, made.key: made}
     if session.own:
         services = replace(services, model=own_metric.with_own(services.model, session.own))
-    payload = _answer_question(defined.ask if defined is not None else question, services, session,
-                               question_id=question_id)
+    kept_before = session.turns[-1] if session.turns else None
+    try:
+        payload = _answer_question(defined.ask if defined is not None else question, services, session,
+                                   question_id=question_id)
+    except Exception:
+        # No answer came back (the AI rate limited or timed out): the question still stays in the conversation, so
+        # the next one ("the late ones") goes on with it rather than with the answer before it. Kept once: a turn
+        # this question already left (a refusal) stands.
+        if (session.turns[-1] if session.turns else None) is kept_before:
+            _unanswered(session, question, NOT_REACHED)
+        raise
     if made is not None:
         payload["question"] = question
         payload["own_metric"] = {**own_metric.card(services.model, made, defined), "measure": made}
@@ -483,11 +493,6 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     start = time.perf_counter()
     model = services.model
     pending, session.pending = session.pending, None
-    if pending is not None and pending.field == FOLLOW_UP:
-        way = which_way(question, pending.options)
-        if way is not None:      # the reader said which they meant: their question, read that way
-            return _answer_question(pending.question, services, session, question_id=question_id, forced=way)
-        pending = None           # a question of its own instead
     if pending is not None and pending.field == END:
         end = choose(question, pending.options)
         if end is not None:      # the member they meant, in quotes where the words pointed: their question again
@@ -497,15 +502,17 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     if forced is None and NEW_PREFIX.match(question) and NEW_PREFIX.sub("", question, count=1).strip():
         question, forced = NEW_PREFIX.sub("", question, count=1).strip(), "new"
     last = session.turns[-1] if session.turns else None
+    # The answer on screen: the last turn that got one (a question refused since is said, not drawn).
+    seen = next((t for t in reversed(session.turns) if not t.unanswered), None)
     following = False
     matches: list[ValueMatch] = []
-    picked = choose(_english_either(question), pending.options) if pending is not None else None
+    picked = choose(question, pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
     if planned is not None:
         outcome = Outcome(planned)
-    elif offer is not None and (pending is None or picked is None) and last is not None:
+    elif offer is not None and (pending is None or picked is None) and seen is not None:
         # A chip of the answer on screen: its plan, one setting changed, run as it is (no AI).
-        outcome = Outcome(offer, masked=last.masked)     # no "Following" line: the chip says what it changed
+        outcome = Outcome(offer, masked=seen.masked)     # no "Following" line: the chip says what it changed
     elif pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
         if pending.field == "time.date":
@@ -527,21 +534,18 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # screen the words point at. A turn that points at one follows that answer, however much else it says.
         # An answer with no list on screen (one store's months) leaves "the third one" pointing at the list before
         # it: the top three stores the series was drawn from.
-        listed = last if last is not None and last.shown else next(
+        listed = seen if seen is not None and seen.shown else next(
             (t for t in reversed(session.turns[-HISTORY:]) if t.shown), None)
         pointed = _visible(placed(question, listed.shown, found, leader=_names_a_leader(listed.question)), model,
                            services.allowed_tables) if listed is not None else []
-        end = which_end(question, last.shown, [*found, *pointed]) if last is not None and last.shown \
-            and last.plan is not None and forced != "new" else None
+        end = which_end(question, seen.shown, [*found, *pointed]) if seen is not None and seen.shown \
+            and seen.plan is not None and forced != "new" else None
         if end is not None:
-            session.pending = Pending(last.plan, END, [end[1], end[2]], question=question, phrase=end[0])  # type: ignore[arg-type]
+            session.pending = Pending(seen.plan, END, [end[1], end[2]], question=question, phrase=end[0])  # type: ignore[arg-type]
             return _which_end(question, *end)
         reading = (Reading(forced, "the reader said so") if forced else
                    Reading("refine", "it points at a member of the answer on screen") if pointed else
                    _read(question, last, model, found))
-        if reading.kind == "unsure" and last is not None and last.plan is not None:
-            session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
-            return _which_question(question, last)
         matches = found
         if reading.kind != "new" and pointed:
             matches = sorted([*found, *pointed], key=lambda m: m.start)
@@ -552,13 +556,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                 written=_visible(services.index.match(question), model, services.allowed_tables),
                                 defined=[d for t in session.turns[-HISTORY:] if t.plan is not None for d in t.plan.derived],
                                 reading=reading.kind if reading.kind in ("refine", "new") else None,
-                                on_screen=list(last.shown) if last is not None and reading.kind != "new" else None)
-        if outcome.plan.kind == "query" and outcome.plan.follow_up == "unsure":
-            if last is not None and last.plan is not None and last.plan.kind == "query":
-                session.pending = Pending(last.plan, FOLLOW_UP, [ABOVE, AFRESH], question=question)
-                return _which_question(question, last)
-            outcome.plan = outcome.plan.model_copy(update={"follow_up": "new"})
-        following = last is not None and last.plan is not None and last.plan.kind == "query"
+                                on_screen=list(seen.shown) if seen is not None and reading.kind != "new" else None)
+        following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
         return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
@@ -569,18 +568,17 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         why = " ".join(plan.notes) or "nothing in this data measures it"
         # After a repair round, the plan that was tried first says what was looked at.
         return _refused(question, f"I cannot answer that from this data: {why}", outcome.tried or plan, services,
-                        why, unsupported=True)
+                        why, session, outcome.masked, unsupported=True)
     if plan.kind == "clarify" and plan.clarify is not None:
         # Kept in the conversation: the reply ("the first one") answers this question.
-        session.turns.append(Turn(question, plan, outcome.masked))
-        del session.turns[:-HISTORY]
+        _keep(session, Turn(question, plan, outcome.masked))
         clarify = plan.clarify
         if clarify.about == "member" and clarify.options:
             # An option written as a description of a row ("top supplier from the previous list") is no member.
             clarify = clarify.model_copy(update={"options": [o for o in clarify.options if not stands_for(o)]})
-        if clarify.about == "member" and not clarify.options and last is not None and last.shown:
+        if clarify.about == "member" and not clarify.options and seen is not None and seen.shown:
             # "Which warehouse do you mean by 'the first one'?": the members of the answer on screen, one click each.
-            listed = list(dict.fromkeys(str(s[1]) for s in last.shown if s[1] is not None))[:5]
+            listed = list(dict.fromkeys(str(s[1]) for s in seen.shown if s[1] is not None))[:5]
             clarify = clarify.model_copy(update={"options": listed})
         asked = _clarification(question, clarify)
         if outcome.problems:      # the planner's plans did not check out: what it tried, and why not
@@ -602,29 +600,29 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                            periods=periods, notes=True)
     except ResolveError as exc:
         if exc.kind == "ambiguous":
-            session.turns.append(Turn(question, plan, outcome.masked))     # the reply names the role this asks for
-            del session.turns[:-HISTORY]
+            _keep(session, Turn(question, plan, outcome.masked))     # the reply names the role this asks for
             if exc.field:
                 session.pending = Pending(plan, exc.field, list(exc.options), outcome.masked)
             return _clarification(question, Clarify(about="path", question=f"{exc.message}. Which one do you mean",
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")
         stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options else "")
-        return _refused(question, template.format(message=exc.message), plan, services, stopped,
-                        unsupported=exc.kind == "unsupported")
+        return _refused(question, template.format(message=exc.message), plan, services, stopped, session,
+                        outcome.masked, unsupported=exc.kind == "unsupported")
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
         if unavailable(cause):
-            return _refused(question, UNAVAILABLE, plan, services, "The database was not available.",
-                            trust={"sql": exc.sql})
+            return _refused(question, UNAVAILABLE, plan, services, "The database was not available.", session,
+                            outcome.masked, trust={"sql": exc.sql})
         reason = str(cause).split(":", 1)[-1].strip() if "Policy" in type(cause).__name__ else "the database refused it"
         return _refused(question, f"The question was understood but the query could not run ({reason}).", plan,
-                        services, f"The query could not run: {reason}", trust={"sql": exc.sql})
+                        services, f"The query could not run: {reason}", session, outcome.masked,
+                        trust={"sql": exc.sql})
     except (CompileError, ValueError) as exc:
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
-                        unsupported=True)
+                        session, outcome.masked, unsupported=True)
     for thing, value in unknown_left_out[:3]:
         payload.setdefault("coverage_caveats", []).append(
             f'No {thing} is called "{value}" in the data, so leaving it out changed nothing. Name it as the data '
@@ -645,7 +643,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                          'one", "the lowest one"), or ask for the same answer in another period ("the same ranking '
                          'against last year").')
         return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
-                        trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+                        session, outcome.masked, trust={"sql": (payload.get("trust") or {}).get("sql", "")})
     if payload.get("beyond_data") and _found_nothing(payload, zero=True):
         # "What will our total sales be in 2004?" said "no value": the data ends before the period asked for. The
         # answer stays an empty one (a dashboard tile draws it over all the data instead), said as it is.
@@ -685,11 +683,14 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                       _visible(services.index.match(question), model, services.allowed_tables))
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
-    if following and plan.follow_up == "refine" and last is not None:
-        # Said on the answer: what it changed, and the same question asked on its own, one click away.
-        payload["following"] = {"question": last.question, "ask_new": f"New question: {question}"}
-    session.turns.append(Turn(question, plan, outcome.masked, shown, periods, _shown_title(payload)))
-    del session.turns[:-HISTORY]
+    if following and plan.follow_up == "refine" and seen is not None:
+        # Said on the answer: what it changed, what it kept from the answer above without the question saying so
+        # ("North", "Q1 2026"), and the same question asked on its own, one click away.
+        payload["following"] = {"question": seen.question, "ask_new": f"New question: {question}"}
+        kept = _kept_said(plan, last_plan(session.turns), question, model)
+        if kept:
+            payload["following"]["kept"] = kept
+    _keep(session, Turn(question, plan, outcome.masked, shown, periods, _shown_title(payload)))
     return payload
 
 

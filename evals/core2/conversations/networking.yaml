@@ -33,7 +33,7 @@ threads:
       - {q: "Public sector only, by customer", label: refine, kind: filter, keeps: [measures, window]}
       - {q: "top 10", label: refine, kind: topn, keeps: [measures, filters, window]}
       - {q: "Tickets by category last quarter", label: new, kind: switch, drops: [filters]}
-      - {q: "How many alarms?", label: unclear, kind: bare}
+      - {q: "How many alarms?", label: refine, kind: subject, keeps: [window]}
   - id: n05
     turns:
       - {q: "Input errors by device yesterday"}
@@ -65,7 +65,7 @@ threads:
       - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
       - {q: "Utilization of tor01-cr01 interfaces last week", label: new, kind: switch, drops: [filters]}
       - {q: "by day", label: refine, kind: grain, keeps: [measures, filters, window]}
-      - {q: "How many tickets?", label: unclear, kind: bare}
+      - {q: "How many tickets?", label: refine, kind: subject, keeps: [window]}
   - id: n09
     turns:
       - {q: "Alarms by site this week"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Billed amount by service type in 2025", label: new, kind: restate, drops: [filters]}
       - {q: "Data usage by week this quarter", label: new, kind: switch, drops: [group_by]}
       - {q: "Average utilization of core devices yesterday", label: new, kind: switch, drops: [group_by]}
+  - id: n10
+    turns:
+      - {q: "Tickets by priority last month"}
+      - {q: "\"Quebec\" only", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many alarms?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "Which devices are firewalls?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "Billed amount by customer segment this year", label: new, kind: switch, drops: [filters]}
+      - {q: "et par mois ?", label: refine, kind: grain, keeps: [measures, window]}

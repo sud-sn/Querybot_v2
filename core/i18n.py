@@ -5691,6 +5691,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     # A follow-up answer says which answer it changed, and offers the same question asked on its own.
     "ui.chat.following": {"en": "Following: {question}", "fr": "Suite de : {question}"},
     "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},
+    # What a follow-up kept from the answer above without the question saying it ("Region is North; in 2025").
+    "ui.chat.following.kept": {"en": "Kept from above: {kept}", "fr": "Repris de plus haut : {kept}"},
     # A dashboard the reader asked for in the chat: how far it is, then saved as theirs ("ui.chat.draft.*" is the
     # composer's unsent message).
     "ui.chat.dashmade.building_kicker": {"en": "Building your dashboard", "fr": "Construction de votre tableau de bord"},

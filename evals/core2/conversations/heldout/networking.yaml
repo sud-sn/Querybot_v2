@@ -17,7 +17,7 @@ threads:
       - {q: "SD-WAN only, monthly", label: refine, kind: filter}
       - {q: "forecast it for the next quarter", label: refine, kind: forecast}
       - {q: "Which sites have the most devices?", label: new, kind: switch}
-      - {q: "how many alarms", label: unclear, kind: bare}
+      - {q: "how many alarms", label: new, kind: switch}
   - id: hn03
     turns:
       - {q: "average utilization per site over the past week"}

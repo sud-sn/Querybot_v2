@@ -49,7 +49,7 @@ threads:
       - {q: "this year only", label: refine, kind: period, keeps: [measures, filters]}
       - {q: "by buyer", label: refine, kind: drill, keeps: [measures, filters, window]}
       - {q: "for the Plant Buying Team, which suppliers?", label: refine, kind: filter, keeps: [measures, window]}
-      - {q: "How many purchase orders?", label: unclear, kind: bare}
+      - {q: "How many purchase orders?", label: refine, kind: subject, keeps: [filters, window]}
   - id: p07
     turns:
       - {q: "Line amount by supplier payment terms"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Purchase orders by status for 2025", label: new, kind: restate, drops: [filters]}
       - {q: "Rejected quantity by week this quarter", label: new, kind: switch, drops: [filters, group_by]}
       - {q: "Average unit price of Resin Pellets this year", label: new, kind: switch, drops: [group_by]}
+  - id: p10
+    turns:
+      - {q: "Line amount by supplier this year"}
+      - {q: "only open orders", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many purchase orders?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "Which items are bought from Mexico?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "Received quantity by month this year", label: new, kind: switch, drops: [filters]}
+      - {q: "et pour \"Smith & Sons Ltd\" ?", label: refine, kind: filter, keeps: [measures, window]}

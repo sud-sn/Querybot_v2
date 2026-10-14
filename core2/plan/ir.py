@@ -281,7 +281,7 @@ class Plan(_Strict):
     about: list[str] = Field(default_factory=list)          # describe_data: what the question asks about
     # "as a pie", "a donut", "stacked", "as a heatmap", "as a scatter", "on a map", "just the table"
     chart: Literal["bar", "line", "area", "pie", "donut", "stacked", "heatmap", "scatter", "map", "table"] | None = None
-    # "unsure": it could change the answer on screen or ask afresh; the reader is asked which (core2/plan/followup.py)
+    # "unsure": the AI could not tell; decided in code (a follow-up when an answer precedes it), never asked of the reader
     follow_up: Literal["new", "refine", "unsure"] = "new"
     include_left_out: bool = False      # "including cancelled orders": the rows tables leave out by default
     # Analytical shapes (core2/resolve/shapes.py), each optional so every stored plan still reads.

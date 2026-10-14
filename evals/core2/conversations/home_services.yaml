@@ -25,7 +25,7 @@ threads:
       - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
       - {q: "what about hours?", label: refine, kind: measure, keeps: [group_by, filters, window]}
       - {q: "Line amount by service type for 2025", label: new, kind: restate, drops: [filters]}
-      - {q: "How many visits?", label: unclear, kind: bare}
+      - {q: "How many visits?", label: refine, kind: subject, keeps: [window]}
   - id: h04
     turns:
       - {q: "Travel fees by partner in Q1 2026"}
@@ -49,7 +49,7 @@ threads:
       - {q: "what about Pinecrest?", label: refine, kind: filter, keeps: [measures, window]}
       - {q: "by service type", label: refine, kind: drill, keeps: [measures, filters, window]}
       - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
-      - {q: "How many bookings?", label: unclear, kind: bare}
+      - {q: "How many bookings?", label: refine, kind: subject, keeps: [filters]}
   - id: h07
     turns:
       - {q: "Hours by team last year"}
@@ -74,3 +74,11 @@ threads:
       - {q: "compared to last month", label: refine, kind: compare, keeps: [measures, group_by, filters]}
       - {q: "Average hours per booking line by service type in 2025", label: new, kind: switch, drops: [filters]}
       - {q: "Travel km by technician this quarter", label: new, kind: switch, drops: [filters]}
+  - id: h10
+    turns:
+      - {q: "Line amount by service type in Q1 2026"}
+      - {q: "only \"Lakemont\"", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many bookings?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "What data do you have about visits?", label: new, kind: describe}
+      - {q: "Travel fees by partner last year", label: new, kind: switch, drops: [filters, window]}
+      - {q: "et seulement \"Bluefin Realty\" ?", label: refine, kind: filter, keeps: [measures, window]}

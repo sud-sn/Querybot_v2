@@ -3,12 +3,13 @@
 Most turns say plainly whether they continue the answer on screen. "Only North", "by week instead",
 "and refunds", "the first one", "why did it drop?", "as a pie" change that answer; "What were refunds
 by return reason last quarter?" names what it measures and for when, and asks afresh. Those are
-decided here, the same way every time. A short complete question after a narrowed answer ("How many
-orders?" after net sales for one region in March) could mean either: the reader is asked, with two
-buttons. What is left is the AI's to read, with the answer before it in view.
+decided here, the same way every time, in English and in French. A complete question after a narrowed
+answer that names no period of its own ("How many orders?" after net sales for one region in March) is
+the AI's to read with the conversation in view, as a person would: the same subject going on keeps the
+scope above (core2/plan/thread.py), another subject starts afresh. The reader is never asked which.
 
-Readings: ``refine`` (continues the answer on screen), ``new`` (a question of its own), ``unsure``
-(ask which), ``open`` (the AI decides).
+Readings: ``refine`` (continues the answer on screen), ``new`` (a question of its own), ``open`` (the AI
+decides).
 """
 
 from __future__ import annotations
@@ -23,7 +24,13 @@ from core2.plan.words import _SHAPE, _phrases, _same
 NEW_PREFIX = re.compile(r"^\s*new question\s*[:\-–]\s*", re.IGNORECASE)
 
 _LEADS = (r"and|also|plus|but|now|then|ok(?:ay)?|what about|how about|what if|only|just|except|excluding|exclude|"
-          r"without|instead|same|versus|vs\.?|by|per|for each|in|for")
+          r"without|instead|same|versus|vs\.?|by|per|for each|in|for|"
+          # the same in French: "et par mois ?", "seulement les clients en ligne", "pour 2025", "hors taxes"
+          r"et|aussi|puis|maintenant|ensuite|seulement|uniquement|juste|sauf|hors|sans|plut[oô]t|pareil|idem|"
+          r"qu'en est-il|et si|par|pour")
+# Words that open a scope rather than carry on ("By store, what were net sales in 2025?", "Pour 2025, quelles sont
+# les ventes ?"): a lead only in a short turn, or one that names no period of its own.
+_SCOPE_LEAD = re.compile(r"^\s*(?:by|per|for|in|without|excluding|par|pour|sans|hors|en)\b", re.IGNORECASE)
 _CONTINUE = re.compile(
     r"^\s*(?:" + _LEADS + r"|compared?\s+(?:to|with|against)|split|break\s+(?:it|that|this|them|those)\s+down|"
     r"drill|sort(?:ed)?|ordered|ranked|order\s+(?:it|them|by)|rank\s+(?:it|them)|top\s+\d+|bottom\s+\d+|first\s+\d+|lowest\s+first|"
@@ -34,15 +41,26 @@ _LEADING = re.compile(r"^\s*(?:" + _LEADS + r")\b", re.IGNORECASE)
 _CARRY = re.compile(r"\b(?:only|instead|too|alongside|as well|next to it|with it|either|as an?\s+(?:percent(?:age)?|"
                     r"share|ratio|proportion|fraction)\s+of)\b", re.IGNORECASE)
 _POINTING = re.compile(
-    r"\b(?:it|its|that|those|them|these|this one|that one|the same|above|the first one|the second one|the third one|"
-    r"the last one|the lowest one|the highest one|the top one|the bottom one|of those|of these|of them|the largest one|"
-    r"the smallest one|the biggest one|the \w+ ones)\b", re.IGNORECASE)
+    r"\b(?:it|its|that|those|them|these|they|this one|that one|the same(?!-)|above|the first one|the second one|"
+    r"the third one|the last one|the lowest one|the highest one|the top one|the bottom one|of those|of these|of them|"
+    r"the largest one|the smallest one|the biggest one|the \w+ ones)\b|"
+    # "and their cost?", "et leurs ventes ?": theirs on screen near the start (not "stores that beat their target")
+    r"^\s*(?:\w+\s+){0,2}(?:their|leurs?)\b|"
+    # "ce magasin", "ces clients", "celui-ci": not "ce mois", "cette année", "ces 12 derniers mois", "ce que",
+    # "est-ce"
+    r"(?<![\w-])(?:ce|cet|cette|ces)\s+(?!(?:que|qui|qu|mois|trimestre|semestre|jour|matin|soir|week-end|ann[ée]es?|"
+    r"semaines?|saison|exercice|derni[eè]re?s?|premi[eè]re?s?|\d+)\b)(?!qu')\w+|"
+    r"\b(?:eux|celui-ci|celle-ci|ceux-ci|celles-ci|celui-l[aà]|celle-l[aà]|ceux-l[aà]|ci-dessus|"
+    r"(?:le|la|les)\s+m[êe]mes?)(?![\w-])", re.IGNORECASE)
 # A turn that opens by pointing ("the first one, how did it do each month?") follows the answer, however long.
 _POINTS_FIRST = re.compile(
     r"^\s*(?:the\s+(?:first|second|third|fourth|fifth|last|lowest|highest|largest|smallest|biggest|top|bottom)"
     r"(?:\s+one)?|that\s+\w+|those\s+\w+|these\s+\w+|it|they|them)\b", re.IGNORECASE)
 # "those same customers", "how many of them": the members of the answer on screen, in a turn of any length.
 _POINTS_AT_MEMBERS = re.compile(r"\b(?:those|these|them|the same(?!-))\b|\b(?:for|of|in)\s+each(?:\s+one)?\s*\??\s*$|"
+                                # "ces clients", "et leurs ventes", "les mêmes produits"
+                                r"(?<![\w-])ces\s+(?!(?:\d+|derni\w*|premi\w*|mois|ann[ée]es?|semaines?|jours)\b)\w|"
+                                r"\b(?:eux|ceux-ci|celles-ci)\b|^\s*(?:\w+\s+){0,2}leurs?\b|\b(?:les\s+m[êe]mes)\b|"
                                 # "Show their monthly quantity", "and their cost?" (not "customers who raised their
                                 # spend", where "their" is the question's own)
                                 r"^\s*(?:\w+\s+){0,2}their\b", re.IGNORECASE)
@@ -66,7 +84,9 @@ _BEHIND = re.compile(r"\b(?:explain|explains|explained|drove|drive|drives|caused
                      r"accounts\s+for)\s+(?:the|this|that)\s+(?:change|increase|decrease|drop|rise|fall|growth|"
                      r"decline|difference|gap|jump|dip|move|movement)\b", re.IGNORECASE)
 _ASKS = re.compile(r"^\s*(?:what|what's|whats|which|who|whom|how|when|where|show|list|give|tell|compare|is|are|do|does|"
-                   r"did|can|could|find|get|count)\b", re.IGNORECASE)
+                   r"did|can|could|find|get|count|"
+                   r"quel|quelle|quels|quelles|quel\s+est|combien|qui|où|quand|comment|montre[sz]?|liste[sz]?|"
+                   r"donne[sz]?|affiche[sz]?|compare[sz]?|y\s+a-t-il|est-ce)\b", re.IGNORECASE)
 _ABOUT_DATA = re.compile(r"^\s*(?:what\s+(?:data|information|tables)|what can i ask|what do you (?:have|know)|"
                          r"what(?:'s| is)\s+(?:in|available)|which tables|describe\b|help\b)", re.IGNORECASE)
 _SUPERLATIVE = re.compile(r"\b(?:most|least|highest|lowest|biggest|smallest|largest|best|worst|top|bottom|cheapest|"
@@ -100,7 +120,7 @@ _GENERIC_TAIL = {"amount", "amt", "quantity", "qty", "value", "val", "count", "c
 
 @dataclass(frozen=True)
 class Reading:
-    kind: str           # refine | new | unsure | open
+    kind: str           # refine | new | open (the AI reads it, with the conversation in view)
     why: str
 
 
@@ -179,9 +199,26 @@ _SERIES = re.compile(r"\b(?:daily|weekly|monthly|quarterly|yearly|annually|over\
 
 # The same in French, and a date written in figures ("le 27/05", "2026"): "Et au 27 mai ?" names a day.
 _WHEN_FR = re.compile(r"\b(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|"
-                      r"d[ée]cembre|mois|ann[ée]e|an|ans|trimestre|semestre|semaine|jour|hier|aujourd'hui|depuis|"
-                      r"exercice)\b", re.IGNORECASE)
+                      r"d[ée]cembre|mois|ann[ée]e|ann[ée]es|l'an|par\s+an|\d+\s+ans?|trimestre|semestre|semaine|jour|hier|"
+                      r"aujourd'hui|depuis|exercice)\b", re.IGNORECASE)
+# A period the question names itself, never a series word ("by month", "par mois"): a year, a quarter, a month,
+# "last quarter", "this year", "so far", "for all time"; in French "l'an dernier", "cette année", "en mai".
+_OWN_PERIOD = re.compile(
+    r"\b(?:(?:this|last|next|previous|past|current)\s+(?:\d+\s+)?(?:fiscal\s+)?(?:day|week|month|quarter|half|year)s?|"
+    r"today|yesterday|ytd|mtd|qtd|year\s+to\s+date|so\s+far|since\s+\w+|until\s+\w+|right\s+now|currently|"
+    r"at\s+the\s+end\s+of|all\s+time|ever|overall|whole\s+period|"
+    r"(?:cette|cet|ce)\s+(?:ann[ée]e|an|mois|trimestre|semestre|semaine)|"
+    r"(?:l'|la\s+|le\s+)(?:ann[ée]e|an|mois|trimestre|semestre|semaine)\s+(?:derni[eè]re?|pass[ée]e?|"
+    r"pr[ée]c[ée]dente?|prochaine?|en\s+cours)|(?:\d+\s+)?derni(?:er|ère|ers|ères)\s+(?:mois|ann[ée]es?|jours|"
+    r"semaines|trimestres)|hier|aujourd'hui|depuis\s+\w+|janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|"
+    r"septembre|octobre|novembre|d[ée]cembre)\b", re.IGNORECASE)
 _DATE_FIGURES = re.compile(r"\b(?:\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?|(?:19|20)\d{2})\b")
+
+
+def names_own_period(question: str) -> bool:
+    """Does the question name a period of its own ("in 2025", "last quarter", "en mai", "for all time")? A series
+    word ("by month", "monthly", "par mois") names none: it splits the period on screen."""
+    return bool(_NAMED_PERIOD.search(question) or _DATE_FIGURES.search(question) or _OWN_PERIOD.search(question))
 
 
 def keeps_period(question: str) -> bool:
@@ -302,9 +339,16 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     texts = members if isinstance(members, list) else []
     own_members = [m for m in texts if not set(re.findall(r"[a-z0-9]+", m.lower())) <= said] if texts else []
     own = scoped(question, len(own_members) if texts else int(members or 0))
-    asks = bool(_ASKS.match(question))
     leading = bool(_LEADING.match(question))
-    period = bool(_WHEN.search(question))
+    own_period = names_own_period(question)
+    # "By store, what were net sales in 2025?", "Pour 2025, quelles sont les ventes par magasin ?": a long question
+    # that opens on its scope and names its own period sets out afresh; it does not carry the answer on.
+    scope_opened = bool(_SCOPE_LEAD.match(question)) and len(words) > 6 and own_period
+    rest = question.split(",", 1)[1] if scope_opened and "," in question else ""
+    asks = bool(_ASKS.match(question) or (rest and _ASKS.match(rest)))
+    if scope_opened:
+        leading = False
+    period = bool(_WHEN.search(question) or _WHEN_FR.search(question))
     grouped = bool(_GROUPED.search(question))
     # What the turn is about comes before its split ("tickets" in "tickets by category"); what follows "by" is
     # how to split it, never what is measured.
@@ -331,7 +375,8 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     # is of the figure on screen (below), never a new question that has none.
     ranks_the_figure = bool(previous.measures and _RANKING.search(question)) and not (
         any(k == "measure" for k, _, _ in found) or _FIGURE.search(question))
-    if not leading and len(words) >= 4 and period and (head_found or asks and grouped) and not ranks_the_figure:
+    if not leading and not pointing and len(words) >= 4 and period and (head_found or asks and grouped) \
+            and not ranks_the_figure:
         return Reading("new", "it names what it measures, how to split it and for when")
     # "Spend by supplier country for 2025": a field of the data to split by and a period of its own make a whole
     # question, whatever word it uses for the figure ("spend" is no measure's name): read as new, it keeps nothing
@@ -340,10 +385,18 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     if not leading and not pointing and len(words) >= 4 and period and len(split) == 2 and not ranks_the_figure \
             and _names_a_figure(split[0]) and _found(model, split[1], ("field",)):
         return Reading("new", "it names how to split it and for when")
-    if _CONTINUE.match(question):
+    if _CONTINUE.match(question) and not scope_opened:
         return Reading("refine", "it starts by carrying on from the answer on screen")
+    # Whether the answer on screen set a scope a follow-up keeps (a filter or a period), and whether the question
+    # says its own period ("in 2025", "for all time"), which replaces it.
+    was_narrowed = narrowed(previous) if previous_narrowed is None else previous_narrowed
     if not asks and not leading:
         if grouped and head_found:
+            if was_narrowed and not own_period:
+                # "avg basket by education level?" after store sales by marital status in 2002: the same subject
+                # split another way, or another one: the AI reads it with the conversation in view, as a person
+                # would. A follow-up keeps the filters and the period from above.
+                return Reading("open", "it names a figure and a split but no period, after a narrowed answer")
             return Reading("new", "it names a measure or a thing and how to split it")
         if short and not head_measure and not any(k == "count" for k, _, _ in head_found):
             return Reading("refine", "a fragment that only changes the answer on screen")
@@ -367,12 +420,15 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
             # after the discount of 2025: a measure on screen split or ranked another way, for no period of its
             # own, keeps the answer's ("Ask as a new question" is one click away).
             return Reading("refine", "it splits a measure of the answer on screen and names no period of its own")
-        if own:
+        # "Who are our top 10 customers by total spend?" after the inactive customers: ranked by a figure of its own
+        # (not the one on screen), the question stands on its own, whatever it leaves unsaid.
+        by_own_figure = by_figure and not (measures_named(model, after_by[1]) & set(previous.measures))
+        if own and (own_period or by_own_figure or not was_narrowed):
             return Reading("new", "it names what it measures and its own scope")
-        was_narrowed = narrowed(previous) if previous_narrowed is None else previous_narrowed
-        if was_narrowed and _NAMES_ONE.search(question):
-            return Reading("open", "it names something the data does not hold: the AI reads it")
         if was_narrowed:
-            return Reading("unsure", "a complete question after a narrowed answer: it may or may not keep that scope")
+            # "How many orders?" after net sales for North in March, "what is our margin by category?" after a
+            # store's discounts in Q1: the same subject going on (a follow-up, keeping North and March) or another
+            # one (new). Never asked back: the AI decides with the conversation in view, as a person would.
+            return Reading("open", "a complete question after a narrowed answer: the conversation decides")
         return Reading("new", "it names what it measures, and the answer on screen narrowed nothing")
     return Reading("open", "left to the AI")

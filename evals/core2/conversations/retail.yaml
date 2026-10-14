@@ -25,7 +25,7 @@ threads:
       - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
       - {q: "what about quantity?", label: refine, kind: measure, keeps: [group_by, filters, window]}
       - {q: "Gross sales by category for 2025", label: new, kind: restate, drops: [filters]}
-      - {q: "How many orders?", label: unclear, kind: bare}
+      - {q: "How many orders?", label: refine, kind: subject, keeps: [window]}
   - id: r04
     turns:
       - {q: "Discount by store in Q1 2026"}
@@ -49,7 +49,7 @@ threads:
       - {q: "what about the South?", label: refine, kind: filter, keeps: [measures, window]}
       - {q: "by store", label: refine, kind: drill, keeps: [measures, filters, window]}
       - {q: "forecast the next 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
-      - {q: "How many orders?", label: unclear, kind: bare}
+      - {q: "How many orders?", label: refine, kind: subject, keeps: [filters]}
   - id: r07
     turns:
       - {q: "Cost by category last year"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Top 5 customers by net sales in May", label: new, kind: restate, drops: [filters]}
       - {q: "Refunds by return reason this year", label: new, kind: switch, drops: [filters, group_by]}
       - {q: "Average discount per order line last month", label: new, kind: switch, drops: [filters, group_by]}
+  - id: r10
+    turns:
+      - {q: "Net sales by store in Q1 2026"}
+      - {q: "only the \"North\" region", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "how many orders?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "average discount by category?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "How many customers do we have in each segment?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "et par mois ?", label: refine, kind: grain, keeps: [measures]}

@@ -4,7 +4,8 @@ Whether the new core reads a turn as a change to the answer on screen or as a ne
 measured on hand-labelled conversations about every synthetic warehouse (evals/core2/followup_eval.py).
 These checks hold the set to what it must be to measure that at all: enough turns, every label one
 the scorer knows, both readings well represented (a planner that always says "follow-up" must not
-pass), and a few turns that are honestly unclear. The scoring is then checked on plans made here,
+pass). No turn is labelled unclear: the new core decides, as a person reading the conversation would, and
+a follow-up keeps the filters and the period from above. The scoring is then checked on plans made here,
 and end to end through the question path with a scripted AI in place of a provider.
 
 Synthetic data only.
@@ -65,8 +66,12 @@ def test_the_set_is_big_and_balanced_enough_to_measure_both_readings():
     assert total >= 300
     # neither "always a follow-up" nor "always new" gets near the 90% target
     assert labels["refine"] / total < 0.75 and labels["new"] / total >= 0.2
-    # honestly unclear turns exist, and asking about all of them stays within the 10% that may be asked
-    assert 0.03 <= labels["unclear"] / total <= 0.10
+    # every turn is one or the other: none is left for the reader to settle
+    assert set(labels) == {"refine", "new"}
+    # the same subject with no scope of its own is a follow-up that keeps the scope above, in every business type
+    for name in FILES:
+        subject = [t for n_, _, n, t in _turns() if n_ == name and n and t["kind"] == "subject"]
+        assert subject and all(set(t["keeps"]) & {"filters", "window"} for t in subject), name
     kinds = Counter(f"{turn['label']}:{turn['kind']}" for _, _, n, turn in _turns() if n)
     for label, names in followup_eval.KINDS.items():
         for kind in names:
@@ -103,10 +108,12 @@ BEFORE = _plan(filters=[NORTH])
      "carried the last answer's filters"),
     ({"label": "new"}, _plan(measures=["refunds"], follow_up="refine"), False, "wrong", "read as a change"),
     ({"label": "new"}, Plan(kind="describe_data"), False, "right", ""),
-    ({"label": "unclear"}, Plan(kind="clarify", clarify=Clarify(about="other", question="Which?")), True,
-     "right", "asked"),
-    ({"label": "unclear"}, _plan(measures=["orders"], filters=[NORTH], follow_up="refine"), False, "guessed",
-     "answered as refine"),
+    ({"label": "refine", "kind": "subject", "keeps": ["filters", "window"]},
+     _plan(measures=["orders"], filters=[NORTH], follow_up="refine"), False, "right", ""),
+    ({"label": "refine", "kind": "subject", "keeps": ["filters", "window"]},
+     _plan(measures=["orders"], follow_up="new"), False, "wrong", "read as a new question"),
+    ({"label": "refine", "kind": "subject"}, Plan(kind="clarify", clarify=Clarify(about="other", question="Which?")),
+     True, "asked", "asked"),
 ])
 def test_a_turn_is_scored_by_its_label(turn, plan, asked, status, detail):
     got, why = followup_eval.judge(turn, plan, asked=asked, previous=BEFORE)
@@ -122,10 +129,10 @@ def test_a_part_the_answer_never_had_cannot_be_carried():
 def test_the_summary_counts_each_status():
     results = [{"domain": "retail", "label": "refine", "kind": "filter", "status": s}
                for s in ("right", "right", "right", "asked")] + \
-              [{"domain": "retail", "label": "unclear", "kind": "bare", "status": "guessed"}]
+              [{"domain": "retail", "label": "refine", "kind": "subject", "status": "wrong"}]
     summary = followup_eval.summarize(results)
-    assert summary["overall"] == {"turns": 5, "right": 0.6, "asked": 0.2, "guessed": 0.2, "wrong": 0.0, "error": 0.0}
-    assert summary["by_label"]["refine"]["right"] == 0.75
+    assert summary["overall"] == {"turns": 5, "right": 0.6, "asked": 0.2, "wrong": 0.2, "error": 0.0}
+    assert summary["by_label"]["refine"]["right"] == 0.6
 
 
 # ── end to end, with a scripted AI ──────────────────────────────────────────
@@ -146,7 +153,7 @@ def _conversation(tmp_path, monkeypatch):
         {"id": "t1", "turns": [
             {"q": "Net sales by region last month"},
             {"q": "only North", "label": "refine", "kind": "filter", "keeps": ["measures", "window"]},
-            {"q": "How many orders?", "label": "unclear", "kind": "bare"},
+            {"q": "How many orders?", "label": "refine", "kind": "subject", "keeps": ["filters", "window"]},
             {"q": "What data do you have about customers?", "label": "new", "kind": "describe"},
             {"q": "only Zzyzx", "label": "refine", "kind": "filter", "keeps": ["measures", "window"]},
         ]}]}))
@@ -159,12 +166,12 @@ def _replies(measure, region, *, refine_window):
     refine = {**first, "filters": [{"field": region, "op": "in", "values": ["North"]}], "follow_up": "refine"}
     if not refine_window:
         refine["time"] = {}
-    ask = {"kind": "clarify", "clarify": {"about": "other", "question": "All orders, or North last month?",
-                                          "options": ["All orders", "North, last month"]}}
+    # "How many orders?" after North last month: the same subject, its scope kept
+    orders = {**refine, "group_by": []}
     describe = {"kind": "describe_data", "about": ["customers"]}
     # a member the data does not have: refused after planning, yet read as the follow-up it is
     unknown = {**first, "filters": [{"field": region, "op": "in", "values": ["Zzyzx"]}], "follow_up": "refine"}
-    return {"retail:t1:0": [json.dumps(first)], "retail:t1:1": [json.dumps(refine)], "retail:t1:2": [json.dumps(ask)],
+    return {"retail:t1:0": [json.dumps(first)], "retail:t1:1": [json.dumps(refine)], "retail:t1:2": [json.dumps(orders)],
             "retail:t1:3": [json.dumps(describe)], "retail:t1:4": [json.dumps(unknown)]}
 
 

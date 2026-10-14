@@ -17,7 +17,7 @@ threads:
       - {q: "for the finance department", label: refine, kind: filter}
       - {q: "Which locations hired the most people in 2025?", label: new, kind: switch}
       - {q: "and the fewest?", label: refine, kind: sort}
-      - {q: "headcount?", label: unclear, kind: bare}
+      - {q: "headcount?", label: refine, kind: subject, keeps: [group_by]}
   - id: hh03
     turns:
       - {q: "FTE by job level at the end of May 2026"}

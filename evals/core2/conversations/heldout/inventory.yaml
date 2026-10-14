@@ -9,7 +9,7 @@ threads:
       - {q: "split by item group too", label: refine, kind: drill}
       - {q: "which group is biggest?", label: refine, kind: sort}
       - {q: "Show the closing quantity for every item group at the end of March 2026", label: new, kind: switch}
-      - {q: "what's the closing value?", label: unclear, kind: bare}
+      - {q: "what's the closing value?", label: refine, kind: subject, keeps: [group_by, window]}
   - id: hi02
     turns:
       - {q: "Issued quantity by week over the last 8 weeks"}
@@ -25,4 +25,4 @@ threads:
       - {q: "compare to 2024", label: refine, kind: compare}
       - {q: "Average unit cost for Electrical items last quarter", label: new, kind: switch}
       - {q: "and Paint", label: refine, kind: filter}
-      - {q: "average unit cost?", label: unclear, kind: bare}
+      - {q: "average unit cost?", label: refine, kind: subject, keeps: [filters, window]}

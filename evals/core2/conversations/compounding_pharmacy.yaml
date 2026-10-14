@@ -33,7 +33,7 @@ threads:
       - {q: "top 10", label: refine, kind: topn, keeps: [measures, filters, window]}
       - {q: "the first one, by month", label: refine, kind: reference, keeps: [measures, window]}
       - {q: "Quantity dispensed by route last month", label: new, kind: switch, drops: [filters]}
-      - {q: "How many fills?", label: unclear, kind: bare}
+      - {q: "How many fills?", label: refine, kind: subject, keeps: [window]}
   - id: c05
     turns:
       - {q: "Quality tests by result this quarter"}
@@ -57,7 +57,7 @@ threads:
       - {q: "and Ketoprofen 0.5% Suspension", label: refine, kind: filter, keeps: [measures, group_by, window]}
       - {q: "forecast 3 months", label: refine, kind: forecast, keeps: [measures, filters]}
       - {q: "Pending claims by payer", label: new, kind: switch, drops: [filters, window]}
-      - {q: "What is the total paid amount?", label: unclear, kind: bare}
+      - {q: "What is the total paid amount?", label: refine, kind: subject, keeps: [filters]}
   - id: c08
     turns:
       - {q: "Average yield by formula last quarter"}
@@ -74,3 +74,11 @@ threads:
       - {q: "Claims by status in 2025", label: new, kind: restate, drops: [filters]}
       - {q: "Waste quantity by week this quarter", label: new, kind: switch, drops: [filters, group_by]}
       - {q: "Average potency of capsule batches this year", label: new, kind: switch, drops: [filters, group_by]}
+  - id: c10
+    turns:
+      - {q: "Paid amount by payer this year"}
+      - {q: "only \"Medicaid\"", label: refine, kind: filter, keeps: [measures, window]}
+      - {q: "what is the total copay amount?", label: refine, kind: subject, keeps: [filters, window]}
+      - {q: "Which prescribers specialise in Endocrinology?", label: new, kind: switch, drops: [filters, window]}
+      - {q: "Fills by month this year", label: new, kind: switch, drops: [filters]}
+      - {q: "et par technicien ?", label: refine, kind: regroup, keeps: [measures, window]}
