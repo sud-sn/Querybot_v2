@@ -414,10 +414,61 @@ def _packed(charts: list) -> list[tuple[int, int, int, int]]:
     return [rects[int(c["id"])] for c in charts]
 
 
+def _is_kpi(chart) -> bool:
+    return str(chart["chart_type"] or "").lower() == "kpi"
+
+
+def _locked(chart) -> bool:
+    return bool(int(chart["layout_locked"] or 0))
+
+
+def _tab_of(chart) -> str:
+    try:
+        return str(chart["dashboard_tab"] or "Overview")
+    except (IndexError, KeyError):
+        return "Overview"
+
+
+def _arranged(charts: list) -> list[tuple[int, int, int, int]]:
+    """Tiles a person has placed, kept as they placed them, under a row of numbers that fills its width.
+
+    The numbers come first, spread evenly across the row (four to a row, as ``_packed`` puts them), in the
+    order they stand on the page and any new one after them. A number added, split in two or taken away left
+    the row as it was: a new number a quarter of the row wide, or two where there had been one, and the rest of
+    the row empty, the charts below never coming up into it. The person's other tiles stay where they put them,
+    pushed down together only as far as the numbers above them need (the page draws each as high as it can go);
+    a new one goes into the first space that fits it."""
+    numbers = sorted((c for c in charts if _is_kpi(c)),
+                     key=lambda c: (0, int(c["grid_y"] or 0), int(c["grid_x"] or 0)) if _locked(c)
+                     else (1, int(c["position"] or 0), int(c["id"])))
+    band = dict(zip((int(c["id"]) for c in numbers), _packed(numbers)))
+    top = max((y + h for _, y, _, h in band.values()), default=0)
+    placed = [c for c in charts if not _is_kpi(c) and _locked(c)]
+    lift = max(0, top - min((int(c["grid_y"] or 0) for c in placed), default=top))
+    rects: dict[int, tuple[int, int, int, int]] = dict(band)
+    occupied: list[tuple[int, int, int, int]] = list(band.values())
+    for chart in placed:
+        rect = (int(chart["grid_x"] or 0), int(chart["grid_y"] or 0) + lift,
+                int(chart["grid_w"] or 6), int(chart["grid_h"] or CHART_ROWS))
+        rects[int(chart["id"])] = rect
+        occupied.append(rect)
+    for chart in charts:
+        if _is_kpi(chart) or _locked(chart):
+            continue
+        width, height = _layout_size(chart["chart_type"])
+        x, y = _first_open_slot(width, height, occupied, start_y=top)
+        rects[int(chart["id"])] = (x, y, width, height)
+        occupied.append((x, y, width, height))
+    return [rects[int(c["id"])] for c in charts]
+
+
 def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
-    """Place unlocked tiles KPI-first while respecting user-edited tiles."""
+    """Every tab laid out again after a tile is added, removed or split: gap-free from scratch where no one has
+    placed a tile by hand (``_packed``), around the person's own arrangement where someone has (``_arranged``).
+    Each tab on its own: laid out as one, a chart on one tab was paired with a chart on another, and each stood
+    alone in half its row."""
     charts = conn.execute(
-        """SELECT id, chart_type, position, grid_x, grid_y, grid_w, grid_h, display_config,
+        """SELECT id, chart_type, position, grid_x, grid_y, grid_w, grid_h, display_config, dashboard_tab,
                   COALESCE(layout_locked, 0) AS layout_locked
              FROM pinned_chart
             WHERE dashboard_id=? AND user_id=?
@@ -425,42 +476,15 @@ def _auto_layout_locked(conn, dashboard_id: int, user_id: int) -> None:
                      position, id""",
         (int(dashboard_id), int(user_id)),
     ).fetchall()
-    if not any(int(chart["layout_locked"] or 0) for chart in charts):
-        # Nobody has placed a tile by hand: the whole dashboard is laid out again, gap-free.
-        for position, (chart, (x, y, width, height)) in enumerate(zip(charts, _packed(charts)), start=1):
-            conn.execute(
-                """UPDATE pinned_chart
-                      SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?
-                    WHERE id=? AND user_id=?""",
-                (x, y, width, height, position, int(chart["id"]), int(user_id)),
-            )
-        return
-    occupied: list[tuple[int, int, int, int]] = []
-    kpi_floor = 0
+    tabs: dict[str, list] = {}
     for chart in charts:
-        if int(chart["layout_locked"] or 0):
-            rect = (
-                int(chart["grid_x"] or 0), int(chart["grid_y"] or 0),
-                int(chart["grid_w"] or 6), int(chart["grid_h"] or CHART_ROWS),
-            )
-            occupied.append(rect)
-            if str(chart["chart_type"] or "").lower() == "kpi":
-                kpi_floor = max(kpi_floor, rect[1] + rect[3])
+        tabs.setdefault(_tab_of(chart), []).append(chart)
+    rects: dict[int, tuple[int, int, int, int]] = {}
+    for group in tabs.values():
+        laid = _arranged(group) if any(_locked(c) for c in group) else _packed(group)
+        rects.update(zip((int(c["id"]) for c in group), laid))
     for position, chart in enumerate(charts, start=1):
-        if int(chart["layout_locked"] or 0):
-            conn.execute(
-                "UPDATE pinned_chart SET position=? WHERE id=? AND user_id=?",
-                (position, int(chart["id"]), int(user_id)),
-            )
-            continue
-        width, height = _layout_size(chart["chart_type"])
-        is_kpi = str(chart["chart_type"] or "").lower() == "kpi"
-        x, y = _first_open_slot(
-            width, height, occupied, start_y=0 if is_kpi else kpi_floor
-        )
-        occupied.append((x, y, width, height))
-        if is_kpi:
-            kpi_floor = max(kpi_floor, y + height)
+        x, y, width, height = rects[int(chart["id"])]
         conn.execute(
             """UPDATE pinned_chart
                   SET grid_x=?, grid_y=?, grid_w=?, grid_h=?, position=?
@@ -1639,14 +1663,20 @@ def save_built_dashboard(account_id: str, user_id: int, *, name: str, tiles: lis
         last = conn.execute("SELECT COALESCE(MAX(position), 0) AS last FROM pinned_chart WHERE dashboard_id=? "
                             "AND user_id=?", (board_id, int(user_id))).fetchone()
         position = int(last["last"] or 0)
-        for tile, tab in zip(tiles, placed):
+        # Placed by Solviz, not by hand (never locked): a tile added, taken away or split later lays the tab out
+        # again with no gap, where a locked one stayed put beside the space. In the order they stand on the page,
+        # tab by tab, so that a new layout keeps it.
+        ordered = sorted(zip(tiles, placed), key=lambda pair: (
+            names.index(pair[1]) if pair[1] in names else len(names),
+            int((pair[0].get("layout") or {}).get("grid_y") or 0), int((pair[0].get("layout") or {}).get("grid_x") or 0)))
+        for tile, tab in ordered:
             layout = tile.get("layout") or {}
             position += 1
             conn.execute(
                 """INSERT INTO pinned_chart (user_id, account_id, title, question, sql_query, chart_type, db_config_id,
                                              position, color_palette, grid_x, grid_y, grid_w, grid_h, dashboard_id,
                                              display_config, dashboard_tab, title_set, layout_locked)
-                   VALUES (?,?,?,?,?,?,?,?,'default',?,?,?,?,?,?,?,1,1)""",
+                   VALUES (?,?,?,?,?,?,?,?,'default',?,?,?,?,?,?,?,1,0)""",
                 (int(user_id), account_id, str(tile.get("title") or "Tile")[:120], str(tile.get("question") or ""),
                  str(tile.get("sql") or ""), str(tile.get("chart_type") or "table"), db_config_id, position,
                  int(layout.get("grid_x") or 0), below[tab] + int(layout.get("grid_y") or 0),
