@@ -186,11 +186,12 @@
 {%- endmacro %}
 {% macro key_field(t, name, cfg_key, placeholder, note) -%}
 <div class="form-group">
-  <label for="{{ name }}">API key</label>
+  <label for="{{name}}">API key</label>
   <div class="input-reveal-wrap">
-    <input type="password" id="{{ name }}" name="{{ name }}" value="{{ cfg.get(cfg_key, '') }}"
+    {# The field and its show button name the same id, written alike so the page check pairs them. #}
+    <input type="password" id="{{name}}" name="{{ name }}" value="{{ cfg.get(cfg_key, '') }}"
            placeholder="{{ placeholder }}" autocomplete="off" spellcheck="false" data-ai-cred>
-    <button type="button" class="input-reveal-btn" data-qb-reveal="{{ name }}" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
+    <button type="button" class="input-reveal-btn" data-qb-reveal="{{name}}" aria-pressed="false" data-label-show="Show key" data-label-hide="Hide key" aria-label="Show key">{{ ic("eye", 15) }}</button>
   </div>
   <p class="form-note">{{ note }} Leave blank to keep the saved key.</p>
 </div>
@@ -362,7 +363,7 @@
 
         {% if t.key != 'local' %}
         <div class="provider-test-row">
-          <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick="testConnection('{{ t.key }}')"{% if not t.connected %} disabled{% endif %}>
+          <button type="button" class="btn btn-secondary btn-sm provider-test-button" onclick='testConnection({{ t.key|tojson }})'{% if not t.connected %} disabled{% endif %}>
             {{ ic("refresh", 13) }}
             {%- if t.key == 'azure_openai' %} {{ 'Test deployments' if (t.query or t.kb) else 'Verify saved credentials' }}{% else %} Test connection{% endif %}
           </button>

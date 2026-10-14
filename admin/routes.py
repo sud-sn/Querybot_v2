@@ -11458,13 +11458,17 @@ async def admin_discover_schema(
 
             _discovery_vocab_token = activate_vocab(vocab_for_account(account_id))
             try:
+                def _read_tables() -> int:
+                    count = discover_and_write(creds, db_type, str(staging),
+                                               allowed_tables=allowed_set,
+                                               masking_config=_masking_config,
+                                               seed_key=account_id,
+                                               industry=_discover_industry)
+                    return count
+
                 # In a worker thread (it carries the vocabulary set above): a discovery reads every table and
                 # can take minutes, and on the event loop it froze every other page and question meanwhile.
-                count = await asyncio.to_thread(discover_and_write, creds, db_type, str(staging),
-                                                allowed_tables=allowed_set,
-                                                masking_config=_masking_config,
-                                                seed_key=account_id,
-                                                industry=_discover_industry)
+                count = await asyncio.to_thread(_read_tables)
             finally:
                 deactivate_vocab(_discovery_vocab_token)
             if not count:
