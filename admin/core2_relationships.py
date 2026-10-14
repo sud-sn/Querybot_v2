@@ -76,7 +76,7 @@ async def relationships_page(request: Request, account_id: str):
     return _resp(request, "client_relationships.html", {
         "client": client, "data": links.view(model) if model else None,
         "kinds": {k: links.KIND_CHOICES[k] for k in _TABLE_KINDS},
-        "cardinalities": links.CARDINALITY_WORDS, "ops": links.OP_WORDS,
+        "cardinalities": links.CARDINALITY_WORDS, "ops": links.OP_CHOICES,
     })
 
 

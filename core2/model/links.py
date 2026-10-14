@@ -33,6 +33,11 @@ CARDINALITY_WORDS = {"many_to_one": "Many to one", "one_to_one": "One to one", "
 OP_WORDS = {"eq": "is", "ne": "is not", "in": "is one of", "not_in": "is not one of", "gt": "is more than",
             "gte": "is at least", "lt": "is less than", "lte": "is at most", "between": "is between",
             "is_null": "is empty", "not_null": "is filled", "contains": "contains", "starts_with": "starts with"}
+# The same, as the condition pickers list them: with the sign a reader looks for ("is at most" is "≤").
+OP_CHOICES = {"eq": "is (=)", "ne": "is not (≠)", "in": "is one of", "not_in": "is not one of",
+              "gt": "is more than (>)", "gte": "is at least (≥)", "lt": "is less than (<)",
+              "lte": "is at most (≤)", "between": "is between", "is_null": "is empty", "not_null": "is filled",
+              "contains": "contains", "starts_with": "starts with"}
 _FAMILY = {"integer": "number", "decimal": "number", "float": "number", "text": "text", "date": "date",
            "timestamp": "date", "boolean": "flag"}
 

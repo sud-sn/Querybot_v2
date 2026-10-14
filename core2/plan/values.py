@@ -456,6 +456,20 @@ def listable(model: SemanticModel) -> list[str]:
     return out
 
 
+def filterable(model: SemanticModel) -> list[str]:
+    """The attributes a dashboard's owner may add to its filter bar: text, not hidden, not sensitive, not a document's
+    number or free text. Unlike listable(), whether their values may be shown to the AI does not count: the picker's
+    values are read for the person who opens the dashboard, by the same governed query as an answer listing them, and
+    a workspace under a compliance profile clears few fields for the AI."""
+    out = []
+    for slug, attribute in model.attributes.items():
+        column = model.columns[attribute.column]
+        if column.data_type == "text" and not column.hidden and column.sensitivity == "none" \
+                and attribute.kind not in ("identifier", "text"):
+            out.append(slug)
+    return out
+
+
 def build_index(model: SemanticModel, fetch: Callable[[str], list[object]], *, values_allowed: bool = True,
                 max_members: int = 20_000, budget_seconds: float | None = None) -> MemberIndex:
     """Members of every attribute whose values may be listed, from profiles or ``fetch(attribute slug)``.

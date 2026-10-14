@@ -255,3 +255,22 @@ class TestTheSetupPageFollowsTheRun:
     def test_the_page_follows_the_run_it_started(self):
         page = (Path(__file__).resolve().parents[1] / "admin/templates/client_setup.html").read_text(encoding="utf-8")
         assert "_pollUntilDiscoveryDone(runId)" in page and "run.status === 'failed'" in page
+
+
+class TestConditionPickersShowTheSigns:
+    """An admin looked for "less than or equal" among the metric's conditions: it was there, as "is at most"."""
+
+    def test_at_most_and_at_least_carry_their_signs(self):
+        from core2.model import links
+
+        assert links.OP_CHOICES["lte"] == "is at most (≤)" and links.OP_CHOICES["gte"] == "is at least (≥)"
+        assert set(links.OP_CHOICES) == set(links.OP_WORDS)
+        # Sentences keep the words alone: "Amount is at most 100".
+        assert links.OP_WORDS["lte"] == "is at most"
+
+    def test_the_metric_and_link_pages_list_them(self):
+        from admin import core2_metrics, core2_relationships
+
+        for module in (core2_metrics, core2_relationships):
+            source = Path(module.__file__).read_text(encoding="utf-8")
+            assert "links.OP_CHOICES" in source and '"ops": links.OP_WORDS' not in source

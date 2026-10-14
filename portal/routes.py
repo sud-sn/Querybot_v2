@@ -3120,10 +3120,10 @@ def _owner_filters(dashboard: dict) -> list[dict]:
 
 
 def _filterable_fields(user: dict, charts: list[dict]) -> list[dict] | None:
-    """The fields ``user`` may filter a dashboard by: the new core's fields whose members may be listed, on the
-    tables they may read; those its tiles already use first. None: the workspace has no new core."""
+    """The fields ``user`` may filter a dashboard by: the new core's fields a filter bar may offer (values.filterable),
+    on the tables they may read; those its tiles already use first. None: the workspace has no new core."""
     from core2.bootstrap.service import answering_model
-    from core2.plan.values import listable
+    from core2.plan.values import filterable
     from core2.service import _allowed_model_tables
 
     model = answering_model(user["account_id"], store.get_client(user["account_id"]) or {})
@@ -3136,7 +3136,7 @@ def _filterable_fields(user: dict, charts: list[dict]) -> list[dict] | None:
         used.update(str(g) for g in plan.get("group_by") or [])
         used.update(str(f.get("field")) for f in plan.get("filters") or [] if isinstance(f, dict))
     out = []
-    for slug in listable(model):
+    for slug in filterable(model):
         attribute = model.attributes[slug]
         table = model.columns[attribute.column].table
         if allowed is not None and table not in allowed:

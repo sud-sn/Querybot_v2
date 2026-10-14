@@ -30,7 +30,7 @@ def _shared(model) -> dict[str, Any]:
     from core2.model import authoring, links
 
     return {"formats": authoring.FORMAT_WORDS, "over_time": {k: v[2] for k, v in authoring.OVER_TIME.items()},
-            "ops": links.OP_WORDS}
+            "ops": links.OP_CHOICES}
 
 
 @router.get("/clients/{account_id}/measures", response_class=HTMLResponse)
