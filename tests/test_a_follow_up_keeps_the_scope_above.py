@@ -341,3 +341,75 @@ def test_a_question_the_ai_never_reached_stays_in_the_conversation(retail):
     assert payload["following"]["question"] == 'Net sales in "North" in March 2026'
     assert any("North" in k for k in payload["following"]["kept"])
     assert [t.unanswered for t in session.turns] == ["", ""], "an answered turn passes the unanswered one by"
+
+
+# ── what the second gpt-4o run of the labelled conversations found ─────────
+
+
+@pytest.fixture(scope="module")
+def learned():
+    cache: dict = {}
+
+    def model_of(name: str):
+        if name not in cache:
+            cache[name] = learn(domains.build(name), "descriptive")[1]
+        return cache[name]
+
+    return model_of
+
+
+@pytest.mark.parametrize("domain,before,question", [
+    ("compounding_pharmacy", {"measures": ["number_of_fills", "price_charged"], "group_by": ["payer.type"]},
+     "Which prescribers wrote the most prescriptions last quarter?"),
+    ("home_services", {"measures": ["hours", "line_amount"], "group_by": ["technician.team"]},
+     "Which partners sent the most bookings in May?"),
+    ("purchasing", {"measures": ["received_quantity"]}, "Which buyers raised the most purchase orders in May?"),
+    ("retail", {"measures": ["cost_amount", "net_amount"], "group_by": ["category"]},
+     "Which customers bought the most Snacks in May?"),
+    ("subscriptions", {"measures": ["tax_amount", "amount"], "group_by": ["customer.country"]},
+     "Which plans have the most cancelled subscriptions?"),
+    ("subscriptions", {"measures": ["number_of_subscriptions"], "group_by": ["plan"]},
+     "Which customers in France pay the most?"),
+])
+def test_a_ranking_by_a_figure_of_its_own_is_a_new_question(learned, domain, before, question):
+    """"The most bookings", "the most purchase orders" (the data calls them PO numbers), "pay the most": the figure
+    ranked is the question's own, not the one on screen, and the members are of a field it names."""
+    previous = Plan(intent="breakdown", **before)
+    assert read_turn(question, previous=previous, model=learned(domain)).kind == "new"
+
+
+@pytest.mark.parametrize("question", ["Which region had the most orders?", "which store sold the most?"])
+def test_a_ranking_of_the_figure_on_screen_is_not_a_new_question(learned, question):
+    """The figure on screen ranked another way stays a follow-up: orders after orders, a sale after net sales."""
+    previous = Plan(intent="value", measures=["number_of_orders", "net_amount"], filters=[NORTH],
+                    time=TimeSpec(window=MARCH))
+    assert read_turn(question, previous=previous, model=learned("retail")).kind != "new"
+
+
+def test_a_new_period_keeps_the_date_the_answer_above_was_counted_by(learned):
+    """"2026 so far" after the customers who signed up each month in 2025: those who signed up in 2026, never asked
+    again whether customers are counted by what they did or by their own date."""
+    from core2.plan.planner import settle
+
+    model = learned("subscriptions")
+    signed_up = TimeSpec(date="signup_timestamp", grain="month", window=Y1997)
+    before = Plan(intent="trend", measures=["number_of_customers"], time=signed_up)
+    ai = Plan(intent="trend", measures=["number_of_customers"], follow_up="refine",
+              time=TimeSpec(grain="month", window=Window(kind="this", unit="year")))
+    assert settle(ai, model, "2026 so far", before).time.date == "signup_timestamp"
+    # a figure on another table is not counted by the customers' sign-up date
+    invoices = ai.model_copy(update={"measures": ["amount"]})
+    assert settle(invoices, model, "and the invoiced amount in 2026?", before).time.date is None
+
+
+def test_stock_today_is_the_latest_snapshot(learned):
+    """The stock on hand "today", before today's balances are loaded, is the latest snapshot, never "the data ends on
+    12 Jun: nothing yet"; sales today stay today's."""
+    from core2.plan.planner import settle
+
+    model = learned("inventory")
+    today = TimeSpec(window=Window(kind="this", unit="day"))
+    stock = Plan(intent="breakdown", measures=["on_hand_value"], group_by=["warehouse"], time=today)
+    assert settle(stock, model, "On-hand value by warehouse today", None).time.window.kind == "all"
+    moved = Plan(intent="value", measures=["quantity"], time=today)
+    assert settle(moved, model, "Quantity moved today", None).time.window.kind == "this"

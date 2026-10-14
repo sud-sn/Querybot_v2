@@ -189,3 +189,26 @@ def test_a_follow_up_keeps_the_period_when_the_ai_drops_it(tmp_path, monkeypatch
     _conversation(tmp_path, monkeypatch)
     results = followup_eval.evaluate("retail", Recorder(None, _replies(*retail_words, refine_window=False)))
     assert results[0]["status"] == "right", results[0]
+
+
+def test_a_turn_is_scored_against_the_answer_the_reader_saw(tmp_path, monkeypatch, retail_words):
+    """"Net sales in North last month", North unquoted inside a whole question, narrows nothing (a name narrows only
+    when quoted): the answer the reader saw is every region, so "by store" after it keeps nothing and is right. It
+    was scored against the AI's plan, which had North, and counted as having dropped a filter the answer never
+    had."""
+    measure, region = retail_words
+    (tmp_path / "retail.yaml").write_text(yaml.safe_dump({"domain": "retail", "today": "2026-06-15", "threads": [
+        {"id": "t1", "turns": [
+            {"q": "Net sales by region last month"},
+            {"q": "Net sales in North last month", "label": "new", "kind": "restate"},
+            {"q": "by store", "label": "refine", "kind": "drill", "keeps": ["measures", "filters", "window"]},
+        ]}]}))
+    monkeypatch.setattr(followup_eval, "CONVERSATIONS", tmp_path)
+    first = {"kind": "query", "intent": "breakdown", "measures": [measure], "group_by": [region],
+             "time": {"window": {"kind": "previous", "unit": "month"}}}
+    north = {**first, "group_by": [], "filters": [{"field": region, "op": "in", "values": ["North"]}]}
+    by_store = {**first, "group_by": ["store.name"], "follow_up": "refine"}
+    replies = {"retail:t1:0": [json.dumps(first)], "retail:t1:1": [json.dumps(north)],
+               "retail:t1:2": [json.dumps(by_store)]}
+    results = followup_eval.evaluate("retail", Recorder(None, replies))
+    assert [(r["turn"], r["status"]) for r in results] == [(1, "right"), (2, "right")], results

@@ -110,6 +110,17 @@ _RANKING = re.compile(r"\b(?:most|least|highest|lowest|best|worst|biggest|smalle
 # A figure of the question's own that no measure is named for: "the average visit duration by team".
 _FIGURE = re.compile(r"\b(?:average|avg|mean|median|duration|percent(?:age)?|share\s+of|rate|ratio)\b", re.IGNORECASE)
 _COUNTING = re.compile(r"\b(?:how\s+many|number\s+of|count|counts|counted)\b", re.IGNORECASE)
+# "Which buyers raised the most purchase orders", "the fewest cancelled subscriptions": a thing counted right after a
+# ranking word is the figure ranked, the question's own.
+_RANKED_COUNT = r"\b(?:most|fewest|least|more|fewer|le\s+plus\s+de|le\s+moins\s+de)\s+(?:\w+\s+){{0,2}}{word}\b"
+# "Which customers in France pay the most?", "who spent the most": a verb of money names the figure, whatever its
+# measure is called.
+# "the most purchase orders", "the fewest visits": things counted, by whatever name, right after the ranking word.
+_RANKED_THINGS = re.compile(r"\b(?:most|fewest)\s+((?:[a-z][\w-]*\s+){0,2}[a-z][\w-]{2,}s)\b(?!\s+than)", re.IGNORECASE)
+_MONEY_VERB = re.compile(r"\b(?:pay|pays|paid|paying|spend|spends|spent|spending|buy|buys|bought|sell|sells|sold|"
+                         r"earn|earns|earned|billed|invoiced|d[ée]pens[ée]s?|d[ée]pensent|achet[ée]s?|ach[eè]tent|"
+                         r"vendu[es]{0,2}|vendent|pay[ée]s?|payent|paient)\b",
+                         re.IGNORECASE)
 # "List our item groups", "what are the profit centres", "which divisions do we have": a list, which measures nothing.
 _LISTS = re.compile(r"^\s*(?:list|name|enumerate|what\s+are\s+(?:the|our|all)|show\s+(?:me\s+)?(?:all|the\s+list)|"
                     r"(?:which|what)\s+\w+(?:\s+\w+)?\s+(?:are\s+there|do\s+we\s+have|exist))\b", re.IGNORECASE)
@@ -373,11 +384,27 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         own = True      # "which warehouse type ..." ranks by warehouse type: its own grouping
     # "Which division grew the most compared with H1 2025?" names a field and a period but no figure: the ranking
     # is of the figure on screen (below), never a new question that has none.
+    ranked_counts = {slug for k, slug, run in found if k == "count" and re.search(
+        _RANKED_COUNT.format(word=re.escape(run[0])), question, re.IGNORECASE)}
+    ranked_things = _RANKED_THINGS.search(question)
+    ranked_count = bool(ranked_counts) or bool(ranked_things)
     ranks_the_figure = bool(previous.measures and _RANKING.search(question)) and not (
-        any(k == "measure" for k, _, _ in found) or _FIGURE.search(question))
+        any(k == "measure" for k, _, _ in found) or _FIGURE.search(question) or ranked_count
+        or _MONEY_VERB.search(question))
     if not leading and not pointing and len(words) >= 4 and period and (head_found or asks and grouped) \
             and not ranks_the_figure:
         return Reading("new", "it names what it measures, how to split it and for when")
+    # "Which plans have the most cancelled subscriptions?" after tax by country, "Which customers in France pay the
+    # most?" after a count of subscriptions: the members of a field of its own, ranked by a figure that is not the
+    # one on screen, ask afresh.
+    if which and not leading and not pointing and model is not None and _found(model, which.group(1), ("field",)):
+        money_on_screen = any(getattr(model.measures.get(m), "format", "") == "currency" for m in previous.measures)
+        things = set(re.findall(r"[a-z]+", ranked_things.group(1).lower())) if ranked_things else set()
+        named_on_screen = any(things & set(m.split("_")) for m in previous.measures)
+        if ranked_counts and not ranked_counts & set(previous.measures) \
+                or ranked_things and not ranked_counts and not named_on_screen \
+                or _MONEY_VERB.search(question) and _RANKING.search(question) and not money_on_screen:
+            return Reading("new", "it ranks the members of a field by a figure of its own")
     # "Spend by supplier country for 2025": a field of the data to split by and a period of its own make a whole
     # question, whatever word it uses for the figure ("spend" is no measure's name): read as new, it keeps nothing
     # of the answer on screen (the supplier it was narrowed to, its months).
@@ -404,7 +431,8 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
         # A thing counted names a figure only when it is counted ("how many profit centres"), never when it is
         # how the answer is split ("by profit centre").
         measured = any(k == "measure" for k, _, _ in found) or any(k == "count" for k, _, _ in found) \
-            and _COUNTING.search(question) or bool(_FIGURE.search(question)) or by_figure
+            and _COUNTING.search(question) or bool(_FIGURE.search(question)) or by_figure or ranked_count \
+            or bool(_RANKING.search(question) and _MONEY_VERB.search(question))
         # "Which devices are firewalls?" lists: only a split or a ranking word is of the figure on screen.
         if not measured and previous.measures and not _LISTS.match(question) \
                 and (grouped or _RANKING.search(question)):

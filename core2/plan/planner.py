@@ -2275,6 +2275,18 @@ _LEAST = re.compile(r"\b(?:(?<!at\s)least|lowest|bottom|fewest|smallest|minimum)
 _COMPARE_IT = re.compile(r"\b(?:compare|comparer?)\s+(?:it|that|this|these|them|those|ça|cela)\b", re.IGNORECASE)
 
 
+def _dated_alike(model: SemanticModel, plan: Plan, previous: Plan) -> bool:
+    """Does the date the answer above was counted by fit this plan: the same figures, or a date on the table of
+    each of its figures?"""
+    from core2.resolve.resolver import find_slug
+
+    if set(plan.measures) <= set(previous.measures) and plan.measures:
+        return True
+    found = find_slug(model, previous.time.date or "")
+    tables = {model.measures[m].table for m in plan.measures if m in model.measures}
+    return found is not None and found[0] == "date" and bool(tables) and tables == {found[1].table}
+
+
 def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | None) -> Plan:
     """The plan with what the question's own words settle, whatever the AI wrote. Found by asking the
     workbooks' questions of a real model:
@@ -2320,10 +2332,19 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         elif time.window != previous.time.window and _one_period(previous.time.window, the_period(question)):
             # "Did we hit our target for the quarter?" after Q1 2026: Q1 2026, not the quarter we are in.
             time = time.model_copy(update={"window": previous.time.window})
+        if time.date is None and previous.time.date and not keeps_period(question) \
+                and _dated_alike(model, plan, previous):
+            # "2026 so far" after the customers who signed up each month: those who signed up in 2026. A new period
+            # keeps the date the answer above was counted by, unless the AI chose one of its own.
+            time = time.model_copy(update={"date": previous.time.date})
         if previous.via and any(k not in plan.via for k in previous.via):
             update["via"] = {**previous.via, **plan.via}
     window = time.window
-    if window.kind == "last" and window.unit == "day" and (window.n or 1) == 1 and plan.measures and all(
+    # "Stock today", "on the latest day": the latest snapshot, which may be a few days old; never an empty answer
+    # because today's has not been loaded yet.
+    latest_day = window.kind == "last" and window.unit == "day" and (window.n or 1) == 1 \
+        or window.kind == "this" and window.unit == "day"
+    if latest_day and plan.measures and all(
             m.slug not in plan.measures or m.additivity == "semi_additive" for m in model.measures.values()) \
             and any(m.slug in plan.measures for m in model.measures.values()):
         time = time.model_copy(update={"window": Window()})

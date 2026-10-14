@@ -167,13 +167,19 @@ def evaluate(domain_name: str, complete: Recorder, *, style: str = "descriptive"
                 session.pending = None   # the reader moves on to the next question as written
             if n and "label" in turn:
                 status, detail = ("error", error) if error else judge(turn, plan, asked=asked, previous=previous)
+                if status == "asked":
+                    detail += f' ("{payload["clarify"].get("question", "")}")'[:200]
                 results.append({"domain": domain_name, "thread": thread["id"], "turn": n, "question": turn["q"],
                                 "label": turn["label"], "kind": turn.get("kind", ""), "status": status,
                                 "detail": detail,
                                 "plan": plan.model_dump(mode="json", exclude_defaults=True) if plan else None,
                                 "seconds": round(time.perf_counter() - start, 2)})
-            if plan is not None and plan.kind == "query" and not asked:
-                previous = plan
+            # What the next turn follows is the answer the reader saw: the plan the conversation kept (a name the
+            # reader did not quote never narrowed it), not the one the AI wrote.
+            kept = session.turns[-1] if session.turns else None
+            if kept is not None and not kept.unanswered and kept.plan is not None and kept.plan.kind == "query" \
+                    and not asked:
+                previous = kept.plan
     return results
 
 

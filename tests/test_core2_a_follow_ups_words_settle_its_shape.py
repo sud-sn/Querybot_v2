@@ -85,7 +85,7 @@ def test_a_measure_on_screen_ranked_another_way_keeps_the_period(model):
     before = _plan(intent="value", measures=["discount_amount"], time=YEAR)
     reading = read_turn("Which stores got the most discount?", previous=before, model=model)
     assert reading.kind == "refine"
-    # A period of its own: a new question. Another measure with none: the same sales going on, or another subject,
-    # read by the AI with the conversation in view (a follow-up keeps the year).
-    assert read_turn("Which stores had the most returns?", previous=before, model=model).kind == "open"
+    # A period of its own, or the members of a field ranked by another figure ("the most returns", as "which
+    # partners sent the most bookings?" in the labelled conversations): a new question.
+    assert read_turn("Which stores had the most returns?", previous=before, model=model).kind == "new"
     assert read_turn("Which stores got the most discount in 2024?", previous=before, model=model).kind == "new"
