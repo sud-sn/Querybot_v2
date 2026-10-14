@@ -117,16 +117,36 @@ def _discover_postgres(cfg: dict) -> dict:
 
 # ── Snowflake ─────────────────────────────────────────────────────────────────
 
+# The databases Snowflake itself shares into every account: its usage views and its sample data. Never the
+# customer's tables, and slow to list.
+_SNOWFLAKE_OWN_DATABASES = {"SNOWFLAKE", "SNOWFLAKE_SAMPLE_DATA"}
+
+
+class NothingVisible(Exception):
+    """Signed in, but no table or view could be listed: the message says why and what to ask for."""
+
+
+def _field(row: dict, name: str) -> Any:
+    """A column of a SHOW or SELECT row, whichever case the connector returned its name in."""
+    for key in (name, name.upper(), name.lower()):
+        if key in row:
+            return row[key]
+    return None
+
+
+def _quoted(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
 def _discover_snowflake(cfg: dict) -> dict:
     """
-    Query Snowflake's INFORMATION_SCHEMA across all databases the connected
-    role can see.
+    Every table and view the connected role can see, by database and schema: PUBLIC included (most accounts keep
+    their tables there), Snowflake's own shared databases left out.
 
-    Snowflake security model:
-      - The role in the credentials determines what's visible.
-      - We iterate every accessible database, switch to it, and query
-        INFORMATION_SCHEMA.TABLES.  We catch PermissionError per database so
-        one locked DB doesn't abort the whole discovery.
+    The lists come from SHOW TABLES and SHOW VIEWS, which need no warehouse (a warehouse the role cannot use is
+    reported by Test connection, not by an empty list here). A database the role cannot read is skipped; when
+    nothing at all is found, NothingVisible says why: the role in use, the database it could not see or read,
+    and the grant to ask the Snowflake admin for.
 
     Returns:  { DATABASE: { SCHEMA: { "tables": [...], "views": [...] } } }
     """
@@ -134,68 +154,68 @@ def _discover_snowflake(cfg: dict) -> dict:
 
     conn = _sf_connect(cfg)
     tree: dict[str, Any] = {}
+    unreadable: list[str] = []
 
     try:
         import snowflake.connector
         cur = conn.cursor(snowflake.connector.DictCursor)
 
-        # List all databases the role can see
-        cur.execute("SHOW DATABASES")
-        databases = [row["name"] for row in cur.fetchall()]
+        cur.execute("SELECT CURRENT_ROLE() AS ROLE")
+        role = str(_field(cur.fetchone() or {}, "ROLE") or cfg.get("role") or "the user's default role")
 
-        # If the credentials specify a database, only return that one — avoids
-        # hammering every DB in a large account.
-        if cfg.get("database"):
-            target = cfg["database"].upper()
-            databases = [d for d in databases if d.upper() == target] or databases[:1]
+        cur.execute("SHOW DATABASES")
+        databases = [str(_field(row, "name")) for row in cur.fetchall()]
+
+        wanted = str(cfg.get("database") or "").strip()
+        if wanted:
+            # The database the connection names, as the account spells it ("sales_db" finds SALES_DB).
+            databases = [d for d in databases if d == wanted or d.upper() == wanted.upper()]
+            if not databases:
+                raise NothingVisible(
+                    f'The role {role} cannot see a database named "{wanted}". Check the name, or ask your '
+                    f"Snowflake admin to run: GRANT USAGE ON DATABASE {wanted} TO ROLE {role};")
+        else:
+            databases = [d for d in databases if d.upper() not in _SNOWFLAKE_OWN_DATABASES]
 
         for db in databases:
+            entry: dict[str, Any] = {}
             try:
-                # We need to USE the database to query its INFORMATION_SCHEMA
-                cur.execute(f'USE DATABASE "{db}"')
-                cur.execute("""
-                    SELECT TABLE_SCHEMA,
-                           TABLE_NAME,
-                           TABLE_TYPE
-                    FROM   INFORMATION_SCHEMA.TABLES
-                    WHERE  TABLE_TYPE IN ('BASE TABLE', 'VIEW')
-                      AND  TABLE_SCHEMA NOT IN (
-                               'INFORMATION_SCHEMA', 'ACCOUNT_USAGE',
-                               'SNOWFLAKE', 'PUBLIC'
-                           )
-                    ORDER  BY TABLE_SCHEMA, TABLE_TYPE DESC, TABLE_NAME
-                """)
-                rows = cur.fetchall()
+                for kind, statement in (("tables", "SHOW TABLES IN DATABASE "), ("views", "SHOW VIEWS IN DATABASE ")):
+                    cur.execute(statement + _quoted(db))
+                    for row in cur.fetchall():
+                        schema = str(_field(row, "schema_name") or "")
+                        if not schema or schema.upper() == "INFORMATION_SCHEMA":
+                            continue
+                        entry.setdefault(schema, {"tables": [], "views": []})[kind].append(str(_field(row, "name")))
             except Exception as e:
                 log.warning("Snowflake: cannot read DB %s — %s", db, e)
+                unreadable.append(f"{db} ({' '.join(str(e).split())[:200]})")
                 continue
-
-            if not rows:
-                continue
-
-            db_entry: dict[str, Any] = {}
-            for row in rows:
-                schema = row["TABLE_SCHEMA"]
-                name   = row["TABLE_NAME"]
-                kind   = row["TABLE_TYPE"]     # 'BASE TABLE' or 'VIEW'
-                if schema not in db_entry:
-                    db_entry[schema] = {"tables": [], "views": []}
-                if kind == "VIEW":
-                    db_entry[schema]["views"].append(name)
-                else:
-                    db_entry[schema]["tables"].append(name)
-
-            if db_entry:
-                tree[db] = db_entry
+            if entry:
+                for objects in entry.values():
+                    objects["tables"].sort()
+                    objects["views"].sort()
+                tree[db] = entry
                 log.info(
                     "Snowflake discovery: %s → %d schemas, %d total objects",
                     db,
-                    len(db_entry),
-                    sum(len(v["tables"]) + len(v["views"]) for v in db_entry.values()),
+                    len(entry),
+                    sum(len(v["tables"]) + len(v["views"]) for v in entry.values()),
                 )
     finally:
         conn.close()
 
+    if not tree:
+        where = f'the database "{databases[0]}"' if wanted else "any database it can see"
+        reason = f" It could not read: {'; '.join(unreadable[:3])}." if unreadable else ""
+        target = databases[0] if wanted else "<database>"
+        raise NothingVisible(
+            f"Signed in, but the role {role} sees no tables or views in {where}.{reason} Ask your Snowflake admin "
+            f"to grant it read access, for example: GRANT USAGE ON DATABASE {target} TO ROLE {role}; "
+            f"GRANT USAGE ON ALL SCHEMAS IN DATABASE {target} TO ROLE {role}; "
+            f"GRANT SELECT ON ALL TABLES IN DATABASE {target} TO ROLE {role}; "
+            f"GRANT SELECT ON ALL VIEWS IN DATABASE {target} TO ROLE {role}; "
+            "or set Role to the one Qlik or Talend use with this user.")
     return tree
 
 

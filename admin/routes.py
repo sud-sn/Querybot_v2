@@ -1569,7 +1569,10 @@ def _selected_schemas_from_tables(tables: list[str]) -> list[str]:
 
 
 def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
+    from core.schema_discovery import NothingVisible
     raw = str(err)
+    if isinstance(err, NothingVisible):
+        return raw      # signed in, nothing listed: the message already says why and what to ask for
     low = raw.lower()
     if db_type == "snowflake":
         from core.snowflake_auth import SnowflakeAuthError, friendly_error

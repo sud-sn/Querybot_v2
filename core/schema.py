@@ -283,8 +283,17 @@ def _resolve_masking_fields(
     return set(detected.keys())
 
 
-def _sf_fetch_sample(cur, schema: str, name: str) -> list[dict]:
-    cur.execute(f'SELECT * FROM "{schema}"."{name}" LIMIT 5')
+def _sf_ident(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _sf_table(database: str, schema: str, name: str) -> str:
+    """A Snowflake table by its full name: a table picked in another database than the connection's is read there."""
+    return ".".join(_sf_ident(part) for part in (database, schema, name) if part)
+
+
+def _sf_fetch_sample(cur, schema: str, name: str, database: str = "") -> list[dict]:
+    cur.execute(f"SELECT * FROM {_sf_table(database, schema, name)} LIMIT 5")
     return [dict(r) for r in cur.fetchall()]
 
 
@@ -778,14 +787,15 @@ def _fetch_pk_columns_azure(cur) -> dict[str, list[str]]:
     return pk_map
 
 
-def _fetch_pk_columns_snowflake(cur, schema: str) -> dict[str, list[str]]:
+def _fetch_pk_columns_snowflake(cur, schema: str, database: str = "") -> dict[str, list[str]]:
     """Return {TABLE_NAME_UPPER: [pk_col, ...]} from INFORMATION_SCHEMA (Snowflake)."""
     pk_map: dict[str, list[str]] = {}
+    info = f"{_sf_ident(database)}.information_schema" if database else "information_schema"
     try:
         cur.execute(f"""
             SELECT tc.table_name, kcu.column_name
-            FROM   information_schema.table_constraints tc
-            JOIN   information_schema.key_column_usage  kcu
+            FROM   {info}.table_constraints tc
+            JOIN   {info}.key_column_usage  kcu
                 ON tc.constraint_name = kcu.constraint_name
                AND tc.table_schema    = kcu.table_schema
             WHERE  tc.constraint_type = 'PRIMARY KEY'
@@ -854,21 +864,22 @@ def _fetch_fk_constraints_azure(cur) -> list[dict]:
         return []
 
 
-def _fetch_fk_constraints_snowflake(cur, schema: str) -> list[dict]:
+def _fetch_fk_constraints_snowflake(cur, schema: str, database: str = "") -> list[dict]:
     """Query INFORMATION_SCHEMA for Snowflake FK constraints (may be unenforced but declared)."""
+    info = f"{_sf_ident(database)}.information_schema" if database else "information_schema"
     try:
         cur.execute(f"""
             SELECT tc.constraint_name,
                    kcu.table_schema, kcu.table_name, kcu.column_name,
                    rkcu.table_schema, rkcu.table_name, rkcu.column_name,
                    kcu.ordinal_position
-            FROM   information_schema.table_constraints      tc
-            JOIN   information_schema.key_column_usage       kcu
+            FROM   {info}.table_constraints      tc
+            JOIN   {info}.key_column_usage       kcu
                 ON tc.constraint_name = kcu.constraint_name
                AND tc.table_schema    = kcu.table_schema
-            JOIN   information_schema.referential_constraints rc
+            JOIN   {info}.referential_constraints rc
                 ON tc.constraint_name = rc.constraint_name
-            JOIN   information_schema.key_column_usage rkcu
+            JOIN   {info}.key_column_usage rkcu
                 ON rc.unique_constraint_name   = rkcu.constraint_name
                AND rc.unique_constraint_schema = rkcu.table_schema
                AND rkcu.ordinal_position       = kcu.position_in_unique_constraint
@@ -2211,11 +2222,11 @@ def _sf_connect(cfg: dict, max_retries: int = 3):
     raise RuntimeError("Snowflake connection failed")
 
 
-def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
+def _sf_distinct(cur, schema: str, name: str, col_name: str, database: str = "") -> list[str]:
     """Get distinct values for a categorical column in Snowflake."""
     try:
         cur.execute(
-            f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{name}" '
+            f'SELECT DISTINCT "{col_name}" FROM {_sf_table(database, schema, name)} '
             f'WHERE "{col_name}" IS NOT NULL LIMIT {_MAX_DISTINCT + 1}'
         )
         vals = [str(r[0]) for r in cur.fetchall()]
@@ -2226,6 +2237,46 @@ def _sf_distinct(cur, schema: str, name: str, col_name: str) -> list[str]:
         return []
 
 
+def _sf_databases_to_read(cur, cfg: dict, allowed: set[str] | None) -> list[str]:
+    """The databases whose tables discovery reads, as the account spells them: the connection's own database (the
+    session's, so a name typed in lower case is found) when no table was picked or one was picked without its
+    database, and the database of each table picked with Browse schemas (DB.SCHEMA.TABLE). Browse schemas offers
+    every database the role sees, so a table picked in another database is read there instead of being missed."""
+    picked: list[str] = []
+    needs_own = allowed is None
+    for ref in allowed or ():
+        parts = str(ref).split(".")
+        if len(parts) == 3 and parts[0]:
+            db = _clean_identifier_part(parts[0])
+            if db not in picked:
+                picked.append(db)
+        else:
+            needs_own = True
+    databases: list[str] = []
+    if needs_own:
+        cur.execute("SELECT CURRENT_DATABASE() AS DB")
+        own = str((cur.fetchone() or {}).get("DB") or cfg.get("database") or "").strip()
+        if own:
+            databases.append(own)
+        elif not picked:
+            raise RuntimeError(
+                "Snowflake: no database to read. Enter the Database on the connection, or pick the tables with "
+                "Browse schemas.")
+    if picked:
+        # A picked name is kept in capitals: spell it as Snowflake lists it (a database made with a quoted lower-case
+        # name keeps its case).
+        try:
+            cur.execute("SHOW DATABASES")
+            spelled = {str(r.get("name")).upper(): str(r.get("name")) for r in cur.fetchall()}
+        except Exception as exc:
+            log.debug("Snowflake: SHOW DATABASES skipped: %s", exc)
+            spelled = {}
+        for name in picked:
+            if name.upper() not in {d.upper() for d in databases}:
+                databases.append(spelled.get(name.upper(), name))
+    return databases
+
+
 def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
     import snowflake.connector
     conn = _sf_connect(cfg)
@@ -2233,14 +2284,16 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
     try:
         cur = conn.cursor(snowflake.connector.DictCursor)
         schema_filter = "" if allowed is not None else "AND TABLE_SCHEMA = CURRENT_SCHEMA()"
-        cur.execute(f"""
-            SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ROW_COUNT, COMMENT
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_TYPE IN ('BASE TABLE','VIEW')
-              {schema_filter}
-            ORDER BY TABLE_SCHEMA, TABLE_NAME
-        """)
-        tables = [dict(r) for r in cur.fetchall()]
+        tables = []
+        for db in _sf_databases_to_read(cur, cfg, allowed):
+            cur.execute(f"""
+                SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, ROW_COUNT, COMMENT
+                FROM {_sf_ident(db)}.INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE IN ('BASE TABLE','VIEW','MATERIALIZED VIEW')
+                  {schema_filter}
+                ORDER BY TABLE_SCHEMA, TABLE_NAME
+            """)
+            tables.extend(dict(r) for r in cur.fetchall())
 
         selected_tables = []
         for tbl in tables:
@@ -2257,10 +2310,19 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             key_name = _clean_identifier_part(tbl["TABLE_NAME"])
             name_counts[key_name] = name_counts.get(key_name, 0) + 1
 
-        # Fetch PK columns for all selected tables before the per-table loop
-        _sf_pk_schema = cfg.get("schema") or "PUBLIC"
+        # Fetch PK columns for all selected tables before the per-table loop: those of every schema a selected
+        # table is in, keyed by database, schema and table (a table's name alone matched another schema's key).
         _sf_pk_cur    = conn.cursor()
-        pk_map = _fetch_pk_columns_snowflake(_sf_pk_cur, _sf_pk_schema)
+        _sf_places = []
+        for tbl in selected_tables:
+            place = (tbl.get("TABLE_CATALOG") or cfg.get("database") or "",
+                     tbl.get("TABLE_SCHEMA") or cfg.get("schema") or "PUBLIC")
+            if place not in _sf_places:
+                _sf_places.append(place)
+        pk_map: dict[tuple, list[str]] = {}
+        for _db, _schema in _sf_places:
+            for _tbl, _cols in _fetch_pk_columns_snowflake(_sf_pk_cur, _schema, _db).items():
+                pk_map[(str(_db).upper(), str(_schema).upper(), _tbl)] = _cols
         if pk_map:
             log.info("Snowflake: PK columns discovered for %d tables", len(pk_map))
 
@@ -2271,11 +2333,13 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             normalized_name = _clean_identifier_part(name)
             table_key = name if name_counts.get(normalized_name, 0) <= 1 else f"{schema}.{name}"
             file_stem = name if table_key == name else f"{schema}__{name}"
+            _info = f"{_sf_ident(database)}.INFORMATION_SCHEMA" if database else "INFORMATION_SCHEMA"
+            _sq = lambda v: str(v).replace("'", "''")
             cur.execute(f"""
                 SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE,
                        CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, COMMENT
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{name}'
+                FROM {_info}.COLUMNS
+                WHERE TABLE_SCHEMA = '{_sq(schema)}' AND TABLE_NAME = '{_sq(name)}'
                 ORDER BY ORDINAL_POSITION
             """)
             columns = [dict(r) for r in cur.fetchall()]
@@ -2300,14 +2364,14 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                     if cname in _pre_masked_fields:
                         continue
                     if _is_categorical(cname, ctype):
-                        vals = _sf_distinct(plain_cur, schema, name, cname)
+                        vals = _sf_distinct(plain_cur, schema, name, cname, database)
                         if vals:
                             distinct_map[cname] = vals
 
             # Read real rows then mask, or fall back to fully synthetic
-            _sf_schema, _sf_name = schema, name  # capture for lambda
+            _sf_schema, _sf_name, _sf_db_name = schema, name, database  # capture for lambda
             sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
-                fetch_fn=lambda: _sf_fetch_sample(cur, _sf_schema, _sf_name),
+                fetch_fn=lambda: _sf_fetch_sample(cur, _sf_schema, _sf_name, _sf_db_name),
                 col_defs=col_defs,
                 mode=_mode,
                 industry=industry,
@@ -2324,7 +2388,7 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
             distinct_map = {k: v for k, v in distinct_map.items()
                             if k.upper() not in _masked_upper}
 
-            _pk_cols = pk_map.get(name.upper(), [])
+            _pk_cols = pk_map.get((str(database).upper(), str(schema).upper(), name.upper()), [])
             (out / f"{_safe_table_file_stem(file_stem)}.md").write_text(
                 _sf_md(name, tbl, columns, sample, distinct_map, pk_columns=_pk_cols),
                 encoding="utf-8",
@@ -2366,9 +2430,9 @@ def _discover_snowflake(cfg: dict, out: Path, allowed: set[str] | None = None, m
                      name, len(columns), len(distinct_map))
 
         # ── Fetch DB-declared FK constraints ─────────────────────────────────
-        _sf_schema = cfg.get("schema") or "PUBLIC"
         _sf_fk_cur = conn.cursor()
-        _sf_fks = _fetch_fk_constraints_snowflake(_sf_fk_cur, _sf_schema)
+        _sf_fks = [fk for _db, _schema in _sf_places
+                   for fk in _fetch_fk_constraints_snowflake(_sf_fk_cur, _schema, _db)]
         if _sf_fks:
             master["__db_fk_constraints__"] = _sf_fks
             log.info("Snowflake: %d DB-declared FK relationships discovered", len(_sf_fks))
