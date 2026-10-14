@@ -273,6 +273,11 @@ class TestTheAdminConsole:
                                  "sf_private_key_passphrase": "wrong"})
         assert "passphrase" in response.headers["location"] and not admin.store.list_db_configs()
 
+    def test_the_passphrase_can_be_seen_before_testing(self, admin):
+        # A browser fills a saved password into the field; the eye shows what is really there.
+        html = _page(admin)
+        assert 'data-qb-reveal="sf_private_key_passphrase"' in html
+
     def test_a_password_connection_is_marked_for_switching(self, admin):
         _save(admin, {**FORM, "sf_auth_method": "password", "sf_password": "a-password-123"})
         html = _page(admin)

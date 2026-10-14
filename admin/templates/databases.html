@@ -101,7 +101,12 @@
             <p class="form-note" id="sf-key-note" style="display:none">A key is stored. Leave blank to keep it.</p></div>
           <div class="form-grid">
             <div class="form-group"><label for="sf_private_key_passphrase">Key passphrase (only if the key is encrypted)</label>
-              <input type="password" name="sf_private_key_passphrase" id="sf_private_key_passphrase" autocomplete="new-password"></div>
+              <div class="input-reveal-wrap">
+                <input type="password" name="sf_private_key_passphrase" id="sf_private_key_passphrase" autocomplete="new-password">
+                <button type="button" class="input-reveal-btn" data-qb-reveal="sf_private_key_passphrase" aria-pressed="false"
+                        data-label-show="Show passphrase" data-label-hide="Hide passphrase" aria-label="Show passphrase">{{ ic("eye", 15) }}</button>
+              </div>
+              <p class="form-note">The password the private key file was encrypted with. Check it with the eye before testing: a password the browser fills in is not it.</p></div>
             <div class="form-group"><label>No key yet?</label>
               <button type="button" class="btn btn-secondary btn-sm" id="sf-generate-btn" onclick="sfGenerateKey()">Generate a key pair</button>
               <p class="form-note">Solviz makes a key pair and puts the private key in this form. Set its public key on the
