@@ -229,9 +229,11 @@ import re
 class _Warehouse:
     """A Snowflake account answering discovery's catalogue and sample queries for the session's database."""
 
-    def __init__(self, tables: dict, current: str):
+    def __init__(self, tables: dict, current: str, keys: dict | None = None, links: tuple = ()):
         self.tables = tables                  # {(database, schema, table): {column: [values]}}
         self.current = current
+        self.keys = keys or {}                # {(database, schema, table): [key columns]}
+        self.links = links                    # ((database, schema, table, column), (database, schema, table, column))
         self.ran: list[str] = []
 
     def cursor(self, kind=None):
@@ -266,9 +268,19 @@ class _Warehouse:
             columns = self.tables.get((db, schema, table), {})
             return [{"COLUMN_NAME": c, "DATA_TYPE": "TEXT", "IS_NULLABLE": "YES", "CHARACTER_MAXIMUM_LENGTH": None,
                      "NUMERIC_PRECISION": None, "COMMENT": None} for c in columns]
+        if text.startswith(("SHOW PRIMARY KEYS IN SCHEMA ", "SHOW IMPORTED KEYS IN SCHEMA ")):
+            db, schema = (p.replace('""', '"') for p in re.findall(r'"((?:[^"]|"")+)"', text))
+            if text.startswith("SHOW PRIMARY"):
+                return [{"database_name": d, "schema_name": s, "table_name": t, "column_name": c, "key_sequence": i + 1}
+                        for (d, s, t), cols in self.keys.items() if (d, s) == (db, schema)
+                        for i, c in enumerate(cols)]
+            return [{"fk_name": "FK_1", "fk_database_name": f[0], "fk_schema_name": f[1], "fk_table_name": f[2],
+                     "fk_column_name": f[3], "pk_database_name": k[0], "pk_schema_name": k[1],
+                     "pk_table_name": k[2], "pk_column_name": k[3], "key_sequence": 1}
+                    for f, k in self.links if (f[0], f[1]) == (db, schema)]
         if "INFORMATION_SCHEMA." in text.upper():
-            self._info(text)
-            return []                          # no declared keys
+            # Snowflake has no KEY_COLUMN_USAGE view: a key lookup joining it fails.
+            raise RuntimeError("002003 (02000): SQL compilation error: Object 'KEY_COLUMN_USAGE' does not exist.")
         source = re.search(r'FROM ((?:"(?:[^"]|"")+"\.?)+)', text)
         parts = tuple(p.replace('""', '"') for p in re.findall(r'"((?:[^"]|"")+)"', source.group(1)))
         key = parts if len(parts) == 3 else (self.current, *parts)
@@ -281,10 +293,11 @@ class _Warehouse:
 
 class _WarehouseCursor:
     def __init__(self, warehouse: _Warehouse, as_dicts: bool):
-        self.warehouse, self.as_dicts, self.rows = warehouse, as_dicts, []
+        self.warehouse, self.as_dicts, self.rows, self.description = warehouse, as_dicts, [], None
 
     def execute(self, sql, *_):
         self.rows = self.warehouse.answer(sql)
+        self.description = [(name,) for name in self.rows[0]] if self.rows else []
 
     def fetchall(self):
         return self.rows if self.as_dicts else [tuple(r.values()) for r in self.rows]
@@ -340,3 +353,21 @@ class TestThePickedTablesAreRead:
         with patch("core.schema._sf_connect", return_value=warehouse), \
                 pytest.raises(RuntimeError, match="Enter the Database on the connection"):
             schema.discover_and_write({"account": "org-acct"}, "snowflake", str(tmp_path), allowed_tables=None)
+
+    def test_the_keys_and_links_the_tables_declare_are_read(self, tmp_path):
+        tables = {
+            ("SALES_DB", "PUBLIC", "ORDERS"): {"ORDER_ID": ["1", "2"], "CUSTOMER_ID": ["7", "8"]},
+            ("SALES_DB", "PUBLIC", "CUSTOMERS"): {"CUSTOMER_ID": ["7", "8"], "NAME": ["Ann", "Bo"]},
+        }
+        warehouse = _Warehouse(
+            tables, current="SALES_DB",
+            keys={("SALES_DB", "PUBLIC", "ORDERS"): ["ORDER_ID"], ("SALES_DB", "PUBLIC", "CUSTOMERS"): ["CUSTOMER_ID"]},
+            links=((("SALES_DB", "PUBLIC", "ORDERS", "CUSTOMER_ID"), ("SALES_DB", "PUBLIC", "CUSTOMERS", "CUSTOMER_ID")),))
+        master = _read_picked(tmp_path, warehouse, {"SALES_DB.PUBLIC.ORDERS", "SALES_DB.PUBLIC.CUSTOMERS"},
+                              database="SALES_DB")
+        assert master["ORDERS"]["pk_columns"] == ["ORDER_ID"]
+        assert master["CUSTOMERS"]["pk_columns"] == ["CUSTOMER_ID"]
+        (link,) = master["__db_fk_constraints__"]
+        assert (link["parent_table"], link["parent_col"], link["ref_table"], link["ref_col"]) == (
+            "ORDERS", "CUSTOMER_ID", "CUSTOMERS", "CUSTOMER_ID")
+        assert link["enforced"] is False

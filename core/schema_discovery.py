@@ -86,7 +86,8 @@ def _discover_postgres(cfg: dict) -> dict:
 
     interactive_cfg = dict(cfg)
     interactive_cfg["login_timeout"] = min(int(interactive_cfg.get("login_timeout", 15)), 15)
-    only = {part.strip() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
+    # The schemas the connection names, whatever case they were typed in ("SALES" is the schema sales).
+    only = {part.strip().lower() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
     conn = _pg_connect(interactive_cfg, max_retries=1, statement_timeout=25)
     try:
         cur = conn.cursor()
@@ -108,11 +109,22 @@ def _discover_postgres(cfg: dict) -> dict:
         conn.close()
     db_entry: dict[str, Any] = {}
     for schema, name, kind in rows:
-        if only and schema not in only:
+        if only and schema.lower() not in only:
             continue
         entry = db_entry.setdefault(schema, {"tables": [], "views": []})
         entry["views" if kind in ("v", "m") else "tables"].append(name)
-    return {db_name.upper(): db_entry} if db_entry else {}
+    if not db_entry:
+        readable = sorted({schema for schema, _, _ in rows})
+        user = cfg.get("user") or "the user"
+        if only and readable:
+            raise NothingVisible(
+                f'Signed in, but the schema{"s" if len(only) > 1 else ""} {", ".join(sorted(only))} of the database '
+                f'"{db_name}" hold no table {user} may read. Schemas with tables it may read: '
+                f'{", ".join(readable[:12])}. Correct the Schemas field, or leave it empty for every schema.')
+        raise NothingVisible(
+            f'Signed in, but {user} may read no table in the database "{db_name}". Ask the database owner to run: '
+            f'GRANT USAGE ON SCHEMA <schema> TO {user}; GRANT SELECT ON ALL TABLES IN SCHEMA <schema> TO {user};')
+    return {db_name.upper(): db_entry}
 
 
 # ── Snowflake ─────────────────────────────────────────────────────────────────

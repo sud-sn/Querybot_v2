@@ -787,26 +787,31 @@ def _fetch_pk_columns_azure(cur) -> dict[str, list[str]]:
     return pk_map
 
 
+def _sf_show_rows(cur, statement: str) -> list[dict]:
+    """The rows of a SHOW command as {column: value}, whichever cursor ran it (a plain one gives tuples)."""
+    cur.execute(statement)
+    rows = cur.fetchall()
+    names = [str(d[0]).lower() for d in (cur.description or ())]
+    return [{str(k).lower(): v for k, v in r.items()} if isinstance(r, dict) else dict(zip(names, r)) for r in rows]
+
+
+def _sf_schema_ref(schema: str, database: str = "") -> str:
+    return ".".join(_sf_ident(part) for part in (database, schema) if part)
+
+
 def _fetch_pk_columns_snowflake(cur, schema: str, database: str = "") -> dict[str, list[str]]:
-    """Return {TABLE_NAME_UPPER: [pk_col, ...]} from INFORMATION_SCHEMA (Snowflake)."""
-    pk_map: dict[str, list[str]] = {}
-    info = f"{_sf_ident(database)}.information_schema" if database else "information_schema"
+    """Return {TABLE_NAME_UPPER: [pk_col, ...]}: the primary keys declared in the schema (Snowflake).
+
+    From SHOW PRIMARY KEYS, which needs no warehouse. Snowflake's INFORMATION_SCHEMA has no KEY_COLUMN_USAGE view,
+    so the join this used failed every time (logged at debug only) and declared keys were never read."""
+    pk_map: dict[str, list[tuple[int, str]]] = {}
     try:
-        cur.execute(f"""
-            SELECT tc.table_name, kcu.column_name
-            FROM   {info}.table_constraints tc
-            JOIN   {info}.key_column_usage  kcu
-                ON tc.constraint_name = kcu.constraint_name
-               AND tc.table_schema    = kcu.table_schema
-            WHERE  tc.constraint_type = 'PRIMARY KEY'
-               AND UPPER(tc.table_schema) = UPPER('{schema}')
-            ORDER BY tc.table_name, kcu.ordinal_position
-        """)
-        for tbl, col in cur.fetchall():
-            pk_map.setdefault(tbl.upper(), []).append(col)
+        for row in _sf_show_rows(cur, f"SHOW PRIMARY KEYS IN SCHEMA {_sf_schema_ref(schema, database)}"):
+            pk_map.setdefault(str(row.get("table_name")).upper(), []).append(
+                (int(row.get("key_sequence") or 0), str(row.get("column_name"))))
     except Exception as exc:
         log.debug("Snowflake: PK constraint query skipped: %s", exc)
-    return pk_map
+    return {table: [col for _, col in sorted(cols)] for table, cols in pk_map.items()}
 
 
 def _fetch_pk_columns_oracle(cur, owner: str) -> dict[str, list[str]]:
@@ -865,44 +870,31 @@ def _fetch_fk_constraints_azure(cur) -> list[dict]:
 
 
 def _fetch_fk_constraints_snowflake(cur, schema: str, database: str = "") -> list[dict]:
-    """Query INFORMATION_SCHEMA for Snowflake FK constraints (may be unenforced but declared)."""
-    info = f"{_sf_ident(database)}.information_schema" if database else "information_schema"
+    """The foreign keys declared in the schema (Snowflake), from SHOW IMPORTED KEYS (no warehouse needed).
+
+    Snowflake's INFORMATION_SCHEMA has no KEY_COLUMN_USAGE view, so the join this used failed every time and
+    declared links were never read. Snowflake does not enforce them: they are a statement, checked like any
+    other suggested link."""
     try:
-        cur.execute(f"""
-            SELECT tc.constraint_name,
-                   kcu.table_schema, kcu.table_name, kcu.column_name,
-                   rkcu.table_schema, rkcu.table_name, rkcu.column_name,
-                   kcu.ordinal_position
-            FROM   {info}.table_constraints      tc
-            JOIN   {info}.key_column_usage       kcu
-                ON tc.constraint_name = kcu.constraint_name
-               AND tc.table_schema    = kcu.table_schema
-            JOIN   {info}.referential_constraints rc
-                ON tc.constraint_name = rc.constraint_name
-            JOIN   {info}.key_column_usage rkcu
-                ON rc.unique_constraint_name   = rkcu.constraint_name
-               AND rc.unique_constraint_schema = rkcu.table_schema
-               AND rkcu.ordinal_position       = kcu.position_in_unique_constraint
-            WHERE  tc.constraint_type = 'FOREIGN KEY'
-               AND UPPER(tc.table_schema) = UPPER('{schema}')
-            ORDER BY kcu.table_name, kcu.ordinal_position
-        """)
-        return [
-            {
-                "constraint_name": r[0],
-                "parent_schema": r[1], "parent_table": r[2], "parent_col": r[3],
-                "ref_schema": r[4], "ref_table": r[5], "ref_col": r[6],
-                "ordinal": int(r[7] or 0),
-                # Standard Snowflake table constraints are metadata and are
-                # not proof that the rows satisfy referential integrity.
-                "enforced": False,
-                "source": "snowflake",
-            }
-            for r in cur.fetchall()
-        ]
+        rows = _sf_show_rows(cur, f"SHOW IMPORTED KEYS IN SCHEMA {_sf_schema_ref(schema, database)}")
     except Exception as exc:
         log.debug("Snowflake: FK constraint query skipped: %s", exc)
         return []
+    return [
+        {
+            "constraint_name": r.get("fk_name"),
+            "parent_schema": r.get("fk_schema_name"), "parent_table": r.get("fk_table_name"),
+            "parent_col": r.get("fk_column_name"),
+            "ref_schema": r.get("pk_schema_name"), "ref_table": r.get("pk_table_name"),
+            "ref_col": r.get("pk_column_name"),
+            "ordinal": int(r.get("key_sequence") or 0),
+            # Standard Snowflake table constraints are metadata and are
+            # not proof that the rows satisfy referential integrity.
+            "enforced": False,
+            "source": "snowflake",
+        }
+        for r in sorted(rows, key=lambda r: (str(r.get("fk_table_name")), int(r.get("key_sequence") or 0)))
+    ]
 
 
 def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
@@ -3519,9 +3511,10 @@ def _discover_postgres(cfg: dict, out: Path, allowed: set[str] | None = None, mc
             ORDER  BY n.nspname, c.relname
         """)
         # The schemas the connection was limited to, when it was ("sales, finance"): every schema otherwise.
-        only = {part.strip() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
+        # Whatever case they were typed in: "SALES" is the schema sales.
+        only = {part.strip().lower() for part in str(cfg.get("schemas") or "").split(",") if part.strip()}
         selected = [r for r in cur.fetchall()
-                    if (not only or r[0] in only) and _allowed_table_match(allowed, r[1], r[0], db_upper)]
+                    if (not only or r[0].lower() in only) and _allowed_table_match(allowed, r[1], r[0], db_upper)]
         if not selected:
             _write_schema_json(out, master)
             _write_join_map(out, master, "postgres")
