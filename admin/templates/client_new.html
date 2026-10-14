@@ -59,8 +59,9 @@
           </span>
         </label>
 
-        <div id="platform-section" class="form-grid" style="margin-top:.9rem">
-          <div class="form-group">
+        <div class="form-grid" style="margin-top:.9rem">
+          {# Only the chat platform goes with "Web portal only": the database is needed either way. #}
+          <div class="form-group" id="platform-section">
             <label for="f_platform">Chat platform</label>
             <select id="f_platform" name="platform_type">
               <option value="">Select a platform</option>
@@ -127,7 +128,7 @@
 
 <script>
 function togglePlatformSection(portalOnly) {
-  document.getElementById('platform-section').style.display = portalOnly ? 'none' : 'grid';
+  document.getElementById('platform-section').style.display = portalOnly ? 'none' : '';
 }
 </script>
 <style>

@@ -158,3 +158,36 @@ class TestTheSetupPage:
         assert "The last discovery failed" in html
         assert "Warehouse &#39;WH&#39; is suspended." in html or "Warehouse 'WH' is suspended." in html
         assert "still come from the discovery before it" in html
+
+
+class TestSetupLeadsWhereItSays:
+    """Two traps on the way to a first discovery."""
+
+    def test_go_to_settings_opens_the_settings_tab(self, workspace):
+        from fastapi import FastAPI
+        from starlette.testclient import TestClient
+        from admin import routes
+        import store
+
+        account, _schema = workspace
+        with store.get_db() as conn:          # no database assigned yet
+            conn.execute("UPDATE client SET db_config_id=NULL WHERE account_id=?", (account,))
+        app = FastAPI()
+        app.include_router(routes.router)
+        with patch.object(routes, "_is_auth", return_value=True):
+            html = TestClient(app).get(f"/admin/clients/{account}/setup").text
+        assert f'href="/admin/clients/{account}/settings" class="btn btn-secondary btn-sm"' in html
+
+    def test_web_portal_only_hides_the_chat_platform_not_the_database(self):
+        import re
+
+        page = (Path(__file__).resolve().parents[1] / "admin/templates/client_new.html").read_text(encoding="utf-8")
+        # The whole element the switch hides: from its opening tag to the </div> that closes it.
+        start = page.index('id="platform-section"')
+        depth, at = 1, page.index(">", start) + 1
+        for tag in re.finditer(r"<(/?)div\b", page[at:]):
+            depth += -1 if tag.group(1) else 1
+            if depth == 0:
+                hidden = page[start:at + tag.start()]
+                break
+        assert 'name="platform_type"' in hidden and 'name="db_config_id"' not in hidden
