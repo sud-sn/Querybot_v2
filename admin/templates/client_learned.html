@@ -166,7 +166,7 @@
         {% for value, title, detail in [
              ("legacy", "Today's pipeline", "As now. The new core does not run."),
              ("compare", "Both, side by side", "Today's answer, then the new core's answer to the same question, marked as a preview. Use this to compare them."),
-             ("core2", "The new core", "The new core answers; a question it cannot express goes to today's pipeline. Its answers are kept in the conversation's history, count toward the monthly limit, can be exported and take the readers' thumbs, like today's.")] %}
+             ("core2", "The new core", "The new core answers, from what Learn found; the Knowledge Base is not used. A question it cannot express gets a reply saying why; nothing goes to today's pipeline. Its answers are kept in the conversation's history, count toward the monthly limit, can be exported and take the readers' thumbs, like today's.")] %}
         <label class="lq-choice">
           <input type="radio" name="engine" value="{{ value }}" {% if engine == value %}checked{% endif %}>
           <span><strong>{{ title }}</strong><span class="lq-why">{{ detail }}</span></span>
