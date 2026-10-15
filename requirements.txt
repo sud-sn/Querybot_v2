@@ -60,16 +60,20 @@ python-dotenv>=1.0.0
 # Data masking
 faker>=25.0.0
 
-# Optional: NER-based person-name scrubbing for regulated tenants
-# (core/masking.py::scrub_person_names_ner). Catches patient/person names
-# embedded inside free-text KB sample values, which regex scrubbing
-# structurally cannot. Fully local — no data leaves the server. When not
-# installed, masking degrades gracefully to regex-only scrubbing.
+# The name recogniser (core/masking.py::scrub_person_names_ner): reads a
+# question of a workspace under compliance, after the name rules, for people's
+# names they miss ("john smith" in lower case, "Maria", "Okafor's"), and the
+# free text of a regulated industry's discovery samples. Fully local: no data
+# leaves the server. It needs an English spaCy model, which is not a PyPI
+# package: deploy/linux/update.sh and deploy/windows/update-querybot.ps1 fetch
+# the medium one, or by hand:
 #
-#   pip install presidio-analyzer
-#   python -m spacy download en_core_web_md   # or en_core_web_lg (larger, more accurate)
+#   python -m spacy download en_core_web_md
 #
-# presidio-analyzer>=2.2.0
+# QB_NER_MODEL names another (en_core_web_lg: as many names found on questions,
+# more business words taken for people, twice the memory). Without a model the
+# rules withhold names alone, and the compliance page says so.
+presidio-analyzer>=2.2.0
 
 # ── Forecasting: seasonal and exponential-smoothing models ───────────────────
 # A series of 12+ points is fitted with damped-trend exponential smoothing, and

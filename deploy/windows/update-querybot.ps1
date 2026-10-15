@@ -69,6 +69,16 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "The PDF browser could not be installed: scheduled emails will go without pictures and PDF."
     }
+    # The name recogniser's English model (core\masking.py): not a PyPI package, so fetched here once. Without it
+    # names typed in questions are withheld by the name rules alone, and the compliance page says so.
+    # Asked without writing to stderr: Windows PowerShell stops the script on a native command's redirected stderr.
+    & $Python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('en_core_web_md') else 1)"
+    if ($LASTEXITCODE -ne 0) {
+        & $Python -m spacy download en_core_web_md
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "The name recogniser's model could not be downloaded: names in questions are withheld by rules only. To retry: $Python -m spacy download en_core_web_md"
+        }
+    }
 } finally {
     if ($HasTask) {
         Write-Host "== Starting QueryBot"

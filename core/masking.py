@@ -30,13 +30,17 @@ and uses a seeded random.Random instance per cell.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac as _hmac_mod
 import logging
 import random
 import re
+import os
 import string
-from typing import Any
+import threading
+from functools import lru_cache
+from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 
@@ -191,57 +195,137 @@ def scrub_embedded_pii(text: str) -> str:
     return t
 
 
-# ── NER-backed person-name scrubbing (Presidio, optional) ────────────────────
+# ── NER-backed person-name scrubbing (Presidio) ──────────────────────────────
 # Person names have no regex-matchable shape — "Patient John Smith reported
 # dizziness" sails through scrub_embedded_pii with the name intact. Presidio
 # (Microsoft's local NER-based PII engine) closes exactly that gap. Scoped
 # deliberately tight:
 #   • PERSON entities only — LOCATION/ORG hit too many legitimate business
 #     dimension values (warehouse cities, company names) to scrub safely.
-#   • Regulated industries only, and only in the KB-discovery scrub pass
-#     (scrub_unmasked_free_text) — never in the query hot path.
-#   • Mixed-case narrative values only — ERP dimension values are typically
+#   • The question of a workspace under compliance (core2/service.py::question_scrubber: after the name rules, and
+#     given the workspace's own words so its members are kept), and the free text of a regulated industry's
+#     KB-discovery samples (scrub_unmasked_free_text) — never the rows of an answer.
+#   • Mixed-case text only — ERP dimension values are typically
 #     ALL CAPS ("MARTIN SUPPLY CO"), where NER person-detection is both
 #     unreliable and business-destructive.
-#   • Fully local (spaCy model in-process); graceful fallback to regex-only
-#     scrubbing when presidio/spaCy aren't installed.
+#   • Fully local (spaCy model in-process). The install brings it with the medium English model
+#     (deploy/linux/update.sh, deploy/windows/update-querybot.ps1); without them the name rules work alone, and the
+#     compliance page and proof pack say so (name_recogniser).
 
 _presidio_analyzer: Any = None  # None = not tried yet, False = unavailable
+_presidio_model = ""            # the spaCy model it reads with, once loaded
+_presidio_lock = threading.Lock()
+_presidio_loading = False       # a worker is loading it for a caller on the event loop
+_loading_lock = threading.Lock()
+# The medium model first: on questions it found the names the large one found, took fewer business words for people,
+# and holds half the memory (a process of about 375 MB against 760 MB). The small one has no word vectors: a last resort.
+_NER_MODELS = ("en_core_web_md", "en_core_web_lg", "en_core_web_sm")
+
+
+def _ner_model(installed: Callable[[str], bool]) -> str | None:
+    """The spaCy model to read names with: the one QB_NER_MODEL names (None when that one is not installed: another
+    is never put in its place), else the first of _NER_MODELS installed."""
+    named = os.environ.get("QB_NER_MODEL", "").strip()
+    if named:
+        return named if installed(named) else None
+    return next((m for m in _NER_MODELS if installed(m)), None)
+
+
+def ner_model_wanted() -> str:
+    """The model an install should bring: the one QB_NER_MODEL names, else the medium English one."""
+    return os.environ.get("QB_NER_MODEL", "").strip() or _NER_MODELS[0]
+
+
+def _load_presidio() -> tuple[Any, str]:
+    """Presidio's engine and the spaCy model it reads with; raises when either is missing. Seconds of work: spaCy,
+    Presidio and the model are read from disk."""
+    import importlib.util
+    from presidio_analyzer import AnalyzerEngine
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+
+    model = _ner_model(lambda name: importlib.util.find_spec(name) is not None)
+    if model is None:
+        named = os.environ.get("QB_NER_MODEL", "").strip()
+        raise ImportError(f"the spaCy model {named} that QB_NER_MODEL names is not installed" if named
+                          else "no spaCy English model installed")
+    provider = NlpEngineProvider(nlp_configuration={
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": model}],
+    })
+    return AnalyzerEngine(nlp_engine=provider.create_engine()), model
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
+def _load_in_background() -> None:
+    """Load the model in a worker, once: the event loop is never held for the seconds it takes."""
+    global _presidio_loading
+    with _loading_lock:
+        if _presidio_loading:
+            return
+        _presidio_loading = True
+
+    def load() -> None:
+        global _presidio_loading
+        try:
+            _get_presidio()
+        finally:
+            _presidio_loading = False
+
+    log.info("masking: the name recogniser is loading in the background; the name rules work alone until it is ready")
+    threading.Thread(target=load, name="name-recogniser-load", daemon=True).start()
 
 
 def _get_presidio():
-    """Lazy Presidio AnalyzerEngine singleton; None when unavailable."""
-    global _presidio_analyzer
+    """Lazy Presidio AnalyzerEngine singleton; None when unavailable. On the event loop, before it is loaded: None
+    while a worker loads it (the name rules work alone for that question). Elsewhere a caller waits for it."""
+    global _presidio_analyzer, _presidio_model
     if _presidio_analyzer is not None:
         return _presidio_analyzer or None
-    try:
-        import importlib.util
-        from presidio_analyzer import AnalyzerEngine
-        from presidio_analyzer.nlp_engine import NlpEngineProvider
-
-        model = next(
-            (m for m in ("en_core_web_lg", "en_core_web_md", "en_core_web_sm")
-             if importlib.util.find_spec(m)),
-            None,
-        )
-        if model is None:
-            raise ImportError("no spaCy English model installed")
-        provider = NlpEngineProvider(nlp_configuration={
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": model}],
-        })
-        _presidio_analyzer = AnalyzerEngine(nlp_engine=provider.create_engine())
-        log.info("masking: Presidio NER person-name scrubbing enabled (spaCy model=%s)", model)
-        return _presidio_analyzer
-    except Exception as exc:
-        log.info("masking: Presidio unavailable (%s) — regex-only free-text scrubbing", exc)
-        _presidio_analyzer = False
+    if _on_event_loop():
+        _load_in_background()
         return None
+    with _presidio_lock:                 # loaded once, though the first questions arrive together
+        if _presidio_analyzer is not None:
+            return _presidio_analyzer or None
+        try:
+            analyzer, model = _load_presidio()
+            _presidio_model = model
+            _presidio_analyzer = analyzer
+            log.info("masking: Presidio NER person-name scrubbing enabled (spaCy model=%s)", model)
+            return _presidio_analyzer
+        except Exception as exc:
+            log.warning("masking: the name recogniser is unavailable (%s); names typed in questions are withheld "
+                        "by the name rules alone", exc)
+            _presidio_analyzer = False
+            return None
 
 
-def scrub_person_names_ner(text: str, analyzer=None) -> str:
+def name_recogniser() -> str:
+    """The spaCy model a question under compliance is also read with for people's names, or "" when the name rules
+    withhold them alone (Presidio or its model is not installed). Loads the model the first time."""
+    if _get_presidio() is None:
+        return ""
+    return _presidio_model or "spaCy"
+
+
+def scrub_person_names_ner(text: str, analyzer=None, known: set[str] | frozenset[str] = frozenset(),
+                           phrases: set[str] | frozenset[str] = frozenset()) -> str:
     """
     Replace person-name spans in narrative text with [PERSON].
+
+    Given the workspace's words (``known`` and ``phrases``, as scrub_typed_names takes them), a span is kept that
+    lies inside a member's or a place's whole name in the text ("Johnson" of "Johnson & Johnson", a store called
+    Clinton, "Texas"), or whose every word is the workspace's own or a common word of a question (a month, "Fills"),
+    unless a title stands before it ("Mrs. Price"). One word of a member does not make a longer span safe: "Mary
+    Franklin" is withheld though a store is called Franklin. Without them every span is withheld, as for a discovery
+    sample's free text. A placeholder a scrub wrote ("[PERSON]", "[EMAIL]") is never read as a name.
 
     Best-effort: returns text unchanged when Presidio is unavailable, the
     value doesn't look like narrative prose (no lowercase letters), or
@@ -249,27 +333,95 @@ def scrub_person_names_ner(text: str, analyzer=None) -> str:
     """
     if not text or not isinstance(text, str):
         return text
+    return _replace_names(text, _recognised_name_spans(text, analyzer, known, phrases))
+
+
+def scrub_names(text: str, known: set[str] | frozenset[str] = frozenset(),
+                phrases: set[str] | frozenset[str] = frozenset(), analyzer=None) -> str:
+    """
+    A person's name a reader typed, withheld by the name rules (scrub_typed_names) and the name recogniser
+    (scrub_person_names_ner) together: both read the question as typed, and what either takes for a name becomes
+    [PERSON]. Neither reads the other's output: the recogniser taking "John" alone would leave the rules no "Smith,
+    John" to see, and the rules withholding "Mary Ann" would leave the recogniser no "Mary Ann Price".
+    """
+    if not text or not isinstance(text, str):
+        return text
+    return _replace_names(text, _typed_name_spans(text, known, phrases)
+                          + _recognised_name_spans(text, analyzer, known, phrases))
+
+
+def _recognised_name_spans(text: str, analyzer, known: set[str] | frozenset[str],
+                           phrases: set[str] | frozenset[str]) -> list[tuple[int, int]]:
+    """What the name recogniser takes for a person's name, less what the workspace's words keep (see
+    scrub_person_names_ner); none where it is not installed or the text has no lower case."""
     # ALL-CAPS values are ERP codes/dimension labels, not prose — NER is
     # unreliable there and a false positive corrupts a legitimate sample.
     if not any(c.islower() for c in text):
-        return text
+        return []
     analyzer = analyzer if analyzer is not None else _get_presidio()
     if analyzer is None:
-        return text
+        return []
     try:
         results = analyzer.analyze(
             text=text, entities=["PERSON"], language="en", score_threshold=0.4,
         )
-        # Replace from the end so earlier span offsets stay valid.
-        for r in sorted(results, key=lambda item: item.start, reverse=True):
-            text = text[:r.start] + "[PERSON]" + text[r.end:]
-        return text
+        spare = bool(known or phrases)
+        named = _named_spans(text, phrases) if spare else []
+        spans = []
+        for r in results:
+            for start, end in _outside_placeholders(text, r.start, r.end):
+                if spare and (any(a <= start and end <= b for a, b in named)
+                              or (not _TITLE_BEFORE.search(text, 0, start)
+                                  and all(_own_word(w, known) for w in _WORD.findall(text[start:end])))):
+                    continue
+                spans.append((start, end))
+        return spans
     except Exception as exc:
         log.debug("masking: NER scrub skipped (%s)", exc)
-        return text
+        return []
 
 
-def scrub_question_pii(text: str, industry: str = "") -> tuple[str, bool]:
+def _replace_names(text: str, spans: list[tuple[int, int]]) -> str:
+    """Each span (merged where they overlap) becomes [PERSON], a possessive kept ("[PERSON]'s claim"); from the end,
+    so earlier offsets stay valid."""
+    for start, end in reversed(_merged(spans)):
+        tail = re.search(r"['’]s$", text[start:end])
+        text = text[:start] + "[PERSON]" + (tail.group(0) if tail else "") + text[end:]
+    return text
+
+
+# The placeholders the scrubs write. Nothing else in square brackets is one: "[MARIA]" is a name a reader typed.
+_PLACEHOLDER = re.compile(r"\[(?:PERSON|EMAIL|PHONE|SSN|DATE|MASKED|REDACTED)\]")
+
+
+def _outside_placeholders(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The parts of text[start:end] outside the placeholders a scrub put there, each from its first word to its
+    last; none when it has no word."""
+    parts, at = [], start
+    for m in _PLACEHOLDER.finditer(text):
+        if m.end() > start and m.start() < end:
+            parts.append((at, max(at, m.start())))
+            at = max(at, m.end())
+    parts.append((at, end))
+    out = []
+    for a, b in parts:
+        found = list(_WORD.finditer(text, a, b))
+        if found:
+            out.append((found[0].start(), found[-1].end()))
+    return out
+
+
+def _merged(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if out and start < out[-1][1]:
+            out[-1] = (out[-1][0], max(end, out[-1][1]))
+        else:
+            out.append((start, end))
+    return out
+
+
+def scrub_question_pii(text: str, industry: str = "", names: bool = True) -> tuple[str, bool]:
     """
     Scrub PII the USER typed into their question before it reaches any LLM
     prompt (SQL generation, off-topic classifier, retries).
@@ -288,6 +440,9 @@ def scrub_question_pii(text: str, industry: str = "") -> tuple[str, bool]:
         subsequent calls are milliseconds on question-length text. Falls
         back to regex-only when Presidio isn't installed.
 
+    ``names=False`` leaves the name recogniser to the caller: the new core runs it after its name rules, which
+    would no longer see "Smith, John" once the recogniser had taken "John".
+
     Returns (scrubbed_text, changed). Idempotent — placeholders like
     [EMAIL] contain nothing the patterns re-match, so scrubbing at both the
     dispatcher and pipeline choke points is safe.
@@ -297,7 +452,7 @@ def scrub_question_pii(text: str, industry: str = "") -> tuple[str, bool]:
     t = _RE_EMAIL_SUB.sub("[EMAIL]", text)
     t = _RE_SSN_SUB.sub("[SSN]", t)
     t = _RE_PHONE_SUB.sub("[PHONE]", t)
-    if industry in ("banking", "healthcare_pharmacy"):
+    if names and industry in ("banking", "healthcare_pharmacy"):
         t = scrub_person_names_ner(t)
     return t, t != text
 
@@ -341,7 +496,59 @@ new york city|united states|united kingdom|new zealand|south africa|saudi arabia
 nova scotia|new brunswick|prince edward island|newfoundland and labrador|ontario|quebec|alberta|manitoba|saskatchewan
 """.replace("\n", "").split("|"))
 _TITLES = frozenset({"mr", "mrs", "ms", "miss", "mx", "dr", "prof", "sir", "madam"})
+# A title just before a span: whatever follows it is a person's name, a word of the workspace or not ("Mrs. Price").
+_TITLE_BEFORE = re.compile(r"(?<!\w)(?:" + "|".join(sorted(_TITLES)) + r")\.?\s+$", re.IGNORECASE)
 _WORD = re.compile(r"[^\W\d_](?:[^\W_]|['’\-])*")
+
+
+def _bare(word: str) -> str:
+    return re.sub(r"['’]s$", "", word)
+
+
+def _lowered(word: str) -> str:
+    return _bare(word).casefold()
+
+
+def _own_word(word: str, known: set[str] | frozenset[str]) -> bool:
+    """A word of the question rather than of a name: the workspace's own (``known``), a common word of business
+    questions, a month, a day, a question word or a title."""
+    w = _lowered(word)
+    forms = {w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("es") else w}
+    return any(f in _NOT_A_NAME or f in _COMMON or f in known for f in forms) or w in _TITLES
+
+
+def _phrase_key(text: str) -> str:
+    """A name as the scrubbers compare it: its words, in lower case, without a possessive or punctuation
+    ("Dr. Reddy's" -> "dr reddy", "Johnson & Johnson" -> "johnson johnson")."""
+    return " ".join(_lowered(w) for w in _WORD.findall(text))
+
+
+@lru_cache(maxsize=32)
+def _kept_phrase_keys(phrases: frozenset[str]) -> frozenset[str]:
+    return frozenset(k for k in map(_phrase_key, phrases) if k)
+
+
+def _phrase_keys(phrases: set[str] | frozenset[str]) -> frozenset[str]:
+    """The members' names as compared, kept per set: a workspace's set is the same object question after question."""
+    if isinstance(phrases, frozenset):
+        return _kept_phrase_keys(phrases)
+    return frozenset(k for k in map(_phrase_key, phrases) if k)
+
+
+def _named_spans(text: str, phrases: set[str] | frozenset[str]) -> list[tuple[int, int]]:
+    """Where a member's or a place's whole name stands in the text: (start, end) of each run of words that is one,
+    the longest at each word."""
+    keys = _phrase_keys(phrases)
+    words = list(_WORD.finditer(text))
+    said = [_lowered(m.group(0)) for m in words]
+    out = []
+    for i in range(len(words)):
+        for n in range(min(6, len(words) - i), 0, -1):
+            key = " ".join(said[i:i + n])
+            if key in keys or key in _PLACES:
+                out.append((words[i].start(), words[i + n - 1].end()))
+                break
+    return out
 
 
 def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
@@ -353,24 +560,27 @@ def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
     Smith", "J. Smith"), a title and a name ("Dr Patel"), or "Smith, John". The run's own words of the question are
     set aside first: a word the workspace knows (``known``: what its fields, metrics and tables are called, in lower
     case, singular or plural), a common word of business questions, a month, a day or a question word. What is left
-    is a name unless it is a member the workspace may list (``phrases``: the member's whole name, in lower case) or a
-    place ("New York"). One word of a member does not make a name safe: "Mary Franklin" is withheld though a store
-    is called Franklin. A word with a digit is no name's.
+    is a name unless it is a member the workspace may list (``phrases``: the member's whole name, compared by its
+    words in lower case without a possessive or punctuation) or a place ("New York"); a title and a name are kept only
+    when together they are a member's whole name ("Dr. Reddy's"). One word of a member does not make a name safe:
+    "Mary Franklin" or "Dr Franklin" is withheld though a store is called Franklin. A word with a digit is no name's.
 
     Best effort, as NER is. It misses a name typed in lower case, or one surname alone ("Smith's refills"): the
-    optional NER library, when installed, catches some of those. A phrase it wrongly withholds is a word the planner
+    name recogniser (scrub_person_names_ner), run after these rules, catches some of those. A phrase it wrongly withholds is a word the planner
     could not have filtered on anyway (only a quoted member, matched before scrubbing, is), but it is lost from the
     question as kept in history.
     """
     if not text or not isinstance(text, str):
         return text
+    return _replace_names(text, _typed_name_spans(text, known, phrases))
+
+
+def _typed_name_spans(text: str, known: set[str] | frozenset[str],
+                      phrases: set[str] | frozenset[str]) -> list[tuple[int, int]]:
+    """Where scrub_typed_names finds a person's name: (start, end) of each."""
     words = [(m.start(), m.end(), m.group(0)) for m in _WORD.finditer(text)]
-
-    def bare(word: str) -> str:
-        return re.sub(r"['’]s$", "", word)
-
-    def lowered(word: str) -> str:
-        return bare(word).casefold()
+    keys = _phrase_keys(phrases)
+    bare, lowered = _bare, _lowered
 
     def initial(word: str) -> bool:
         return len(word) == 1 and word.isupper()
@@ -384,9 +594,7 @@ def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
         return any(c.islower() for c in base[1:])
 
     def own_word(word: str) -> bool:
-        w = lowered(word)
-        forms = {w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("es") else w}
-        return bool(forms & (_NOT_A_NAME | _COMMON | set(known))) or w in _TITLES
+        return _own_word(word, known)
 
     def joined(i: int, j: int) -> bool:
         """Words i and j (j = i + 1) are one run: only spaces between them, or an initial's full stop."""
@@ -399,7 +607,7 @@ def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
         at = 0
         while at < len(said):
             longest = next((n for n in range(min(5, len(said) - at), 0, -1)
-                            if " ".join(said[at:at + n]) in phrases or " ".join(said[at:at + n]) in _PLACES), 0)
+                            if " ".join(said[at:at + n]) in keys or " ".join(said[at:at + n]) in _PLACES), 0)
             if longest:
                 at += longest
             elif own_word(words[run[at]][2]):
@@ -424,11 +632,13 @@ def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
         # The question's own words at either end of the run are the question's ("Avery Quill Sales").
         while run and own_word(words[run[0]][2]) and not titled:
             run.pop(0)
-        while run and own_word(words[run[-1]][2]):
+        # A title keeps the word after it, the workspace's or not: "Mrs. Price" is a person though "price" is a field.
+        while len(run) > (1 if titled else 0) and own_word(words[run[-1]][2]):
             run.pop()
         names = [k for k in run if capital(words[k][2])]
         if titled and names:
-            spans.append((words[i][0], words[run[-1]][1]))
+            if " ".join(lowered(words[k][2]) for k in [i, *run]) not in keys:
+                spans.append((words[i][0], words[run[-1]][1]))
         elif len(run) >= 2 and names and not safe(run):
             spans.append((words[run[0]][0], words[run[-1]][1]))
         elif len(run) == 1 and names and j + 1 < len(words) and capital(words[j + 1][2]) \
@@ -436,10 +646,7 @@ def scrub_typed_names(text: str, known: set[str] | frozenset[str] = frozenset(),
             spans.append((words[run[0]][0], words[j + 1][1]))      # "Smith, John"
             j += 1
         i = j + 1
-    for start, end in reversed(spans):
-        tail = re.search(r"['’]s$", text[start:end])
-        text = text[:start] + "[PERSON]" + (tail.group(0) if tail else "") + text[end:]
-    return text
+    return spans
 
 
 def scrub_unmasked_free_text(

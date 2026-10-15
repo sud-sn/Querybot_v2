@@ -29,6 +29,12 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Write-Host "Installing the name recogniser's English model..."
+& $VenvPython -m spacy download en_core_web_md
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "The name recogniser's model could not be downloaded: names typed in questions will be withheld by rules only. To retry: $VenvPython -m spacy download en_core_web_md"
+}
+
 Write-Host "Checking Microsoft ODBC Driver 18..."
 $Drivers = & $VenvPython -c "import pyodbc; print('|'.join(pyodbc.drivers()))"
 if ($Drivers -notmatch "ODBC Driver 18 for SQL Server") {

@@ -1661,17 +1661,19 @@ def question_scrubber(account_id: str, model: SemanticModel | None = None) -> Ca
 
     The agent runtime's rule (core/agent_runtime.py): regulated, unprovisioned, or any
     mode but standard. It may widen, never narrow. The same tenants keep member values
-    from the AI. Emails, phone numbers and social security numbers; a person's name by the
-    optional NER library when it is installed, in every industry; and a name-shaped phrase
-    that is not the workspace's own words (``model``, the answering one when not given)
-    whether or not it is.
+    from the AI. Emails, phone numbers and social security numbers; then a name-shaped
+    phrase that is not the workspace's own words (``model``, the answering one when not
+    given) and, in every industry, what the name recogniser (Presidio) takes for a person
+    where it is installed: both read the question as typed, and what either finds is
+    withheld (core/masking.py::scrub_names). Both keep the workspace's own names: its
+    members, places and words.
     """
     import store
     from core.compliance.policy_engine import under_compliance
 
     if not under_compliance(account_id):
         return None
-    from core.masking import scrub_person_names_ner, scrub_question_pii, scrub_typed_names
+    from core.masking import scrub_names, scrub_question_pii
 
     industry = str((store.get_compliance_profile(account_id) or {}).get("industry") or "")
     read: list[tuple[frozenset[str], frozenset[str]]] = []
@@ -1693,11 +1695,9 @@ def question_scrubber(account_id: str, model: SemanticModel | None = None) -> Ca
         return read[0]
 
     def scrub(text: str) -> str:
-        said = scrub_question_pii(text, industry)[0]
-        if industry not in ("banking", "healthcare_pharmacy"):
-            said = scrub_person_names_ner(said)     # a no-op where the library is not installed
+        said = scrub_question_pii(text, industry, names=False)[0]
         known, phrases = vocabulary()
-        return scrub_typed_names(said, known, phrases)
+        return scrub_names(said, known, phrases)
 
     return scrub
 
@@ -1728,9 +1728,11 @@ def _vocabulary(model: SemanticModel) -> tuple[frozenset[str], frozenset[str]]:
         if not people_column(c) and c.values_allowed and c.profile and c.profile.top:
             for v in c.profile.top:
                 if isinstance(v.value, str):
-                    # The member's name, and each run of its words ("Northline Distribution" of "... 58").
-                    phrases.update(" ".join(w.casefold() for w in run.split())
-                                   for run in [v.value, *re.split(r"[^\w\s'’\-]|\d+", v.value)] if run.strip())
+                    # The member's whole name, and each run of two or more of its words ("Northline Distribution"
+                    # of "... 58"). Never one word cut from it: "Spencer" alone is a person's name though a
+                    # supplier is called Marks & Spencer.
+                    runs = [v.value, *(r for r in re.split(r"[^\w\s'’\-]|\d+", v.value) if len(r.split()) >= 2)]
+                    phrases.update(" ".join(w.casefold() for w in run.split()) for run in runs if run.strip())
     for m in model.measures.values():
         add(m.slug, m.business_name, *[w for ws in m.synonyms.values() for w in ws])
     for e in model.entities.values():

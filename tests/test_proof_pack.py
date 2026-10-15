@@ -449,7 +449,7 @@ class TestTheWholePack(ProofPackCase):
 
     def test_a_pack_carries_every_section_and_a_fingerprint(self):
         pack = build_proof_pack(self.account_id, days=30)
-        for section in ("egress", "calls", "refusals", "grounding", "integrity"):
+        for section in ("egress", "names", "calls", "refusals", "grounding", "integrity"):
             self.assertIn(section, pack, section)
         self.assertEqual(pack["pack_version"], PACK_VERSION)
         self.assertEqual(pack["account_id"], self.account_id)
@@ -486,9 +486,10 @@ class TestTheWholePack(ProofPackCase):
         self._call(manifest=self._manifest())
         self._call(status="blocked", reason="regulated tenant")
         lines = summary_lines(build_proof_pack(self.account_id, days=30))
-        self.assertEqual(len(lines), 5)
+        self.assertEqual(len(lines), 6)
         joined = " ".join(lines)
         self.assertIn("No external model endpoint", joined)
+        self.assertIn("names typed in", joined)
         self.assertIn("1 of 1", joined)
         self.assertIn("1 model calls were refused", joined)
 

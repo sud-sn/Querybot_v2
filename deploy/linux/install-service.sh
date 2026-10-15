@@ -34,7 +34,8 @@ done
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$APP_DIR/venv/bin/python"
 [ -x "$PY" ] || { echo "No virtual environment at $APP_DIR/venv. Create it first:" >&2
-                  echo "  python3 -m venv venv && venv/bin/pip install -r requirements.lock" >&2; exit 1; }
+                  echo "  python3 -m venv venv && venv/bin/pip install -r requirements.lock" >&2
+                  echo "  venv/bin/python -m spacy download en_core_web_md" >&2; exit 1; }
 id "$RUN_USER" >/dev/null 2>&1 || { echo "No user $RUN_USER on this server (--user)." >&2; exit 1; }
 RUN_GROUP="$(id -gn "$RUN_USER")"
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"

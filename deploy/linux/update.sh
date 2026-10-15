@@ -60,6 +60,16 @@ PYEOF
 else
   echo "!! Chromium could not be downloaded; scheduled emails will go without pictures and PDF." >&2
 fi
+# The name recogniser's English model (core/masking.py). Not a PyPI package, so fetched here once. Without it names
+# typed in questions are withheld by the name rules alone, and the compliance page says so.
+if ! "$PY" -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('en_core_web_md') else 1)"; then
+  if "$PY" -m spacy download en_core_web_md >/dev/null 2>&1; then
+    echo "== Installed the name recogniser's model (en_core_web_md)"
+  else
+    echo "!! The name recogniser's model could not be downloaded; names in questions are withheld by rules only." >&2
+    echo "     To retry: $PY -m spacy download en_core_web_md" >&2
+  fi
+fi
 
 echo "== Restarting $NAME"
 sudo systemctl restart "$NAME"

@@ -90,6 +90,33 @@ def egress_section(account_id: str) -> dict:
     }
 
 
+def names_section(account_id: str) -> dict:
+    """How a person's name typed into a question is kept from the AI: by the name rules alone, or by them and by the
+    name recogniser (Presidio) where it is installed on this server (core/masking.py). The compliance page reads the
+    same section, so the page and the pack cannot disagree."""
+    from core.compliance.policy_engine import under_compliance
+    from core.masking import name_recogniser, ner_model_wanted
+
+    if not under_compliance(account_id):
+        return {"applies": False, "rules": False, "recogniser": False, "model": "", "install": "",
+                "statement": "This workspace is not under compliance: names typed in its questions are not withheld."}
+    model = name_recogniser()
+    return {
+        "applies": True,
+        "rules": True,
+        "recogniser": bool(model),
+        "model": model,
+        # What turns it on where it is off: the model QB_NER_MODEL names, else the medium English one.
+        "install": "" if model else f"python -m spacy download {ner_model_wanted()}",
+        "statement": (
+            f"People's names typed in questions are withheld before any AI call by rules and by a name recogniser "
+            f"that runs on this server ({model})." if model else
+            "People's names typed in questions are withheld before any AI call by rules only: the name recogniser "
+            "is not installed on this server."
+        ),
+    }
+
+
 def calls_section(account_id: str, days: int) -> dict:
     """Every model call in the period, and what each one sent.
 
@@ -453,6 +480,7 @@ def build_proof_pack(account_id: str, *, days: int = 30) -> dict[str, Any]:
     sections: dict[str, Any] = {}
     for name, build in (
         ("egress", lambda: egress_section(account_id)),
+        ("names", lambda: names_section(account_id)),
         ("calls", lambda: calls_section(account_id, days)),
         ("refusals", lambda: refusals_section(account_id, days)),
         ("grounding", lambda: grounding_section(account_id)),
@@ -482,7 +510,7 @@ def summary_lines(pack: dict) -> list[str]:
     drift away from the evidence beneath it.
     """
     lines: list[str] = []
-    for name in ("egress", "calls", "refusals", "grounding", "integrity"):
+    for name in ("egress", "names", "calls", "refusals", "grounding", "integrity"):
         section = pack.get(name) or {}
         statement = section.get("statement")
         if statement:

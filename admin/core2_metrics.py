@@ -12,6 +12,7 @@ decision, so it answers from the next question and survives the next Learn.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 from typing import Any
@@ -200,7 +201,8 @@ async def measure_describe(request: Request, account_id: str):
 
     # Under compliance the admin's words reach the AI as a reader's question would: personal data scrubbed.
     scrub = question_scrubber(account_id, model=model)
-    said = scrub(description) if scrub else description
+    # In a worker: the name recogniser may still be loading its model after a restart.
+    said = await asyncio.to_thread(scrub, description) if scrub else description
     try:
         complete = metric_writer(account_id, client, description=said)
     except Exception as exc:  # noqa: BLE001 - a workspace with no AI configured is told so

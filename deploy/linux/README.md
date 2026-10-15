@@ -47,7 +47,8 @@ bash deploy/linux/update.sh
 It copies the SQLite database (`data/querybot.db.bak-<time>`, taken with
 SQLite's backup so writes not yet folded into the file are kept), sets the
 local branch to the branch on GitHub, installs `requirements.lock`, installs
-the browser that draws scheduled dashboards as pictures and PDF, restarts the
+the browser that draws scheduled dashboards as pictures and PDF and the name
+recogniser's English model (`en_core_web_md`, once), restarts the
 service, checks `/health` and shows any error logged since. Files changed on
 the server are kept unless the update changes them too: git then stops and
 nothing changes. The line to go back to where the server was is printed at

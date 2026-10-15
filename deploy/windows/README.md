@@ -208,8 +208,9 @@ powershell -ExecutionPolicy Bypass -File .\deploy\windows\update-querybot.ps1
 
 It stops QueryBot, copies the SQLite database (`data\querybot.db.bak-<time>`,
 with the writes not yet folded into the file), sets the local branch to the
-branch on GitHub, installs `requirements-windows.txt` and the PDF browser,
-starts QueryBot again and checks it. Files changed on the server are kept
+branch on GitHub, installs `requirements-windows.txt`, the PDF browser and the
+name recogniser's English model (`en_core_web_md`, once), starts QueryBot again
+and checks it. Files changed on the server are kept
 unless the update changes them too: git then stops and nothing changes. The
 line to go back to where the server was is printed at the end.
 

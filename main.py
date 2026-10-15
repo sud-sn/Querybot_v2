@@ -177,6 +177,24 @@ async def startup() -> None:
     from core.background_tasks import spawn
     spawn(_warmup(), name="vector-store-warmup")
 
+    # The name recogniser (core/masking.py) loads its language model on the first question it reads, in 1-4 s; it is
+    # loaded here instead, off the event loop, when some workspace is under compliance (only theirs are read).
+    async def _warm_name_recogniser():
+        try:
+            from core.compliance.policy_engine import under_compliance
+            from core.masking import name_recogniser
+
+            def wanted() -> bool:
+                return any(under_compliance(str(c.get("account_id") or "")) for c in store.list_clients())
+
+            if await asyncio.to_thread(wanted):
+                model = await asyncio.to_thread(name_recogniser)
+                log.info("Name recogniser warm-up complete: %s", model or "not installed, the name rules work alone")
+        except Exception as exc:
+            log.warning("Name recogniser warm-up failed (non-fatal): %s", exc)
+
+    spawn(_warm_name_recogniser(), name="name-recogniser-warmup")
+
     # Notify active Teams users the service is back up — symmetric to the
     # "signing off" notification in the shutdown handler below.
     try:

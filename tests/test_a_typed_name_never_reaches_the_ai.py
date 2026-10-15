@@ -5,7 +5,8 @@ name ("why was John Smith's claim denied?") was found only by Presidio, an optio
 and only for a pharmacy or a bank. On a default install every typed name went to the AI. Now, in every workspace
 under compliance and every industry, a name-shaped phrase -- two or more capitalised words that are not the
 workspace's own words (its fields, metrics and tables, months, question words), or a title and a name ("Dr Patel")
--- is replaced by [PERSON] before the question reaches the AI. Presidio, when installed, still runs first.
+-- is replaced by [PERSON] before the question reaches the AI. Presidio, when installed, runs after these rules
+(tests/test_the_name_recogniser_works_with_the_rules.py).
 
 Invented names; nothing is sent anywhere.
 """

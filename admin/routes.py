@@ -3480,9 +3480,23 @@ async def compliance_page(request: Request, account_id: str):
         "egress_rows": egress_rows,
         "llm_audit_enabled": bool(client.get("enable_llm_audit")) or _audit_forced(account_id),
         "egress": _egress_describe(account_id),
+        "names": await asyncio.to_thread(_names_withheld, account_id),    # may load the name recogniser
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
     })
+
+
+def _names_withheld(account_id: str) -> dict:
+    """How names typed in questions are kept from the AI, as the proof pack states it; a page that cannot tell says
+    so rather than failing."""
+    from core.compliance.proof_pack import names_section
+
+    try:
+        return names_section(account_id)
+    except Exception as exc:  # noqa: BLE001 - the rest of the compliance page still renders
+        log.warning("compliance: could not tell how names are withheld for %s: %s", account_id, exc)
+        return {"applies": True, "rules": True, "recogniser": False, "model": "", "install": "",
+                "statement": "Could not tell whether the name recogniser is installed; see the server log."}
 
 
 def _egress_describe(account_id: str) -> dict:
@@ -3881,7 +3895,8 @@ async def compliance_proof_pack(request: Request, account_id: str):
         days = max(1, min(365, int(request.query_params.get("days") or 30)))
     except (TypeError, ValueError):
         days = 30
-    pack = build_proof_pack(account_id, days=days)
+    # In a worker: its names section may load the name recogniser, seconds the event loop must not wait.
+    pack = await asyncio.to_thread(build_proof_pack, account_id, days=days)
     filename = f"solviz-proof-pack-{account_id}-{pack['generated_at'][:10]}.json"
     return JSONResponse(
         pack,

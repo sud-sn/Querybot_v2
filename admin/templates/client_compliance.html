@@ -361,6 +361,17 @@
             {% if trust.last_blocked_at %}· last: {{ trust.last_blocked_at }}{% endif %}</td>
         </tr>
         <tr>
+          <td>People's names typed in questions</td>
+          <td>
+            {% if not names.applies %}<span class="tag">Not withheld (standard)</span>
+            {% elif names.recogniser %}<span class="tag" style="background:var(--green-light);color:var(--green)">Rules + name recogniser</span>
+            {% else %}<span class="tag" style="background:var(--amber-light);color:var(--amber)">Rules only</span>{% endif %}
+          </td>
+          <td style="font-size:var(--font-sm)">{{ names.statement }}
+            {% if names.install %} To add it, run <code>pip install presidio-analyzer</code> and
+            <code>{{ names.install }}</code> on the server, then restart Solviz.{% endif %}</td>
+        </tr>
+        <tr>
           <td>KB sample rows sent to the model</td>
           <td>
             {% if egress_summary.real_sample_count > 0 %}
