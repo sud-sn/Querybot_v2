@@ -965,6 +965,171 @@ def _documents(model: SemanticModel, table: str) -> list[str]:
     return out
 
 
+def _grouped_tables(model: SemanticModel, plan: Plan) -> set[str]:
+    """The tables a plan's groupings and member conditions are on."""
+    out: set[str] = set()
+    for slug in [*plan.group_by, *(f.field for f in plan.filters)]:
+        found = find_slug(model, slug) if isinstance(slug, str) else None
+        if found is None:
+            continue
+        kind, thing = found
+        if kind == "entity" and isinstance(thing, Entity) and thing.table in model.tables:
+            out.add(thing.table)
+        elif kind == "attribute" and isinstance(thing, Attribute) and thing.column in model.columns:
+            out.add(model.columns[thing.column].table)
+    return out
+
+
+def _out_of_reach(model: SemanticModel, plan: Plan, table: str) -> set[str]:
+    """The tables of the plan's groupings and conditions a table's rows have no link to, not even one waiting for
+    an admin (a patient has no doctor of their own: the prescriptions name both)."""
+    return {t for t in _grouped_tables(model, plan)
+            if t != table and not P.all_paths(model, table, t, unconfirmed=True) and not P.crossings(model, table, t)}
+
+
+def _ways(model: SemanticModel, start: str, goal: str) -> list[P.Path]:
+    """The routes from a table's rows to another table: links, or across one bridge (a film's categories), where
+    a row counts under each member it reaches; a count of distinct members stays one each."""
+    return P.all_paths(model, start, goal) or P.crossings(model, start, goal)
+
+
+def _one_each(column: Column | None) -> bool:
+    """A column with a value of its own for each row: the table's key, or one Learn found unique."""
+    p = column.profile if column is not None else None
+    return column is not None and (column.role == "key" or bool(
+        p and p.rows and not p.distinct_is_approx and p.distinct == p.non_null == p.rows))
+
+
+def _counts_members(model: SemanticModel, measure: Measure) -> bool:
+    """A count of a table's own members: its rows, or the distinct values of a column (its id)."""
+    expr = measure.expr
+    if not isinstance(expr, AggExpr) or expr.agg not in ("count", "count_distinct") or expr.filters \
+            or measure.filters or measure.table not in model.tables:
+        return False
+    if expr.agg == "count":
+        return expr.column is None and (expr.table or measure.table) == measure.table
+    column = model.columns.get(expr.column or "")
+    return column is not None and column.table == measure.table
+
+
+def _lands_on_members(model: SemanticModel, measure: Measure, join: Join) -> bool:
+    """A link into the counted table that names its members one to one: by the counted id, or by another value
+    each member has one of (a prescriber's NPI for their id)."""
+    expr = measure.expr
+    if len(join.to_columns) != 1 or len(join.from_columns) != 1:
+        return False
+    target = model.columns.get(join.to_columns[0])
+    if expr.agg == "count":
+        return join.to_unique or _one_each(target)
+    counted = model.columns.get(expr.column or "")
+    return join.to_columns[0] == expr.column or (
+        (join.to_unique or _one_each(target)) and _one_each(counted))
+
+
+_ROWS_FIRST = {"fact": 0, "snapshot": 0, "bridge": 1}
+_PLANNED_WORDS = frozenset({"budget", "target", "forecast", "plan", "quota", "goal"})
+_HAPPENED = {"event": 0, "due": 1, "validity": 1, "snapshot": 2, "planned": 3}
+
+
+def _happened(model: SemanticModel, table: Table) -> int:
+    """How much a table's rows are what happened: events first, then balances, then plans and budgets."""
+    from core2.bootstrap import names
+
+    if {names.singular(w) for w in names.tokens(table.business_name or table.name)} & _PLANNED_WORDS:
+        return 3
+    own = model.date_roles.get(table.default_date or "")
+    return _HAPPENED.get(own.kind, 2) if own else 2
+
+
+def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, allowed: set[str] | None = None,
+                      timed: bool = False) -> tuple[MeasureExpr, str, str] | None:
+    """A count of a table's members by something its rows do not reach, counted on the rows that reach both.
+
+    "The patient count by each doctor": a patient has no doctor of their own, but each prescription names its
+    patient and its prescriber; the patients of a doctor are the distinct patients on that doctor's prescriptions.
+    The same for any business and any two lists a table of rows ties together, however many links away: the
+    customers of a product are the distinct customers on the order lines of that product (each line's order
+    names the customer), the categories a customer bought from the distinct categories of their lines' products,
+    the bookings of a technician the distinct bookings on their visits. Over a period, those rows' own date.
+
+    Of several tables of rows that reach both, rows of events first, then the nearest, then the most trusted
+    link, then the busiest. None when the counted table reaches everything the plan names (patients by gender);
+    and where what the plan groups by is itself under the counted table (customers of a region, as regions by
+    customer), the question is not this one: the resolver says why it cannot split them."""
+    if not _counts_members(model, measure):
+        return None
+    needed = _out_of_reach(model, plan, measure.table)
+    if not needed or any(P.all_paths(model, t, measure.table) for t in needed):
+        return None
+    # A date the question names says whose rows (fills by fill date); without one, rows of what happened before
+    # plans and balances (journal lines before budgets).
+    named = find_slug(model, plan.time.date) if plan.time.date else None
+    on_date = named[1] if named and named[0] == "date" and isinstance(named[1], DateRole) else None
+    candidates = []
+    for key, table in model.tables.items():
+        if key == measure.table or table.kind == "calendar" or (allowed is not None and key not in allowed):
+            continue
+        try:
+            route = P.best_path(model, key, measure.table)
+        except P.Ambiguous:
+            continue                  # two ways to the members (a bill-to and a ship-to customer): not guessed
+        bridged = route is None
+        if bridged:                   # across a bridge (a film's categories): each row under each member, once
+            crossed = P.crossings(model, key, measure.table)
+            route = crossed[0] if crossed else None
+        if route is None or not _lands_on_members(model, measure, route.joins[-1]) \
+                or (allowed is not None and any(t not in allowed for t in route.tables)):
+            continue
+        steps = len(route.joins)
+        for t in needed:
+            if t == key:
+                continue
+            ways = _ways(model, key, t)
+            if not ways or (allowed is not None and any(x not in allowed for x in ways[0].tables)):
+                break
+            steps += len(ways[0].joins)
+        else:
+            if on_date is not None and on_date.table != key and on_date.table not in _documents(model, key):
+                continue
+            if timed:
+                try:
+                    if _date_role_for(model, plan, None, key) is None:
+                        continue      # a period is counted by the rows' own date, or their document's
+                except ResolveError:
+                    continue
+            last = route.joins[-1]
+            # The member's id where the route reaches it: on the row that names it, or, across a bridge, on the
+            # member's own row (the bridge is crossed only to reach a table beyond it).
+            counted_column = last.to_columns[0] if bridged else last.from_columns[0]
+            candidates.append((_ROWS_FIRST.get(table.kind, 2), steps, _happened(model, table),
+                               -(last.trust in ("admin", "declared", "verified")), -(table.row_count or 0), key,
+                               counted_column))
+    if not candidates:
+        return None
+    best = min(candidates, key=lambda c: c[:6])
+    rows, column, counted = model.tables[best[5]], best[6], model.tables[measure.table]
+    whole = f"{counted.business_name.lower()} list" if counted.kind == "dimension" else \
+        f"{counted.business_name.lower()} table"
+    # What the count leaves out on its own table (cancelled bookings), it leaves out here too: a technician's
+    # bookings are the bookings counted anywhere else, on that technician's lines.
+    included = plan.include_left_out and counted.readers_may_include and bool(counted.default_filters)
+    left_out = [] if included else list(counted.default_filters)
+    said = [f"{measure.business_name} counts the {plural(counted.business_name.lower())} on "
+            f"{rows.business_name.lower()} rows, which reach both, not the {whole} itself.",
+            *(left_out_note(model, counted.key, f) for f in left_out)]
+    if included:
+        said.append(f"Including the {(counted.business_name or counted.name).lower()} rows left out by default (" +
+                    "; ".join(left_out_words(model, f) for f in counted.default_filters) + "), as asked.")
+    # Rows as near and as much what happened that name both too (loans and cards, beside loan applications):
+    # each holds its own members, so the answer says which it did not count on.
+    also = list(dict.fromkeys(model.tables[c[5]].business_name.lower() for c in sorted(candidates)
+                              if c[:3] == best[:3] and c[5] != best[5]))
+    if also:
+        joined = also[0] if len(also) == 1 else ", ".join(also[:-1]) + " and " + also[-1]
+        said.append(f"{joined[0].upper()}{joined[1:]} rows name both too; they are not counted here.")
+    return AggExpr(agg="count_distinct", column=column, filters=left_out), rows.key, " ".join(said)
+
+
 def _members_by_activity(model: SemanticModel, plan: Plan, measure: Measure) -> tuple[MeasureExpr, str, str] | None:
     """A count of a list's members over a period, counted on the events that name them.
 
@@ -1236,7 +1401,11 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         m = found[1]
         assert isinstance(m, Measure)
         expr = _with_filters(_measure_expr(model, m), m.filters)
-        by_activity = _members_by_activity(model, plan, m) if timed else None
+        # Grouped by what the counted table does not reach (patients by doctor): counted on the rows that reach
+        # both. Else, over a period, a list's members counted on the rows of what they did then.
+        by_activity = _members_by_links(model, plan, m, allowed=ctx.allowed_tables, timed=timed)
+        if by_activity is None and timed:
+            by_activity = _members_by_activity(model, plan, m)
         if by_activity is not None:
             counted, on, said = by_activity
             chosen.append((m, counted, on, m.business_name, m.format))
@@ -2242,16 +2411,70 @@ def _fallback_measure(model: SemanticModel, table: str) -> Measure | None:
     return next((m for m in model.measures.values() if m.table == table), None)
 
 
+def _rows_naming_all(model: SemanticModel, tables: set[str], allowed: set[str] | None,
+                     timed: bool) -> str | None:
+    """The table of rows that reaches every one of ``tables`` (a prescription reaches its patient and its
+    prescriber): rows of events first, then of what happened, then the nearest, the busiest. None when none
+    does."""
+    found = []
+    for key, table in model.tables.items():
+        if table.kind == "calendar" or (allowed is not None and key not in allowed):
+            continue
+        steps = 0
+        for t in tables:
+            if t == key:
+                continue
+            ways = _ways(model, key, t)
+            if not ways or (allowed is not None and any(x not in allowed for x in ways[0].tables)):
+                break
+            steps += len(ways[0].joins)
+        else:
+            if timed and not table.default_date and not _documents(model, key):
+                continue
+            found.append((_ROWS_FIRST.get(table.kind, 2), steps, _happened(model, table), -(table.row_count or 0),
+                          key))
+    return min(found)[4] if found else None
+
+
 def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, aliases: _Aliases, intent: str) -> Logical:
-    """A list of members (no measure): the distinct values of the grouping, from its own table."""
+    """A list of members (no measure): the distinct values of the grouping, from its own table; or, kept to what
+    its table does not reach ("the patients of Dr Ingram": a patient has no doctor of their own), from the rows
+    that reach both (the prescriptions), over the question's period by their date."""
     slug, attribute, time_attr = wanted[0]
     if time_attr or attribute is None:
         raise ResolveError("unsupported", "listing periods needs a measure")
     column = model.columns[attribute.column]
-    builder = _PartBuilder(model, column.table, aliases, ctx)
-    builder._allowed(column.table)
+    listed = {model.columns[a.column].table for _, a, _ in wanted if a is not None and a.column in model.columns}
+    named = _grouped_tables(model, plan) - listed
+    needed = {t for t in named if not P.all_paths(model, column.table, t, unconfirmed=True)
+              and not P.crossings(model, column.table, t)}
+    base = column.table
+    timed = plan.time.window.kind != "all"
+    if needed and not any(P.all_paths(model, t, column.table) for t in needed):
+        base = _rows_naming_all(model, listed | named, ctx.allowed_tables, timed) or base
+    builder = _PartBuilder(model, base, aliases, ctx)
+    builder._allowed(base)
     part = builder.part
     part.distinct_only = True
+    window, on_rows = Range(None, None), []
+    if base != column.table:
+        on_rows.append(f"{plural(attribute.business_name)} on {model.tables[base].business_name.lower()} rows, "
+                       f"which reach both.")
+        role = _date_role_for(model, plan, None, base) if timed else None
+        if role is not None:
+            part.date = builder.date(role)
+            first, last = _first_last(role)
+            window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                                    fiscal_start=model.settings.fiscal_year_start_month)
+            part.date_ranges.append((part.date, window))
+        # The same members their count counts: neither the rows nor the list's own rows left out by default.
+        for owner in (model.tables[k] for k in dict.fromkeys((base, column.table))):
+            if plan.include_left_out and owner.readers_may_include:
+                continue
+            for df in owner.default_filters:
+                part.preds.append(Pred(part.alias if owner.key == base else builder.reach(owner.key),
+                                       df.column, df.op, list(df.values)))
+                on_rows.append(left_out_note(model, owner.key, df))
     out_names: set[str] = set()
     groups = []
     for slug_, attr, _ in wanted:
@@ -2267,6 +2490,8 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
             part.groups.append(PartGroup(code_name, alias, identity, "attribute"))
             groups.append(Group(code_name, f"{attr.business_name} code", "member_code", attribute=attr.slug))
     conditions: list[Condition] = []
+    if base != column.table:
+        conditions.append(Condition("activity", model.tables[base].business_name.lower()))
     for f in plan.filters:
         found = find_slug(model, f.field)
         if not found or found[0] not in ("attribute", "entity"):
@@ -2288,9 +2513,10 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
             raise ResolveError("unknown", f"nothing to sort by called {s.by}", list(names))
         sort.append((name, s.desc))
     sort += [(groups[0].name, False)] if all(n != groups[0].name for n, _ in sort) else []
-    return Logical(intent="list", parts=[part], groups=groups, measures=[], window=Range(None, None),
+    return Logical(intent="list", parts=[part], groups=groups, measures=[], window=window,
                    sort=sort, limit=plan.limit, max_rows=ctx.max_rows, conditions=conditions,
-                   notes=[f"{model.tables[column.table].business_name}: {attribute.business_name.lower()} as listed."])
+                   notes=[f"{model.tables[column.table].business_name}: {attribute.business_name.lower()} as listed.",
+                          *on_rows])
 
 
 def _date_filter_range(f: Filter, values: list[dt.date]) -> Range:

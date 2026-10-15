@@ -143,6 +143,19 @@ def _frame(question: str, text: str, **extra: Any) -> dict[str, Any]:
             "anomaly_callouts": [], "coverage_caveats": [], "follow_up_suggestions": [], **extra}
 
 
+def _named_options(model: SemanticModel, options: list[str]) -> list[str]:
+    """Options of a question back as readers name them: a metric, field or date by its name, never its slug."""
+    from core2.resolve.resolver import find_slug
+
+    out = []
+    for option in options:
+        found = find_slug(model, option.strip()) if option and re.fullmatch(r"[a-z0-9_.:]+", option.strip()) else None
+        thing = found[1] if found else None
+        name = (getattr(thing, "business_name", "") or getattr(thing, "name", "")) if thing is not None else ""
+        out.append(name or option)
+    return list(dict.fromkeys(out))
+
+
 def _clarification(question: str, clarify: Clarify) -> dict[str, Any]:
     """A question back: the options in the sentence, and each one a chip that answers it."""
     options = [o for o in clarify.options if o][:6]
@@ -597,6 +610,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
             # "Which warehouse do you mean by 'the first one'?": the members of the answer on screen, one click each.
             listed = list(dict.fromkeys(str(s[1]) for s in seen.shown if s[1] is not None))[:5]
             clarify = clarify.model_copy(update={"options": listed})
+        if clarify.about != "member" and clarify.options:
+            # "number_of_doctors" is what the planner calls it; the reader sees, and clicks, "Number of doctors".
+            clarify = clarify.model_copy(update={"options": _named_options(model, clarify.options)})
         asked = _clarification(question, clarify)
         if outcome.problems:      # the planner's plans did not check out: what it tried, and why not
             asked["trust"] = {**asked["trust"], "considered": _considered(outcome.tried, model),
