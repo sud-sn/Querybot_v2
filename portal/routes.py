@@ -4600,13 +4600,27 @@ async def portal_start_page(request: Request):
         log.warning("The start page of %s could not be made: %s", user.get("id"), exc, exc_info=True)
         page = {"state": "failed"}
     try:
-        threads = await asyncio.to_thread(_reader_threads, user, 3)
+        threads = await asyncio.to_thread(_reader_threads, user, 12)
     except Exception as exc:  # noqa: BLE001 - shown without them
         log.warning("The threads of %s could not be read: %s", user.get("id"), exc)
         threads = []
-    return JSONResponse({"ok": True, "page": page,
-                         "continue": [{"id": t["thread_id"], "question": t["question"], "at": t["created_at"]}
-                                      for t in threads]})
+    return JSONResponse({"ok": True, "page": page, "continue": _continue_rows(threads)})
+
+
+def _continue_rows(threads: list[dict], most: int = 3) -> list[dict]:
+    """The conversations a start page offers to go back to, newest first: a question asked in several threads is
+    one row, its latest."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for t in threads:
+        said = " ".join(str(t.get("question") or "").casefold().split())
+        if said in seen:
+            continue
+        seen.add(said)
+        rows.append({"id": t["thread_id"], "question": t["question"], "at": t["created_at"]})
+        if len(rows) == most:
+            break
+    return rows
 
 
 # ══════════════════════════════════════════════════════════════════════════════

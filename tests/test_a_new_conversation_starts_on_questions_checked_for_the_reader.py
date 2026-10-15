@@ -340,3 +340,19 @@ def test_the_chat_page_asks_for_the_start_page_and_answers_a_card_by_its_words()
     from tests.chat_render import render as render_chat, visible as visible_chat
     page = render_chat()
     assert "Typing your own question needs the AI connection" in visible_chat(page)     # no AI set up here
+
+
+def test_continue_lists_a_question_asked_in_several_threads_once():
+    # Three threads that asked the same thing are one row to go back to: the latest. Newest first, as read.
+    from portal.routes import _continue_rows
+
+    threads = [{"thread_id": "t5", "question": "Net amount by month in 2025", "created_at": "2026-06-14 09:00"},
+               {"thread_id": "t4", "question": "net amount by month  in 2025", "created_at": "2026-06-13 09:00"},
+               {"thread_id": "t3", "question": "Top 10 stores by net amount", "created_at": "2026-06-12 09:00"},
+               {"thread_id": "t2", "question": "Net amount by month in 2025", "created_at": "2026-06-11 09:00"},
+               {"thread_id": "t1", "question": "Returns by reason", "created_at": "2026-06-10 09:00"},
+               {"thread_id": "t0", "question": "Orders last month", "created_at": "2026-06-09 09:00"}]
+    assert _continue_rows(threads) == [
+        {"id": "t5", "question": "Net amount by month in 2025", "at": "2026-06-14 09:00"},
+        {"id": "t3", "question": "Top 10 stores by net amount", "at": "2026-06-12 09:00"},
+        {"id": "t1", "question": "Returns by reason", "at": "2026-06-10 09:00"}]
