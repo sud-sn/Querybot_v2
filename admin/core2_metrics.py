@@ -43,13 +43,20 @@ async def measures_page(request: Request, account_id: str):
         return RedirectResponse("/admin/clients", status_code=303)
     from core2.model import authoring
 
-    rows = []
+    from core2.model import saved_segments
+
+    rows, segments, choices = [], [], []
     if model is not None:
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).strftime("%Y-%m-%d")
         rows = authoring.listing(model, store.core2_measure_uses(account_id, since))
+        segments, choices = saved_segments.listing(model), saved_segments.choices(model)
     return _resp(request, "client_measures.html", {
         "client": client, "learned": model is not None, "rows": rows,
         "saved": request.query_params.get("saved", ""),
+        "segments": segments, "segment_choices": choices,
+        "segment_kinds": [(k, f"{words} — {said.split(' ', 1)[1] if said.startswith('{things}') else said}".replace(
+            "{things}", "members").replace("{activity_one}", "activity").replace("{activity}", "activity"))
+                          for k, (words, said) in saved_segments.KINDS.items()],
     })
 
 
@@ -281,4 +288,51 @@ async def measure_hide(request: Request, account_id: str):
         return _refused("That metric is not in the data any more.")
     store.set_core2_override(account_id, client.get("db_config_id"), target("measure", key), "hidden",
                              bool(data.get("hidden")))
+    return JSONResponse({"ok": True})
+
+
+# ── segments: groups of members by what they did (core2/model/saved_segments.py) ──────────────────────────────
+
+
+@router.post("/clients/{account_id}/measures/api/segment/save")
+async def segment_save(request: Request, account_id: str):
+    """Save a segment: always the admin's own, defined whole, so every Learn keeps it."""
+    if not _is_auth(request):
+        return _refused("Signed out.", 401)
+    client, model = _workspace(account_id)
+    if model is None:
+        return _refused("Solviz has to learn this database first.")
+    from core2.model import saved_segments
+    from core2.model.overrides import target
+
+    data = await _body(request)
+    key = str(data.get("key") or "")
+    if key and key not in model.segments:
+        return _refused("That segment is not there any more.")
+    try:
+        segment = saved_segments.build(model, data, key=key)
+    except saved_segments.SegmentError as exc:
+        return _refused(str(exc))
+    store.set_core2_override(account_id, client.get("db_config_id"), target("segment", segment.key), "define",
+                             segment.model_dump(mode="json"))
+    return JSONResponse({"ok": True, "key": segment.key})
+
+
+@router.post("/clients/{account_id}/measures/api/segment/remove")
+async def segment_remove(request: Request, account_id: str):
+    """Remove a segment: readers are no longer offered it, and a question naming it is read as any other."""
+    if not _is_auth(request):
+        return _refused("Signed out.", 401)
+    client, model = _workspace(account_id)
+    if model is None:
+        return _refused("Solviz has to learn this database first.")
+    from core2.model.overrides import target
+
+    key = str((await _body(request)).get("key") or "")
+    if key not in model.segments:
+        return _refused("That segment is not there any more.")
+    db_id = client.get("db_config_id")
+    for row in store.list_core2_overrides(account_id, db_id):
+        if row["object_key"] == target("segment", key):
+            store.delete_core2_override(account_id, db_id, row["object_key"], row["field"])
     return JSONResponse({"ok": True})

@@ -138,6 +138,9 @@
   .ask-dialog{width:100vw;max-width:100vw;margin:auto 0 0;border-radius:var(--radius-lg) var(--radius-lg) 0 0}
 }
 @media(prefers-reduced-motion:reduce){.ask-item{transition:none}.ask-dialog{animation:none}}
+.ask-segment-list{list-style:none;margin:.5rem 0 0;padding:0;display:grid;gap:.75rem}
+.ask-segment-list li{display:grid;gap:.25rem;min-width:0}
+.ask-segment-list .try-question{margin-top:.15rem}
 </style>
 {% endblock %}
 {% block content %}
@@ -270,6 +273,20 @@
         <div class="try-questions kb-learned-try">
           {% for q in learned.examples %}<a class="try-question" href="/portal/chat?new=1&amp;ask={{ q|urlencode }}">{{ ic("arrow-right", 15) }}<span>{{ q }}</span></a>{% endfor %}
         </div>
+      </div></div>
+      {% endif %}
+      {% if catalog.segments %}
+      <div class="card ask-segments"><div class="card-body">
+        <h3>{{ t('ui.ask.segments') }}</h3>
+        <p class="ask-meaning">{{ t('ui.ask.segments_note') }}</p>
+        <ul class="ask-segment-list">
+          {% for sg in catalog.segments %}
+          <li><strong>{{ sg.name }}</strong>
+            <span class="ask-meaning">{{ sg.meaning }}.{% if sg.description %} {{ sg.description }}{% endif %}</span>
+            {% if sg.also %}<span class="ask-meta">{{ t('ui.ask.also', words=sg.also|join(', ')) }}</span>{% endif %}
+            <a class="try-question" href="/portal/chat?new=1&amp;ask={{ sg.example|urlencode }}">{{ ic("arrow-right", 15) }}<span>{{ sg.example }}</span></a></li>
+          {% endfor %}
+        </ul>
       </div></div>
       {% endif %}
       <div class="card"><div class="card-body">

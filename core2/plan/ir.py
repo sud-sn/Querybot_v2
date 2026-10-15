@@ -201,6 +201,7 @@ class Lifecycle(_Strict):
     measure: str                     # a measure slug whose rows are the activity
     status: Literal["all", "active", "new", "returning", "won_back", "lapsed", "churn_rate", "repeat", "one_time",
                     "loyal"] = "all"
+    name: str = ""                   # a saved segment's name ("Regular shoppers"), said on the answer for them
 
 
 class Segment(_Strict):
@@ -214,6 +215,7 @@ class Segment(_Strict):
     measure: str                     # a measure slug whose rows are their activity (number of orders)
     status: Literal["new", "returning", "won_back", "repeat", "one_time"] = "returning"
     split: bool = False              # a grouping by it (new against returning, repeat against one-time)
+    name: str = ""                   # a saved segment's name ("Regular shoppers"), said on the answer for them
 
 
 class Cohort(_Strict):

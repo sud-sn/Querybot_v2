@@ -206,7 +206,7 @@ def _entries(model: SemanticModel, today: dt.date, may: May) -> list[Entry]:
     from core2.plan.analyses import activities, in_french, of_activity
 
     shown = {json.dumps(plan, sort_keys=True) for _, plan in found}
-    for act in activities(model, may)[1:MOST_ACTIVITIES]:
+    for act in activities(model, may, trading=False)[1:MOST_ACTIVITIES]:
         for question, plan in of_activity(act):
             if json.dumps(plan, sort_keys=True) not in shown:
                 shown.add(json.dumps(plan, sort_keys=True))

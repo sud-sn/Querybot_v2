@@ -82,7 +82,9 @@ table.ms-l .act{width:48px;text-align:right}
 {% set saved_words = {"metric": "Metric saved. It answers from the next question.",
                       "draft": "Draft saved. It is hidden from questions until you save it as a metric.",
                       "hidden": "Metric hidden. Readers are no longer offered it; Show brings it back.",
-                      "shown": "Metric shown to readers again."} %}
+                      "shown": "Metric shown to readers again.",
+                      "segment": "Segment saved. Readers can ask for it by name from the next question.",
+                      "segment_removed": "Segment removed."} %}
 {% if saved in saved_words %}<div class="alert alert-success" role="status">{{ saved_words[saved] }}</div>{% endif %}
 {% set twins = rows | selectattr("same_name") | rejectattr("hidden") | list %}
 {% if twins %}{{ alert(type="amber", icon_name="alert-triangle", message=(twins | length | string) ~ " metrics share a name with
@@ -132,6 +134,135 @@ table.ms-l .act{width:48px;text-align:right}
   </tbody>
 </table></div>
 <p class="ms-note">A change answers from the next question, and is kept when Solviz learns again.</p>
+
+{# ── Segments: groups of members by what they did (core2/model/saved_segments.py) ── #}
+<section class="card sg-card" id="segments" aria-labelledby="sg-title">
+  <div class="sg-head">
+    <div>
+      <h2 id="sg-title">Segments</h2>
+      <p class="ms-muted">Groups of members by what they did, named the way your business says it: “Regular shoppers”,
+        “Won-back patients”. Readers ask for them by name (“net sales from Regular shoppers by store”, “how many Regular
+        shoppers last quarter”) and find them in the Data guide.</p>
+    </div>
+    {% if segment_choices %}<button type="button" class="btn btn-secondary" id="sg-add">{{ ic("plus", 16) }} Add a segment</button>{% endif %}
+  </div>
+  {% if not segment_choices %}
+  <p class="ms-muted">This data has no members whose activity can be followed (customers and their orders, patients and
+    their fills, suppliers and their purchase orders), so no segment can be made yet.</p>
+  {% endif %}
+  {% if segments %}
+  <ul class="sg-list">
+    {% for s in segments %}
+    <li class="sg-item" data-key="{{ s.key }}" data-name="{{ s.name }}" data-kind="{{ s.kind }}" data-of="{{ s.of }}"
+        data-measure="{{ s.measure }}" data-also="{{ s.also | join(', ') }}" data-description="{{ s.description }}">
+      <div class="sg-text"><span class="sg-name"><b>{{ s.name }}</b> <span class="ms-tag admin">{{ s.kind_name }}</span>
+        {% if s.hidden %}<span class="ms-tag off">Hidden</span>{% endif %}</span>
+        <span class="what">{{ s.meaning }}.{% if s.description %} {{ s.description }}{% endif %}</span>
+        <span class="what">Try: “{{ s.example }}”</span></div>
+      <div class="sg-acts">
+        <button type="button" class="btn btn-ghost btn-sm" data-sg-edit>{{ ic("pencil", 14) }} Edit</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-sg-remove>{{ ic("trash", 14) }} Remove</button>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% elif segment_choices %}
+  <p class="ms-muted" id="sg-none">No segments yet.</p>
+  {% endif %}
+  <form class="sg-form" id="sg-form" hidden novalidate>
+    <input type="hidden" name="key" value="">
+    <div class="sg-grid">
+      <div class="form-group"><label for="sg-name">Name</label>
+        <input class="form-input" id="sg-name" name="name" maxlength="80" placeholder="Regular shoppers" required></div>
+      <div class="form-group"><label for="sg-kind">Who is in it</label>
+        <select class="form-input" id="sg-kind" name="kind">
+          {% for value, words in segment_kinds %}<option value="{{ value }}">{{ words }}</option>{% endfor %}
+        </select></div>
+      <div class="form-group"><label for="sg-of">Members and their activity</label>
+        <select class="form-input" id="sg-of" name="of_measure">
+          {% for c in segment_choices %}<option value="{{ c.of }}|{{ c.measure }}">{{ c.label }}</option>{% endfor %}
+        </select></div>
+      <div class="form-group"><label for="sg-also">Other words people use</label>
+        <input class="form-input" id="sg-also" name="also" maxlength="200" placeholder="regulars, frequent buyers"></div>
+    </div>
+    <div class="form-group"><label for="sg-description">What it is for (optional)</label>
+      <input class="form-input" id="sg-description" name="description" maxlength="300"></div>
+    <p class="sg-error" id="sg-error" role="alert" hidden></p>
+    <div class="sg-buttons"><button type="submit" class="btn btn-primary">Save segment</button>
+      <button type="button" class="btn btn-ghost" id="sg-cancel">Cancel</button></div>
+  </form>
+</section>
+<style>
+.sg-card{margin-top:1.5rem;padding:1.25rem;display:grid;gap:.9rem}
+.sg-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap}
+.sg-head h2{margin:0 0 .25rem;font-size:var(--font-lg)}
+.sg-head p{margin:0;max-width:70ch}
+.sg-list{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+.sg-item{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap;padding:.75rem .9rem;
+  border:1px solid var(--border);border-radius:var(--radius-md,10px);background:var(--surface)}
+.sg-text{min-width:0;display:grid;gap:.2rem}
+.sg-text .what{color:var(--text-muted);font-size:var(--font-sm)}
+.sg-acts{display:flex;gap:.25rem}
+.sg-form{display:grid;gap:.75rem;border-top:1px solid var(--border);padding-top:1rem}
+.sg-form[hidden]{display:none}
+.sg-name{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.sg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.75rem}
+.sg-error{color:var(--danger,#b42318);margin:0}
+.sg-buttons{display:flex;gap:.5rem}
+@media (pointer:coarse){.sg-acts .btn{min-height:44px}}
+</style>
+<script>
+(function () {
+  'use strict';
+  var form = document.getElementById('sg-form');
+  if (!form) return;
+  var base = location.pathname.replace(/\/$/, '') + '/api/segment/';
+  var error = document.getElementById('sg-error');
+  function open(item) {
+    form.reset();
+    form.key.value = item ? item.dataset.key : '';
+    if (item) {
+      form.name.value = item.dataset.name;
+      form.kind.value = item.dataset.kind;
+      form.of_measure.value = item.dataset.of + '|' + item.dataset.measure;
+      form.also.value = item.dataset.also;
+      form.description.value = item.dataset.description;
+    }
+    error.hidden = true;
+    form.hidden = false;
+    form.name.focus();
+  }
+  function post(path, body) {
+    return fetch(base + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)}).then(function (r) { return r.json(); }).catch(function (e) { return {ok: false, error: e.message}; });
+  }
+  var add = document.getElementById('sg-add');
+  if (add) add.addEventListener('click', function () { open(null); });
+  document.getElementById('sg-cancel').addEventListener('click', function () { form.hidden = true; });
+  document.querySelectorAll('[data-sg-edit]').forEach(function (b) {
+    b.addEventListener('click', function () { open(b.closest('.sg-item')); });
+  });
+  document.querySelectorAll('[data-sg-remove]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var item = b.closest('.sg-item');
+      b.disabled = true;
+      post('remove', {key: item.dataset.key}).then(function (data) {
+        if (data.ok) { location.href = location.pathname + '?saved=segment_removed#segments'; } else { b.disabled = false; }
+      });
+    });
+  });
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var pair = form.of_measure.value.split('|');
+    post('save', {key: form.key.value, name: form.name.value, kind: form.kind.value, of: pair[0], measure: pair[1],
+                  also: form.also.value, description: form.description.value}).then(function (data) {
+      if (data.ok) { location.href = location.pathname + '?saved=segment#segments'; return; }
+      error.textContent = data.error || 'The segment could not be saved.';
+      error.hidden = false;
+    });
+  });
+})();
+</script>
 
 <script>
 (function () {

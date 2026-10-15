@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from core2.model.schema import AggExpr, DateRole, Join, Measure, RefExpr, SemanticModel, SqlExpr
+from core2.model.schema import AggExpr, DateRole, Join, Measure, RefExpr, SavedSegment, SemanticModel, SqlExpr
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
@@ -29,11 +29,13 @@ ALLOWED = {
     "entity": {"business_name", "label_column", "code_column", "synonyms"},
     "attribute": {"business_name", "synonyms"},
     "settings": {"fiscal_year_start_month"},      # one object: settings:workspace
+    # A group of members an admin named ("Regular shoppers"): always the admin's own, added whole and decided on.
+    "segment": {"business_name", "description", "synonyms", "hidden", "kind"},
 }
 # A metric, a link or a date that today's setup or an admin has and the build did
 # not find is added whole ("define"), then decided on like any other object.
-DEFINABLE: dict[str, type[Measure] | type[Join] | type[DateRole]] = {
-    "measure": Measure, "join": Join, "date_role": DateRole}
+DEFINABLE: dict[str, type[Measure] | type[Join] | type[DateRole] | type[SavedSegment]] = {
+    "measure": Measure, "join": Join, "date_role": DateRole, "segment": SavedSegment}
 
 
 def target(kind: str, key: str) -> str:
@@ -48,7 +50,7 @@ def _find(model: SemanticModel, object_key: str) -> tuple[str, BaseModel] | None
     collections: dict[str, dict[str, Any]] = {
         "table": model.tables, "column": model.columns, "join": model.joins, "date_role": model.date_roles,
         "measure": model.measures, "entity": model.entities, "attribute": model.attributes,
-        "settings": {"workspace": model.settings}}
+        "segment": model.segments, "settings": {"workspace": model.settings}}
     collection = collections.get(kind)
     if collection is None or key not in collection:
         return None
@@ -62,7 +64,8 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
     if kind_type is None:
         notes.append(f"A decision defines {object_key}, which cannot be added by hand.")
         return
-    collection: dict[str, Any] = {"measure": model.measures, "join": model.joins, "date_role": model.date_roles}[kind]
+    collection: dict[str, Any] = {"measure": model.measures, "join": model.joins, "date_role": model.date_roles,
+                                  "segment": model.segments}[kind]
     if key in collection:
         if kind == "join":
             collection[key].trust = "admin"
@@ -81,6 +84,15 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
 
         taken = {r.slug for r in model.date_roles.values()}
         obj.slug = ids.unique_slug(ids.slug(obj.slug or obj.name or obj.key), taken)
+    elif isinstance(obj, SavedSegment):
+        # Members and activity still learned: the entity, and a measure of its rows.
+        activity = next((m for m in model.measures.values() if m.slug == obj.measure), None)
+        known = obj.of in model.entities and activity is not None and activity.table in model.tables
+        taken = {s.slug for s in model.segments.values()}
+        if obj.slug in taken:
+            from core2 import ids
+
+            obj.slug = ids.unique_slug(obj.slug, taken)
     elif isinstance(obj, Join):
         known = obj.from_table in model.tables and obj.to_table in model.tables and all(
             c in model.columns for c in [*obj.from_columns, *obj.to_columns]) and not _stray_conditions(model, obj)

@@ -395,6 +395,23 @@ class ReviewItem(_Data):
     evidence: list[Evidence] = Field(default_factory=list)
 
 
+class SavedSegment(_Data):
+    """A group of members an admin named, by what they did ("Regular shoppers": customers with orders on 2 or more
+    days of the period asked). Asked of like any figure: "net sales from Regular shoppers by store", "how many
+    Regular shoppers last quarter" (core2/resolve/segments.py, core2/resolve/shapes.py)."""
+
+    key: str                        # "admin:regular_shoppers"
+    slug: str
+    business_name: str
+    description: str = ""
+    synonyms: dict[str, list[str]] = Field(default_factory=dict)
+    of: str                         # entity slug: whose activity
+    measure: str                    # measure slug: whose rows are the activity
+    # Which members: as Plan.segment and Plan.lifecycle name them. (Not "status": decisions mark an object's status.)
+    kind: Literal["new", "returning", "won_back", "repeat", "one_time", "lapsed", "loyal", "active"]
+    hidden: bool = False
+
+
 class ModelSettings(_Data):
     week_start: Literal["monday"] = "monday"
     fiscal_year_start_month: int | None = Field(default=None, ge=1, le=12)
@@ -419,6 +436,7 @@ class SemanticModel(_Data):
     measures: dict[str, Measure] = Field(default_factory=dict)
     entities: dict[str, Entity] = Field(default_factory=dict)      # by slug
     attributes: dict[str, Attribute] = Field(default_factory=dict) # by slug
+    segments: dict[str, SavedSegment] = Field(default_factory=dict)   # by key; an admin's, kept as decisions
     quality: list[QualityFlag] = Field(default_factory=list)
     review: list[ReviewItem] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)

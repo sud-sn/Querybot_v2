@@ -249,6 +249,10 @@ def _condition_fr(c: Condition, quoted: bool) -> str:
         return f"avec {c.label}"
     if c.kind == "segment":
         things = str(c.values[0]) if c.values else c.label
+        from core2.resolve.segments import WORDS
+
+        if c.label != f"{WORDS.get(c.op, '')} {things}":
+            return f"pour {c.label}"            # a saved segment, by its own name ("pour Regular shoppers")
         return f"pour les {things} {_SEGMENT_FR.get(c.op, '')}".strip()
     if c.kind == "by":
         return f"selon {c.label}"

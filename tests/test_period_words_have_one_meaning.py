@@ -165,3 +165,40 @@ def test_the_answer_is_for_those_dates_and_shows_them(retail, question, written,
     assert float(got["kpi"]["value"]) == pytest.approx(_net(retail, start, last))
     periods = [b["text"] for b in got["answer"]["badges"] if b["kind"] == "period"]
     assert periods == [badge]
+
+
+# ── a quarter or year not called fiscal is the calendar's ─────────────────
+
+
+@pytest.mark.parametrize("question, written, start, end", [
+    # Read as the second quarter of a fiscal year starting in April (July to September 2024).
+    ("Net sales from Regular shoppers by store in Q2 2025", {"kind": "between", "start": "2024-07-01",
+                                                             "end": "2024-09-30"}, D(2025, 4, 1), D(2025, 6, 30)),
+    ("net sales 2025 Q4", {"kind": "between", "start": "2025-01-01", "end": "2025-03-31"},
+     D(2025, 10, 1), D(2025, 12, 31)),
+    ("ventes nettes au T3 2024", {"kind": "between", "start": "2024-10-01", "end": "2024-12-31"},
+     D(2024, 7, 1), D(2024, 9, 30)),
+    ("net sales in 2025 by store", {"kind": "between", "start": "2024-04-01", "end": "2025-03-31"},
+     D(2025, 1, 1), D(2025, 12, 31)),
+])
+def test_a_quarter_or_year_not_called_fiscal_is_the_calendars(question, written, start, end):
+    from core2.plan.planner import calendar_meant
+
+    got = calendar_meant(_plan(written), None, question)
+    assert (got.time.window.kind, got.time.window.start, got.time.window.end, got.time.window.fiscal) == \
+        ("between", start, end, False)
+
+
+@pytest.mark.parametrize("question, window", [
+    ("net sales in Q2 FY2025", {"kind": "between", "start": "2024-07-01", "end": "2024-09-30"}),
+    ("fiscal 2025 net sales", {"kind": "between", "start": "2024-04-01", "end": "2025-03-31"}),
+    ("net sales in 2024 and 2025", {"kind": "between", "start": "2024-01-01", "end": "2025-12-31"}),
+    ("net sales in March 2025", {"kind": "between", "start": "2025-03-01", "end": "2025-03-31"}),
+    ("net sales Q4 2024 to Q1 2025", {"kind": "between", "start": "2024-10-01", "end": "2025-03-31"}),
+    ("net sales in Q2 2025", {"kind": "between", "start": "2025-04-01", "end": "2025-06-30"}),
+])
+def test_a_fiscal_or_already_right_period_stands(question, window):
+    from core2.plan.planner import calendar_meant
+
+    plan = _plan(window)
+    assert calendar_meant(plan, None, question) is plan

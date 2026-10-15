@@ -284,6 +284,19 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
                 lines.append(f"  - {a.slug} | {a.business_name}{_meaning(model, a)} | {values}{_synonyms(a.synonyms)}")
     lines.append("")
 
+    saved = [s for s in model.segments.values() if not s.hidden and s.of in model.entities]
+    if saved:
+        from core2.model.saved_segments import NARROW, meaning
+
+        # Groups of members the admin named: a figure for them is segment, a count of them lifecycle.
+        lines.append("SAVED SEGMENTS (name | of | measure | status | who): a figure for them -> segment {of, measure, "
+                     "status, name}; counting them -> lifecycle {of, measure, status, name}")
+        for s in sorted(saved, key=lambda s: s.business_name.casefold()):
+            narrow = "" if s.kind in NARROW else " (counted only)"
+            lines.append(f"- {s.business_name} | {s.of} | {s.measure} | {s.kind}{narrow} | {meaning(model, s)}"
+                         f"{_synonyms(s.synonyms)}")
+        lines.append("")
+
     from core2.resolve.age import EDGES, age_fields
     from core2.resolve.resolver import time_fields
 

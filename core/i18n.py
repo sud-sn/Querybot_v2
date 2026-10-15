@@ -5705,6 +5705,11 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.following.kept": {"en": "Kept from above: {kept}", "fr": "Repris de plus haut : {kept}"},
     # Standing conditions ("from now on use the last 2 months"): the chip row above the box, and the line on each
     # answer given under them (core2/standing.py).
+    # Groups of members the admin named, in the Data guide (core2/model/saved_segments.py).
+    "ui.ask.segments": {"en": "Groups you can ask about", "fr": "Groupes sur lesquels vous pouvez poser des questions"},
+    "ui.ask.segments_note": {"en": "Named by your admin. Ask any figure for them, or how many there were.",
+                             "fr": "Nommés par votre administrateur. Demandez n’importe quel chiffre pour eux, ou "
+                                   "combien il y en avait."},
     "ui.profile.standing": {"en": "Standing conditions", "fr": "Conditions permanentes"},
     "ui.profile.standing_note": {
         "en": "Said in a chat with “always” (“always use the last 2 months”): every conversation of yours uses them. "

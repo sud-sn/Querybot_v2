@@ -336,7 +336,7 @@ def _kept_said(plan: Plan, previous: Plan | None, question: str, model: Semantic
 
         found = find_slug(model, seg.of)
         thing = getattr(found[1], "business_name", "") if found is not None else ""
-        words = f"{WORDS[seg.status]} {names.plural((thing or seg.of).lower())}"
+        words = seg.name or f"{WORDS[seg.status]} {names.plural((thing or seg.of).lower())}"
         if not seg.split and words.casefold() not in question.casefold():
             said.append(words)
     if window is not None:

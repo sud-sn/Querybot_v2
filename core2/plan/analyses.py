@@ -50,21 +50,29 @@ PARTIES = {"customer", "client", "patient", "member", "subscriber", "user", "gue
            "cardholder", "passenger", "resident", "citizen", "beneficiary", "insured", "contact", "lead"}
 
 
-def party(entity: Entity) -> bool:
+# Those a business buys from: their orders come and go too ("new suppliers this quarter", "spend with returning
+# suppliers"). Parties for the analyses of who comes back, never customers for a dashboard's top customers.
+TRADING = {"supplier", "vendor", "merchant", "distributor", "wholesaler", "subcontractor", "contractor"}
+
+
+def party(entity: Entity, trading: bool = True) -> bool:
     """Named as a party: its own word, or a known short form of one (CUST); never a word that only starts like one
-    (a cost centre is no customer)."""
+    (a cost centre is no customer). Those a business buys from count when asked of (trading), not when offered."""
     words = names.tokens(entity.business_name or entity.slug)
-    return any(names.singular(names.EXPANSIONS.get(w, w)) in PARTIES for w in words)
+    known = PARTIES | TRADING if trading else PARTIES
+    return any(names.singular(names.EXPANSIONS.get(w, w)) in known for w in words)
 
 
 def activity(model: SemanticModel, may: May = _all) -> Activity | None:
     """The main activity: the largest table with a dated count of its own (orders, fills), and the party with the
-    most members its rows reach (customers, patients)."""
-    found = activities(model, may, most=1)
+    most members its rows reach (customers, patients). Offered unasked (suggestions, dashboards), so never a
+    supplier's: a stock movement's supplier is asked of, not offered."""
+    found = activities(model, may, most=1, trading=False)
     return found[0] if found else None
 
 
-def activities(model: SemanticModel, may: May = _all, most: int | None = None) -> list[Activity]:
+def activities(model: SemanticModel, may: May = _all, most: int | None = None,
+               trading: bool = True) -> list[Activity]:
     """Every party's activity on every table of dated rows that reaches it, the main one first: the largest table
     with a dated count of its own (orders, fills) and, for each, the parties its rows reach, most members first
     (patients' fills, prescribers' prescriptions, payers' claims). Returning members, retention and the time between
@@ -77,8 +85,8 @@ def activities(model: SemanticModel, may: May = _all, most: int | None = None) -
                                m.slug))
     out: list[Activity] = []
     for m in counts:
-        entities = sorted((e for e in model.entities.values() if e.table != m.table and may(e.table) and party(e)
-                           and len(e.key_columns) == 1 and P.all_paths(model, m.table, e.table)),
+        entities = sorted((e for e in model.entities.values() if e.table != m.table and may(e.table)
+                           and party(e, trading) and len(e.key_columns) == 1 and P.all_paths(model, m.table, e.table)),
                           key=lambda e: (-(e.members or 0), e.slug))
         things = m.business_name.lower().removeprefix("number of ").removeprefix("count of ")
         date = next((r for r in model.date_roles.values() if r.key == m.default_date), None)

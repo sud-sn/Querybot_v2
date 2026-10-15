@@ -1071,7 +1071,8 @@ def _lifecycle(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         name = _output_name(status, taken)
         taken.add(name)
         columns[status] = name
-        label = "Churn rate" if status == "churn_rate" else f"{LIFECYCLE[status]} {things}"
+        label = "Churn rate" if status == "churn_rate" else lc.name if lc.name and lc.status != "all" \
+            else f"{LIFECYCLE[status]} {things}"
         out.append(OutMeasure(name=name, label=label, expr=AggExpr(agg="sum"),
                               format="percent" if status == "churn_rate" else "number", measure=None))
     shape = LifecycleShape(events=events, status=lc.status, columns=columns)

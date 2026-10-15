@@ -111,7 +111,18 @@ def reader_view(model: SemanticModel, *, today: dt.date, allowed: set[str] | Non
             "metrics": metrics, "breakdowns": unique[:BREAKDOWNS_SHOWN], "more": max(0, len(unique) - BREAKDOWNS_SHOWN),
             "dates": [{"key": r.key, "name": r.name, "default": r.is_default, "also": _words(r.synonyms),
                        "span": _span(r.first, r.last, r.granularity)} for r in dates]})
-    return {"subjects": subjects}
+    return {"subjects": subjects, "segments": _segments(model, reader)}
+
+
+def _segments(model: SemanticModel, reader: _Reader) -> list[dict[str, Any]]:
+    """The groups of members the admin named (core2/model/saved_segments.py) whose activity this reader may see."""
+    from core2.model.saved_segments import listing
+
+    tables = {m.slug: m.table for m in model.measures.values()}
+    return [{"key": row["key"], "name": row["name"], "meaning": row["meaning"], "description": row["description"],
+             "also": row["also"], "example": row["example"]}
+            for row in listing(model) if not row["hidden"] and reader.may(tables.get(row["measure"], ""))
+            and row["of"] in model.entities and reader.may(model.entities[row["of"]].table)]
 
 
 # ── a suggestion, as the admin decisions it would write ──────────────────────

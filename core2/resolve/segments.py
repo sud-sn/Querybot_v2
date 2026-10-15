@@ -77,5 +77,6 @@ def attach(plan: Plan, model: SemanticModel, ctx: Context, builders: list, group
     if split:
         groups.append(Group(name, label, "attribute"))
         return "breakdown" if intent == "value" else intent
-    conditions.append(Condition("segment", f"{WORDS[seg.status]} {things}", op=seg.status, values=[things]))
+    conditions.append(Condition("segment", seg.name or f"{WORDS[seg.status]} {things}", op=seg.status,
+                                values=[things]))
     return intent

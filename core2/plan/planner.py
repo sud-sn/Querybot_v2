@@ -1036,6 +1036,43 @@ def _segment_named(question: str, things: list[str]) -> str | None:
     return None
 
 
+def saved_segment_named(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Net sales from Regular shoppers", "how many Regular shoppers last quarter": a group of members the admin
+    named (core2/model/saved_segments.py) is the segment or the lifecycle it was saved as, by name, whatever the AI
+    read the name as."""
+    from core2.model.saved_segments import NARROW, named
+
+    if plan.kind != "query" or not model.segments:
+        return plan
+    saved = named(question, model)
+    if saved is None:
+        return plan
+    lifecycle = {"of": saved.of, "measure": saved.measure, "status": saved.kind, "name": saved.business_name}
+    counted = plan.lifecycle is not None or not plan.measures or any(
+        (m := next((x for x in model.measures.values() if x.slug == slug), None)) is not None
+        and getattr(m.expr, "agg", "") in ("count", "count_distinct")
+        and (m.table == model.entities[saved.of].table or _counts_members(m, model.entities[saved.of]))
+        for slug in plan.measures)
+    if counted:
+        if plan.segment is not None or plan.shaped() and plan.lifecycle is None:
+            return plan
+        from core2.plan.ir import Lifecycle
+
+        return plan.model_copy(update={"lifecycle": Lifecycle(**lifecycle), "measures": [], "per": None,
+                                       "intent": "trend" if plan.time.grain else "value"})
+    if saved.kind not in NARROW or plan.shaped():
+        return plan
+    return plan.model_copy(update={"segment": Segment(of=saved.of, measure=saved.measure, status=saved.kind,
+                                                      split=False, name=saved.business_name)})
+
+
+def _counts_members(measure: Measure, entity: Entity) -> bool:
+    """Does the measure count the entity's members (a distinct count of its key, on any table)?"""
+    column = str(getattr(measure.expr, "column", "") or "")
+    key = entity.key_columns[0].split(".")[-1] if entity.key_columns else ""
+    return getattr(measure.expr, "agg", "") == "count_distinct" and bool(key) and column.endswith("." + key)
+
+
 def segment_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "Net sales from returning customers by store" planned as net sales by store, every customer counted: a
     figure said of new, returning, repeat, one-time or won-back members is narrowed to them (split for "new vs
@@ -1244,6 +1281,47 @@ def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
     return plan.model_copy(update={
         "filters": [x for x in plan.filters if x is not f and x not in used],
         "time": plan.time.model_copy(update={"date": f.field, "window": Window(kind="between", start=start, end=end)})})
+
+
+# One quarter or year named as the calendar's: "Q2 2025", "2025 Q2", "T2 2025", "in 2025" (never "FY2025 Q2",
+# "Q2 FY25", "fiscal 2025", "l'exercice 2025").
+_CAL_QUARTER = re.compile(r"(?<![\w-])(?:q|t)([1-4])\s*(?:of\s+|de\s+)?((?:19|20)\d\d)\b|\b((?:19|20)\d\d)\s*[-\s]?(?:q|t)([1-4])\b",
+                          re.IGNORECASE)
+_CAL_YEAR = re.compile(r"\b(?:in|for|during|over|en|pour|durant)\s+((?:19|20)\d\d)\b(?!\s*[-/]\d)", re.IGNORECASE)
+_FISCAL_SAID = re.compile(r"\b(?:fiscal|fy\s?'?\d{2,4}|fy|exercice|financial\s+year)\b", re.IGNORECASE)
+
+
+def calendar_meant(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Net sales from Regular shoppers by store in Q2 2025" was planned as July to September 2024 -- the second
+    quarter of a fiscal year starting in April -- though the question never called it fiscal (the AI read it so
+    beside a saved segment's name, and as the calendar's without it). One quarter, or one year, named with no
+    "fiscal" or "FY" is the calendar's: its dates are put right, and the answer says them."""
+    if plan.kind != "query" or plan.time.compare is not None or _FISCAL_SAID.search(question or ""):
+        return plan
+    window = plan.time.window
+    if window.kind != "between" or window.start is None or window.end is None:
+        return plan
+    quarters = _CAL_QUARTER.findall(question or "")
+    years = _CAL_YEAR.findall(question or "")
+    if len(set(re.findall(r"\b(?:19|20)\d\d\b", question or ""))) != 1:
+        return plan                     # "in 2024 and 2025", "Q4 2024 to Q1 2025": more than one period
+    if len(quarters) == 1 and not years:
+        q, year = (int(quarters[0][0]), int(quarters[0][1])) if quarters[0][0] else \
+            (int(quarters[0][3]), int(quarters[0][2]))
+        start = dt.date(year, 3 * q - 2, 1)
+        end = (dt.date(year + 1, 1, 1) if q == 4 else dt.date(year, 3 * q + 1, 1)) - dt.timedelta(days=1)
+    elif len(years) == 1 and not quarters and len(set(years)) == 1:
+        year = int(years[0])
+        start, end = dt.date(year, 1, 1), dt.date(year, 12, 31)
+        # "In 2025" planned as one of its months or quarters ("in March 2025"): the question's own narrower words.
+        if window.start >= start and window.end <= end:
+            return plan
+    else:
+        return plan
+    if (window.start, window.end) == (start, end) and not window.fiscal:
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={
+        "window": Window(kind="between", start=start, end=end)})})
 
 
 def _since_and_until(plan: Plan, roles: set[str]) -> list[Filter]:
@@ -2372,8 +2450,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (route_named, all_time_asked, period_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
-                     counted_where_done, active_counted, segment_asked, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+        for rule in (route_named, all_time_asked, period_meant, calendar_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+                     counted_where_done, active_counted, saved_segment_named, segment_asked, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
