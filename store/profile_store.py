@@ -6,6 +6,8 @@ A reader's own profile, their photo, and where they signed in from (portal Setti
     portal_profile   job title, time zone (the one schedules start from), start page (where signing in lands), and
                      a photo revision that changes with every new photo, so a browser never shows the old one
     portal_sign_in   each sign-in: when, from which address and browser; the last SIGN_INS are kept
+    portal_standing  the reader's standing conditions for every conversation in a workspace ("always use the last
+                     2 months", core2/standing.py), listed on the Profile page
 
 The photo is a 256-pixel square PNG beside the database (<db dir>/profile_photos/<user id>.png), re-drawn from what
 was uploaded, so nothing of the original file (its metadata, a script in it) is kept.
@@ -90,6 +92,54 @@ def recent_sign_ins(user_id: int, limit: int = 10) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+STANDING_MOST = 12
+
+
+def standing_conditions(user_id: int, account_id: str) -> list[dict]:
+    """The reader's standing conditions in a workspace, oldest first (core2/standing.py Standing.data)."""
+    import json
+
+    with get_db() as conn:
+        rows = conn.execute("SELECT data FROM portal_standing WHERE user_id=? AND account_id=? ORDER BY position, id",
+                            (int(user_id), str(account_id))).fetchall()
+    out = []
+    for row in rows:
+        try:
+            out.append(json.loads(row["data"]))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def keep_standing(user_id: int, account_id: str, data: dict) -> None:
+    """Keep one standing condition; a new period replaces the period kept, a field's condition the one on it."""
+    import json
+
+    kept = standing_conditions(user_id, account_id)
+    fields = {f.get("field") for f in data.get("filters") or []}
+    replaced = [k["id"] for k in kept if k.get("id") == data["id"]
+                or data.get("window") and k.get("window")
+                or fields and {f.get("field") for f in k.get("filters") or []} == fields]
+    with get_db() as conn:
+        for old in replaced:
+            conn.execute("DELETE FROM portal_standing WHERE user_id=? AND account_id=? AND id=?",
+                         (int(user_id), str(account_id), old))
+        if len(kept) - len(replaced) >= STANDING_MOST:
+            return
+        last = conn.execute("SELECT MAX(position) AS last FROM portal_standing WHERE user_id=? AND account_id=?",
+                            (int(user_id), str(account_id))).fetchone()
+        position = int((last["last"] if last is not None else 0) or 0) + 1
+        conn.execute("INSERT INTO portal_standing (user_id, account_id, id, data, position) VALUES (?, ?, ?, ?, ?)",
+                     (int(user_id), str(account_id), str(data["id"]), json.dumps(data), position))
+
+
+def drop_standing(user_id: int, account_id: str, standing_id: str) -> bool:
+    with get_db() as conn:
+        done = conn.execute("DELETE FROM portal_standing WHERE user_id=? AND account_id=? AND id=?",
+                            (int(user_id), str(account_id), str(standing_id)))
+    return bool(done.rowcount)
+
+
 def end_other_sessions(user_id: int) -> None:
     """Every session of this reader ends (the one in hand is issued again by the route)."""
     with get_db() as conn:
@@ -103,6 +153,7 @@ def forget_people(conn, user_ids: list[int]) -> None:
     for user_id in user_ids:
         conn.execute("DELETE FROM portal_profile WHERE user_id=?", (int(user_id),))
         conn.execute("DELETE FROM portal_sign_in WHERE user_id=?", (int(user_id),))
+        conn.execute("DELETE FROM portal_standing WHERE user_id=?", (int(user_id),))
         try:
             photo_path(int(user_id)).unlink()
         except FileNotFoundError:

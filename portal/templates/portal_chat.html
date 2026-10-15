@@ -740,6 +740,17 @@ body:has(.chat-page) .main { background: var(--bg); }
 .msg-bot + .msg-user { margin-top: 18px; }
 .query-limit-notice { width: min(100% - 32px, var(--chat-column-max)); margin: 0 auto 8px; }
 .composer-footer { width: var(--chat-column); margin-inline: auto; }
+/* Standing conditions: chips above the box, each answer given under them says so (core2/standing.py). */
+.standing-row { width: var(--chat-column); max-width: 100%; margin: 0 auto .5rem; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.standing-label { font-size: var(--font-xs); color: var(--text-muted); margin-right: 2px; }
+.standing-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; max-width: 100%; padding: 0 2px 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-bold, 600); }
+.standing-chip.always { border-style: dashed; }
+.standing-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.standing-off { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 15px; line-height: 1; }
+.standing-off:hover, .standing-off:focus-visible { background: var(--surface); color: var(--primary-ink, var(--primary)); }
+@media (pointer: coarse) { .standing-chip { min-height: 44px; } .standing-off { width: 40px; height: 40px; } }
+.answer-standing { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
+.answer-standing span { min-width: 0; overflow-wrap: anywhere; }
 /* How many earlier turns the next question carries is the product's bookkeeping, not the reader's. */
 #memoryBadge { display: none !important; }
 @media (max-width: 600px) {
@@ -911,6 +922,7 @@ body:has(.chat-page) .main { background: var(--bg); }
         <span id="queryLimitNoticeText">{{ query_status.message }}</span>
       </div>
       <div class="chat-composer">
+        <div class="standing-row" id="standingRow" role="group" aria-label="{{ t('ui.chat.standing.label') }}" hidden></div>
                 <div class="chat-input-bar">
           {{ ic("sparkles", 18, "chat-input-icon") }}
           <div class="chat-input-wrap" id="inputWrap">
@@ -3910,6 +3922,47 @@ function _wireFigures(root) {
 
 // A follow-up answer says which answer it changed and what it kept from it ("Region is North; in 2025"); asking
 // it on its own is one click (sent as "New question: ...").
+// Standing conditions in force: the chips above the box, from the last answer or read when the page opens.
+function renderStanding(list) {
+  const row = document.getElementById('standingRow');
+  if (!row) return;
+  const kept = Array.isArray(list) ? list : [];
+  row.hidden = !kept.length;
+  row.innerHTML = kept.length
+    ? `<span class="standing-label">${escHtml(t('ui.chat.standing.label'))}</span>`
+      + kept.map(s => `<span class="standing-chip${s.scope === 'always' ? ' always' : ''}" title="${escHtml(t(s.scope === 'always' ? 'ui.chat.standing.always' : 'ui.chat.standing.here'))}"><span>${escHtml(_inLang(s, 'words'))}</span>`
+        + `<button type="button" class="standing-off" data-standing-id="${escHtml(s.id)}" aria-label="${escHtml(t('ui.chat.standing.remove', {words: _inLang(s, 'words')}))}">&times;</button></span>`).join('')
+    : '';
+}
+async function loadStanding() {
+  try {
+    const response = await fetch(`/portal/api/chat/standing?thread_id=${encodeURIComponent(THREAD_ID)}`, {credentials: 'same-origin'});
+    const data = await response.json();
+    if (data && data.ok) renderStanding(data.standing);
+  } catch (_) { /* the chips come with the next answer */ }
+}
+document.addEventListener('click', async ev => {
+  const button = ev.target.closest('.standing-off');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch('/portal/api/chat/standing/off', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({thread_id: THREAD_ID, id: button.dataset.standingId})});
+    const data = await response.json();
+    if (data && data.ok) renderStanding(data.standing); else button.disabled = false;
+  } catch (_) { button.disabled = false; }
+});
+function _standingHtml(msg) {
+  const standing = msg.standing;
+  if (!standing || typeof standing !== 'object') return '';
+  const appliedWords = _inLang(standing, 'applied'), asideWords = _inLang(standing, 'aside');
+  const applied = Array.isArray(appliedWords) && appliedWords.length
+    ? `<span>${escHtml(t('ui.chat.standing.applied', {words: appliedWords.join(' · ')}))}</span>` : '';
+  const aside = Array.isArray(asideWords) && asideWords.length
+    ? `<span>${escHtml(t('ui.chat.standing.aside', {words: asideWords.join(' · ')}))}</span>` : '';
+  return applied || aside ? `<p class="answer-standing">${applied}${aside}</p>` : '';
+}
+
 function _followingHtml(msg) {
   const following = msg.following;
   if (!following || !following.question) return '';
@@ -4040,6 +4093,7 @@ function answerCardHtml(msg, ids, env) {
 
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
     + _followingHtml(msg)
+    + _standingHtml(msg)
     + _ownMetricHtml(msg)
     + _figuresHtml(msg)
     + _answerBadgesHtml(msg)
@@ -4951,6 +5005,8 @@ function _terminalRunState(msg) {
   if (state === 'needs_input') return 'waiting_for_user';
   return '';
 }
+loadStanding();
+
 function connect(){
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   setConnectionState(
@@ -5087,6 +5143,7 @@ function connect(){
       _placeAnswerNote(String(msg.question_id || ''), msg.note || null);
     } else if (msg.type === 'assistant_response') {
       _dropDashboardLine();
+      if (msg.standing && Array.isArray(msg.standing.kept)) renderStanding(msg.standing.kept);
       finishAnalysisAction(msg);
       _markActiveOutbound('complete');
       // Show celebration state briefly so the user sees it before result renders

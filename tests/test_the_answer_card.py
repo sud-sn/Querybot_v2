@@ -36,6 +36,7 @@ FUNCTIONS = [
     "function _ownMetricHtml(msg)",
     "function _figuresHtml(msg)",
     "function _followingHtml(msg)",
+    "function _standingHtml(msg)",
     "function _answerTiles(msg)",
     "function _answerTilesHtml(tiles)",
     "function _kpiChangeHtml(change)",

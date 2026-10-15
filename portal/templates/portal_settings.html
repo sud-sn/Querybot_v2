@@ -96,6 +96,17 @@
         </div>
       </div>
     </form>
+    <div class="card settings-card" id="standingCard">
+      <div class="card-body">
+        <h2 class="settings-title">{{ t('ui.profile.standing') }}</h2>
+        <p class="settings-note">{{ t('ui.profile.standing_note') }}</p>
+        <ul class="settings-standing" id="standingList"{% if not standing %} hidden{% endif %}>
+          {% for s in standing %}<li class="settings-row" data-standing-id="{{ s.id }}"><span class="settings-standing-words">{{ s.words_fr if lang == 'fr' and s.words_fr else s.words }}</span>
+            <button type="button" class="btn btn-secondary btn-sm" data-standing-remove="{{ s.id }}" aria-label="{{ t('ui.profile.standing_remove_named', words=s.words) }}">{{ t('ui.profile.standing_remove') }}</button></li>{% endfor %}
+        </ul>
+        <p class="qb-table-empty" id="standingNone"{% if standing %} hidden{% endif %}>{{ t('ui.profile.standing_none') }}</p>
+      </div>
+    </div>
   </section>
 
   {# ── Security ────────────────────────────────────────────────────────── #}
@@ -306,6 +317,9 @@
 .settings-preview { height: 220px; border: 1px solid var(--line-subtle); border-radius: var(--radius-lg); background: var(--surface); }
 .settings-actions { margin-top: .5rem; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; }
+.settings-standing { list-style: none; margin: .75rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.settings-standing li { padding: .5rem .75rem; border: 1px solid var(--border); border-radius: var(--radius, 10px); background: var(--surface-2); }
+.settings-standing-words { min-width: 0; overflow-wrap: anywhere; font-weight: var(--weight-bold, 600); }
 .settings-row > div { flex: 1 1 320px; min-width: 0; }
 .settings-row > div .settings-note { margin-bottom: 0; }
 .settings-row + .settings-n-group, .settings-row + .qb-table-empty { margin-top: 1.25rem; }
@@ -489,5 +503,20 @@
     }, 'image/png');
   });
 })();
+// Standing conditions kept in the profile: removed for good, here.
+document.getElementById('standingList')?.addEventListener('click', async ev => {
+  const button = ev.target.closest('[data-standing-remove]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch('/portal/api/profile/standing/remove', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: button.dataset.standingRemove})});
+    const data = await response.json();
+    if (!data.ok) { button.disabled = false; return; }
+    button.closest('li')?.remove();
+    const list = document.getElementById('standingList');
+    if (list && !list.children.length) { list.hidden = true; document.getElementById('standingNone').hidden = false; }
+  } catch (_) { button.disabled = false; }
+});
 </script>
 {% endblock %}

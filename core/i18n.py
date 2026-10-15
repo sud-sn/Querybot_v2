@@ -5703,6 +5703,28 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},
     # What a follow-up kept from the answer above without the question saying it ("Region is North; in 2025").
     "ui.chat.following.kept": {"en": "Kept from above: {kept}", "fr": "Repris de plus haut : {kept}"},
+    # Standing conditions ("from now on use the last 2 months"): the chip row above the box, and the line on each
+    # answer given under them (core2/standing.py).
+    "ui.profile.standing": {"en": "Standing conditions", "fr": "Conditions permanentes"},
+    "ui.profile.standing_note": {
+        "en": "Said in a chat with “always” (“always use the last 2 months”): every conversation of yours uses them. "
+              "A question that names its own period or member is answered for it.",
+        "fr": "Dites dans une conversation avec « toujours » (« toujours les 2 derniers mois ») : chacune de vos "
+              "conversations les utilise. Une question qui nomme sa propre période ou son propre membre y répond."},
+    "ui.profile.standing_none": {"en": "None yet. Say “always …” in a chat to keep one here.",
+                                 "fr": "Aucune pour l’instant. Dites « toujours … » dans une conversation."},
+    "ui.profile.standing_remove": {"en": "Remove", "fr": "Retirer"},
+    "ui.profile.standing_remove_named": {"en": "Remove “{words}”", "fr": "Retirer « {words} »"},
+    "ui.chat.standing.label": {"en": "Applied to every answer", "fr": "Appliqué à chaque réponse"},
+    "ui.chat.standing.here": {"en": "This conversation only", "fr": "Cette conversation seulement"},
+    "ui.chat.standing.always": {"en": "From your profile: every conversation uses it",
+                                "fr": "De votre profil : chaque conversation l’utilise"},
+    "ui.chat.standing.remove": {"en": "Remove “{words}” from this conversation",
+                                "fr": "Retirer « {words} » de cette conversation"},
+    "ui.chat.standing.applied": {"en": "Under your standing conditions: {words}",
+                                 "fr": "Selon vos conditions permanentes : {words}"},
+    "ui.chat.standing.aside": {"en": "Set aside for this question: {words}",
+                               "fr": "Mis de côté pour cette question : {words}"},
     # A dashboard the reader asked for in the chat: how far it is, then saved as theirs ("ui.chat.draft.*" is the
     # composer's unsent message).
     "ui.chat.dashmade.building_kicker": {"en": "Building your dashboard", "fr": "Construction de votre tableau de bord"},

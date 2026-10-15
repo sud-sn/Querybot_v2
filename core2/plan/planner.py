@@ -1611,10 +1611,12 @@ _UNIT_OF = {"day": "day", "week": "week", "month": "month", "quarter": "quarter"
             "semaine": "week", "mois": "month", "trimestre": "quarter", "an": "year", "annee": "year"}
 _EN_UNIT = r"(days?|weeks?|months?|quarters?|years?)"
 _FR_UNIT = r"(jours?|semaines?|mois|trimestres?|ans|ann(?:é|e)es?)"
-_UP_TO_TODAY = r"(?:from|up\s+to|until|till|to|through|including)\s+(?:today|now)"
+_UP_TO_TODAY = (r"(?:from|up\s+to|until|till|to|through|including)\s+(?:today|now|the\s+current\s+day|this\s+day|"
+                r"the\s+present\s+day|the\s+present)")
 # "The last 2 months from today", "rolling 3 months", "the past 60 days": n units up to today, today included.
 _ROLLING = [
-    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+{_EN_UNIT}\s+{_UP_TO_TODAY}\b", re.I),
+    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+{_EN_UNIT}(?:['’]?\s+(?:of\s+)?(?:data|figures|"
+               rf"numbers|sales))?\s+{_UP_TO_TODAY}\b", re.I),
     re.compile(rf"\brolling\s+{_COUNT}[\s-]+{_EN_UNIT}\b", re.I),
     re.compile(rf"\b{_COUNT}[\s-]+{_EN_UNIT}\s+rolling\b", re.I),
     re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+(days?)\b", re.I),

@@ -2265,6 +2265,8 @@ async def settings_page(request: Request):
         "saved": saved if saved in _SETTINGS_SAID else ("charts" if saved == "1" else ""),
         "error": error_text,
         "profile": profile_store.get_profile(int(user["id"])),
+        # "Always use the last 2 months" said in a chat: listed here, each removable (core2/standing.py).
+        "standing": profile_store.standing_conditions(int(user["id"]), str(user.get("account_id") or "")),
         "zones": profile.zones(), "starts": profile.start_choices(user),
         "sign_ins": profile.sign_ins(user, lang),
         "notifications": profile.notifications(user, lang),
@@ -4700,3 +4702,5 @@ async def portal_suggestions_event(request: Request):
 
 # A reader's suggestions to the new core live in portal/core2_requests.py, registered on this router here.
 from portal import core2_requests as _core2_requests  # noqa: E402,F401
+# Standing conditions (the chip row above the chat box, and the reader's own on the Profile page).
+from portal import standing_routes as _standing_routes  # noqa: E402,F401

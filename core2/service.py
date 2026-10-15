@@ -43,6 +43,8 @@ from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words, plan_question, stands_for
 from core2.plan.thread import kept_parts
+from core2 import standing as S
+from core2.standing import Standing
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, about_people, build_index, listable, normalise,
                                 people_column, placed, quoted_spans, which_end, slugs_in)
 from core2.resolve.figures import worked_out
@@ -84,6 +86,11 @@ class Services:
     # Every question the data answers, worked out and checked (core2/question_map.py): the planner is told the
     # routes counted on rows that name both lists, and a question that cannot be answered offers the nearest.
     question_map: Any = None
+    # The reader's standing conditions kept in their profile ("always use the last 2 months", core2/standing.py),
+    # and how one is kept there or taken out; None: kept for the conversation only.
+    always: list[Standing] = field(default_factory=list)
+    keep_always: Callable[[Standing], None] | None = None
+    drop_always: Callable[[str], None] | None = None
 
 
 @dataclass
@@ -106,6 +113,10 @@ class Session:
     # The chips of the answer on screen that change one setting ("Median instead"), by their words: the plan
     # each runs, with no AI (core2/plan/chips.py).
     offers: dict[str, Plan] = field(default_factory=dict)
+    # Standing conditions set in this conversation ("from now on use the last 2 months"), and the reader's own
+    # ones from their profile taken off for this conversation only (core2/standing.py).
+    standing: list[Standing] = field(default_factory=list)
+    paused: set[str] = field(default_factory=set)
 
 
 _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
@@ -406,6 +417,15 @@ def answer_question(question: str, services: Services, session: Session, *, ques
 
     if dashboards.asked_for(question) is not None:
         return _described(question, services, session)     # "build me a dashboard of ...": before planning
+    if planned is None:
+        # "From now on use the last 2 months", "always leave out 'Wholesale'", "stop using the last 2 months":
+        # read and kept in code, never asked of the AI (core2/standing.py); "remove ..." is no change to the data.
+        said = S.instruction(question)
+        if said is not None:
+            return _standing_set(question, *said, services, session)
+        gone = S.letting_go(question, _standing_now(services, session))
+        if gone is not None:
+            return _standing_dropped(question, gone, services, session)
     shown = changes_data(question)
     if shown is not None:
         french = shown.startswith(_SHOW["fr"])
@@ -676,6 +696,12 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
+    bare = plan
+    from core2.plan.planner import check
+
+    plan, applied, aside = S.apply(plan, _standing_now(services, session), question, model,
+                                   lambda p: not check(p, model, services.today)[0],
+                                   seen.plan if seen is not None else None)
 
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
                   personal_shown=services.scrub is not None, link_repeats=_link_check(services))
@@ -786,8 +812,152 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         kept = _kept_said(plan, last_plan(session.turns), question, model)
         if kept:
             payload["following"]["kept"] = kept
-    _keep(session, Turn(question, plan, outcome.masked, shown, periods, _shown_title(payload)))
+    _standing_said(payload, services, session, applied, aside)
+    # The conversation keeps the plan as asked: a standing condition is put on again at each answer, so one
+    # removed is gone from the follow-ups too.
+    _keep(session, Turn(question, S.without(plan, applied, bare), outcome.masked, shown, periods,
+                        _shown_title(payload)))
     return payload
+
+
+# ── standing conditions (core2/standing.py) ────────────────────────────────
+
+
+def _standing_now(services: Services, session: Session) -> list[Standing]:
+    return _in_force(services.always, session)
+
+
+def _in_force(always: list[Standing], session: Session) -> list[Standing]:
+    """The standing conditions in force: the reader's own from their profile (unless taken off here), then this
+    conversation's; one condition said twice counts once."""
+    out: list[Standing] = []
+    for s in [*(a for a in always if a.id not in session.paused), *session.standing]:
+        if not any(o.words == s.words for o in out):
+            out.append(s)
+    return out
+
+
+def _standing_shown(services: Services, session: Session) -> list[dict[str, Any]]:
+    return [s.shown() for s in _standing_now(services, session)]
+
+
+def _standing_said(payload: dict[str, Any], services: Services, session: Session, applied: list[Standing],
+                   aside: list[str]) -> None:
+    """On the answer: the standing conditions it was given under, and any set aside for it, and why."""
+    kept = _standing_shown(services, session)
+    if not kept:
+        return
+    payload["standing"] = {"kept": kept, "applied": [s.words for s in applied],
+                           "applied_fr": [s.words_fr or s.words for s in applied],
+                           "aside": [en for en, _ in aside], "aside_fr": [fr for _, fr in aside]}
+
+
+def _standing_set(question: str, scope: str, words: str, services: Services, session: Session) -> dict[str, Any]:
+    """A standing instruction read: the conditions kept, said with what each means, or why none could be."""
+    said = S.read(scope, words, services.model, services.index, services.today)  # type: ignore[arg-type]
+    fr = S.french(question)
+    unknown = ", ".join(f"« {u} »" if fr else f"“{u}”" for u in said.unknown[:3])
+    if not said.standing:
+        text = ("Je n’ai pas compris quoi garder désormais. Nommez une période (« les 2 derniers mois ») ou les noms à "
+                "garder ou à exclure, entre guillemets (seulement « Downtown », sans « Cancelled »)." if fr else
+                "I could not tell what to keep from now on. Name a period (\u201cthe last 2 months\u201d) or the "
+                "names to keep or leave out, in quotes (only \u201cDowntown\u201d, leave out \u201cCancelled\u201d).")
+        if said.unknown:
+            text = (f"Rien dans les données ne s’appelle {unknown} : rien n’a été gardé. Nommez-le comme les données "
+                    "l’écrivent." if fr else
+                    f"Nothing in the data is called {unknown}, so nothing was kept. Name it as the data writes it.")
+        frame = _frame(question, text, kind="standing")
+        _standing_said(frame, services, session, [], [])
+        return frame
+    kept_here = scope == "conversation" or services.keep_always is None
+    for s in said.standing:
+        if kept_here:
+            session.standing = [k for k in session.standing if k.id != s.id and not _same_kind(k, s)]
+            session.standing.append(s)
+        else:
+            services.keep_always(s)  # type: ignore[misc]
+            services.always = [a for a in services.always if a.id != s.id and not _same_kind(a, s)] + [s]
+            session.paused.discard(s.id)
+    listed = "; ".join(_meant(s, services, fr) for s in said.standing)
+    if scope == "always" and not kept_here:
+        text = (f"Enregistré dans votre profil : {listed}. Chacune de vos conversations l’utilise jusqu’à ce que vous "
+                "le retiriez, ici ou sur votre page Profil." if fr else
+                f"Saved to your profile: {listed}. Every conversation of yours uses it until you remove it, here "
+                "or on your Profile page.")
+    else:
+        text = (f"Désormais dans cette conversation : {listed}. Chaque réponse l’utilise jusqu’à ce que vous le "
+                "retiriez." if fr else
+                f"From now on in this conversation: {listed}. Every answer uses it until you remove it.")
+    if said.unknown:
+        text += (f" Rien dans les données ne s’appelle {unknown} : laissé de côté." if fr else
+                 f" Nothing in the data is called {unknown}: left out.")
+    frame = _frame(question, text, kind="standing")
+    _standing_said(frame, services, session, [], [])
+    return frame
+
+
+def _same_kind(a: Standing, b: Standing) -> bool:
+    """A new period replaces the period kept; a new condition on a field replaces the one on that field."""
+    if a.window is not None and b.window is not None:
+        return True
+    return bool(a.filters and b.filters and {f.field for f in a.filters} == {f.field for f in b.filters})
+
+
+def _meant(s: Standing, services: Services, fr: bool = False) -> str:
+    """A condition with what it means now: "the last 2 months (1 Apr 2026 – 31 May 2026)", counted back from where
+    the data ends when it ended a while ago, as the answers count it (core2/resolve/time.py)."""
+    words = (s.words_fr or s.words) if fr else s.words
+    if s.window is None:
+        return words
+    from core2.answer.builder import _jour
+    from core2.resolve.time import resolve_window
+
+    from core2.plan.analyses import activities
+    from core2.resolve.resolver import _first_last
+
+    # The main activity's date (orders, fills), as the answers count most questions: never a table of targets
+    # that runs on into next year.
+    main = next((a.date for a in activities(services.model, most=1) if a.date is not None), None)
+    try:
+        rng = resolve_window(s.window, today=services.today, last_data=_first_last(main)[1] if main else None)
+    except Exception:  # noqa: BLE001 - the words alone
+        return words
+    if rng.start is None or rng.end is None:
+        return words
+    last = rng.end - dt.timedelta(days=1)
+    if fr:
+        return f"{words} ({_jour(rng.start)} \u2013 {_jour(last)})"
+    return f"{words} ({rng.start.day} {rng.start:%b %Y} \u2013 {last.day} {last:%b %Y})"
+
+
+def _standing_dropped(question: str, gone: list[Standing], services: Services, session: Session) -> dict[str, Any]:
+    """Standing conditions removed: this conversation's go; the reader's own are taken off for this conversation,
+    and out of their profile when they say so for good."""
+    for s in gone:
+        if s.scope == "always":
+            if re.search(r"\b(?:for\s+good|everywhere|permanently|from\s+my\s+profile|always)\b", question, re.I) \
+                    and services.drop_always is not None:
+                services.drop_always(s.id)
+                services.always = [a for a in services.always if a.id != s.id]
+            else:
+                session.paused.add(s.id)
+        else:
+            session.standing = [k for k in session.standing if k.id != s.id]
+    fr = S.french(question)
+    names_ = "; ".join((s.words_fr or s.words) if fr else s.words for s in gone)
+    still = "; ".join((s.words_fr or s.words) if fr else s.words for s in _standing_now(services, session))
+    if fr:
+        text = f"Retiré : {names_}. " + (f"Toujours appliqué : {still}" if still else
+                                          "Les prochaines réponses utilisent de nouveau toutes les données")
+    else:
+        text = f"Removed: {names_}. " + (f"Still in force: {still}" if still else
+                                         "The next answers use all of the data again")
+    if any(s.scope == "always" and s.id in session.paused for s in gone):
+        text += (". Il reste dans votre profil pour les autres conversations : retirez-le là-bas pour de bon" if fr
+                 else ". It stays in your profile for other conversations: remove it there for good")
+    frame = _frame(question, text + ".", kind="standing")
+    frame["standing"] = {"kept": _standing_shown(services, session), "applied": [], "aside": []}
+    return frame
 
 
 def _marked(payload: dict[str, Any], plan: Plan, model: SemanticModel) -> dict[str, Any]:
@@ -2029,6 +2199,7 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
         return refused or _frame(question, "The new core cannot answer here yet.")
     if progress is not None:
         services = replace(services, progress=progress)
+    services = _with_profile_standing(services, account_id, portal_user)
     session = _session(session_key)
     payload = answer_question(question, services, session, question_id=question_id,
                               planned=_card_asked(account_id, portal_user, question, session))
@@ -2048,6 +2219,52 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
             figure["token"] = _own_token(account_id, str((portal_user or {}).get("id") or ""), session_key,
                                          figure.pop("measure"), figure.get("formula", ""), question_id)
     return payload
+
+
+def _with_profile_standing(services: Services, account_id: str, portal_user: dict[str, Any] | None) -> Services:
+    """The reader's own standing conditions ("always use the last 2 months"), read from their profile at each
+    question, so one removed on the Profile page is gone from the next answer; and how one is kept or removed."""
+    user_id = (portal_user or {}).get("id")
+    if not user_id:
+        return services
+    from store import profile_store as P
+
+    return replace(services, always=_profile_always(account_id, portal_user),
+                   keep_always=lambda s: P.keep_standing(int(user_id), account_id, s.data()),
+                   drop_always=lambda standing_id: P.drop_standing(int(user_id), account_id, standing_id))
+
+
+def _profile_always(account_id: str, portal_user: dict[str, Any] | None) -> list[Standing]:
+    user_id = (portal_user or {}).get("id")
+    if not user_id:
+        return []
+    from store import profile_store as P
+
+    try:
+        return [Standing.of(d) for d in P.standing_conditions(int(user_id), account_id)]
+    except Exception as exc:  # noqa: BLE001 - the question is answered without them, and it is logged
+        log.warning("core2: standing conditions of reader %s could not be read: %s", user_id, exc)
+        return []
+
+
+def standing_in(account_id: str, portal_user: dict[str, Any] | None, session_key: str) -> list[dict[str, Any]]:
+    """The standing conditions in force in a conversation, for the chip row above the box (a reopened thread,
+    a new one): the reader's own, unless taken off here, then the conversation's."""
+    always = _profile_always(account_id, portal_user)
+    with _LOCK:
+        session = _SESSIONS.get(session_key) or Session()
+        return [s.shown() for s in _in_force(always, session)]
+
+
+def standing_taken_off(account_id: str, portal_user: dict[str, Any] | None, session_key: str,
+                       standing_id: str) -> list[dict[str, Any]]:
+    """The chip's ×: a condition taken off this conversation (one of the reader's own, for this conversation only;
+    the Profile page removes it for good). The conditions still in force."""
+    session = _session(session_key)
+    with _LOCK:
+        session.standing = [k for k in session.standing if k.id != standing_id]
+        session.paused.add(str(standing_id))
+    return standing_in(account_id, portal_user, session_key)
 
 
 def _card_asked(account_id: str, portal_user: dict[str, Any] | None, question: str, session: Session) -> Plan | None:

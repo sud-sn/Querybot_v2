@@ -2060,6 +2060,15 @@ def _ensure_profile_tables(conn: sqlite3.Connection) -> None:
             photo_rev  INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT    DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS portal_standing (
+            user_id    INTEGER NOT NULL,
+            account_id TEXT    NOT NULL,
+            id         TEXT    NOT NULL,
+            data       TEXT    NOT NULL DEFAULT '{}',
+            position   INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT    DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, account_id, id)
+        );
         CREATE TABLE IF NOT EXISTS portal_sign_in (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id    INTEGER NOT NULL,
