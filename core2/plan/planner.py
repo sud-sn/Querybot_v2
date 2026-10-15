@@ -1199,8 +1199,10 @@ def members_by_what_they_did(plan: Plan, model: SemanticModel, question: str) ->
             from core2.plan.ir import Lifecycle
 
             seg = plan.segment
+            # "New vs returning customers": both, with those won back and lapsed beside them.
             return plan.model_copy(update={
-                "lifecycle": Lifecycle(of=seg.of, measure=seg.measure, status=seg.status, name=seg.name),
+                "lifecycle": Lifecycle(of=seg.of, measure=seg.measure, status="all" if seg.split else seg.status,
+                                       name="" if seg.split else seg.name),
                 "segment": None, "measures": [], "per": None, "intent": "trend" if plan.time.grain else "value"})
     if plan.kind != "query" or not question or plan.segment is not None or plan.lifecycle is not None \
             and plan.lifecycle.status not in ("all", "active") or not _HOW_MANY_OF.search(question):

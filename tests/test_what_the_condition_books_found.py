@@ -671,3 +671,16 @@ def test_none_after_the_data_named_as_a_date_condition_is_said(home):
                        "had": [{"field": "renewal_date", "op": "between", "values": ["2024-01-01", "2024-12-31"]}]}})
     said = got.get("answer", {}).get("headline") or got.get("text") or ""
     assert "Your data ends" in said and "had none" not in said, said
+
+
+def test_new_vs_returning_customers_keeps_both(retail):
+    # The Phase 5 screenshots: "new vs returning customers by month in 2025", planned as the number of customers
+    # split new against returning, was answered with the returning customers alone.
+    chat = Chat(retail)
+    got = chat.ask("new vs returning customers by month in 2025",
+                   {"intent": "breakdown", "measures": ["number_of_customers"],
+                    "segment": {"of": "customer", "measure": "number_of_orders", "split": True},
+                    "time": {"grain": "month", "window": {"kind": "between", "start": "2025-01-01",
+                                                          "end": "2025-12-31"}}})
+    first = got["export_rows"][0]
+    assert "new" in first and "returning" in first, first
