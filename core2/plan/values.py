@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from core2.model.schema import SemanticModel, value_names
 
 MAX_TOKENS = 8
+NEAREST_MOST = 50000   # members of one field read through for a name written like another ("did you mean")
 
 # Everyday words a question is made of. A member stored as one of them -- a group coded DO, AS, IF or
 # HAD, a province ON, a unit ME -- is matched only where the question writes it as stored ("sales for DO"),
@@ -156,6 +157,22 @@ class MemberIndex:
         hits = {v for key, entries in self.names.items() if words <= set(key.split())
                 for a, v in entries if a == attribute}
         return hits.pop() if len(hits) == 1 else None
+
+    def nearest(self, attribute: str, value: str, most: int = 3) -> list[str]:
+        """The members of ``attribute`` written most like ``value`` ("Downtwn Store" -> "Downtown Store"), closest
+        first; none past a list too long to read through on a question."""
+        import difflib
+
+        stored = {key: v for key, entries in self.names.items() for a, v in entries if a == attribute}
+        if not stored or len(stored) > NEAREST_MOST:
+            return []
+        key = normalise(value)
+        found = difflib.get_close_matches(key, list(stored), n=most, cutoff=0.72)
+        if not found:
+            return []
+        # Only those about as close as the closest: "Downtwn Store" is Downtown Store, not Midtown Store too.
+        best = difflib.SequenceMatcher(None, key, found[0]).ratio()
+        return [stored[k] for k in found if difflib.SequenceMatcher(None, key, k).ratio() >= best - 0.05]
 
     def homes(self, value: str) -> list[tuple[str, str]]:
         """Every grouping with a member ``value`` names, whole or by its own words, and that member."""

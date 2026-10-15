@@ -541,7 +541,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
                     duration_ms=(time.perf_counter() - started) * 1000, data_source=data_source,
                     question_id=question_id, notes=notes, model_version=model_version)
     payload["drivers"] = {"change": change, "groupings": [
-        {"slug": g.slug, "label": g.label, "explained": round(g.explained, 4),
+        {"slug": g.slug, "label": g.label, "word": g.word, "explained": round(g.explained, 4),
          "leaders": [{"member": x.member, "change": x.change} for x in g.leaders]} for g in ranked]}
     return payload
 

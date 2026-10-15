@@ -2551,7 +2551,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                   hidden: list[ValueMatch] | None = None,
                   reading: str | None = None, on_screen: list[tuple] | None = None,
                   written: list[ValueMatch] | None = None, defined: list | None = None,
-                  routes: str = "") -> Outcome:
+                  routes: str = "", feedback: str = "") -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
@@ -2561,6 +2561,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     ``written``: every member name the question writes, quoted or not (two compared: "actual and budget").
     ``defined``: the figures the conversation's plans worked out (gross profit), oldest first: definitions only,
     never a figure of an answer, so a new question may use them too.
+    ``feedback``: what the answer to a first plan showed when it was checked before being shown (core2/service.py
+    looks again once): the plan is written again with it in view.
     """
     matches = matches or []
     history = history or []
@@ -2580,6 +2582,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None, routes=routes)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
                          scrub=scrub, model=model, reading=reading)
+    if feedback:
+        tail = f"{tail}\n\n{feedback}"
     raw: list[str] = []
     problems: list[str] = []
     hint = ""

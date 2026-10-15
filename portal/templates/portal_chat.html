@@ -708,6 +708,7 @@ body:has(.chat-page) .main { background: var(--bg); }
   border: 1px solid var(--line-control); border-radius: var(--radius); background: var(--surface-raised); color: var(--text-strong);
   font-weight: var(--weight-semibold); cursor: pointer; }
 .clarify-card .clarify-choice:hover { border-color: var(--primary); background: var(--primary-soft); }
+.clarify-card .clarify-choice .clarify-figure { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; font-weight: var(--weight-regular); color: var(--text-muted); }
 .clarify-card .clarify-choice:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
 .answer-next .follow-up-chip { min-height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: var(--radius-pill);
   border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: var(--font-sm); font-weight: var(--weight-medium);
@@ -3872,10 +3873,13 @@ function _clarifyCardHtml(msg) {
   const clarify = msg.clarify || {};
   const options = (Array.isArray(clarify.options) ? clarify.options : []).filter(Boolean);
   const question = clarify.question || (msg.answer || {}).headline || '';
+  // Each fair reading worked out before asking: its figure beside its name (core2/service.py _with_numbers).
+  const figures = (clarify.figures && typeof clarify.figures === 'object') ? clarify.figures : {};
   return `<article class="answer-card clarify-card" aria-label="${escHtml(question)}">`
     + `<p class="clarify-question">${escHtml(question)}</p>`
     + `<div class="clarify-options">${options.map(o =>
-        `<button type="button" class="clarify-choice follow-up-chip" data-question="${escHtml(o)}" data-follow-up="${escHtml(o)}">${escHtml(o)}</button>`).join('')}</div>`
+        `<button type="button" class="clarify-choice follow-up-chip" data-question="${escHtml(o)}" data-follow-up="${escHtml(o)}">${escHtml(o)}`
+        + (figures[o] ? `<span class="clarify-figure">${escHtml(String(figures[o]))}</span>` : '') + `</button>`).join('')}</div>`
     + `</article>`;
 }
 

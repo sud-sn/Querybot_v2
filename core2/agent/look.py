@@ -58,6 +58,7 @@ class Seen:
     figures: list[float] = field(default_factory=list)
     days: list[str] = field(default_factory=list)        # ISO days (a month or week by its first day)
     members: list[str] = field(default_factory=list)     # the data's names it states (kept from the AI if need be)
+    about: str = ""                                       # the field whose condition it is about (elsewhere)
 
 
 @dataclass
@@ -105,15 +106,18 @@ def looked_at(plan: Plan, logical: Logical) -> bool:
 
 
 def look(plan: Plan, logical: Logical, payload: dict[str, Any], run: Run, *, empty: bool,
-         budget: float = BUDGET_SECONDS) -> Look | None:
+         carried: list | None = None, standing: list | None = None, budget: float = BUDGET_SECONDS) -> Look | None:
     """What an analyst would say of this answer before showing it, from at most MAX_CHECKS small queries; None
-    when there is nothing to say (a busy answer) or nothing it reads."""
+    when there is nothing to say (a busy answer) or nothing it reads. ``carried``: the plan's conditions kept from
+    the answer above, not written in this question; ``standing``: the standing conditions it was given under.
+    Nothing found because of one of them is said so."""
     if not looked_at(plan, logical):
         return None
     words = _Words(logical)
     checks = _Checks(run, budget)
     try:
-        found = _nothing(plan, logical, words, checks) if empty else _thin(plan, logical, payload, words, checks)
+        found = _nothing(plan, logical, words, checks, carried or [], standing or []) if empty else \
+            _thin(plan, logical, payload, words, checks)
     except Exception as exc:  # noqa: BLE001 - the answer stands as it is
         log.warning("core2: looking at an answer failed: %s", exc, exc_info=True)
         return None
@@ -123,7 +127,8 @@ def look(plan: Plan, logical: Logical, payload: dict[str, Any], run: Run, *, emp
 # ── nothing found ─────────────────────────────────────────────────────────────
 
 
-def _nothing(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks") -> Look:
+def _nothing(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks", carried: list,
+             standing: list) -> Look:
     out = Look()
     window = logical.window
     if window.start is not None or window.end is not None:
@@ -132,7 +137,8 @@ def _nothing(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks") -
         if months is not None:
             _when_else(plan, logical, words, checks, months, out)
     for f in [f for f in plan.filters if f.op in ("eq", "in") and f.values][:2]:
-        _elsewhere(plan, logical, words, checks, f, out)
+        how = "carried" if _among(f, carried) else "standing" if _among(f, standing) else ""
+        _elsewhere(plan, logical, words, checks, f, out, how)
     return out
 
 
@@ -196,8 +202,15 @@ def _when_else(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks",
                                                              "end": end.isoformat()}})))
 
 
-def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks", f: Any, out: Look) -> None:
-    """Everyone else in the same period: without the condition on one field, is there anything?"""
+def _among(f: Any, filters: list) -> bool:
+    return any(g.field == f.field and [str(v) for v in g.values] == [str(v) for v in f.values] for g in filters)
+
+
+def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks", f: Any, out: Look,
+               how: str = "") -> None:
+    """Everyone else in the same period: without the condition on one field, is there anything? A condition
+    kept from the answer above (``how`` "carried"), or a standing one ("standing"), is said as such: it may be the
+    one the reader no longer means."""
     others = [g for g in plan.filters if g is not f]
     rows = checks.one(_base(plan, filters=[g.model_dump(mode="json", exclude_defaults=True) for g in others]),
                       words.name)
@@ -214,9 +227,31 @@ def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks",
     said_fr = amount(value, words.format, lang="fr")
     scope = " ".join(w for w in (span, rest_en) if w)
     scope_fr = " ".join(w for w in (span_fr, rest_fr) if w)
+    said_cond = condition_words(condition) if condition is not None else f"for {thing} {', '.join(map(str, f.values))}"
+    said_cond_fr = condition_words(condition, lang="fr") if condition is not None else said_cond
+    if how:
+        lead = ("I kept the condition " if how == "carried" else "The standing condition ") + said_cond
+        lead_fr = ("J'ai gardé la condition " if how == "carried" else "La condition permanente ") + said_cond_fr
+        out.seen.append(Seen(
+            how,
+            f"{lead} {'from the question before' if how == 'carried' else 'applies to every answer here'}; "
+            f"without it, {words.low} {scope} is {said}.".replace("  ", " "),
+            f"{lead_fr} {'de la question précédente' if how == 'carried' else 's’applique à chaque réponse ici'} ; "
+            f"sans elle, {words.label} {scope_fr} : {said_fr}.".replace("  ", " "),
+            figures=[value], about=f.field))
+        out.checked.append((f"Looked without {said_cond} {scope}: {said}.".replace("  ", " "),
+                            f"Cherché sans « {said_cond_fr} » {scope_fr} : {said_fr}.".replace("  ", " ")))
+        if how == "carried":     # a standing condition is put on every answer again: removing it is said, not run
+            tail = "".join(f", {w}" for w in (condition_words(c, quoted=True) for c in rest) if w)
+            tail_fr = "".join(f", {w}" for w in (condition_words(c, quoted=True, lang="fr") for c in rest) if w)
+            out.offers.append(Offer(f"{words.label} {span}{tail}".replace("  ", " "),
+                                    f"{words.label} {span_fr}{tail_fr}".replace("  ", " "),
+                                    _base(plan, filters=[g.model_dump(mode="json", exclude_defaults=True)
+                                                         for g in others])))
+        return
     out.seen.append(Seen("elsewhere", f"Across all {plural(thing)}, {words.low} {scope} is {said}.".replace("  ", " "),
                          f"Sans la condition sur {thing}, {words.label} {scope_fr} : {said_fr}.".replace("  ", " "),
-                         figures=[value]))
+                         figures=[value], about=f.field))
     out.checked.append((f"Looked across all {plural(thing)} {scope}: {said}.".replace("  ", " "),
                         f"Cherché sans la condition sur {thing} {scope_fr} : {said_fr}.".replace("  ", " ")))
     tail = "".join(f", {w}" for w in (condition_words(c, quoted=True) for c in rest) if w)

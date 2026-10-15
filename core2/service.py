@@ -40,7 +40,7 @@ from core2.compile.shapes import fill_edges
 from core2.plan.chips import french as chip_french, offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
-from core2.plan.ir import Clarify, Compare, Plan, Window
+from core2.plan.ir import Clarify, Compare, Filter, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words, plan_question, stands_for
 from core2.plan.thread import kept_parts, points_above
 from core2 import standing as S
@@ -614,15 +614,50 @@ def portal_shown(session_key: str) -> Any:
 def _answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
                      forced: str | None = None, planned: Plan | None = None) -> dict[str, Any]:
     """``forced``: "refine" or "new" when the reader said which ("Ask as a new question", or a button).
-    ``planned``: the plan written for the question in code (a recipe's dashboard tile), run as it is (no AI)."""
+    ``planned``: the plan written for the question in code (a recipe's dashboard tile), run as it is (no AI).
+
+    An answer to the AI's plan that looks wrong when it is checked (nothing found because of a condition the
+    question never states, a share of exactly 0% or 100%) is asked of the AI once more, with what the check found
+    (core2/agent/again.py). The second reading is kept only when it puts that right; the answer says it looked
+    again, and the first reading stays one click away. Otherwise the first answer stands, as it was."""
+    from core2.agent import again as A
+
+    before = A.state(session)
+    payload = _answer_once(question, services, session, question_id=question_id, forced=forced, planned=planned)
+    looked = payload.pop(A.KEY, None)
+    if looked is None:
+        return payload
+    asked, how, first, reasons = looked
+    after = A.state(session)
+    A.restore(session, before)
+    try:
+        second = _answer_once(asked, services, session, question_id=question_id, forced=how,
+                              feedback=A.feedback(first, reasons, values=services.values_allowed))
+        second.pop(A.KEY, None)
+    except Exception as exc:  # noqa: BLE001 - the first answer stands
+        log.info("core2: looking again at %r failed: %s", asked, exc)
+        second = None
+    if second is not None and A.better(second, first, payload, reasons):
+        A.say(second, payload, first, reasons, session, _plain)
+        return second
+    A.restore(session, after)
+    A.unchanged(payload, reasons)
+    return payload
+
+
+def _answer_once(question: str, services: Services, session: Session, *, question_id: str = "",
+                 forced: str | None = None, planned: Plan | None = None, feedback: str = "") -> dict[str, Any]:
+    """One reading of the question, answered (see _answer_question). ``feedback``: what the check of a first
+    reading found, for the AI writing the plan again."""
     start = time.perf_counter()
     model = services.model
+    from_ai = False
     pending, session.pending = session.pending, None
     if pending is not None and pending.field == END:
         end = choose(question, pending.options)
         if end is not None:      # the member they meant, in quotes where the words pointed: their question again
             asked = pending.question.replace(pending.phrase, f'"{end}"', 1)
-            return _answer_question(asked, services, session, question_id=question_id, forced="refine")
+            return _answer_once(asked, services, session, question_id=question_id, forced="refine")
         pending = None
     if forced is None and NEW_PREFIX.match(question) and NEW_PREFIX.sub("", question, count=1).strip():
         question, forced = NEW_PREFIX.sub("", question, count=1).strip(), "new"
@@ -638,20 +673,14 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         offer = yes             # "yes please" to the answer's own question: its first offer, with no AI
     if planned is not None:
         outcome = Outcome(planned)
-    elif offer is not None and (pending is None or picked is None) and seen is not None:
-        # A chip of the answer on screen: its plan, one setting changed, run as it is (no AI).
-        outcome = Outcome(offer, masked=seen.masked)     # no "Following" line: the chip says what it changed
+    elif offer is not None and (pending is None or picked is None):
+        # A chip of the answer on screen (or of a reply that found no answer, "Did you mean ...?"): its plan, run
+        # as it is (no AI).
+        outcome = Outcome(offer, masked=seen.masked if seen is not None else None)  # the chip says what it changed
     elif pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
-        if pending.field == "time.date":
-            # The offered dates are tables' defaults; another table may have a date of the same name.
-            named = [r for r in model.date_roles.values() if r.name == picked]
-            role = next((r for r in named if r.is_default), named[0] if named else None)
-            update: dict[str, Any] = {"time": pending.plan.time.model_copy(
-                update={"date": role.slug if role is not None else picked})}
-        else:
-            update = {"via": {**pending.plan.via, pending.field: picked}}
-        outcome = Outcome(pending.plan.model_copy(update={**update, "follow_up": "refine"}), masked=pending.masked)
+        outcome = Outcome(_completed(pending.plan, pending.field, picked, model).model_copy(
+            update={"follow_up": "refine"}), masked=pending.masked)
     else:
         # Only a name the reader put in quotes is a member: ordinary words never narrow the answer. Every
         # name written, quoted or not, is still withheld from the AI where member values may not reach it.
@@ -680,6 +709,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         if reading.kind != "new" and pointed:
             matches = sorted([*found, *pointed], key=lambda m: m.start)
         # A new question is planned on its own: nothing of the answer before it can leak in.
+        from_ai = True
         outcome = plan_question(model, question, services.complete, today=services.today,
                                 history=[] if reading.kind == "new" else session.turns[-HISTORY:], matches=matches,
                                 values_allowed=services.values_allowed, scrub=services.scrub, hidden=hidden,
@@ -687,7 +717,7 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                 defined=[d for t in session.turns[-HISTORY:] if t.plan is not None for d in t.plan.derived],
                                 reading=reading.kind if reading.kind in ("refine", "new") else None,
                                 on_screen=list(seen.shown) if seen is not None and reading.kind != "new" else None,
-                                routes=_routes(services))
+                                routes=_routes(services), feedback=feedback)
         following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
@@ -754,19 +784,38 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown,
                            periods=periods, notes=True)
     except ResolveError as exc:
-        if exc.kind == "ambiguous":
+        if exc.kind != "ambiguous":
+            template = _REFUSALS.get(exc.kind, "{message}.")
+            stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options
+                                     else "")
+            instead = _nearest(services, plan)
+            return _refused(question, template.format(message=exc.message), plan, services, stopped, session,
+                            outcome.masked, unsupported=exc.kind == "unsupported",
+                            **({"follow_up_suggestions": [{"label": q, "question": q} for q in instead]} if instead
+                               else {}))
+        # Two fair readings (two links, two dates): each one worked out first. The same figure either way is
+        # answered and said so; different figures are asked about, each one's figure beside its name.
+        figures = _each_reading(question, plan, exc, services, ctx, question_id=question_id) if exc.field else {}
+        same = _same_either_way(figures, plan)
+        answered = None
+        if same is not None:
+            either = _completed(plan, exc.field or "", same, model)
+            try:
+                answered = _compute(question, either, services, ctx, question_id=question_id, started=start,
+                                    shown=shown, periods=periods, notes=True)
+            except Exception as again:  # noqa: BLE001 - asked about, as before
+                log.info("core2: could not answer %r by its one reading: %s", question, again)
+        if answered is None:
             _keep(session, Turn(question, plan, outcome.masked))     # the reply names the role this asks for
             if exc.field:
                 session.pending = Pending(plan, exc.field, list(exc.options), outcome.masked)
-            return _clarification(question, Clarify(about="path", question=f"{exc.message}. Which one do you mean",
-                                                    options=exc.options))
-        template = _REFUSALS.get(exc.kind, "{message}.")
-        stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options else "")
-        instead = _nearest(services, plan)
-        return _refused(question, template.format(message=exc.message), plan, services, stopped, session,
-                        outcome.masked, unsupported=exc.kind == "unsupported",
-                        **({"follow_up_suggestions": [{"label": q, "question": q} for q in instead]} if instead
-                           else {}))
+            asked = _clarification(question, Clarify(about="path", question=f"{exc.message}. Which one do you mean",
+                                                     options=exc.options))
+            if figures:
+                _with_numbers(asked, figures)
+            return asked
+        plan, payload = either, answered
+        _said_same_either_way(payload, exc.message, figures)
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
@@ -781,6 +830,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
                         session, outcome.masked, unsupported=True)
+    if plan.intent == "drivers":
+        _one_step_down(question, plan, payload, services, ctx, question_id=question_id)
     if plan.figures:
         payload["figures"] = _figures_shown(plan, model)
     for thing, value in unknown_left_out[:3]:
@@ -792,18 +843,33 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
         # is found by the query, so it is never refused for being new.)
         thing, value = missing
+        meant: list[tuple[str, str, str]] = []
         if _points(str(value)):
             # The planner filtered on the words that point at a row ("lowest", "that division"): they name no member.
             text = (f'I could not tell which {thing} "{value}" means. Name it, or point at one in the answer above: '
                     '"the first one", "the lowest one".')
         else:
             text = _REFUSALS["unknown"].format(message=f'there is no {thing} called "{value}"')
-            if plan.follow_up == "refine":
+            meant = _did_you_mean(question, plan, str(value), services, ctx, question_id=question_id)
+            if meant:
+                # "Downtwn Store": the members written most like it, each asked first through the reader's own
+                # access, so only one they can see is offered -- with its figure.
+                text += " Did you mean " + " or ".join(f'"{name}"' for name, _, _ in meant) + "?"
+                if len(meant) == 1:
+                    text += f" {meant[0][2]}"
+            elif plan.follow_up == "refine":
                 text += (f' If you mean one of the {names.plural(thing)} in the answer above, say which ("the first '
                          'one", "the lowest one"), or ask for the same answer in another period ("the same ranking '
                          'against last year").')
-        return _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
-                        session, outcome.masked, trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+        refused = _refused(question, text, plan, services, f'No {thing} is called "{value}", and nothing matched.',
+                           session, outcome.masked, trust={"sql": (payload.get("trust") or {}).get("sql", "")})
+        if meant:
+            refused["follow_up_suggestions"] = [{"label": asked, "question": asked, "kind": "look"}
+                                                for _, asked, _ in meant]
+            for name, asked, _ in meant:
+                session.offers[_plain(asked)] = _named_instead(plan, str(value), name)
+            session.yes = _named_instead(plan, str(value), meant[0][0])
+        return refused
     if payload.get("beyond_data") and _found_nothing(payload, zero=True):
         # "What will our total sales be in 2004?" said "no value": the data ends before the period asked for. The
         # answer stays an empty one (a dashboard tile draws it over all the data instead), said as it is.
@@ -830,7 +896,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     # Looked at before it is shown, as an analyst would (core2/agent/look.py): nothing found, and why; a figure
     # resting on a few days; a period starting before the data.
     empty = _found_nothing(payload, zero=True)
-    looked = _look(plan, payload, services, ctx, empty=empty)
+    # The conditions this question did not write: kept from the answer above, or standing ones.
+    carried = kept_parts(plan, seen.plan if seen is not None else None, question)[0] \
+        if following and plan.follow_up == "refine" else []
+    standing_filters = [f for s in applied for f in s.filters]
+    looked = _look(plan, payload, services, ctx, empty=empty, carried=carried, standing=standing_filters)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     chips = offered(plan, model)
     if chips:
@@ -844,6 +914,15 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                               for words, _ in chips), *rest]
     if looked:
         _offer(payload, session, looked, empty=empty)
+    dig = payload.pop("_dig", None)
+    if dig is not None:
+        # The "why" one step down: its next step is a button, and what "yes" runs (no AI).
+        steps = [{**o, "kind": "look"} for o in payload["reply"]["offers"]]
+        for o in steps:
+            session.offers[_plain(o["question"])] = dig
+            session.offers[_plain(o["question_fr"])] = dig
+        session.yes = dig
+        payload["follow_up_suggestions"] = [*steps, *(payload.get("follow_up_suggestions") or [])][:6]
     if unquoted:
         _say_unquoted(payload, question, unquoted,
                       _visible(services.index.match(question), model, services.allowed_tables))
@@ -861,6 +940,13 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     # removed is gone from the follow-ups too.
     _keep(session, Turn(question, S.without(plan, applied, bare), outcome.masked, shown, periods,
                         _shown_title(payload)))
+    if from_ai and not feedback:
+        from core2.agent import again as A
+
+        reasons = A.suspect(question, plan, payload, looked, kept=[*carried, *standing_filters],
+                            empty=empty, model=model, values=services.values_allowed)
+        if reasons:
+            payload[A.KEY] = (question, forced, plan, reasons)
     return payload
 
 
@@ -1578,6 +1664,206 @@ def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Servic
         shown[:] = members
 
 
+CARRIED = 0.4       # the member that moved a figure most is followed when it carried this much of the change
+
+
+def _one_step_down(question: str, plan: Plan, payload: dict[str, Any], services: Services, ctx: Context, *,
+                   question_id: str = "") -> None:
+    """A "why" answer followed one step down, as an analyst would: the member that carried most of the change
+    (a store), then, inside it alone, what moved it (its product category). One more "why" of the same figure for
+    that member, through the same groupings and access; said as steps, with the step itself one click away."""
+    from core2.answer.facts import amount
+
+    model = services.model
+    found = payload.get("drivers") or {}
+    change = _amount(found.get("change"))
+    top = next((g for g in found.get("groupings") or [] if g.get("leaders")), None)
+    if not change or top is None or float(top.get("explained") or 0) < 0.5:
+        return
+    lead = top["leaders"][0]
+    member, moved = lead.get("member"), _amount(lead.get("change"))
+    if member in (None, "", "Unknown") or moved is None or abs(moved) < CARRIED * abs(change):
+        return
+    slug = top["slug"]
+    named = model.entities[slug].label_column if slug in model.entities else None
+    field = slug if slug in model.attributes else next(
+        (a.slug for a in model.attributes.values() if named and a.column == named), None)
+    if field is None or about_people(model, field):
+        return
+    deeper = plan.model_copy(update={"filters": [*plan.filters, Filter(field=field, op="eq", values=[member])],
+                                     "group_by": [], "follow_up": "new"})
+    try:
+        inside = _compute(question, deeper, services, ctx, question_id=question_id, started=time.perf_counter())
+    except Exception as exc:  # noqa: BLE001 - the answer stands at its first step
+        log.info("core2: could not follow %r one step down: %s", question, exc)
+        return
+    within = inside.get("drivers") or {}
+    nxt = next((g for g in within.get("groupings") or [] if g.get("leaders")), None)
+    form = ((payload.get("data") or {}).get("column_formats") or {}).get("change") or "number"
+    thing = str(top.get("word") or top.get("label") or "").lower()
+
+    def said(value: float, lang: str = "en") -> str:
+        return amount(value, form, lang=lang)
+
+    whole, part = said(change), said(moved)
+    if abs(moved) > abs(change):      # one member moved by more than the whole: the others went the other way
+        en = (f"{thing.capitalize()} {member} moved by more than the whole change: {part} against {whole} overall, "
+              "the rest going the other way.")
+        fr = (f"{thing.capitalize()} {member} a bougé plus que l'ensemble : {said(moved, 'fr')} pour "
+              f"{said(change, 'fr')} au total, le reste allant dans l'autre sens.")
+    else:
+        en = f"Most of the change came from {thing} {member}: {part} of {whole}."
+        fr = f"L'essentiel de la variation vient de {thing} {member} : {said(moved, 'fr')} sur {said(change, 'fr')}."
+    of, sur = ("against", "pour") if abs(moved) > abs(change) else ("of", "sur")
+    checked = [{"en": f"Step 1, the change by {thing}: {member} {part} {of} {whole} overall.",
+                "fr": f"Étape 1, la variation par {thing} : {member} {said(moved, 'fr')} {sur} "
+                      f"{said(change, 'fr')} au total."}]
+    figures = [moved, change]
+    if nxt is not None and float(nxt.get("explained") or 0) >= 0.5:
+        lead2 = nxt["leaders"][0]
+        moved2 = _amount(lead2.get("change"))
+        thing2 = str(nxt.get("word") or nxt.get("label") or "").lower()
+        if lead2.get("member") not in (None, "", "Unknown") and moved2 is not None:
+            en += f" Inside {member}, {thing2} {lead2['member']} moved most: {said(moved2)}."
+            fr += f" Dans {member}, c'est {thing2} {lead2['member']} qui a le plus bougé : {said(moved2, 'fr')}."
+            checked.append({"en": f"Step 2, inside {member}, the change by {thing2}: {lead2['member']} {said(moved2)}.",
+                            "fr": f"Étape 2, dans {member}, la variation par {thing2} : {lead2['member']} "
+                                  f"{said(moved2, 'fr')}."})
+            figures.append(moved2)
+    else:
+        en += f" Inside {member}, nothing stands out: the change is spread out."
+        fr += f" Dans {member}, rien ne se détache : la variation est répartie."
+        checked.append({"en": f"Step 2, inside {member}: the change is spread out.",
+                        "fr": f"Étape 2, dans {member} : la variation est répartie."})
+    ask = f'Why did it change, for {thing} "{member}"?'
+    ask_fr = f'Pourquoi cela a-t-il varié, pour {thing} « {member} » ?'
+    seen = {"kind": "steps", "en": en, "fr": fr, "figures": figures, "days": [], "members": [member], "about": field}
+    payload["reply"] = {"en": en, "fr": fr, "by": "facts", "seen": [seen], "checked": checked, "nothing": False,
+                        "offers": [{"label": ask, "question": ask, "label_fr": ask_fr, "question_fr": ask_fr}]}
+    payload["_dig"] = deeper          # the step itself, offered with no AI (taken off before the answer is shown)
+
+
+def _completed(plan: Plan, field: str, option: str, model: SemanticModel) -> Plan:
+    """A plan waiting for the link or the date the reader names, completed with ``option``."""
+    if field == "time.date":
+        # The offered dates are tables' defaults; another table may have a date of the same name.
+        named = [r for r in model.date_roles.values() if r.name == option]
+        role = next((r for r in named if r.is_default), named[0] if named else None)
+        return plan.model_copy(update={"time": plan.time.model_copy(
+            update={"date": role.slug if role is not None else option})})
+    return plan.model_copy(update={"via": {**plan.via, field: option}})
+
+
+READINGS = 4        # fair readings worked out before asking which one is meant
+
+
+def _each_reading(question: str, plan: Plan, exc: ResolveError, services: Services, ctx: Context, *,
+                  question_id: str = "") -> dict[str, tuple[float, str]]:
+    """Each fair reading's figure for the whole question -- one total, the figure as the answer says it -- for
+    the readings that can be worked out."""
+    from core2.answer.extra import _base
+
+    out: dict[str, tuple[float, str]] = {}
+    if exc.field in plan.group_by and exc.field not in {f.field for f in plan.filters}:
+        return out        # only how the rows are grouped differs: every reading has the same total, nothing to say
+    for option in list(exc.options)[:READINGS]:
+        reading = _completed(plan, exc.field or "", option, services.model)
+        if reading.group_by or reading.time.grain:
+            reading = _base(reading, intent="value")      # readings compared on the whole
+        try:
+            got = _compute(question, reading, services, ctx, question_id=question_id, started=time.perf_counter())
+        except Exception as again:  # noqa: BLE001 - that reading is offered without its figure
+            log.info("core2: could not work out %r read as %s: %s", question, option, again)
+            continue
+        rows = (got.get("data") or {}).get("rows") or []
+        kpi = got.get("kpi") if isinstance(got.get("kpi"), dict) else {}
+        value = _amount(kpi.get("value")) if kpi else None
+        if value is None and len(rows) == 1:
+            value = next((_amount(v) for v in rows[0].values() if _amount(v) is not None), None)
+        said = str((got.get("answer") or {}).get("short_value") or "")
+        if value is not None and said:
+            out[option] = (value, said)
+    return out
+
+
+def _same_either_way(figures: dict[str, tuple[float, str]], plan: Plan) -> str | None:
+    """The reading to answer with when every reading gives the same figure and that figure is the whole answer
+    (one value: a breakdown read two ways can differ member by member even where the totals agree)."""
+    if len(figures) < 2 or plan.group_by or plan.time.grain:
+        return None
+    values = [v for v, _ in figures.values()]
+    top = max(abs(v) for v in values)
+    return next(iter(figures)) if max(values) - min(values) <= 0.005 * top else None
+
+
+def _with_numbers(asked: dict[str, Any], figures: dict[str, tuple[float, str]]) -> None:
+    """A question back with each reading's figure beside its name -- unless every one is the same, which says
+    nothing."""
+    if len({round(v, 6) for v, _ in figures.values()}) < 2:
+        return
+    clarify = asked.get("clarify") or {}
+    options = list(clarify.get("options") or [])
+    clarify["figures"] = {o: said for o, (_, said) in figures.items()}
+    listed = [f"{o} ({figures[o][1]})" if o in figures else o for o in options]
+    head = str(clarify.get("question") or "").rstrip(" ?:.")
+    text = f"{head}: {listed[0] if len(listed) == 1 else ', '.join(listed[:-1]) + ' or ' + listed[-1]}?"
+    clarify["question"] = text
+    asked["answer"]["headline"] = text
+
+
+def _said_same_either_way(payload: dict[str, Any], message: str, figures: dict[str, tuple[float, str]]) -> None:
+    """An answer read more than one way, each to the same figure: said on its reply, so the reader is not asked."""
+    options = list(figures)
+    said = next(iter(figures.values()))[1]
+    seen = {"kind": "same_either_way", "about": "", "days": [], "members": [],
+            "figures": [next(iter(figures.values()))[0]],
+            "en": f"{message}, and it comes to the same either way ({' or '.join(options)}): {said}.",
+            "fr": f"La question se lit de plusieurs façons ({' ou '.join(options)}), et le résultat est le même : "
+                  f"{said}."}
+    checked = [{"en": "Worked out each reading: " + "; ".join(f"{o} {s}" for o, (_, s) in figures.items()) + ".",
+                "fr": "Calculé chaque lecture : " + " ; ".join(f"{o} {s}" for o, (_, s) in figures.items()) + "."}]
+    reply = payload.get("reply")
+    if isinstance(reply, dict) and reply.get("en"):
+        reply.update({"en": f"{seen['en']} {reply['en']}", "fr": f"{seen['fr']} {reply.get('fr') or ''}".strip(),
+                      "seen": [seen, *(reply.get("seen") or [])], "checked": [*checked, *(reply.get("checked") or [])]})
+    else:
+        payload["reply"] = {"en": seen["en"], "fr": seen["fr"], "by": "facts", "seen": [seen], "checked": checked,
+                            "offers": [], "nothing": False}
+
+
+def _named_instead(plan: Plan, value: str, name: str) -> Plan:
+    """The plan with the member ``value`` it names replaced by ``name``."""
+    filters = [f.model_copy(update={"values": [name if str(v) == value else v for v in f.values]})
+               for f in plan.filters]
+    return plan.model_copy(update={"filters": filters, "follow_up": "new"})
+
+
+def _did_you_mean(question: str, plan: Plan, value: str, services: Services, ctx: Context, *,
+                  question_id: str = "", most: int = 2) -> list[tuple[str, str, str]]:
+    """The members written most like a name the data does not have, each asked first through the reader's own
+    access and kept only when it has rows: (its name, the question asked with it, its answer's sentence). Never
+    for a person's name."""
+    f = next((f for f in plan.filters if any(str(v) == value for v in f.values)), None)
+    if f is None or about_people(services.model, f.field):
+        return []
+    out = []
+    for name in services.index.nearest(f.field, value)[:most]:
+        try:
+            got = _compute(question, _named_instead(plan, value, name), services, ctx, question_id=question_id,
+                           started=time.perf_counter())
+        except Exception as exc:  # noqa: BLE001 - only the suggestion is lost
+            log.info("core2: could not check %r as the member meant: %s", name, exc)
+            continue
+        if _found_nothing(got, zero=True):
+            continue
+        asked = question.replace(f'"{value}"', f'"{name}"') if f'"{value}"' in question else \
+            re.sub(re.escape(value), f'"{name}"', question, count=1, flags=re.IGNORECASE)
+        if asked == question:
+            asked = f'{question.rstrip(" ?")} for "{name}"'
+        out.append((name, asked, str((got.get("answer") or {}).get("headline") or "")))
+    return out
+
+
 # "Yes", "ok, show me", "oui merci": the whole message says yes to the answer's own offer, and nothing more ("yes,
 # and by store" is a question of its own).
 _YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|do that|show me|let'?s see|"
@@ -1586,7 +1872,8 @@ _YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it
                   r"[\s!.]*$", re.IGNORECASE)
 
 
-def _look(plan: Plan, payload: dict[str, Any], services: Services, ctx: Context, *, empty: bool) -> Any:
+def _look(plan: Plan, payload: dict[str, Any], services: Services, ctx: Context, *, empty: bool,
+          carried: list | None = None, standing: list | None = None) -> Any:
     """The answer looked at before it is shown (core2/agent/look.py); None when there is nothing to say, or the
     answer already says why it found nothing (the data ends before the period, the rows are left out)."""
     from core2.agent.look import look
@@ -1606,7 +1893,7 @@ def _look(plan: Plan, payload: dict[str, Any], services: Services, ctx: Context,
         compiled = compile_query(lg, services.model, warehouse.dialect)
         return lg, compiled, warehouse.query(compiled.sql, max_rows=min(compiled.row_cap or 500, 500))
 
-    return look(plan, logical, payload, run, empty=empty)
+    return look(plan, logical, payload, run, empty=empty, carried=carried or [], standing=standing or [])
 
 
 def _offer(payload: dict[str, Any], session: Session, looked: Any, *, empty: bool) -> None:

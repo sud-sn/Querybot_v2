@@ -276,3 +276,247 @@ def test_a_reason_guessed_rather_than_found_is_never_said(retail):
     for guess in ("Only 2 of the 31 days had sales, which could indicate partial data for this product.",
                   "Seuls 2 des 31 jours ont des ventes : cela pourrait indiquer des données partielles."):
         assert talk.write(got["reply"], "q", got["answer"]["headline"], lambda s, g, t=guess: t) is None, guess
+
+
+# ── a name the data does not have: the nearest, checked first ────────────────
+
+
+def test_a_name_written_wrong_offers_the_nearest_with_its_figure(retail):
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Downtwn Store" in May 2026', {
+        "measures": ["net_amount"], "time": MAY, "filters": [{"field": "store.name", "op": "eq",
+                                                               "values": ["Downtwn Store"]}]})
+    text = got["answer"]["headline"]
+    assert 'called "Downtwn Store"' in text and 'Did you mean "Downtown Store"?' in text
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE store_name = 'Downtown Store' AND {IN_MAY}")
+    assert f"{float(want):,.2f}"[:5] in text.replace("$", "") or "K" in text     # its figure, as the answer says it
+    offer = got["follow_up_suggestions"][0]["question"]
+    assert offer == 'Net sales of "Downtown Store" in May 2026'
+    asked = chat.asked
+    again = chat.ask("yes")
+    assert chat.asked == asked
+    assert float(again["kpi"]["value"]) == pytest.approx(float(want))
+
+
+def test_a_name_never_offers_one_the_reader_cannot_see(retail):
+    # Each name offered is asked first through the reader's own access: a member their rows do not reach has none.
+    built, model, warehouse, index = retail
+
+    class Blind:
+        dialect = warehouse.dialect
+
+        def query(self, sql: str, max_rows: int | None = None):
+            result = warehouse.query(sql, max_rows=max_rows)
+            if "Downtown Store" in sql:
+                return type(result)(result.columns, [tuple(None for _ in r) for r in result.rows][:1],
+                                    *([] if not hasattr(result, "truncated") else [False]))
+            return result
+
+    chat = Chat(retail)
+    chat.services.warehouse = Blind()
+    got = chat.ask('Net sales of "Downtwn Store" in May 2026', {
+        "measures": ["net_amount"], "time": MAY, "filters": [{"field": "store.name", "op": "eq",
+                                                               "values": ["Downtwn Store"]}]})
+    assert "Did you mean" not in got["answer"]["headline"]
+
+
+# ── looking again: the AI asked once more when its plan looks misread ────────
+
+
+class Told(Chat):
+    """A conversation that keeps what the AI was told at each call."""
+
+    def __init__(self, retail, today: dt.date = TODAY):
+        super().__init__(retail, today)
+        self.told: list[str] = []
+        first = self.services.complete
+
+        def complete(system: str, tail: str) -> str:
+            self.told.append(tail)
+            return first(system, tail)
+
+        self.services.complete = complete
+
+
+def _rate(status: str) -> dict:
+    return {"rates": [{"name": "Cancelled share", "measure": "number_of_order_lines",
+                       "where": [{"field": "order_line.status_code", "op": "eq", "values": [status]}]}], "time": MAY}
+
+
+def _share(retail, status: str) -> float:
+    return float(_one(retail, f"""SELECT 100.0 * COUNT(*) FILTER (WHERE status_code = '{status}') / COUNT(*)
+        FROM ({LINES}) l WHERE {IN_MAY}"""))
+
+
+def test_a_share_of_exactly_none_is_read_again_and_the_second_reading_kept(retail):
+    chat = Told(retail)
+    chat.plans += [_rate("S"), _rate("C")]       # the first reading took the wrong status; the second the right one
+    got = chat.ask("What share of order lines were cancelled in May 2026?")
+    assert len(chat.told) == 2 and "A FIRST PLAN FOR THIS QUESTION" in chat.told[1] and "exactly 0%" in chat.told[1]
+    assert float(got["kpi"]["value"]) == pytest.approx(_share(retail, "C"), abs=0.01)
+    reply = got["reply"]
+    assert reply["seen"][0]["kind"] == "looked_again" and "read your question again" in reply["en"]
+    assert any(o["label"] == "Show my first reading" for o in reply["offers"])
+    assert got["trust"]["looked_again"]["first_plan"]["rates"][0]["where"][0]["values"] == ["S"]
+    # The first reading, one click away, with no AI.
+    first = chat.ask("Show my first reading")
+    assert len(chat.told) == 2 and float(first["kpi"]["value"]) == 0
+
+
+def test_nothing_found_by_a_condition_the_question_never_states_is_read_again(retail):
+    chat = Told(retail)
+    chat.plans += [{**_net(customer="Lakeside Wholesale"), "time": MAY}, {"measures": ["net_amount"], "time": MAY}]
+    got = chat.ask("Net sales in May 2026")
+    assert "Customer name is Lakeside Wholesale" in chat.told[1] or "customer name is Lakeside" in chat.told[1].lower()
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE {IN_MAY}")
+    assert float(got["kpi"]["value"]) == pytest.approx(float(want))
+    assert got["reply"]["seen"][0]["kind"] == "looked_again"
+
+
+def test_a_condition_the_question_states_is_never_second_guessed(retail):
+    chat = Told(retail)
+    got = chat.ask('Net sales for "Lakeside Wholesale" in May 2026', {**_net(customer="Lakeside Wholesale"), "time": MAY})
+    assert len(chat.told) == 1 and "looked_again" not in got.get("trust", {})
+    _seen(got, "last_seen")
+
+
+def test_a_second_reading_that_puts_nothing_right_leaves_the_first_answer(retail):
+    chat = Told(retail)
+    chat.plans += [_rate("S"), _rate("O")]       # read again, still a share of none
+    got = chat.ask("What share of order lines were cancelled in May 2026?")
+    assert len(chat.told) == 2 and float(got["kpi"]["value"]) == 0
+    assert got["trust"]["looked_again"]["kept"] == "first"
+    # The conversation is the first reading's: a follow-up goes on from it.
+    assert chat.session.turns[-1].question == "What share of order lines were cancelled in May 2026?"
+    assert len(chat.session.turns) == 1
+
+
+def test_member_names_never_reach_the_ai_when_it_looks_again_where_they_may_not(retail):
+    chat = Told(retail)
+    chat.services.values_allowed = False
+    chat.plans += [{**_net(customer="Lakeside Wholesale"), "time": MAY}, {"measures": ["net_amount"], "time": MAY}]
+    chat.ask("Net sales in May 2026")
+    assert len(chat.told) == 2 and "Lakeside" not in chat.told[1] and "<value>" in chat.told[1]
+
+
+def test_nothing_found_because_of_a_condition_kept_from_the_question_before_is_said(retail):
+    chat = Chat(retail)
+    chat.ask('Net sales for "Lakeside Wholesale" in January 2026', {
+        **_net(customer="Lakeside Wholesale"), "time": {"window": {"kind": "between", "start": "2026-01-01",
+                                                                   "end": "2026-01-31"}}})
+    got = chat.ask("and in May 2026?", {**_net(customer="Lakeside Wholesale"), "time": MAY, "follow_up": "refine"})
+    seen = _seen(got, "carried")
+    assert "I kept the condition for customer Lakeside Wholesale from the question before" in seen["en"]
+    others = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE {IN_MAY}")
+    assert seen["figures"][0] == pytest.approx(float(others))
+    offer = next(o for o in got["reply"]["offers"] if "Lakeside" not in o["label"])
+    asked = chat.asked
+    plain = chat.ask(offer["question"])
+    assert chat.asked == asked and float(plain["kpi"]["value"]) == pytest.approx(float(others))
+
+
+# ── two fair readings: each one worked out before asking ─────────────────────
+
+
+def test_a_question_two_dates_could_answer_is_asked_with_each_ones_figure(retail):
+    chat = Chat(retail)
+    got = chat.ask("How many customers in May 2026?", {"measures": ["number_of_customers"], "time": MAY})
+    figures = got["clarify"]["figures"]
+    ordered = _one(retail, f"SELECT COUNT(DISTINCT customer_id) FROM ({LINES}) l WHERE {IN_MAY}")
+    returned = _one(retail, """SELECT COUNT(DISTINCT r.customer_id) FROM returns r JOIN calendar d
+        ON r.return_date_key = d.date_key WHERE d.full_date >= DATE '2026-05-01' AND d.full_date < DATE '2026-06-01'""")
+    assert figures["Order date"] == f"{ordered:,}" and figures["Return date"] == f"{returned:,}"
+    assert f"Order date ({ordered:,})" in got["answer"]["headline"]
+    # The reply picks one by name, with no AI: the waiting question is answered by it.
+    asked = chat.asked
+    picked = chat.ask("Order date")
+    assert chat.asked == asked and float(picked["kpi"]["value"]) == ordered
+
+
+def _same_orders():
+    import duckdb
+    import numpy as np
+    import pandas as pd
+
+    from core2.bootstrap.build import BuildOptions, build_model
+    from core2.bootstrap.inventory import from_duckdb
+
+    rng = np.random.default_rng(5)
+    customers = pd.DataFrame({"customer_id": np.arange(1, 21), "customer_name": [f"Client {i:02d}" for i in range(1, 21)]})
+    bill = rng.integers(1, 21, 800)
+    orders = pd.DataFrame({"order_id": np.arange(1, 801), "bill_to_customer_id": bill, "ship_to_customer_id": bill,
+                           "order_amount": np.round(rng.uniform(10, 900, 800), 2)})
+    con = duckdb.connect()
+    for name, frame in {"customers": customers, "orders": orders}.items():
+        con.register("_f", frame)
+        con.execute(f"CREATE TABLE {name} AS SELECT * FROM _f")
+        con.unregister("_f")
+    warehouse = DuckDBWarehouse(con)
+    return warehouse, build_model(warehouse, from_duckdb(warehouse), client_id="t", options=BuildOptions(workers=1))
+
+
+def test_a_question_two_links_answer_alike_is_answered_and_says_so():
+    from core2.plan.values import MemberIndex
+
+    warehouse, model = _same_orders()
+    measure = next(m.slug for m in model.measures.values()
+                   if (getattr(m.expr, "column", None) or "").endswith("order_amount"))
+    name = next(a for a in model.attributes if a.endswith("customer_name") or a.endswith(".name"))
+    index = MemberIndex()
+    index.add(name, [f"Client {i:02d}" for i in range(1, 21)])
+    plan = {"kind": "query", "measures": [measure], "filters": [{"field": name, "op": "eq", "values": ["Client 07"]}]}
+    sent: list[str] = []
+
+    def complete(system: str, tail: str) -> str:
+        sent.append(tail)
+        return json.dumps(plan)
+
+    services = Services(model=model, warehouse=warehouse, complete=complete, index=index, today=TODAY)
+    got = answer_question('Sales for "Client 07"', services, Session())
+    want = warehouse.query("SELECT SUM(order_amount) FROM orders WHERE bill_to_customer_id = 7").rows[0][0]
+    assert not got.get("clarify"), "the same figure either way: answered, not asked"
+    assert float(got["kpi"]["value"]) == pytest.approx(float(want))
+    assert got["reply"]["seen"][0]["kind"] == "same_either_way" and "same either way" in got["reply"]["en"]
+
+
+# ── why, in steps: the member that carried the change, then what moved it ─────
+
+
+APRIL = "l.day >= DATE '2026-04-01' AND l.day < DATE '2026-05-01'"
+CHANGE = f"SUM(net_amount) FILTER (WHERE {IN_MAY}) - COALESCE(SUM(net_amount) FILTER (WHERE {APRIL}), 0)"
+SEGMENTS = f"""SELECT l.*, c.segment FROM ({LINES}) l LEFT JOIN customers c ON l.customer_id = c.customer_id"""
+
+
+def _moved(retail, by: str, where: str = "TRUE") -> list[tuple[str, float]]:
+    rows = retail[0].con.execute(f"""SELECT {by}, {CHANGE} AS change FROM ({SEGMENTS}) l
+        WHERE {where} AND ({IN_MAY} OR {APRIL}) GROUP BY 1 ORDER BY abs(change) DESC""").fetchall()
+    return [(r[0], float(r[1])) for r in rows]
+
+
+def test_why_a_figure_changed_is_followed_one_step_down(retail):
+    chat = Chat(retail)
+    got = chat.ask("Why did net sales change in May 2026?",
+                   {"intent": "drivers", "measures": ["net_amount"], "time": MAY})
+    whole = float(_one(retail, f"SELECT {CHANGE} FROM ({LINES}) l"))
+    store, moved = _moved(retail, "store_name")[0]
+    segment, inside = _moved(retail, "segment", f"store_name = '{store}'")[0]
+    seen = _seen(got, "steps")
+    assert seen["members"] == [store]
+    assert seen["figures"] == pytest.approx([moved, whole, inside], abs=0.01)
+    reply = got["reply"]
+    assert f"Store {store}" in reply["en"] or f"store {store}" in reply["en"]
+    assert f"Inside {store}, segment {segment} moved most" in reply["en"]
+    assert f"Dans {store}" in reply["fr"]
+    if abs(moved) > abs(whole):
+        assert "more than the whole change" in reply["en"] and "the rest going the other way" in reply["en"]
+    assert [c["en"].split(",")[0] for c in reply["checked"]] == ["Step 1", "Step 2"]
+    # The step itself, one click away -- or "yes" -- with no AI: the same "why", for that store alone.
+    offer = reply["offers"][0]
+    assert offer["label"] == f'Why did it change, for store "{store}"?'
+    asked = chat.asked
+    step = chat.ask("yes")
+    assert chat.asked == asked
+    assert float(step["drivers"]["change"]) == pytest.approx(
+        float(_one(retail, f"SELECT {CHANGE} FROM ({LINES}) l WHERE store_name = '{store}'")), abs=0.01)
+    assert any(f["values"] == [store] for f in step["plan"]["filters"])
+
