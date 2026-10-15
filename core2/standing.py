@@ -59,7 +59,10 @@ _ALL_OF_THEM = re.compile(r"^\W*(?:all\s+)?(?:the\s+|my\s+|these\s+|those\s+)?(?
 # Words that name no condition: "remove the Downtown condition", "stop using the last 2 months for good".
 _FILLER = {"the", "a", "an", "my", "this", "that", "these", "those", "condition", "conditions", "filter", "filters",
            "standing", "period", "for", "good", "now", "please", "from", "profile", "everywhere", "permanently",
-           "always", "is", "of", "on", "le", "la", "les", "filtre", "condition", "pour", "de", "du", "des", "toujours"}
+           "always", "is", "of", "on", "le", "la", "les", "filtre", "condition", "pour", "de", "du", "des", "toujours",
+           "sur", "un", "une", "en", "with", "about", "est", "ok", "okay", "so", "and", "et"}
+# A removal that is about a condition, whatever it names: "remove the Germany condition".
+_ABOUT_A_CONDITION = re.compile(r"\b(?:conditions?|filters?|filtres?|standing)\b", re.IGNORECASE)
 
 _MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august",
                                        "september", "october", "november", "december"), 1)}
@@ -130,18 +133,23 @@ def instruction(question: str) -> tuple[Scope, str] | None:
 
 
 def letting_go(question: str, kept: list[Standing]) -> list[Standing] | None:
-    """The standing conditions a question removes ("stop using the last 2 months", "clear the conditions"); None
-    when it removes none (and is read as a question)."""
-    found = _LET_GO.match(question.strip())
-    if found is None or not kept:
+    """The standing conditions a question removes ("stop using the last 2 months", "clear the conditions"); an
+    empty list when it is about a condition none of them is ("remove the Germany condition"); None when it removes
+    none (and is read as a question)."""
+    question = re.sub(r"^\s*(?:ok(?:ay)?|so|and|alright|et|bon)\b[\s,]*", "", question.strip(), flags=re.IGNORECASE)
+    found = _LET_GO.match(question)
+    if found is None:
         return None
+    about = bool(_ABOUT_A_CONDITION.search(found.group(1)))
+    if not kept:
+        return [] if about else None          # "remove the Germany condition" with none kept: said, never answered
     rest = found.group(1).strip(" .!?")
     rest = re.sub(r"^(?:using|applying|with|the\s+standing|standing)\s+", "", rest, flags=re.IGNORECASE)
     if not rest or _ALL_OF_THEM.match(rest):
         return list(kept)
     said = set(_plain(rest).split()) - _FILLER
     named = [s for s in kept if said and any(said <= set(_plain(w).split()) | _FILLER for w in (s.words, s.words_fr))]
-    return named or None
+    return named or ([] if about else None)
 
 
 def read(scope: Scope, words: str, model: SemanticModel, index: MemberIndex, today: dt.date) -> Said:
@@ -195,7 +203,7 @@ def apply(plan: Plan, kept: list[Standing], question: str, model: SemanticModel,
             else:
                 set_aside(s, "not for these rows")
             continue
-        own = [f for f in s.filters if any(g.field == f.field for g in plan.filters)]
+        own = [f for f in s.filters if any(_same_list(model, g.field, f.field) for g in plan.filters)]
         if own:
             if not all(f in plan.filters for f in s.filters):
                 set_aside(s, "your question names its own")
@@ -209,6 +217,24 @@ def apply(plan: Plan, kept: list[Standing], question: str, model: SemanticModel,
         else:
             set_aside(s, "not for these rows")
     return plan, applied, aside
+
+
+def _same_list(model: SemanticModel, a: str, b: str) -> bool:
+    """Two filter fields naming the same members: one field, or a list and its own name, code or key ("store" and
+    "store.name" both name the stores)."""
+    return a == b or _list_of(model, a) == _list_of(model, b)
+
+
+def _list_of(model: SemanticModel, slug: str) -> str:
+    if slug in model.entities:
+        return "entity:" + slug
+    attribute = model.attributes.get(slug)
+    if attribute is None:
+        return slug
+    for e in model.entities.values():
+        if attribute.column in (e.label_column, e.code_column, *e.key_columns):
+            return "entity:" + e.slug
+    return "column:" + attribute.column
 
 
 def without(plan: Plan, applied: list[Standing], bare: Plan) -> Plan:
@@ -269,9 +295,11 @@ def _members(words: str, model: SemanticModel, index: MemberIndex
     picked: list[tuple[ValueMatch, bool]] = []
     for m in [*quoted, *written]:
         before = words[:m.start]
-        leave = re.search(rf"\b{_LEAVE}\b(?:\s+(?:the|any|all|les?|la|des?|du))?(?:\s+[\w'-]+){{0,2}}\s*[\"“«']?\s*$",
+        # "leave out the cost centre "O'Neil Studio"", "exclus le centre de coûts « O'Neil Studio »": up to four
+        # words of what the name is between the verb and the name.
+        leave = re.search(rf"\b{_LEAVE}\b(?:\s+(?:the|any|all|les?|la|des?|du))?(?:\s+[\w'-]+){{0,4}}\s*[\"“«']?\s*$",
                           before, re.IGNORECASE)
-        only = re.search(rf"\b{_ONLY}\b(?:\s+(?:the|our|les?|la|des?|du|l'))?(?:\s+[\w'-]+){{0,2}}\s*[\"“«']?\s*$",
+        only = re.search(rf"\b{_ONLY}\b(?:\s+(?:the|our|les?|la|des?|du|l'))?(?:\s+[\w'-]+){{0,4}}\s*[\"“«']?\s*$",
                          before, re.IGNORECASE)
         if m in quoted or leave or only:
             picked.append((m, bool(leave) and (not only or leave.start() > only.start())))
@@ -284,9 +312,98 @@ def _members(words: str, model: SemanticModel, index: MemberIndex
             filters[key] = f.model_copy(update={"op": "not_in" if out else "in", "values": [*f.values, m.value]})
         else:
             filters[key] = Filter(field=m.attribute, op="ne" if out else "eq", values=[m.value])
-    unknown = [words[a:b] for a, b in _spans(words) if not any(m.start >= a and m.end <= b for m in quoted)]
+    unknown = []
+    for a, b in _spans(words):
+        inside = [m for m in quoted if m.start >= a and m.end <= b]
+        if inside and any(m.start == a and m.end == b for m in inside):
+            continue
+        # A name the index does not hold, on a field it does not read ("only the "MRO Desk" buying team", "les
+        # fournisseurs du pays "Germany""): kept on the one field the words name, as written; the query says
+        # whether any row has it. A name read only in part ("MRO" of "MRO Desk") gives way to it.
+        field = _unread_field(words[:a] + " " + words[b:], model, index)
+        if field is None:
+            if not inside:
+                unknown.append(words[a:b])
+            continue
+        for m in inside:
+            for key in [k for k, f in filters.items() if k[0] == m.attribute and m.value in f.values]:
+                del filters[key]
+        before = words[:a]
+        leave = re.search(rf"\b{_LEAVE}\b", before, re.IGNORECASE)
+        only = re.search(rf"\b{_ONLY}\b", before, re.IGNORECASE)
+        out = bool(leave) and (not only or leave.start() > only.start())
+        filters[(field, out)] = Filter(field=field, op="ne" if out else "eq", values=[words[a:b].strip()])
     unquoted = [m for m in written if not any(m is p for p, _ in picked)]
     return list(filters.values()), unknown, unquoted
+
+
+# A field's French name, read as its English one ("le pays" is the country).
+_FIELD_FR = {"pays": "country", "region": "region", "magasin": "store", "categorie": "category",
+             "fournisseur": "supplier", "client": "customer", "ville": "city", "equipe": "team", "acheteur": "buyer",
+             "agence": "branch", "succursale": "branch", "devise": "currency", "compte": "account",
+             "service": "service", "produit": "product", "canal": "channel", "segment": "segment"}
+
+
+def _stem(word: str) -> str:
+    """A word without its ending: "buying" and "buyer" are both "buy"; "countries" is "countr"."""
+    for ending in ("ings", "ing", "ers", "er", "ies", "es", "s"):
+        if word.endswith(ending) and len(word) - len(ending) >= 3:
+            return word[: -len(ending)]
+    return word
+
+
+def _unread_field(words: str, model: SemanticModel, index: MemberIndex) -> str | None:
+    """The one field the words name whose members the index does not read (a buyer's name, a supplier's country),
+    or None."""
+    from core2.plan.values import filterable
+
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", words.casefold()).encode("ascii", "ignore").decode()
+    said = {_stem(_FIELD_FR.get(w, w)) for w in re.findall(r"[a-z]+", plain)} - {"the", "only", "from", "now"}
+    found = [slug for slug in filterable(model) if slug not in index.attributes
+             and said & {_stem(w) for w in _field_words(model, slug)} - {"name", "nam"}]
+    return found[0] if len(found) == 1 else None
+
+
+def quoted_unread(plan: Plan, question: str, model: SemanticModel, index: MemberIndex,
+                  in_force: list[Filter]) -> Plan:
+    """A name in quotes that no field read for its names holds, put on the field whose names are not read that it
+    is of, in place of what the AI made of it.
+
+    Purchasing PU5-03.5: 'same for "Packaging Desk"' under the buying team "MRO Desk" was read as the category
+    Packaging, a part of the name, with MRO Desk still applied: the buyers' names are not shown to the AI. The
+    field is the one the words around the quotes name ("the buying team "Packaging Desk""), else that of a name in
+    force ending as this one does ("MRO Desk"), else the one its own words name ("Westfield Store")."""
+    from core2.plan.values import filterable, quoted_spans
+
+    if plan.kind != "query":
+        return plan
+    whole = {(m.start, m.end) for m in index.quoted(question)}
+    unread = [slug for slug in filterable(model) if slug not in index.attributes]
+    filters = list(plan.filters)
+    for a, b in quoted_spans(question):
+        name = question[a:b].strip()
+        plain = _plain(name)
+        if (a, b) in whole or not plain or not unread \
+                or any(_plain(str(v)) == plain for f in filters for v in f.values):
+            continue
+        last = plain.split()[-1]
+        alike = {slug for f in in_force for v in f.values for slug in unread
+                 if _same_list(model, f.field, slug) and _plain(str(v)) != plain
+                 and _plain(str(v)).split()[-1:] == [last] and len(plain.split()) > 1}
+        # Only a name the AI cut in two, or one like a name in force: a name it read whole stays as it was read.
+        part = [f for f in filters if any(_plain(str(v)) and _plain(str(v)) in plain for v in f.values)]
+        if not part and not alike:
+            continue
+        field = _unread_field(question[:a] + " " + question[b:], model, index) \
+            or (next(iter(alike)) if len(alike) == 1 else None) or _unread_field(name, model, index)
+        if field is None:
+            continue
+        op = "ne" if part and part[0].op in ("ne", "not_in") else "eq"
+        filters = [f for f in filters if f not in part and not _same_list(model, f.field, field)]
+        filters.append(Filter(field=field, op=op, values=[name]))
+    return plan if filters == plan.filters else plan.model_copy(update={"filters": filters})
 
 
 def _one_field_each(picked: list[tuple[ValueMatch, bool]], words: str, model: SemanticModel
@@ -389,7 +506,11 @@ def _spans(words: str) -> list[tuple[int, int]]:
 
 
 def _plain(text: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+    """Words as compared: lower case, without accents ("région" is "region")."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKD", text.casefold()).encode("ascii", "ignore").decode()
+    return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
 def _id(*parts: str) -> str:

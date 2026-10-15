@@ -126,7 +126,9 @@ def test_letting_go_names_the_condition_or_all_of_them():
     assert letting_go("clear the standing conditions", kept) == kept
     assert letting_go("forget them", kept) == kept
     assert letting_go("stop", kept) == kept
-    assert letting_go("remove the Airport filter", kept) is None
+    # About a condition none of them is: said so (an empty list), never answered as a question.
+    assert letting_go("remove the Airport filter", kept) == []
+    assert letting_go("remove cancelled orders", kept) is None
     assert letting_go("Stop using the last 2 months", []) is None
 
 
@@ -202,6 +204,21 @@ def test_a_standing_store_holds_and_a_question_naming_another_wins(retail):
     other = chat.ask("New question: net sales for \"Airport Store\"", {**NET, "filters": [
         {"field": "store.name", "op": "eq", "values": ["Airport Store"]}]})
     assert float(other["kpi"]["value"]) == pytest.approx(_sql(retail, "l.store_name = 'Airport Store'"))
+    assert other["standing"]["aside"] == ["Store name is Downtown Store (your question names its own)"]
+
+
+def test_another_member_named_by_the_list_itself_wins_too(retail):
+    # 'and for "Airport Store"?' planned on the stores list, not its name field: the same field all the same, so
+    # never both stores at once (an answer of nothing).
+    chat = Chat(retail)
+    chat.ask("only the \"Downtown Store\" from now on")
+    chat.ask("net sales in 2025", {**NET, "time": {"window": {"kind": "between", "start": "2025-01-01",
+                                                               "end": "2025-12-31"}}})
+    other = chat.ask("and for \"Airport Store\"?", {**NET, "follow_up": "refine", "filters": [
+        {"field": "store", "op": "eq", "values": ["Airport Store"]}], "time": {"window": {
+            "kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}})
+    assert float(other["kpi"]["value"]) == pytest.approx(_sql(
+        retail, "l.store_name = 'Airport Store' AND l.day >= DATE '2025-01-01' AND l.day < DATE '2026-01-01'"))
     assert other["standing"]["aside"] == ["Store name is Downtown Store (your question names its own)"]
 
 

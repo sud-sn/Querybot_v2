@@ -28,7 +28,7 @@ from core2.resolve.resolver import Logical, OutMeasure, Part, PartGroup, Segment
 from core2.resolve.shapes import (ABC, AGEING, AbsentShape, ActiveShape, CohortShape, Events, FunnelShape, GapShape,
                                   LifecycleShape, OnTimeShape, ParetoShape, PerShape, RollingShape, TogetherShape,
                                   WithinShape)
-from core2.resolve.time import Range
+from core2.resolve.time import Range, unit_start
 from core2.warehouse import dialect as D
 
 MEMBERS = "members_counted"     # per member: how many members (or rows) have a figure
@@ -436,7 +436,10 @@ def _lifecycle(c: _Compiler, shape: LifecycleShape) -> tuple[exp.Select, list[Ou
     # The periods asked for, and none after the last with activity (everyone would have lapsed then).
     last = exp.select(exp.Max(this=D.period_start(c.out("ev2", e.day), e.grain, c.d))).from_(
         c.part_select(e.part).subquery(c.name("ev2")))
-    conds = [*within(c, at, e.window), exp.LTE(this=at.copy(), expression=last.subquery())]
+    # From the period holding the window's first day: January 2023 by week starts with the week of 26 December
+    # 2022, which holds 1 January.
+    shown = Range(unit_start(e.window.start, e.grain) if e.window.start else None, e.window.end)
+    conds = [*within(c, at, shown), exp.LTE(this=at.copy(), expression=last.subquery())]
     body = body.from_(both).where(exp.and_(*conds)).group_by(*[c.out("lc", n) for n in names])
     columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
                                                          for m in c.q.measures]

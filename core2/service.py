@@ -42,7 +42,7 @@ from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, Seman
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
 from core2.plan.ir import Clarify, Compare, Plan, Window
 from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words, plan_question, stands_for
-from core2.plan.thread import kept_parts
+from core2.plan.thread import kept_parts, points_above
 from core2 import standing as S
 from core2.standing import Standing
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, about_people, build_index, listable, normalise,
@@ -642,6 +642,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
             return _which_end(question, *end)
         reading = (Reading(forced, "the reader said so") if forced else
                    Reading("refine", "it points at a member of the answer on screen") if pointed else
+                   Reading("refine", "it points at the member the answer above was narrowed to")
+                   if points_above(question, seen.plan if seen is not None else None) else
                    _read(question, last, model, found))
         matches = found
         if reading.kind != "new" and pointed:
@@ -693,6 +695,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         return asked
 
     plan = _roles_named(plan, model, services.index)        # "per manager": the link, never a level called so
+    plan = _under_a_parent(plan, question, model)           # 'accounts under "Operating Expenses"': its children
+    # A quoted name of a field whose names are not read ("Packaging Desk", a buying team), never a part of it.
+    plan = S.quoted_unread(plan, question, model, services.index,
+                           [f for s in _standing_now(services, session) for f in s.filters]
+                           + (list(seen.plan.filters) if seen is not None and seen.plan is not None else []))
     plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
@@ -916,8 +923,9 @@ def _meant(s: Standing, services: Services, fr: bool = False) -> str:
     from core2.resolve.resolver import _first_last
 
     # The main activity's date (orders, fills), as the answers count most questions: never a table of targets
-    # that runs on into next year.
-    main = next((a.date for a in activities(services.model, most=1) if a.date is not None), None)
+    # that runs on into next year. With no members followed (a ledger), the busiest table of what has happened.
+    main = next((a.date for a in activities(services.model, most=1) if a.date is not None), None) \
+        or _happened(services.model, services.today)
     try:
         rng = resolve_window(s.window, today=services.today, last_data=_first_last(main)[1] if main else None)
     except Exception:  # noqa: BLE001 - the words alone
@@ -928,6 +936,17 @@ def _meant(s: Standing, services: Services, fr: bool = False) -> str:
     if fr:
         return f"{words} ({_jour(rng.start)} \u2013 {_jour(last)})"
     return f"{words} ({rng.start.day} {rng.start:%b %Y} \u2013 {last.day} {last:%b %Y})"
+
+
+def _happened(model: SemanticModel, today: dt.date) -> DateRole | None:
+    """The date of the busiest table whose figures are dated up to today, never one running on past it (budgets,
+    plans, targets): what "the last 2 months" of a ledger counts back from."""
+    from core2.resolve.resolver import _first_last
+
+    dated = {m.default_date for m in model.measures.values() if not m.hidden and m.default_date}
+    roles = [r for r in model.date_roles.values() if r.key in dated and r.table in model.tables
+             and (last := _first_last(r)[1]) is not None and last <= today]
+    return max(roles, key=lambda r: (model.tables[r.table].row_count or 0, r.key), default=None)
 
 
 def _standing_dropped(question: str, gone: list[Standing], services: Services, session: Session) -> dict[str, Any]:
@@ -946,6 +965,17 @@ def _standing_dropped(question: str, gone: list[Standing], services: Services, s
     fr = S.french(question)
     names_ = "; ".join((s.words_fr or s.words) if fr else s.words for s in gone)
     still = "; ".join((s.words_fr or s.words) if fr else s.words for s in _standing_now(services, session))
+    if not gone:
+        # "Remove the Germany condition" where none is kept by that name: said, never answered as a question.
+        if fr:
+            text = ("Aucune condition de ce nom n’est appliquée dans cette conversation. " +
+                    (f"Appliqué : {still}" if still else "Aucune condition n’est appliquée"))
+        else:
+            text = ("No condition by that name is in force in this conversation. " +
+                    (f"In force: {still}" if still else "None is in force"))
+        frame = _frame(question, text + ".", kind="standing")
+        frame["standing"] = {"kept": _standing_shown(services, session), "applied": [], "aside": []}
+        return frame
     if fr:
         text = f"Retiré : {names_}. " + (f"Toujours appliqué : {still}" if still else
                                           "Les prochaines réponses utilisent de nouveau toutes les données")
@@ -1026,7 +1056,7 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     logical = fill_edges(logical, model, warehouse.dialect, lambda sql: warehouse.query(sql, max_rows=1).rows)
     compiled = compile_query(logical, model, warehouse.dialect)
     result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
-    payload = build_answer(question, logical, compiled, result.columns, result.rows,
+    payload = build_answer(question, logical, compiled, result.columns, _with_a_figure(compiled, result.columns, result.rows),
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
     if logical.beyond:
@@ -1060,6 +1090,21 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     if notes:
         _more_for_the_note(plan, logical, payload, services, ctx, warehouse)
     return payload
+
+
+def _with_a_figure(compiled: Any, names: list[str], rows: list[tuple]) -> list[tuple]:
+    """The members of a breakdown that have some of the figure asked: revenue in CAD by cost centre listed the nine
+    cost centres booking only expenses as "no value", and said "across 12 cost centres" for three. Periods keep
+    theirs (a month with nothing is a month of the series), and an answer with no member having any stays as it
+    is, to be said so."""
+    roles = {c.role for c in compiled.columns}
+    # A store with nothing this year but some last year fell to nothing: a figure of the answer too.
+    measures = {c.name for c in compiled.columns if c.role in ("measure", "prior") and not c.computed}
+    at = [i for i, n in enumerate(names) if n in measures]
+    if not at or roles & {"period", "time"} or not roles & {"attribute", "member_code"}:
+        return rows
+    kept = [r for r in rows if any(r[i] is not None for i in at)]
+    return kept or rows
 
 
 def _more_for_the_note(plan: Plan, logical: Any, payload: dict[str, Any], services: Services, ctx: Context,
@@ -1630,6 +1675,45 @@ def _roles_named(plan: Plan, model: SemanticModel, index: MemberIndex) -> Plan:
     if len(kept) == len(plan.filters):
         return plan
     return plan.model_copy(update={"filters": kept, "via": via})
+
+
+# "under "Operating Expenses"", "sous « Charges »": the members a heading holds.
+_UNDER = re.compile(r"\b(?:under|beneath|below|within|sous)\s+(?:the\s+|le\s+|la\s+|les\s+|l')?[\"“«']?\s*$",
+                    re.IGNORECASE)
+
+
+def _under_a_parent(plan: Plan, question: str, model: SemanticModel) -> Plan:
+    """ 'top 5 accts under "Operating Expenses"' filtered the account called so, a heading no line is posted to:
+    "No rows match". A quoted member written after "under" (sous) of a list that links to itself (an account's
+    parent account, an employee's manager) narrows to the members it holds, by that link; the plan's grouping of
+    the same list still lists the members themselves."""
+    if plan.kind != "query" or not plan.filters:
+        return plan
+    from core2.plan.values import quoted_spans
+
+    via, filters = dict(plan.via), list(plan.filters)
+    for a, b in quoted_spans(question):
+        if not _UNDER.search(question[:a]):
+            continue
+        name = _plain(question[a:b])
+        for i, f in enumerate(filters):
+            table = _table_of(model, f.field)
+            selves = [j for j in model.joins.values() if j.from_table == j.to_table == table and j.role]
+            if f.op not in ("eq", "in") or not any(_plain(str(v)) == name for v in f.values) or len(selves) != 1:
+                continue
+            field = f.field
+            if field in plan.group_by:      # the grouping lists the members: the filter names the list otherwise
+                entity = next((e for e in model.entities.values() if e.table == table), None)
+                field = entity.slug if entity is not None and field != entity.slug else next(
+                    (x.slug for x in model.attributes.values() if entity is not None
+                     and x.column == (entity.label_column or entity.code_column)), field)
+                if field in plan.group_by:
+                    continue
+            filters[i] = f.model_copy(update={"field": field})
+            via[field] = f"role:{selves[0].role}"
+    if via == plan.via:
+        return plan
+    return plan.model_copy(update={"filters": filters, "via": via})
 
 
 def _member_home(model: SemanticModel, plan: Plan, index: MemberIndex, values: list[str],

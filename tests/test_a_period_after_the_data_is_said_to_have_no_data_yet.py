@@ -20,11 +20,11 @@ from core2.warehouse.runner import DuckDBWarehouse
 from tests.test_a_new_core_answer_can_be_pinned import retail  # noqa: F401
 
 
-def _ask(retail, plan: dict, today=dt.date(2026, 6, 15)):  # noqa: F811
+def _ask(retail, plan: dict, today=dt.date(2026, 6, 15), question="What will our net amount be in 2030?"):  # noqa: F811
     con, model = retail
     services = Services(model=model, warehouse=DuckDBWarehouse(con), complete=lambda s, u: json.dumps(plan),
                         index=MemberIndex(), today=today)
-    return answer_question("What will our net amount be in 2030?", services, Session())
+    return answer_question(question, services, Session())
 
 
 def _text(payload) -> str:
@@ -47,5 +47,6 @@ def test_the_conditions_asked_under_are_still_said(retail):  # noqa: F811
 
 def test_a_year_the_data_covers_is_still_answered(retail):  # noqa: F811
     payload = _ask(retail, {"kind": "query", "measures": ["net_amount"],
-                            "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-03-31"}}})
+                            "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-03-31"}}},
+                   question="What was our net amount in Q1 2026?")
     assert (payload.get("data") or {}).get("rows") and "The data ends on" not in _text(payload)

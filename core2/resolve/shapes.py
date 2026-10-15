@@ -114,6 +114,7 @@ class AbsentShape:
     member: str = ""               # "customer"
     activity_label: str = ""       # "orders"
     member_key: str = ""           # the listed part's output name for each member's key (never shown)
+    counted: bool = False          # asked how many: their number leads the answer, the list below it
 
 
 @dataclass
@@ -658,6 +659,17 @@ def rolling_note(shape: RollingShape) -> str:
 # ── members with no activity ───────────────────────────────────────────────
 
 
+def _after_the_data(window: Range, last: dt.date | None) -> None:
+    """A period that starts after the data's last day holds nothing yet: "which customers will not order next
+    month" was answered "240 customers had no orders in November 2026", every one of them. Said, never answered."""
+    if window.start is None or last is None or window.start <= last:
+        return
+    from core2.answer.builder import span_words
+
+    raise ResolveError("empty", f"Your data ends {last.day} {last:%b %Y}, so there is nothing "
+                       f"{span_words(window).removeprefix('on ')} yet: ask about a period up to then")
+
+
 def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     a = plan.absent
     assert a is not None
@@ -702,6 +714,7 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                             fiscal_start=model.settings.fiscal_year_start_month)
     if plan.time.window.kind == "all":
         window = Range(None, None)
+    _after_the_data(window, last)
 
     def period(filters: list) -> tuple[list, Range | None, DateRole | None]:
         """"Bought in Q1 but not in Q2": a filter on one of the activity's dates is its period, not a field. The
@@ -760,7 +773,7 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         window, role = absent_in, absent_on        # "not in Q2", the period written as a date filter
     act, act_key = activity([*rest, *without], window)
     shape = AbsentShape(entity=listed, key=key, activity=act, activity_key=act_key, member=entity.business_name.lower(),
-                        activity_label=measure.business_name, member_key=key_name)
+                        activity_label=measure.business_name, member_key=key_name, counted=plan.intent == "count")
     if a.had:
         had, had_in, had_on = period(a.had)
         shape.had, shape.had_key = activity([*rest, *had], had_in, had_on)
@@ -869,6 +882,7 @@ def _events(plan: Plan, model: SemanticModel, ctx: Context, of: str, measure_slu
                             fiscal_start=model.settings.fiscal_year_start_month)
     if plan.time.window.kind == "all":
         window = Range(None, None)
+    _after_the_data(window, last)
 
     aliases = _Aliases()
     builder = _PartBuilder(model, measure.table, aliases, ctx)
@@ -1079,6 +1093,9 @@ def _lifecycle(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if grain is None:
         shape.prior, shape.prior_words = period_before(plan.time.window, events.window)
         sub = plan.time.window.unit if plan.time.window.unit in ("week", "month", "quarter") else "month"
+        if len(periods(events.window, sub)) < 2:
+            # "Loyal last quarter": every month of it, never "every quarter" of one quarter (everyone active).
+            sub = {"quarter": "month", "month": "week"}.get(sub, sub)
         shape.sub_grain, shape.periods = sub, len(periods(events.window, sub))
         return Logical(intent="breakdown" if groups else "value", parts=[events.part], groups=groups, measures=out,
                        window=events.window, sort=[], limit=plan.limit, max_rows=ctx.max_rows, notes=[],

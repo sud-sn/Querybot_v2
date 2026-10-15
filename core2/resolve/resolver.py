@@ -134,6 +134,19 @@ class OutMeasure:
     overlaps: bool = False   # grouped through a bridge: a row counts under each of its members (an actor's films)
 
 
+
+def documents_left_out(model: SemanticModel, table: str) -> list:
+    """The documents ``table``'s rows are lines of, that leave some of theirs out by default: a booking line's
+    booking (cancelled, duplicate and voided ones left out). Only a link of each line to one document."""
+    out = []
+    for j in model.joins.values():
+        head = model.tables.get(j.to_table)
+        if j.from_table == table and j.to_table != table and j.cardinality == "many_to_one" and head is not None \
+                and head.default_filters and head.kind == "fact" and P.usable(j) and head not in out:
+            out.append(head)
+    return out
+
+
 def adds_up(o: OutMeasure) -> bool:
     """Do the groups' values of ``o`` add up to the whole (a sum or a count), so a share of it means something?
 
@@ -2059,6 +2072,16 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         for df in owner.default_filters:
             builder.part.preds.append(Pred(builder.part.alias, df.column, df.op, list(df.values)))
             notes.append(left_out_note(model, owner.key, df))
+        for head in [] if owner.default_filters else documents_left_out(model, owner.key):
+            # A line of a document left out by default (a cancelled booking's lines) is left out with it.
+            if plan.include_left_out and head.readers_may_include:
+                notes.append(f"Including the {(head.business_name or head.name).lower()} rows left out by default (" +
+                             "; ".join(left_out_words(model, df) for df in head.default_filters) + "), as asked.")
+                continue
+            alias = builder.reach(head.key, label=head.business_name, filtering=True)
+            for df in head.default_filters:
+                builder.part.preds.append(Pred(alias, df.column, df.op, list(df.values)))
+                notes.append(left_out_note(model, head.key, df))
 
     # Links an admin keeps to some rows of the table they reach, or to matched rows only.
     for builder, _ in builders:

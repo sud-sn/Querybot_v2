@@ -1110,6 +1110,203 @@ def segment_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
     return plan
 
 
+# The words of a segment, never the name of an activity ("returning" is no return of goods).
+_SEGMENT_WORDS = re.compile(r"\b(?:returning|returned\s+customers?|new|repeat|lapsed|loyal|won|back|churn\w*)\b",
+                            re.IGNORECASE)
+# A row's word whose verb is spelled otherwise: a receipt is of goods received.
+_ROW_VERBS = {"receipt": ("receive", "received", "receiving")}
+
+
+# What was done, said in French: "au moins une commande", "reçu", "facturé".
+_DEED_FR = {**dict.fromkeys(("commande", "commandes", "commandee", "commandees", "commander"), "order"),
+            **dict.fromkeys(("achat", "achats", "achete", "achetes", "acheter"), "purchase"),
+            **dict.fromkeys(("recu", "recus", "recue", "recues", "reception", "receptions", "recevoir"), "receive"),
+            **dict.fromkeys(("vente", "ventes", "vendu", "vendus"), "sale"),
+            **dict.fromkeys(("facture", "factures", "facturee", "facturees", "facturer"), "invoice"),
+            **dict.fromkeys(("reservation", "reservations", "reserve", "reserves"), "booking"),
+            **dict.fromkeys(("livraison", "livraisons", "livre", "livres"), "delivery"),
+            **dict.fromkeys(("expedition", "expeditions", "expedie", "expedies"), "shipment"),
+            **dict.fromkeys(("paiement", "paiements", "paye", "payes"), "payment"),
+            **dict.fromkeys(("visite", "visites"), "visit"),
+            **dict.fromkeys(("renouvellement", "renouvellements", "renouvele", "renouveles"), "renewal"),
+            **dict.fromkeys(("ordonnance", "ordonnances"), "prescription")}
+
+
+def _accentless(text: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", text.casefold()).encode("ascii", "ignore").decode()
+
+
+# Words of a table's name that say nothing of what was done: "Purchase order line", "Sales order header".
+_NO_DEED = {"line", "item", "detail", "header", "entry", "record", "row", "fact", "history", "log", "table"}
+
+
+def _name_words(model: SemanticModel, table: str) -> list[str]:
+    """The other words of a table's name, tried when none is named by its last: "did we order from" is said of a
+    Purchase order line."""
+    words = re.findall(r"[a-z]+", model.tables[table].business_name.casefold()) if table in model.tables else []
+    return [names.singular(w) for w in words[:-1] if len(w) > 2 and names.singular(w) not in _NO_DEED]
+
+
+def _does(word: str) -> set[str]:
+    """What a question says of one row of an activity: "fill" -> fill, fills, filled, filling; "renewal" -> renew,
+    renewed; "transaction" -> transacted; "shipment" -> shipped."""
+    stems = {word}
+    for suffix in ("ation", "ion", "ment", "al", "ing"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            stems.add(word[: -len(suffix)])
+    out = set(_ROW_VERBS.get(word, ()))
+    for stem in stems:
+        out |= {stem, f"{stem}s", f"{stem}es", f"{stem}ed", f"{stem}d", f"{stem}ing", f"{stem}{stem[-1]}ed",
+                f"{stem}{stem[-1]}ing"}
+    return out
+
+
+# What members did over a period, in the reader's words, when no segment word is said: "on 2 or more days",
+# "on only one day", "every single month", "lost", "perdus".
+_DID = (("one_time", r"\bon\s+(?:only\s+)?(?:one|1|a\s+single)\s+(?:\w+\s+)?day(?:\s+only)?\b|\bonly\s+once\b|"
+                     r"\bune\s+seule\s+fois\b"),
+        ("repeat", r"\bon\s+(?:2|two)\s+(?:or\s+more|\+)\s+(?:\w+\s+)?days\b|\bmore\s+than\s+once\b|"
+                   r"\bplusieurs\s+fois\b"),
+        ("loyal", r"\bevery\s+single\s+month\b|\bin\s+every\s+month\b|\bevery\s+month\s+(?:of|in)\b|"
+                  r"\b\w+ed\s+every\s+month\b|\bchaque\s+mois\s+(?:de|du|sur)\b"),
+        ("lapsed", r"\b(?:lost|lose|losing|churned|lapsed|perdu(?:e|s|es)?|perdons|perdre)\b"),
+        ("won_back", r"\bw[oi]n\s+back\b|\bwon[-\s]back\b|\breactivated\b|\breconquis\b"))
+
+
+# A rate asked for, not a number: "churn rate", "taux d'attrition", "what % did we lose".
+_A_RATE = re.compile(r"\b(?:rate|taux|percent(?:age)?|pourcentage|ratio|share|proportion)\b|%", re.IGNORECASE)
+
+
+def members_by_what_they_did(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many suppliers did we order from on 2 or more days this month" was planned as a count of suppliers per
+    supplier (none), "how many customers transacted every single month" found nothing to answer, and "combien de
+    clients avons-nous perdus" listed who had no orders: members counted by what they did over a period are the
+    lifecycle (repeat, one-time, loyal, lapsed, won back), however the reader says it."""
+    if plan.kind == "query" and plan.lifecycle is not None and plan.lifecycle.status == "churn_rate" and question \
+            and _HOW_MANY_OF.search(question) and not _A_RATE.search(question):
+        # "Combien de patients avons-nous perdus chaque mois" planned as the churn rate: how many is a number.
+        return plan.model_copy(update={"lifecycle": plan.lifecycle.model_copy(update={"status": "lapsed"})})
+    if plan.kind == "query" and plan.segment is not None and plan.lifecycle is None and len(plan.measures) == 1 \
+            and not plan.group_by and plan.segment.of in model.entities:
+        # "How many customers did we win back" planned as the number of customers, for won-back customers: their
+        # number is the lifecycle's, read by what they did (never a date of their own to ask about).
+        counted = next((m for m in model.measures.values() if m.slug == plan.measures[0]), None)
+        entity = model.entities[plan.segment.of]
+        if counted is not None and (counted.table == entity.table and getattr(counted.expr, "agg", "") in
+                                    ("count", "count_distinct") or _counts_members(counted, entity)):
+            from core2.plan.ir import Lifecycle
+
+            seg = plan.segment
+            return plan.model_copy(update={
+                "lifecycle": Lifecycle(of=seg.of, measure=seg.measure, status=seg.status, name=seg.name),
+                "segment": None, "measures": [], "per": None, "intent": "trend" if plan.time.grain else "value"})
+    if plan.kind != "query" or not question or plan.segment is not None or plan.lifecycle is not None \
+            and plan.lifecycle.status not in ("all", "active") or not _HOW_MANY_OF.search(question):
+        return plan
+    status = next((st for st, words in _DID if re.search(words, question, re.IGNORECASE)), None)
+    if status is None:
+        return plan
+    from core2.plan.analyses import activities
+    from core2.plan.words import _EVERYDAY
+
+    # "How many of those did we win back": the members of the plan, when the question names none.
+    planned = next((x.of for x in (plan.absent, plan.per, plan.lifecycle) if x is not None and x.of), None)
+    acts = [a for a in activities(model) if not a.entity.role]
+    for act in [*acts, *(a for a in acts if a.entity.slug == planned)]:
+        name = act.entity.business_name.lower()
+        said = {name, *_EVERYDAY.get(name, ()), *(w.lower() for ws in act.entity.synonyms.values() for w in ws)}
+        said |= {names.plural(w) for w in said}
+        if not re.search(r"\b(?:" + "|".join(re.escape(w) for w in sorted(said, key=len, reverse=True)) + r")\b",
+                         question, re.IGNORECASE) and act.entity.slug != planned:
+            continue
+        from core2.plan.ir import Lifecycle
+
+        return plan.model_copy(update={
+            "lifecycle": Lifecycle(of=act.entity.slug, measure=act.measure.slug, status=status), "measures": [],
+            "per": None, "absent": None, "bands": None, "group_by": [], "sort": [], "limit": None,
+            "intent": "trend" if plan.time.grain else "value"})
+    return plan
+
+
+_HOW_MANY_OF = re.compile(r"^\s*(?:so\s+|and\s+|ok\s+)?(?:how\s+many|combien\s+(?:de|d'))\b|\bnumber\s+of\s+\w+\s+(?:with|who)\b",
+                          re.IGNORECASE)
+
+
+def absent_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many customers have had no orders in the last 90 days?" listed the 7 by name: a question asking how
+    many is answered with their number first (the list stays below it)."""
+    if plan.kind != "query" or plan.absent is None or plan.intent == "count" or not _HOW_MANY_OF.search(question or ""):
+        return plan
+    return plan.model_copy(update={"intent": "count"})
+
+
+def _how_many_of(question: str, entity: Entity) -> bool:
+    """Does the question ask how many of the members there are ("how many new customers", "combien de clients")?"""
+    from core2.plan.words import _EVERYDAY
+
+    name = entity.business_name.lower()
+    said = {name, *_EVERYDAY.get(name, ()), *(w.lower() for ws in entity.synonyms.values() for w in ws)}
+    said |= {names.plural(w) for w in said}
+    words = "|".join(re.escape(w) for w in sorted(said, key=len, reverse=True))
+    return bool(re.search(rf"\b(?:how\s+many|number\s+of|combien\s+(?:de|d')\s*)\s*(?:\w+\s+){{0,2}}(?:{words})\b",
+                          question or "", re.IGNORECASE))
+
+
+def figure_of_those(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "And what did we spend with them" after the suppliers won back was planned as the won-back suppliers with
+    the line amount beside them, and answered with their number again. A figure asked of members counted by what
+    they did (not their number) is theirs: the segment narrows it."""
+    lc = plan.lifecycle
+    if plan.kind != "query" or lc is None or not plan.measures \
+            or lc.status not in ("new", "returning", "won_back", "repeat", "one_time") or lc.of not in model.entities:
+        return plan
+    entity = model.entities[lc.of]
+    by_slug = {m.slug: m for m in model.measures.values()}
+    counted = [by_slug.get(slug) for slug in plan.measures]
+    if any(m is None or m.table == entity.table and getattr(m.expr, "agg", "") in ("count", "count_distinct")
+           or _counts_members(m, entity) for m in counted) or _how_many_of(question, entity):
+        return plan                          # "how many suppliers did we win back": their number, the lifecycle's
+    from core2.plan.ir import Segment
+
+    return plan.model_copy(update={"segment": Segment(of=lc.of, measure=lc.measure, status=lc.status, name=lc.name),
+                                   "lifecycle": None})
+
+
+def activity_meant(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many new customers did we get" was followed by the customer list's own sign-up date, or by the accounts
+    they opened: 285 where 86 had their first booking, and a churn rate of 100%. Members are followed by what they
+    did: the activity the question names ("renewed", "received", "filled"), else the one a figure is counted on
+    ("net sales from returning customers": their orders), else the main one (orders, transactions, bookings). A
+    saved segment keeps the activity it was saved with."""
+    if plan.kind != "query" or not question:
+        return plan
+    from core2.plan.analyses import activities
+
+    words = set(re.findall(r"[a-z]+", _SEGMENT_WORDS.sub(" ", question.casefold())))
+    words |= {_DEED_FR[w] for w in re.findall(r"[a-z]+", _accentless(question)) if w in _DEED_FR}
+    update: dict[str, Any] = {}
+    for part in ("lifecycle", "segment"):
+        shape = getattr(plan, part)
+        if shape is None or shape.name:
+            continue
+        acts = [a for a in activities(model) if a.entity.slug == shape.of and not a.entity.role]
+        if not acts:
+            continue
+        named = [a for a in acts if words & _does(_row_word(model, a.measure.table))] \
+            or [a for a in acts if any(words & _does(w) for w in _name_words(model, a.measure.table))]
+        figure = next((m for m in model.measures.values() if plan.measures and m.slug == plan.measures[0]), None)
+        on_figure = [a for a in acts if part == "segment" and figure is not None and a.measure.table == figure.table]
+        # A follow-up naming no activity keeps the one above ("and how many were one-time?").
+        kept = [a for a in acts if a.measure.slug == shape.measure] if plan.follow_up == "refine" else []
+        pick = next((a for a in named if a.measure.slug == shape.measure), None) \
+            or (named or on_figure or kept or acts)[0]
+        if pick.measure.slug != shape.measure:
+            update[part] = shape.model_copy(update={"measure": pick.measure.slug})
+    return plan.model_copy(update=update) if update else plan
+
+
 _MARGIN = re.compile(r"\bmargin|\bmarge\b", re.IGNORECASE)
 _COSTLY = re.compile(r"\b(?:cost|costs|cogs|expense|expenses|co[uû]t|co[uû]ts|charges)\b", re.IGNORECASE)
 _SHARE_WORDS = re.compile(r"\s*(?:%|percent(?:age)?|pct|rate|ratio|en\s+%|pourcentage|taux)\s*$", re.IGNORECASE)
@@ -1288,17 +1485,22 @@ def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
 _CAL_QUARTER = re.compile(r"(?<![\w-])(?:q|t)([1-4])\s*(?:of\s+|de\s+)?((?:19|20)\d\d)\b|\b((?:19|20)\d\d)\s*[-\s]?(?:q|t)([1-4])\b",
                           re.IGNORECASE)
 _CAL_YEAR = re.compile(r"\b(?:in|for|during|over|en|pour|durant)\s+((?:19|20)\d\d)\b(?!\s*[-/]\d)", re.IGNORECASE)
-_FISCAL_SAID = re.compile(r"\b(?:fiscal|fy\s?'?\d{2,4}|fy|exercice|financial\s+year)\b", re.IGNORECASE)
+_FISCAL_SAID = re.compile(r"\b(?:fiscal|fy\s?'?\d{2,4}|fy|fytd|fyqtd|exercice|financial\s+year)\b", re.IGNORECASE)
 
 
 def calendar_meant(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "Net sales from Regular shoppers by store in Q2 2025" was planned as July to September 2024 -- the second
     quarter of a fiscal year starting in April -- though the question never called it fiscal (the AI read it so
     beside a saved segment's name, and as the calendar's without it). One quarter, or one year, named with no
-    "fiscal" or "FY" is the calendar's: its dates are put right, and the answer says them."""
+    "fiscal" or "FY" is the calendar's: its dates are put right, and the answer says them. So is a year or a quarter
+    to date, this one or the last ("ytd", "last quarter")."""
     if plan.kind != "query" or plan.time.compare is not None or _FISCAL_SAID.search(question or ""):
         return plan
     window = plan.time.window
+    if window.fiscal and window.kind != "between":
+        # "Plan renewal fees ytd", "this year", "last quarter": the calendar's, as a named year is.
+        return plan.model_copy(update={"time": plan.time.model_copy(update={
+            "window": window.model_copy(update={"fiscal": False})})})
     if window.kind != "between" or window.start is None or window.end is None:
         return plan
     quarters = _CAL_QUARTER.findall(question or "")
@@ -1686,8 +1888,9 @@ _COUNTS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seve
            "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11, "douze": 12}
 _COUNT = r"(\d{1,3}|" + "|".join(_COUNTS) + r")"
 _UNIT_OF = {"day": "day", "week": "week", "month": "month", "quarter": "quarter", "year": "year", "jour": "day",
-            "semaine": "week", "mois": "month", "trimestre": "quarter", "an": "year", "annee": "year"}
-_EN_UNIT = r"(days?|weeks?|months?|quarters?|years?)"
+            "semaine": "week", "mois": "month", "trimestre": "quarter", "an": "year", "annee": "year",
+            "wk": "week", "mth": "month", "mo": "month", "qtr": "quarter", "yr": "year", "dy": "day"}
+_EN_UNIT = r"(days?|dys?|weeks?|wks?|months?|mths?|mos?|quarters?|qtrs?|years?|yrs?)"
 _FR_UNIT = r"(jours?|semaines?|mois|trimestres?|ans|ann(?:é|e)es?)"
 _UP_TO_TODAY = (r"(?:from|up\s+to|until|till|to|through|including)\s+(?:today|now|the\s+current\s+day|this\s+day|"
                 r"the\s+present\s+day|the\s+present)")
@@ -1706,9 +1909,19 @@ _ROLLING = [
 ]
 # "The last 2 months", "the trailing 12 months": n complete units before the current one.
 _COMPLETE = [
-    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+(weeks?|months?|quarters?|years?)\b", re.I),
+    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+(weeks?|wks?|months?|mths?|mos?|quarters?|qtrs?|"
+               rf"years?|yrs?)\b", re.I),
     re.compile(rf"\b{_COUNT}\s+derni(?:er|ère)s?\s+(semaines?|mois|trimestres?|ans|ann(?:é|e)es?)\b", re.I),
 ]
+# "Last quarter", "the previous month", "le trimestre dernier": the one complete unit before the current one.
+_PREVIOUS = [
+    re.compile(r"\b(?:last|previous|prior)\s+(week|wk|month|mth|quarter|qtr|year|yr)\b(?!\s*['’]s)", re.I),
+    re.compile(r"\b(?:le|la|l['’])\s*(semaine|mois|trimestre|an|ann(?:é|e)e)\s+(?:derni(?:er|ère)|pr(?:é|e)c(?:é|e)dente?)\b",
+               re.I),
+]
+# A comparison with the period before ("this year against last year", "the same time last year"): its own reading.
+_AGAINST = re.compile(r"\b(?:vs\.?|versus|against|compared?|than|over|same\s+(?:time|period)|par\s+rapport|contre)\b",
+                      re.I)
 _TRAILING_YEAR = re.compile(r"\b(?:trailing\s+(?:year|twelve\s+months)|ttm|ltm)\b", re.I)
 _INCLUDING_THIS = re.compile(r"\b(?:including|incl\.?|with)\s+(?:this|the\s+current|the\s+present)\b|"
                              r"\by\s+compris\s+(?:ce|cette|le|la)\b", re.I)
@@ -1732,7 +1945,8 @@ _DATES_NAMED = re.compile(r"\b(?:(?:19|20)\d\d|fy\s?\d{2,4}|q[1-4]|h[12]|jan(?:u
 
 def _unit(word: str) -> str:
     word = word.casefold().replace("é", "e")
-    word = word[:-1] if word.endswith("s") and word not in ("mois",) else word
+    word = word[:-1] if word.endswith("s") and word not in ("mois", "mos") else word
+    word = "mo" if word == "mos" else word
     return _UNIT_OF.get(word, word)
 
 
@@ -1758,6 +1972,10 @@ def period_meant(plan: Plan, model: SemanticModel | None, question: str) -> Plan
                 found.append({"kind": "last", "unit": _unit(m.group(2)), "n": _count(m.group(1))})
         if _TRAILING_YEAR.search(question):
             found.append({"kind": "last", "unit": "month", "n": 12})
+        if not found and not _AGAINST.search(question):
+            for pattern in _PREVIOUS:
+                for m in pattern.finditer(question):
+                    found.append({"kind": "previous", "unit": _unit(m.group(1))})
     for pattern, short in _SO_FAR:
         for m in pattern.finditer(question):
             word = next(g for g in m.groups() if g)
@@ -1936,8 +2154,10 @@ _HOW_MANY = re.compile(r"\bhow\s+many\s+(?:different\s+|distinct\s+|unique\s+|se
 
 def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> list[str]:
     """ "How many items does the top one have on hand?" was answered with the stock on hand: "how many" of a thing
-    the data lists asks for a count of that thing, or a list of them."""
-    if plan.kind != "query" or plan.per is not None or plan.absent is not None or plan.bands is not None:
+    the data lists asks for a count of that thing, or a list of them. Members counted by what they did (new,
+    returning, lapsed: the lifecycle) are a count of them too."""
+    if plan.kind != "query" or plan.per is not None or plan.absent is not None or plan.bands is not None \
+            or plan.lifecycle is not None:
         return []
     problems = []
     for m in _HOW_MANY.finditer(question or ""):
@@ -2151,8 +2371,8 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
     try:
         resolve(plan, model, Context(today=today))
     except ResolveError as exc:
-        if exc.kind in ("unconfirmed", "denied", "ambiguous"):
-            return [], ""          # not the planner's to fix: the service answers or asks the reader
+        if exc.kind in ("unconfirmed", "denied", "ambiguous", "empty"):
+            return [], ""          # not the planner's to fix: the service answers, asks the reader or says why
         options = f" Allowed: {', '.join(exc.options[:12])}." if exc.options else ""
         if exc.message.endswith(" has no date"):
             return [f"{exc.message}.{options}"], _dated(model, plan, question)
@@ -2451,7 +2671,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
         for rule in (route_named, all_time_asked, period_meant, calendar_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
-                     counted_where_done, active_counted, saved_segment_named, segment_asked, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+                     counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
@@ -2620,14 +2840,17 @@ def _restated(rate: Any, plan: Plan) -> bool:
 
 
 def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
-    """Does a rate's condition name a column whose rows a table leaves out by default?"""
+    """Does a rate's condition name a column whose rows a table leaves out by default, or a column of the lookup
+    that column names ("Closed - Cancelled", the name of status 4)?"""
     from core2.resolve.resolver import find_slug
 
     left_out = {df.column for t in model.tables.values() for df in t.default_filters}
+    lookups = {j.to_table for j in model.joins.values() if left_out & set(j.from_columns) and j.to_table != j.from_table}
     for rate in plan.rates:
         for f in rate.where:
             found = find_slug(model, f.field)
-            if found is not None and getattr(found[1], "column", None) in left_out:
+            column = getattr(found[1], "column", None) if found is not None else None
+            if column in left_out or column in model.columns and model.columns[column].table in lookups:
                 return True
     return False
 

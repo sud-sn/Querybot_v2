@@ -28,7 +28,8 @@ from core2.plan.ir import Filter, Plan, Window
 
 # "Overall", "in total", "for everyone": every filter of the answer above lets go.
 _OVERALL = re.compile(r"\b(?:overall|in\s+total|altogether|company[-\s]wide|across\s+the\s+board|everyone|everything|"
-                      r"au\s+total|dans\s+l'ensemble|globalement|tout\s+confondu)\b", re.IGNORECASE)
+                      r"our\s+(?:total|whole|entire)|au\s+total|dans\s+l'ensemble|globalement|tout\s+confondu|"
+                      r"notre\s+total)\b", re.IGNORECASE)
 # "All regions", "every store", "toutes les régions": the filter on that field lets go.
 _ALL_OF = re.compile(r"\b(?:all(?:\s+(?:the|of\s+the|our))?|every|tou(?:s|tes)\s+(?:les|nos))\s+([a-zà-ÿ][\w-]*"
                      r"(?:\s+[a-zà-ÿ][\w-]*)?)", re.IGNORECASE)
@@ -91,6 +92,12 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     if plan.kind != "query" or previous is None or previous.kind != "query":
         return plan
     plan = figures_carried(plan, previous)
+    pointed = _pointed_at(question, previous, plan)
+    if pointed:
+        # "What did the lab spend in March 2026?" after "R&D Lab #2": the member above, by a word of its name,
+        # whatever else the question asks anew.
+        trial = plan.model_copy(update={"filters": [*plan.filters, *pointed]})
+        plan = trial if answers(trial) else plan
     if plan.follow_up == "new":
         return _nothing_carried(plan, question, previous)
     if plan.follow_up != "refine":
@@ -113,6 +120,22 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     if previous.segment is not None and plan.segment is None and not _OVERALL.search(question) \
             and not _LET_GO.search(question) and answers(plan.model_copy(update={"segment": previous.segment})):
         update["segment"] = previous.segment       # "and by month" after returning customers' sales: still theirs
+    lc = previous.lifecycle
+    if lc is not None and plan.segment is None and plan.lifecycle is None and plan.measures \
+            and lc.status in ("new", "returning", "won_back", "repeat", "one_time") and _THEM.search(question):
+        # "And what did we spend with them" after the suppliers won back this month: the spend with those suppliers,
+        # not their number again.
+        from core2.plan.ir import Segment
+
+        them = Segment(of=lc.of, measure=lc.measure, status=lc.status, name=lc.name)
+        if answers(plan.model_copy(update={"segment": them})):
+            update["segment"] = them
+    if plan.group_by and plan.group_by == previous.group_by and _TOTAL.search(question) \
+            and not any(_named_split(model, g, question) for g in plan.group_by):
+        # "And total spend by month?" after spend by category: one total a month, no longer by category.
+        update["group_by"] = []
+        if plan.intent == "breakdown":
+            update["intent"] = "trend" if plan.time.grain else "value"
     time = plan.time
     if time.compare is not None and time.compare == previous.time.compare and plan.intent != "drivers" \
             and names_own_period(question) and not _COMPARES.search(question):
@@ -131,6 +154,48 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     if time != plan.time:
         update["time"] = time
     return plan.model_copy(update=update) if update else plan
+
+
+_POINTER = r"(?:the|that|this|our|le|la|ce|cette|cet)"
+_NOT_NAMES = {"the", "and", "for", "of", "inc", "ltd", "llc", "co", "store", "team", "group"}
+
+
+def points_above(question: str, previous: Plan | None) -> bool:
+    """Does the question point at the member the answer above was narrowed to, by a word of its name ("What did
+    the lab spend in March?" after "R&D Lab #2")? It follows that answer, however much else it asks anew."""
+    return previous is not None and previous.kind == "query" \
+        and bool(_pointed_at(question, previous, Plan(kind="query")))
+
+
+def _pointed_at(question: str, previous: Plan, plan: Plan) -> list[Filter]:
+    """The filters above whose member the question points at by a word of its name ("the lab" for "R&D Lab #2",
+    "that studio"), when the plan names no member of that field itself."""
+    have = {f.field for f in plan.filters}
+    out = []
+    for f in previous.filters:
+        if f.field in have or f.op not in ("eq", "in") or len(f.values) != 1 or not isinstance(f.values[0], str):
+            continue
+        words = {w for w in re.findall(r"[a-z]+", f.values[0].lower()) if len(w) >= 3 and w not in _NOT_NAMES}
+        if any(re.search(rf"\b{_POINTER}\s+{re.escape(w)}s?\b", question, re.IGNORECASE) for w in words):
+            out.append(f)
+    return out
+
+
+# Those the answer above counted: "what did we spend with them", "leur chiffre d'affaires".
+_THEM = re.compile(r"\b(?:them|they|those|these|their|eux|ils|elles|leurs?|ces)\b", re.IGNORECASE)
+# The whole, no longer split: "and total spend by month?", "le total par mois".
+_TOTAL = re.compile(r"\b(?:total|overall|le\s+total|au\s+total)\b", re.IGNORECASE)
+
+
+def _named_split(model: SemanticModel, slug: str, question: str) -> bool:
+    """Does the question name the split itself ("total spend by category")?"""
+    words = {w for w in re.split(r"[._\s]+", slug.lower()) if len(w) > 2 and w not in ("name", "code")}
+    attribute = model.attributes.get(slug)
+    if attribute is not None:
+        words |= {w for w in re.findall(r"[a-z]+", (attribute.business_name or "").lower()) if len(w) > 2
+                  and w not in ("name", "code")}
+    said = {names.singular(w) for w in re.findall(r"[a-z]+", question.lower())}
+    return bool({names.singular(w) for w in words} & said)
 
 
 def figures_carried(plan: Plan, previous: Plan) -> Plan:

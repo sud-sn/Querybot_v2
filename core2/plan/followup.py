@@ -195,9 +195,11 @@ def scoped(question: str, members: int = 0) -> bool:
 
 # "For all time", "overall": the reader sets the period to everything, which is still saying when.
 _ALL_TIME = re.compile(r"\b(?:all\s+time|ever|overall|in\s+total|whole\s+period)\b", re.IGNORECASE)
-# "That month", "the same period": the period of the answer above, pointed at rather than named.
+# "That month", "the same period": the period of the answer above, pointed at rather than named. Never "the same
+# time last year": a comparison with a year before the period asked ("YTD against the same time last year").
 _THAT_PERIOD = re.compile(r"\b(?:that|the\s+same|same)\s+(?:day|week|month|quarter|half|year|fiscal\s+year|period|"
-                          r"time|date|season)\b", re.IGNORECASE)
+                          r"time|date|season)\b(?!\s+(?:(?:last|previous|prior)\s+year|a\s+year\s+(?:ago|before|"
+                          r"earlier)|(?:the\s+)?year\s+before|l'an\s+(?:dernier|pass[ée]))\b)", re.IGNORECASE)
 # A period named outright: a year, a quarter or half, a fiscal year, a month.
 _NAMED_PERIOD = re.compile(
     r"\b(?:(?:19|20)\d{2}|q[1-4]|t[1-4]\s+(?:19|20)\d{2}|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
@@ -205,7 +207,9 @@ _NAMED_PERIOD = re.compile(
 # "Monthly", "by week", "over time": the question asks for a series.
 _SERIES = re.compile(r"\b(?:daily|weekly|monthly|quarterly|yearly|annually|over\s+time|trend|trends|trending|"
                      r"(?:by|per|each|every|a)\s+(?:day|week|month|quarter|year)|"
-                     r"(?:day|week|month|quarter|year)\s+(?:by|on|over)\s+(?:day|week|month|quarter|year))\b",
+                     r"(?:day|week|month|quarter|year)\s+(?:by|on|over)\s+(?:day|week|month|quarter|year)|"
+                     r"(?:par|chaque)\s+(?:jour|semaine|mois|trimestre|an|ann[ée]e)(?!\s+(?:de|du|sur)\b)|"
+                     r"mensuel(?:le)?s?|hebdomadaires?|trimestriel(?:le)?s?|annuel(?:le)?s?)\b",
                      re.IGNORECASE)
 
 
@@ -217,7 +221,7 @@ _WHEN_FR = re.compile(r"\b(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[
 # "last quarter", "this year", "so far", "for all time"; in French "l'an dernier", "cette année", "en mai".
 _OWN_PERIOD = re.compile(
     r"\b(?:(?:this|last|next|previous|past|current|rolling|trailing)\s+(?:\d+\s+)?(?:fiscal\s+)?"
-    r"(?:day|week|month|quarter|half|year)s?|ttm|ltm|"
+    r"(?:day|week|wk|month|mth|mo|quarter|qtr|half|year|yr)s?|ttm|ltm|"
     r"today|yesterday|ytd|mtd|qtd|year\s+to\s+date|so\s+far|since\s+\w+|until\s+\w+|right\s+now|currently|"
     r"at\s+the\s+end\s+of|all\s+time|ever|overall|whole\s+period|"
     r"(?:cette|cet|ce)\s+(?:ann[ée]e|an|mois|trimestre|semestre|semaine)|"

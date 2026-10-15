@@ -212,6 +212,10 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
             answer["headline"] = (f"Every {shape.member}{had} had {activity} {when} too." if had else
                                   f"Every {shape.member} listed had {activity} {when}.")
         definition = next((n for n in logical.notes if n.startswith("Listed:")), "")
+        if shape.counted:
+            label = f"{things[:1].upper()}{things[1:]} with no {activity}"
+            payload["kpi"] = {"label": label, "title": f"{label} {when}", "value": count, "format": "number",
+                              "display_format": "0", "state": "ready", "note": span}
     if isinstance(logical.target, TargetInfo):
         said = target_headline(payload, logical, logical.target, span)
         if said:

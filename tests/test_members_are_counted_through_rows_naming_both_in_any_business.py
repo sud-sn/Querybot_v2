@@ -75,10 +75,11 @@ CASES = [
     ("inventory", "number_of_suppliers", "warehouse", "stock_movement", """
         SELECT w.warehouse_name, COUNT(DISTINCT m.supplier_id) FROM stock_movements m
         JOIN warehouses w ON m.warehouse_id = w.warehouse_id GROUP BY 1"""),
+    # The lines of bookings left out by default (cancelled, duplicate, voided) are left out with them.
     ("home_services", "number_of_customers", "technician", "booking_line", """
         SELECT t.technician_name, COUNT(DISTINCT b.customer_id) FROM booking_lines l
         JOIN bookings b ON l.booking_number = b.booking_number
-        JOIN technicians t ON l.technician_id = t.technician_id GROUP BY 1"""),
+        JOIN technicians t ON l.technician_id = t.technician_id WHERE b.status_id NOT IN (4, 6, 7) GROUP BY 1"""),
     ("compounding_pharmacy", "number_of_patients", "pharmacist", "fill", """
         SELECT ph.pharmacist_name, COUNT(DISTINCT p.patient_id) FROM fills f
         JOIN prescriptions p ON f.rx_number = p.rx_number
