@@ -371,10 +371,13 @@ def _analyses(model: SemanticModel) -> str:
         lines.append(f"Q: average days between {things} per {e.business_name.lower()} this year\n"
                      f"A: {json.dumps(plan)}")
         lines.append(
-            "- lifecycle: members by their activity in each period (time.grain; a month by default); no measures. "
-            "status all (active, new, returning, won back and lapsed side by side) | active | new | returning | "
-            "won_back | lapsed | churn_rate (\"churn\", \"attrition of customers\", \"retention rate\" is 100 minus "
-            "it: ask churn_rate). \"New vs returning\" -> all.")
+            "- lifecycle: members by their activity over the window; no measures. No time.grain: one figure for the "
+            "whole window (\"returning customers in the last 2 months\"); time.grain only when the question asks "
+            "by week, month, quarter or year. status all (active, new, returning, won back and lapsed side by "
+            "side) | active | new | returning (active, and active before it too) | won_back | lapsed | churn_rate "
+            "(\"churn\", \"attrition of customers\", \"retention rate\" is 100 minus it: ask churn_rate) | repeat "
+            "(2 or more days with activity) | one_time | loyal (active every month of the window). \"New vs "
+            "returning\" -> all. \"At risk\", \"no order in 90 days\" -> absent with active_before.")
         plan = {"kind": "query", "intent": "trend", "lifecycle": {"of": e.slug, "measure": count.slug,
                                                                   "status": "churn_rate"},
                 "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12}}}
@@ -964,6 +967,37 @@ def counted_where_done(plan: Plan, model: SemanticModel, question: str) -> Plan:
                              values=[1.0]),
             "time": plan.time.model_copy(update={"date": date})})
     return plan
+
+
+# Members said to have done something in a period: active, bought, ordered, visited, filled.
+_ACTIVE = re.compile(r"\b(?:active|bought|buying|purchased|purchasing|ordered|ordering|shopped|shopping|transacted|"
+                     r"visited|filled|engaged|actifs?|actives?|achet(?:é|e|és|ées|ant|ent)|command(?:é|e|és|ées|ent)|"
+                     r"venus?)\b", re.IGNORECASE)
+
+
+def active_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Customers active in the last 2 months, by store" asked which of a customer's own dates to count by (the
+    conditions probe): members said to be active in a period (to have bought, ordered, visited) are counted on the
+    rows of what they did in it, each once in each group, never by a date of their own list."""
+    if plan.kind != "query" or plan.shaped() or len(plan.measures) != 1 or plan.derived or plan.figures \
+            or plan.time.window.kind == "all" or plan.time.compare is not None or plan.sort or plan.limit \
+            or not _ACTIVE.search(question or "") or any("activ" in f.field for f in plan.filters):
+        return plan
+    counted = next((m for m in model.measures.values() if m.slug == plan.measures[0]), None)
+    if counted is None or getattr(counted.expr, "agg", None) not in ("count", "count_distinct"):
+        return plan
+    from core2.plan.analyses import activities
+
+    acts = [a for a in activities(model) if a.entity.table == counted.table and not a.entity.role]
+    if not acts:
+        return plan
+    done = _done_words(question)
+    act = next((a for a in acts if (w := _row_word(model, a.measure.table)) and done & {w, f"{w}ed", f"{w}d"}),
+               acts[0])
+    return plan.model_copy(update={
+        "measures": [act.measure.slug], "intent": "count",
+        "per": PerMember(of=act.entity.slug, summary="count", op="gte", values=[1.0]),
+        "time": plan.time.model_copy(update={"date": None})})
 
 
 _MARGIN = re.compile(r"\bmargin|\bmarge\b", re.IGNORECASE)
@@ -2264,7 +2298,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
         for rule in (route_named, all_time_asked, period_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
-                     counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+                     counted_where_done, active_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
@@ -2573,6 +2607,10 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
     if (plan.intent == "compare" or ranks_members) and time.grain is not None and not asks_series(question) \
             and not the_series \
             and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", question, re.IGNORECASE):
+        time = time.model_copy(update={"grain": None})
+    if plan.lifecycle is not None and time.grain is not None and time.window.kind not in ("all", "until") \
+            and question and not asks_series(question) and not the_series:
+        # "How many returning customers in the last 2 months": one figure for the two months, not one a month.
         time = time.model_copy(update={"grain": None})
     if plan.rates and not plan.include_left_out and _rate_on_left_out(plan, model):
         # "Cancellation rate": the rows a table leaves out by default (cancelled ones) are what it counts.

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 
 from core2.bootstrap.names import plural
 from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel
-from core2.plan.ir import Plan
+from core2.plan.ir import Plan, Window
 from core2.resolve import bands as B
 from core2.resolve import paths as P
 from core2.resolve.resolver import (
@@ -55,7 +55,7 @@ from core2.resolve.resolver import (
     one_total,
     resolve_plain,
 )
-from core2.resolve.time import Range, add_units, periods, resolve_window, unit_start
+from core2.resolve.time import Range, add_units, periods, resolve_window, same_day_back, shift, unit_start
 
 SUMMARY_WORDS = {"avg": "Average", "median": "Median", "min": "Lowest", "max": "Highest"}
 
@@ -141,8 +141,12 @@ class GapShape:
 @dataclass
 class LifecycleShape:
     events: Events
-    status: str                    # all | active | new | returning | won_back | lapsed | churn_rate
+    status: str                    # all | active | new | returning | won_back | lapsed | churn_rate | repeat | ...
     columns: dict[str, str]        # each figure worked out -> its output name
+    prior: Range | None = None     # the window as one period (no grain): the period before it
+    prior_words: str = ""          # "the 2 months before it"
+    sub_grain: str = "month"       # loyal: active in every one of these in the window
+    periods: int = 0               # loyal: how many of them the window holds
 
 
 @dataclass
@@ -196,7 +200,9 @@ AGEING = ["Not yet due", "1-30 days", "31-60 days", "61-90 days", "Over 90 days"
 
 
 LIFECYCLE = {"active": "Active", "new": "New", "returning": "Returning", "won_back": "Won back",
-             "lapsed": "Lapsed", "churn_rate": "Churn rate"}
+             "lapsed": "Lapsed", "churn_rate": "Churn rate", "repeat": "Repeat", "one_time": "One-time",
+             "loyal": "Loyal"}
+WHOLE_ONLY = ("loyal",)            # counted over the whole window, never period by period
 
 
 def resolve_shaped(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
@@ -1009,12 +1015,53 @@ def _period_grain(plan: Plan) -> str:
     return grain
 
 
+def _lifecycle_grain(plan: Plan) -> str | None:
+    """The periods members are counted in, or None for the window as one period: "returning customers in the
+    last 2 months" is one figure; "by month" (or no period at all) a series."""
+    window = plan.time.window
+    if plan.time.grain is None and window.kind not in ("all", "until") and \
+            (window.kind != "between" or window.start is not None):
+        return None
+    grain = plan.time.grain or (window.unit if window.unit in ("week", "month", "quarter", "year") else None) \
+        or "month"
+    if grain not in ("week", "month", "quarter", "year"):
+        raise ResolveError("unsupported", f"members are counted by week, month, quarter or year, not by "
+                           f"{grain.replace('_', ' ')}")
+    return grain
+
+
+def period_before(window: Window, rng: Range) -> tuple[Range, str]:
+    """The period a window is held against, and its words: this year (so far) against last year, the last 2
+    months against the 2 months before them, a rolling 60 days against the 60 days before; named dates against
+    as long just before (whole months as whole months)."""
+    assert rng.start is not None and rng.end is not None
+    unit, n = window.unit or "month", window.n or 1
+    if window.kind in ("this", "to_date", "previous"):
+        return Range(add_units(rng.start, unit, -1), rng.start), f"the {unit} before it"
+    if window.kind in ("last", "rolling"):
+        start = add_units(rng.start, unit, -n) if window.kind == "last" else same_day_back(rng.start, unit, n)
+        return Range(start, rng.start), f"the {n} {unit}s before it" if n > 1 else f"the {unit} before it"
+    before = shift(Range(rng.start, rng.end), "previous_period")
+    assert before.start is not None
+    if rng.start.day == 1 and rng.end.day == 1:
+        months = (rng.end.year - rng.start.year) * 12 + rng.end.month - rng.start.month
+        return before, f"the {months} months before it" if months > 1 else "the month before it"
+    return before, f"the {(rng.end - rng.start).days} days before it"
+
+
 def _lifecycle(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     lc = plan.lifecycle
     assert lc is not None
-    grain = _period_grain(plan)
+    grain = _lifecycle_grain(plan)
+    if grain is not None and lc.status in WHOLE_ONLY:
+        raise ResolveError("unsupported", f"{LIFECYCLE[lc.status].lower()} members are counted over a whole period: "
+                           "ask for one period, without a series")
     # Every period of activity up to the window's end: who is new, who was away and came back.
     events, groups = _events(plan, model, ctx, lc.of, lc.measure, read=lambda w: Range(None, w.end), grain=grain)
+    if grain is None and (events.window.start is None or events.window.end is None):
+        grain = "month"
+        events, groups = _events(plan, model, ctx, lc.of, lc.measure, read=lambda w: Range(None, w.end),
+                                 grain=grain)
     taken = {g.name for g in groups}
     things = plural(events.member)
     shown = ["active", "new", "returning", "won_back", "lapsed"] if lc.status == "all" else [lc.status]
@@ -1028,27 +1075,52 @@ def _lifecycle(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         out.append(OutMeasure(name=name, label=label, expr=AggExpr(agg="sum"),
                               format="percent" if status == "churn_rate" else "number", measure=None))
     shape = LifecycleShape(events=events, status=lc.status, columns=columns)
+    if grain is None:
+        shape.prior, shape.prior_words = period_before(plan.time.window, events.window)
+        sub = plan.time.window.unit if plan.time.window.unit in ("week", "month", "quarter") else "month"
+        shape.sub_grain, shape.periods = sub, len(periods(events.window, sub))
+        return Logical(intent="breakdown" if groups else "value", parts=[events.part], groups=groups, measures=out,
+                       window=events.window, sort=[], limit=plan.limit, max_rows=ctx.max_rows, notes=[],
+                       fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
     period = next(g.name for g in groups if g.kind == "period")
     return Logical(intent="trend", parts=[events.part], groups=groups, measures=out, window=events.window,
                    sort=[(period, False)], limit=plan.limit, max_rows=ctx.max_rows, notes=[],
                    fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
 
 
-def lifecycle_definition(shape: LifecycleShape) -> str:
+def lifecycle_definition(shape: LifecycleShape, span: str = "") -> str:
     e = shape.events
-    period = e.grain or "month"
     things, single = plural(e.member), _singular(e.activity)
+    asked = ["active", "new", "returning", "won_back", "lapsed"] if shape.status == "all" else [shape.status]
+    if shape.status == "churn_rate":
+        asked = ["lapsed", "churn_rate"]
+    if shape.prior is not None:          # the window as one period
+        before = shape.prior_words
+        parts = {
+            "active": f"active: with {e.activity} in it",
+            "new": f"new: their first {single} ever was in it",
+            "returning": f"returning: they had {e.activity} before it too",
+            "won_back": f"won back: returning, with none in {before.removesuffix(' before it')} before",
+            "lapsed": f"lapsed: {e.activity} in {before}, none in it",
+            "churn_rate": f"churn rate: the lapsed as a share of the {things} with {e.activity} in {before}",
+            "repeat": f"repeat: {e.activity} on 2 or more days in it",
+            "one_time": f"one-time: {e.activity} on one day only in it",
+            "loyal": f"loyal: {e.activity} in every {shape.sub_grain} of it",
+        }
+        said = "; ".join(parts[k] for k in asked)
+        when = f" {span}" if span else ""
+        return f"{things[:1].upper()}{things[1:]} by their {e.activity}{when}, each counted once: {said}."
+    period = e.grain or "month"
     parts = {
         "active": f"active: with {e.activity} in the {period}",
         "new": f"new: their first {single} ever was in the {period}",
-        "returning": f"returning: they had {e.activity} the {period} before too",
-        "won_back": f"won back: they had {e.activity} before, but none the {period} before",
+        "returning": f"returning: they had {e.activity} before the {period} too",
+        "won_back": f"won back: returning, with none the {period} before",
         "lapsed": f"lapsed: {e.activity} the {period} before, none in this one",
         "churn_rate": f"churn rate: the lapsed as a share of the {things} with {e.activity} the {period} before",
+        "repeat": f"repeat: {e.activity} on 2 or more days in the {period}",
+        "one_time": f"one-time: {e.activity} on one day only in the {period}",
     }
-    asked = list(parts) if shape.status == "all" else [shape.status]
-    if shape.status == "churn_rate":
-        asked = ["lapsed", "churn_rate"]
     said = "; ".join(parts[k] for k in asked)
     return (f"{things[:1].upper()}{things[1:]} by {period}, each counted once a {period}: {said}. The latest "
             f"{period} may not be over yet.")

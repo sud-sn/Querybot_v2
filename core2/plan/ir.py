@@ -190,14 +190,17 @@ class Gap(_Strict):
 
 
 class Lifecycle(_Strict):
-    """Members by their activity in each period (time.grain, a month by default): new (first activity ever),
-    returning (active the period before too), won back (back after at least a period with none), lapsed (active
-    the period before, not in this one), and the churn rate (lapsed over those active the period before): "new vs
-    returning customers by month", "churn rate by quarter", "how many patients lapsed this year"."""
+    """Members by their activity over a period: the window as one figure ("returning customers in the last 2
+    months"), or each week, month, quarter or year of it with time.grain ("new vs returning customers by month").
+    New: first activity ever in it; returning: active in it and before it (new and returning make up the active);
+    won back: returning, with none in the period before; lapsed: active the period before, not in it; repeat:
+    active on 2 or more days in it; one-time: on one day only; loyal: active in every month (week, quarter) of it;
+    churn rate: the lapsed over those active the period before."""
 
     of: str                          # an entity slug: whose activity
     measure: str                     # a measure slug whose rows are the activity
-    status: Literal["all", "active", "new", "returning", "won_back", "lapsed", "churn_rate"] = "all"
+    status: Literal["all", "active", "new", "returning", "won_back", "lapsed", "churn_rate", "repeat", "one_time",
+                    "loyal"] = "all"
 
 
 class Cohort(_Strict):

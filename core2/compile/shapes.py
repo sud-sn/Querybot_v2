@@ -378,38 +378,51 @@ def _flag(condition: exp.Expr) -> exp.Expression:
     return exp.Case(ifs=[exp.If(this=condition, true=_num(1))], default=_num(0))
 
 
+def _step(c: _Compiler, value: exp.Expression, grain: str, n: int) -> exp.Expression:
+    """A period start moved by ``n`` periods of ``grain``: weeks by days, the rest by months."""
+    if grain == "week":
+        return D.add_days(value.copy(), 7 * n, c.d)
+    return D.add_months(value.copy(), _MONTHS[grain] * n, c.d)
+
+
 def _lifecycle(c: _Compiler, shape: LifecycleShape) -> tuple[exp.Select, list[OutColumn], str]:
     e = shape.events
+    if shape.prior is not None:
+        return _lifecycle_window(c, shape)
     assert e.grain is not None
-    months = _MONTHS[e.grain]
+    if shape.status in ("repeat", "one_time"):
+        return _lifecycle_days(c, shape)
     p, prev, nxt, first = (c.out("mp", n) for n in ("period_start", "prev_period", "next_period", "first_period"))
     period = next(g for g in c.q.groups if g.kind == "period")
     own = [c.out("mp", g).as_(c.name(g)) for g in e.groups]
     zero = _num(0)
 
-    def row(at: exp.Expression, active, new, returning, lapsed, before) -> exp.Select:
+    def row(at: exp.Expression, active, new, retained, lapsed, before) -> exp.Select:
         return exp.select(at.as_(c.name(period.name)), *[x.copy() for x in own],
                           active.as_(c.name("is_active")), new.as_(c.name("is_new")),
-                          returning.as_(c.name("is_returning")), lapsed.as_(c.name("is_lapsed")),
+                          retained.as_(c.name("is_retained")), lapsed.as_(c.name("is_lapsed")),
                           before.as_(c.name("was_active")))
 
     mp = member_periods(c, e)
-    # Each member's period with activity, as it stands in that period...
+    # Each member's period with activity, as it stands in that period: new in their first, retained when they had
+    # some the period before too...
     now = row(p.copy(), _num(1), _flag(exp.EQ(this=p.copy(), expression=first.copy())),
-              _flag(exp.EQ(this=prev.copy(), expression=D.add_months(p.copy(), -months, c.d))),
+              _flag(exp.EQ(this=prev.copy(), expression=_step(c, p, e.grain, -1))),
               zero.copy(), zero.copy()).from_(mp)
     # ... and in the period after it: lapsed when it had none then.
-    after = D.add_months(p.copy(), months, c.d)
+    after = _step(c, p, e.grain, 1)
     lapsed = _flag(exp.or_(exp.Is(this=nxt.copy(), expression=exp.Null()),
                            exp.NEQ(this=nxt.copy(), expression=after.copy())))
     then = row(after, zero.copy(), zero.copy(), zero.copy(), lapsed, _num(1)).from_(mp.copy())
     both = exp.union(now, then, distinct=False).subquery(c.name("lc"))
     at = c.out("lc", period.name)
-    total = {n: exp.Sum(this=c.out("lc", f"is_{n}")) for n in ("active", "new", "returning", "lapsed")}
+    total = {n: exp.Sum(this=c.out("lc", f"is_{n}")) for n in ("active", "new", "retained", "lapsed")}
     total["was"] = exp.Sum(this=c.out("lc", "was_active"))
+    # Returning: active and not new (they had some before); of them, won back: none the period before.
+    returning = D.sub(total["active"].copy(), total["new"].copy())
     figures = {
-        "active": total["active"], "new": total["new"], "returning": total["returning"],
-        "won_back": D.sub(D.sub(total["active"].copy(), total["new"].copy()), total["returning"].copy()),
+        "active": total["active"], "new": total["new"], "returning": returning,
+        "won_back": D.sub(returning.copy(), total["retained"].copy()),
         "lapsed": total["lapsed"],
         "churn_rate": D.div(D.mul(_double(total["lapsed"].copy()), 100),
                             exp.Nullif(this=total["was"].copy(), expression=_num(0))),
@@ -427,6 +440,96 @@ def _lifecycle(c: _Compiler, shape: LifecycleShape) -> tuple[exp.Select, list[Ou
     body = body.from_(both).where(exp.and_(*conds)).group_by(*[c.out("lc", n) for n in names])
     columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
                                                          for m in c.q.measures]
+    hidden = ["lapsed_count", "active_before"] if shape.status == "churn_rate" else []
+    outer = exp.select(*[c.out("q", col.name) for col in columns], *[c.out("q", h) for h in hidden])
+    return outer.from_(body.subquery(c.name("q"))), columns, "q"
+
+
+def _lifecycle_days(c: _Compiler, shape: LifecycleShape) -> tuple[exp.Select, list[OutColumn], str]:
+    """Repeat and one-time members in each period: activity on 2 or more days of it, or on one day only."""
+    e = shape.events
+    assert e.grain is not None
+    period = next(g for g in c.q.groups if g.kind == "period")
+    ev = c.part_select(e.part).subquery(c.name("ev"))
+    at = D.period_start(c.out("ev", e.day), e.grain, c.d)
+    per = exp.select(c.out("ev", e.key).as_(c.name("k")), at.as_(c.name(period.name)),
+                     *[c.out("ev", g).as_(c.name(g)) for g in e.groups],
+                     exp.Count(this=exp.Distinct(expressions=[c.out("ev", e.day)])).as_(c.name("days"))) \
+        .from_(ev).group_by(c.out("ev", e.key), at.copy(), *[c.out("ev", g) for g in e.groups])
+    days = c.out("pm", "days")
+    meets = exp.GTE(this=days.copy(), expression=_num(2)) if shape.status == "repeat" else \
+        exp.EQ(this=days.copy(), expression=_num(1))
+    names = [period.name, *e.groups]
+    name = shape.columns[shape.status]
+    body = exp.select(*[c.out("pm", n).as_(c.name(n)) for n in names],
+                      exp.Sum(this=_flag(meets)).as_(c.name(name))).from_(per.subquery(c.name("pm")))
+    conds = within(c, c.out("pm", period.name), e.window)
+    if conds:
+        body = body.where(exp.and_(*conds))
+    body = body.group_by(*[c.out("pm", n) for n in names])
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
+                                                         for m in c.q.measures]
+    outer = exp.select(*[c.out("q", col.name) for col in columns])
+    return outer.from_(body.subquery(c.name("q"))), columns, "q"
+
+
+def _lifecycle_window(c: _Compiler, shape: LifecycleShape) -> tuple[exp.Select, list[OutColumn], str]:
+    """The window as one period: each member once, by their days with activity before and in it, then counted."""
+    e = shape.events
+    assert shape.prior is not None and e.window.start is not None and e.window.end is not None
+    assert shape.prior.start is not None
+    ev = c.part_select(e.part).subquery(c.name("ev"))
+    day, key = c.out("ev", e.day), c.out("ev", e.key)
+
+    def during(start, end) -> exp.Expr:
+        return exp.and_(exp.GTE(this=day.copy(), expression=D.date_literal(start, c.d)),
+                        exp.LT(this=day.copy(), expression=D.date_literal(end, c.d)))
+
+    now = during(e.window.start, e.window.end)
+    was = during(shape.prior.start, e.window.start)
+    member = exp.select(
+        key.copy().as_(c.name("k")), *[c.out("ev", g).as_(c.name(g)) for g in e.groups],
+        exp.Max(this=_flag(now.copy())).as_(c.name("is_now")),
+        _flag(exp.GTE(this=exp.Min(this=day.copy()), expression=D.date_literal(e.window.start, c.d)))
+        .as_(c.name("is_new")),
+        exp.Max(this=_flag(was)).as_(c.name("was_active")),
+        exp.Count(this=exp.Distinct(expressions=[exp.Case(ifs=[exp.If(this=now.copy(), true=day.copy())])]))
+        .as_(c.name("days_now")),
+        exp.Count(this=exp.Distinct(expressions=[exp.Case(ifs=[exp.If(
+            this=now.copy(), true=D.period_start(day.copy(), shape.sub_grain, c.d))])])).as_(c.name("periods_now")),
+    ).from_(ev).group_by(key.copy(), *[c.out("ev", g) for g in e.groups])
+    m = {n: c.out("m", n) for n in ("is_now", "is_new", "was_active", "days_now", "periods_now")}
+
+    def count(*conditions: exp.Expr) -> exp.Expression:
+        return exp.Sum(this=_flag(exp.and_(*conditions)))
+
+    one = _num(1)
+    active = exp.Sum(this=m["is_now"].copy())
+    new = exp.Sum(this=m["is_new"].copy())
+    lapsed = count(exp.EQ(this=m["was_active"].copy(), expression=one.copy()),
+                   exp.EQ(this=m["is_now"].copy(), expression=_num(0)))
+    was_total = exp.Sum(this=m["was_active"].copy())
+    figures = {
+        "active": active, "new": new, "returning": D.sub(active.copy(), new.copy()),
+        "won_back": count(exp.EQ(this=m["is_now"].copy(), expression=one.copy()),
+                          exp.EQ(this=m["is_new"].copy(), expression=_num(0)),
+                          exp.EQ(this=m["was_active"].copy(), expression=_num(0))),
+        "lapsed": lapsed,
+        "churn_rate": D.div(D.mul(_double(lapsed.copy()), 100), exp.Nullif(this=was_total.copy(),
+                                                                         expression=_num(0))),
+        "repeat": count(exp.GTE(this=m["days_now"].copy(), expression=_num(2))),
+        "one_time": count(exp.EQ(this=m["days_now"].copy(), expression=one.copy())),
+        "loyal": count(exp.GTE(this=m["periods_now"].copy(), expression=_num(max(shape.periods, 1)))),
+    }
+    body = exp.select(*[c.out("m", g).as_(c.name(g)) for g in e.groups],
+                      *[figures[k].copy().as_(c.name(n)) for k, n in shape.columns.items()])
+    if shape.status == "churn_rate":
+        body = body.select(lapsed.copy().as_(c.name("lapsed_count")), was_total.copy().as_(c.name("active_before")))
+    body = body.from_(member.subquery(c.name("m")))
+    if e.groups:
+        body = body.group_by(*[c.out("m", g) for g in e.groups])
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m_.name, m_.label, "measure", m_.format, None)
+                                                         for m_ in c.q.measures]
     hidden = ["lapsed_count", "active_before"] if shape.status == "churn_rate" else []
     outer = exp.select(*[c.out("q", col.name) for col in columns], *[c.out("q", h) for h in hidden])
     return outer.from_(body.subquery(c.name("q"))), columns, "q"

@@ -162,7 +162,10 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
         top = f" the first {shape.top} of each are shown;" if shape.top else ""
         definition = f"Ranked within each group by the figure shown;{top} ties are put in name order."
     elif isinstance(shape, LifecycleShape):
-        definition = lifecycle_definition(shape)
+        said = lifecycle_headline(payload, shape, span)
+        if said:
+            answer["headline"] = said
+        definition = lifecycle_definition(shape, span)
     elif isinstance(shape, CohortShape):
         said = cohort_headline(payload, logical, shape)
         if said:
@@ -401,6 +404,20 @@ def pareto_headline(payload: dict[str, Any], shape: ParetoShape, span: str, tota
         else:
             parts.append(f"{name}: {int(n):,}, {_pct_words(share)}")
     return "; ".join(parts) + "."
+
+
+def lifecycle_headline(payload: dict[str, Any], shape: LifecycleShape, span: str) -> str:
+    """The members of one period side by side, in one sentence: "217 customers had orders from Apr 2026 to May
+    2026: 0 new and 217 returning (21 of them won back); 21 lapsed." """
+    records = _records(payload)
+    if shape.prior is None or shape.status != "all" or len(records) != 1:
+        return ""
+    row, cols = records[0], shape.columns
+    v = {k: int(_float(row.get(cols[k])) or 0) for k in ("active", "new", "returning", "won_back", "lapsed")}
+    things = plural(shape.events.member)
+    when = f" {span}" if span else ""
+    return (f"{v['active']:,} {things} had {shape.events.activity}{when}: {v['new']:,} new and {v['returning']:,} "
+            f"returning ({v['won_back']:,} of them won back); {v['lapsed']:,} lapsed.")
 
 
 _EVERY = {"day": "daily", "week": "weekly", "month": "monthly", "quarter": "quarterly", "year": "yearly"}

@@ -350,6 +350,16 @@ def add_months(value: exp.Expression, months: exp.Expression | int, dialect: str
     return _fill(_ADD_MONTHS[dialect], dialect, value, _number(months))
 
 
+_ADD_DAYS = {"snowflake": "DATEADD(DAY, __N__, __X__)", "tsql": "DATEADD(DAY, __N__, __X__)",
+             "oracle": "(__X__ + __N__)", "postgres": "CAST(__X__ + __N__ * INTERVAL '1 DAY' AS DATE)",
+             "duckdb": "CAST(__X__ + TO_DAYS(__N__) AS DATE)"}
+
+
+def add_days(value: exp.Expression, days: exp.Expression | int, dialect: str) -> exp.Expression:
+    """A DATE moved by a whole number of days (``days`` may be an expression)."""
+    return _fill(_ADD_DAYS[dialect], dialect, value, _number(days))
+
+
 _DAYS_BETWEEN = {"snowflake": "DATEDIFF(DAY, __X__, __N__)", "tsql": "DATEDIFF(DAY, __X__, __N__)",
                  "oracle": "(TRUNC(__N__) - TRUNC(__X__))",
                  "postgres": "(CAST(__N__ AS DATE) - CAST(__X__ AS DATE))",

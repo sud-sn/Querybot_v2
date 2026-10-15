@@ -1,9 +1,9 @@
 """New, returning, won back and lapsed customers in each period, and the churn rate, equal to SQL written by hand.
 
 Asked of the invented retail warehouse through the whole answer path (a scripted plan, as the planner writes it).
-A customer counts once a period: new when their first order ever was in it, returning when they ordered the period
-before too, won back when they ordered before but not the period before, lapsed when they ordered the period
-before and not in this one; the churn rate is the lapsed over those who ordered the period before. No period after
+A customer counts once a period: new when their first order ever was in it, returning when they ordered before it
+too (new and returning make up the active), won back when they are returning but did not order the period before,
+lapsed when they ordered the period before and not in this one; the churn rate is the lapsed over those who ordered the period before. No period after
 the last with any orders is shown (everyone would look lapsed), and each answer says what each word means.
 
 Invented data only.
@@ -50,7 +50,9 @@ def _ask(learned, plan: dict) -> dict:
     answers = [json.dumps({"kind": "query", **plan})]
     services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=lambda s, t: answers.pop(0),
                         index=MemberIndex(), today=TODAY)
-    payload = answer_question("q", services, Session())
+    grain = (plan.get("time") or {}).get("grain")
+    # The reader's words: a series is asked for by its period ("by month"); with none, one figure for the period.
+    payload = answer_question(f"customers by {grain}" if grain else "q", services, Session())
     assert payload.get("type") == "assistant_response" and "export_rows" in payload, payload.get("answer")
     return payload
 
@@ -67,7 +69,7 @@ def _expected(learned, unit: str, step: str) -> dict:
           (SELECT COUNT(*) FROM s WHERE CAST(p + INTERVAL {step} AS DATE) = m AND (nxt IS NULL OR nxt <> m)),
           (SELECT COUNT(*) FROM s WHERE CAST(p + INTERVAL {step} AS DATE) = m)
         FROM months ORDER BY m""").fetchall()
-    return {str(m): {"active": a, "new": n, "returning": r, "won_back": a - n - r, "lapsed": lp, "before": b}
+    return {str(m): {"active": a, "new": n, "returning": a - n, "won_back": a - n - r, "lapsed": lp, "before": b}
             for m, a, n, r, lp, b in rows}
 
 
