@@ -3124,10 +3124,12 @@ function dashboardMadeHtml(msg) {
   const missing = (Array.isArray(msg.missing) ? msg.missing : []).filter(Boolean);
   const instead = (Array.isArray(msg.instead) ? msg.instead : []).filter(Boolean);
   const widened = (Array.isArray(msg.widened) ? msg.widened : []).filter(Boolean);
+  const waiting = (Array.isArray(msg.waiting) ? msg.waiting : []).filter(Boolean);
   const quoted = titles => titles.map(w => `“${w}”`).join(', ');
   const gaps = (missing.length ? `<p class="answer-definition dash-made-gap">${qbIcon('info', 14)}${escHtml(t('ui.chat.dashmade.missing', {items: missing.join(', ')}))}`
       + (instead.length ? ` ${escHtml(t('ui.chat.dashmade.instead', {titles: quoted(instead)}))}` : '') + `</p>` : '')
-    + (widened.length ? `<p class="answer-definition dash-made-gap">${qbIcon('calendar', 14)}${escHtml(t('ui.chat.dashmade.widened', {titles: quoted(widened)}))}</p>` : '');
+    + (widened.length ? `<p class="answer-definition dash-made-gap">${qbIcon('calendar', 14)}${escHtml(t('ui.chat.dashmade.widened', {titles: quoted(widened)}))}</p>` : '')
+    + (waiting.length ? `<p class="answer-definition dash-made-gap">${qbIcon('sparkles', 14)}${escHtml(t('ui.chat.dashmade.waiting', {items: waiting.join(', ')}))}</p>` : '');
   return `<article class="answer-card dash-made" aria-label="${escHtml(t('ui.chat.dashmade.kicker'))}">`
     + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashmade.kicker'))}</span>`
     + `<p class="answer-headline is-lead">${escHtml(t('ui.chat.dashmade.headline', {name: board.name || ''}))}</p>`

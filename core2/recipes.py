@@ -38,9 +38,11 @@ from core2.resolve.resolver import Context, ResolveError, _date_role_for, resolv
 May = Callable[[str], bool]
 
 MOST_HEADLINES = 4
-MOST_AREAS = 3
+MOST_AREAS = 5                   # the tables a business is told by, a tab each
 MOST_GROUP_MEMBERS = 25          # a breakdown's bars; more is a top 10's job
-MOST_TILES = 16
+MOST_TILES = 48                  # tiles of the whole business's dashboard; each is a plan run as it is (no AI)
+MOST_TABS = 8                    # its tabs, the overview first
+MOST_NUMBERS = 6                 # numbers in a row: the overview's, and each business metric area's
 
 
 def _all(table: str) -> bool:
@@ -128,7 +130,21 @@ RECIPES = [
            [{"produced", "production", "output"}, {"scrap", "waste"}, {"cost"}, {"downtime"}],
            ["line", "plant", "machine", "product", "location", "category"],
            tops=["product", "machine"]),
+    # A bank's words are its own: loans, deposits, principal and collateral say a bank, where customers, products
+    # and transactions alone would say a shop.
+    Recipe("bank", "Banking", "Banque",
+           {"loan", "deposit", "principal", "collateral", "interest", "mortgage", "overdraft", "teller", "atm",
+            "delinquency", "borrower", "lending", "arrears", "repayment", "withdrawal", "branch", "chargeoff"},
+           [{"principal", "loan", "lending"}, {"balance", "deposit"}, {"interest"}, {"transaction"},
+            {"payment", "repayment"}],
+           ["product", "branch", "region", "segment", "type", "channel", "category", "state", "family"],
+           tops=["branch", "customer", "product", "officer"], analysis="lifecycle"),
 ]
+# The industry an admin set on the Compliance page says the kind of business when the names alone leave it close.
+# The kinds of business an industry is (healthcare and pharmacy is a clinic's or a pharmacy's: never one over the
+# other, only over every other kind).
+INDUSTRY_KIND = {"banking": frozenset({"bank"}), "healthcare_pharmacy": frozenset({"pharmacy", "healthcare"})}
+INDUSTRY_WEIGHT = 3.0
 GENERIC = Recipe("business", "", "", set(), [],
                  ["category", "region", "type", "segment", "country", "group", "class", "status"],
                  tops=["customer", "client", "product", "item", "account", "site", "store"])
@@ -168,6 +184,16 @@ def _words(name: str) -> set[str]:
     return out
 
 
+def _stems(name: str) -> set[str]:
+    """A name's words to their stems, for telling two names of one subject apart from two subjects: Shipping and
+    Shipment are one, Quality and Quality tests one, Repayments and Payments two."""
+    out = set()
+    for w in _words(name):
+        stem = re.sub(r"(ments?|ings?)$", "", w) if len(w) > 6 else w
+        out.add(stem[:-1] if len(stem) > 3 and stem[-1] == stem[-2] else stem)
+    return out
+
+
 def _last(name: str) -> str:
     words = names.tokens(name or "")
     return names.singular(names.EXPANSIONS.get(words[-1], words[-1]).split()[-1]) if words else ""
@@ -181,8 +207,8 @@ def _figures(model: SemanticModel, may: May) -> list[Measure]:
     out = []
     for m in model.measures.values():
         table = model.tables.get(m.table)
-        if m.hidden or table is None or not may(m.table) or not dated(model, m) or table.kind == "dimension" \
-                or _mixed(model, m) or _words(table.business_name) & _COPIES:
+        if m.hidden or m.kpi or table is None or not may(m.table) or not dated(model, m) \
+                or table.kind == "dimension" or _mixed(model, m) or _words(table.business_name) & _COPIES:
             continue
         agg = getattr(m.expr, "agg", "")
         if m.kind != "metric" and (agg not in ("sum", "count", "count_distinct") or m.format == "percent"):
@@ -205,9 +231,10 @@ def _mixed(model: SemanticModel, m: Measure) -> bool:
     return bool(m.unit_column and not m.unit) or any(q.kind == "unit_mix" and q.object == column for q in model.quality)
 
 
-def kind_of(model: SemanticModel, may: May = _all) -> Recipe:
+def kind_of(model: SemanticModel, may: May = _all, industry: str = "") -> Recipe:
     """The recipe whose signs the workspace's names carry most (a sign on a table things are counted on counts
-    twice), or the generic one where none carries enough."""
+    twice), or the generic one where none carries enough. The industry an admin set on the Compliance page
+    (``industry``: "banking", "healthcare_pharmacy") weighs for its own kind, once its names show it at all."""
     counted = {m.table for m in _figures(model, may)}
     seen: dict[str, float] = {}
     for t in model.tables.values():
@@ -218,9 +245,15 @@ def kind_of(model: SemanticModel, may: May = _all) -> Recipe:
         if not m.hidden and may(m.table):
             for w in _words(m.business_name):
                 seen[w] = max(seen.get(w, 0.0), 1.0)
-    scored = [(sum(seen.get(s, 0.0) for s in r.signs), -i, r) for i, r in enumerate(RECIPES)]
-    score, _, best = max(scored, key=lambda s: s[:2])
-    return best if score >= FEWEST_SIGNS else GENERIC
+    hinted = INDUSTRY_KIND.get(industry or "", frozenset())
+
+    def score(r: Recipe) -> float:
+        found = sum(seen.get(s, 0.0) for s in r.signs)
+        return found + INDUSTRY_WEIGHT if found and r.kind in hinted else found
+
+    scored = [(score(r), -i, r) for i, r in enumerate(RECIPES)]
+    best_score, _, best = max(scored, key=lambda s: s[:2])
+    return best if best_score >= FEWEST_SIGNS else GENERIC
 
 
 # What a lead is measured in: money words want an amount ("sales": the sales amount, never the number of sales);
@@ -358,7 +391,7 @@ _SAY = {
 
 
 def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, language: str = "en",
-              allowed: set[str] | None = None) -> tuple[str, list[Made]] | None:
+              allowed: set[str] | None = None, industry: str = "") -> tuple[str, list[Made]] | None:
     """The whole business's dashboard, by the recipe of its kind: its name and its tiles, each with its plan, for
     a reader allowed ``allowed`` tables (None: all). A tile is kept only where the resolver can answer its plan:
     a grouping the figure reaches one way, a top 10 of members it is counted by. None when the data has no
@@ -376,7 +409,7 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
         return True
 
     say = _SAY.get(language, _SAY["en"])
-    recipe = kind_of(model, may)
+    recipe = kind_of(model, may, industry)
     leads = [m for m in headlines(model, recipe, may) if answers(_value(m, {"kind": "all"}))]
     if not leads:
         return None
@@ -435,15 +468,69 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
                    ("top", e.slug)):
                 return
 
+    # The business metrics an admin accepted (core2/kpis.py), the most important first, where this reader's
+    # tables answer them.
+    from core2 import kpis
+
+    accepted = [a for a in kpis.approved(model, may=may, lang=language) if answers(_value(a.measure, window))]
     for m in leads:
         add(Made(called(m), "number", f"{called(m)} {when}", _value(m, window), overview))
     extra = _analysis(model, recipe, window, when, say, may)
     if extra is not None:
         extra.tab = overview
         add(extra)
+    # The business's headline ratios beside its totals, as far as the row of numbers goes.
+    room = MOST_NUMBERS - sum(t.kind == "number" for t in made)
+    for a in [a for a in accepted if a.rank == 1][:max(room, 0)]:
+        add(Made(a.measure.business_name, "number", f"{a.measure.business_name} {when}", _value(a.measure, window),
+                 overview))
     trend(leads[0], overview)
     for m in leads[:2]:
         breakdown(m, overview)
+
+    # The areas of the business its accepted metrics read (Lending, Risk, Repayments), and the tables it is told
+    # by (Loans, Transactions): a table's tab named for an area (Quality tests, Quality) goes on the area's.
+    areas_of: dict[str, list[Any]] = {}
+    for a in accepted:
+        areas_of.setdefault(a.area, []).append(a)
+    english = {area: those[0].area_key or area for area, those in areas_of.items()}
+
+    def area_for(tab: str) -> str:
+        return next((area for area in areas_of if _stems(english[area]) and _stems(english[area]) <= _stems(tab)),
+                    tab)
+
+    figures = _figures(model, may)
+    rows = {m.table: model.tables[m.table].row_count or 0 for m in figures}
+    order = list(dict.fromkeys(m.table for m in leads))
+    areas = [*order, *sorted({m.table for m in figures} - set(order), key=lambda t: (-rows[t], t))][:MOST_AREAS]
+    by_table: list[tuple[str, str, list[Measure]]] = []
+    for table_key in areas:
+        own = [m for m in leads if m.table == table_key] + [
+            m for m in headlines(model, recipe, lambda t, k=table_key: t == k and may(t))
+            if m not in leads and answers(_value(m, window))]
+        if own:
+            by_table.append((table_key, area_for(area_name(model, table_key)), own))
+    # Which tabs there is room for: the areas of the business's leading metrics, the tables its headline totals
+    # are counted on, the other areas, the other tables.
+    ranked = [area for area, those in areas_of.items() if min(a.rank for a in those) <= 2]
+    ranked += [tab for table_key, tab, _ in by_table if table_key in order]
+    ranked += list(areas_of)
+    ranked += [tab for _, tab, _ in by_table]
+    room = [overview.casefold()]
+    for tab in ranked:
+        if tab.casefold() not in room and len(room) < MOST_TABS:
+            room.append(tab.casefold())
+
+    # Each area: its numbers first, the first two by month, the first by the business's grouping.
+    for area, those in areas_of.items():
+        if area.casefold() not in room:
+            continue
+        for a in those[:MOST_NUMBERS]:
+            add(Made(a.measure.business_name, "number", f"{a.measure.business_name} {when}",
+                     _value(a.measure, window), area))
+        for a in those[:2]:
+            trend(a.measure, area)
+        breakdown(those[0].measure, area)
 
     paired = analyses.target_pair(model, may)
     against: dict[str, Made] = {}          # a target's table: its figure against the target, by month
@@ -457,17 +544,9 @@ def executive(model: SemanticModel, *, today: dt.date, year: int | None = None, 
             against[target.table] = made_target
             shown.add((target.slug, "month"))
 
-    figures = _figures(model, may)
-    rows = {m.table: model.tables[m.table].row_count or 0 for m in figures}
-    order = list(dict.fromkeys(m.table for m in leads))
-    areas = [*order, *sorted({m.table for m in figures} - set(order), key=lambda t: (-rows[t], t))][:MOST_AREAS]
     tabs: set[str] = {overview.casefold()}
-    for table_key in areas:
-        tab = area_name(model, table_key)
-        own = [m for m in leads if m.table == table_key] + [
-            m for m in headlines(model, recipe, lambda t, k=table_key: t == k and may(t))
-            if m not in leads and answers(_value(m, window))]
-        if not own or tab.casefold() in tabs:
+    for table_key, tab, own in by_table:
+        if tab.casefold() in tabs or tab.casefold() not in room:
             continue
         tabs.add(tab.casefold())
         if table_key in against:

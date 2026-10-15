@@ -5724,6 +5724,12 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.dashmade.instead": {"en": "In their place: {titles}.", "fr": "À leur place : {titles}."},
     "ui.chat.dashmade.widened": {"en": "Nothing in their period, so shown over all the data: {titles}.",
                                  "fr": "Rien sur leur période, donc affichées sur toutes les données : {titles}."},
+    # Business metrics suggested from the data and waiting for an admin (core2/kpi_proposals.py).
+    "ui.chat.dashmade.waiting": {
+        "en": "Suggested from this data and waiting for an admin to accept them: {items}. Once accepted, they are on "
+              "the next executive dashboard.",
+        "fr": "Suggérés à partir de ces données, en attente de l’accord d’un administrateur : {items}. Une fois "
+              "acceptés, ils figurent sur le prochain tableau de bord de direction."},
     "ui.chat.dashmade.define": {"en": "Define it", "fr": "Le définir"},
     "ui.dash.new": {"en": "New dashboard", "fr": "Nouveau tableau de bord"},
     "ui.dash.describe": {"en": "Describe a dashboard", "fr": "Décrire un tableau de bord"},

@@ -12,6 +12,7 @@ and is marked done once it is.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -96,7 +97,10 @@ def _card(model, request: dict[str, Any]) -> dict[str, Any]:
         try:
             measure = Measure.model_validate(request["definition"])
             made = {"formula": authoring.to_text(model, measure.expr), "reads_as": definition(model, measure.expr),
-                    "only": [left_out_words(model, f) for f in measure.filters if f.column in model.columns]}
+                    "only": [left_out_words(model, f) for f in measure.filters if f.column in model.columns],
+                    # A business metric Solviz proposed: its last months, as checked on the data when it was filed.
+                    "checked": request["definition"].get("checked") if isinstance(request["definition"].get("checked"),
+                                                                                  dict) else None}
         except Exception as exc:  # noqa: BLE001 - shown as unreadable; accepting it says why
             made = {"formula": "", "reads_as": f"It cannot be read any more ({str(exc)[:120]}).", "only": []}
     return {**request, "changes": changes, "dates": dates, "kinds": sorted(_kinds(request)), "made": made,
@@ -148,6 +152,33 @@ async def _tell(account_id: str, decided: dict[str, Any]) -> None:
 
 def _found(account_id: str, request_id: int) -> dict[str, Any] | None:
     return store.get_core2_request(account_id, request_id)
+
+
+@router.post("/clients/{account_id}/requests/api/suggest")
+async def requests_suggest(request: Request, account_id: str):
+    """The business metrics the data holds, checked on it and filed as New metric requests (core2/kpi_proposals.py)."""
+    if not _is_auth(request):
+        return _refused("Signed out.", 401)
+    client = store.get_client(account_id)
+    if client is None:
+        return _refused("That workspace is not there any more.", 404)
+    from core2.kpi_proposals import propose
+
+    try:
+        outcome = await asyncio.to_thread(propose, account_id, client)
+    except Exception as exc:  # noqa: BLE001 - the database's own refusal is the admin's to read
+        log.warning("core2: business metrics for %s could not be checked: %s", account_id, exc, exc_info=True)
+        return _refused(f"The metrics could not be checked: {str(exc)[:200]}")
+    if outcome.error:
+        return _refused(outcome.error)
+    if outcome.filed:
+        try:
+            from core.admin_notifications import notify_core2_request_changed
+
+            await notify_core2_request_changed(account_id=account_id, action="filed", request_id=0)
+        except Exception as exc:  # noqa: BLE001 - filed; the page shows them on reload
+            log.warning("core2: the admin pages were not told of new requests: %s", exc)
+    return JSONResponse({"ok": True, **outcome.as_dict()})
 
 
 @router.post("/clients/{account_id}/requests/api/{request_id}/accept")

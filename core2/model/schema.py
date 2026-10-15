@@ -337,6 +337,9 @@ class Measure(Belief):
     better: Literal["higher", "lower", "neither"] = "higher"
     tested: bool = False
     hidden: bool = False
+    # The business metric it was proposed as (core2/kpis.py: "bank.approval_rate"), kept once an admin accepts it:
+    # an executive dashboard puts it in its area ("Lending") and among its headlines by how much it matters.
+    kpi: str = ""
 
 
 class Entity(Belief):

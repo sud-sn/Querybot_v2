@@ -218,7 +218,7 @@ def test_the_layout_puts_numbers_in_a_row_trends_across_and_breakdowns_side_by_s
     assert {t["title"]: t["tab"] for t in payload["dashboard_tiles"]}["Top customers"] == "Customers"
 
 
-def test_tabs_go_overview_first_at_most_six_and_twelve_tiles_a_tab():
+def test_tabs_go_overview_first_at_most_eight_and_twelve_tiles_a_tab():
     tiles = [dashboards.Tile("a", "breakdown", "q", tab="Revenue"), dashboards.Tile("b", "number", "q"),
              dashboards.Tile("c", "trend", "q", tab="overview")]
     assert dashboards.lay_out(tiles) == ["overview", "Revenue"]          # a tile with none goes on the first
@@ -226,9 +226,11 @@ def test_tabs_go_overview_first_at_most_six_and_twelve_tiles_a_tab():
     many = [dashboards.Tile(f"t{i}", "breakdown", "q") for i in range(15)]
     assert dashboards.lay_out(many) == ["Overview", "Overview 2"]
     assert [t.layout["tab"] for t in many] == [0] * 12 + [1] * 3
-    areas = [dashboards.Tile(f"t{i}", "number", "q", tab=f"Area {i}") for i in range(8)]
-    assert dashboards.lay_out(areas) == [f"Area {i}" for i in range(6)]
-    assert [t.tab for t in areas[6:]] == ["Area 0", "Area 0"]            # past the sixth: on the first
+    # Eight: an executive dashboard's overview and the areas of its business (core2/recipes.MOST_TABS).
+    areas = [dashboards.Tile(f"t{i}", "number", "q", tab=f"Area {i}") for i in range(10)]
+    assert dashboards.MOST_TABS == 8
+    assert dashboards.lay_out(areas) == [f"Area {i}" for i in range(8)]
+    assert [t.tab for t in areas[8:]] == ["Area 0", "Area 0"]            # past the eighth: on the first
 
 
 def test_a_design_of_more_than_sixteen_tiles_keeps_sixteen(retail):

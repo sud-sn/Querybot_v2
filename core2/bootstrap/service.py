@@ -394,7 +394,16 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
             read_members(account_id)
         except Exception as exc:  # noqa: BLE001 - the first question reads them instead
             log.warning("core2: member names of %s not read after Learn: %s", account_id, exc)
-        left_out = sum("was left out" in note for note in model.notes)
+        say("Checking the business metrics this data holds (approval rate, margin, average order and the like)")
+        try:
+            from core2.kpi_proposals import propose
+
+            from core2.kpi_proposals import LEARN_BUDGET
+
+            propose(account_id, client, model=load_model(account_id, db_id), say=say, budget=LEARN_BUDGET)
+        except Exception as exc:  # noqa: BLE001 - an admin can ask for them on the Requests page
+            log.warning("core2: business metrics of %s not proposed after Learn: %s", account_id, exc, exc_info=True)
+        left_out =sum("was left out" in note for note in model.notes)
         say(f"Done in {_took(began)}: version {version}, {len(model.tables)} tables, {len(model.measures)} measures"
             + (f"; {left_out} left out, each named in the notes below" if left_out else ""))
         store.finish_core2_build(account_id, db_id, started, status="done", version=version)

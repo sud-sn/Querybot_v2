@@ -243,7 +243,8 @@ async def measure_save(request: Request, account_id: str):
         taken = {m.slug for m in model.measures.values() if m.key != key}
         slug = existing.slug if existing is not None else ids.unique_slug(ids.slug(name, fallback="metric"), taken)
         key = key or authoring.ADMIN_PREFIX + slug
-        measure = draft.model_copy(update={"key": key, "slug": slug})
+        # A business metric accepted from Solviz's suggestions stays one when edited: its dashboard area follows.
+        measure = draft.model_copy(update={"key": key, "slug": slug, "kpi": existing.kpi if existing else ""})
         store.set_core2_override(account_id, db_id, target("measure", key), "define", measure.model_dump(mode="json"))
         if existing is not None and existing.hidden != measure.hidden:
             store.set_core2_override(account_id, db_id, target("measure", key), "hidden", measure.hidden)

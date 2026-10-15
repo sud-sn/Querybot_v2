@@ -74,6 +74,12 @@ class Services:
     write_metric: Callable[[str], Complete] | None = None
     # A described dashboard's card as its tiles land (from the threads that build them); None: shown when done.
     progress: Callable[[dict[str, Any]], None] | None = None
+    # The workspace's industry on its Compliance page ("banking"): which kind of business its dashboards are of,
+    # where its data could be read as more than one.
+    industry: str = ""
+    # The business metrics suggested from the data and waiting for an admin (core2/kpi_proposals.py), by name:
+    # an executive dashboard says they are coming.
+    waiting: Callable[[], list[str]] | None = None
 
 
 @dataclass
@@ -453,7 +459,8 @@ def _described(question: str, services: Services, session: Session | None = None
                                  progress=None if told is None else lambda d: told(
                                      {"type": "dashboard_building", "engine": "core2", "question": question,
                                       "building": dashboards.status(d)}),
-                                 today=services.today, allowed=services.allowed_tables, shown=shown)
+                                 today=services.today, allowed=services.allowed_tables, shown=shown,
+                                 industry=services.industry)
     except dashboards.DesignError as exc:
         return _frame(question, f"I could not design that dashboard: {exc}. Try naming what it should show, "
                                 "as \"a dashboard of net sales by store and month\".", kind="dashboard_refused")
@@ -465,7 +472,17 @@ def _described(question: str, services: Services, session: Session | None = None
             "tabs": list(draft.tabs), "dashboard_tiles": [dashboards.kept(t) for t in built],
             "not_built": dashboards.not_built(draft), "checks": list(draft.checks),
             "missing": list(draft.missing), "instead": dashboards.in_place(draft),
-            "widened": dashboards.widened(draft)}
+            "widened": dashboards.widened(draft), "waiting": _waiting(services) if draft.executive else []}
+
+
+def _waiting(services: Services) -> list[str]:
+    if services.waiting is None:
+        return []
+    try:
+        return list(services.waiting())
+    except Exception as exc:  # noqa: BLE001 - the dashboard is built; the line about what is coming is left out
+        log.warning("core2: the business metrics waiting for an admin could not be read: %s", exc)
+        return []
 
 
 def shown_answer(session: Session | None) -> Any:
@@ -1772,6 +1789,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     from core.value_index import value_index_enabled
     from core2.bootstrap.ai import metric_writer, workspace_planner
     from core2.bootstrap.service import answering_model, keep_decisions_current
+    from core2.kpi_proposals import industry_of, waiting_metrics
     from core2.warehouse.governed import GovernedWarehouse
 
     client = store.get_client(account_id) or {}
@@ -1802,18 +1820,20 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         log.warning("core2: member names of %s could not be read; answering without them: %s", account_id, exc,
                     exc_info=True)
         index = MemberIndex()
+    tables = _allowed_model_tables(model, allowed)
     return Services(
         model=model, warehouse=warehouse,
         # The AI call log keeps the question as the AI was given it: scrubbed, where the workspace scrubs.
         complete=workspace_planner(account_id, client, question=scrub(question) if scrub else question,
                                    question_id=question_id),
         index=index, today=dt.date.today(),
-        values_allowed=scrub is None and indexing, allowed_tables=_allowed_model_tables(model, allowed),
+        values_allowed=scrub is None and indexing, allowed_tables=tables,
         data_source=str(db_config.get("db_type") or ""), scrub=scrub,
         # A reader's own metric is written by the AI from their words, unscrubbed and beside the fields' values:
         # offered only where the question itself may reach the AI as typed.
         write_metric=(lambda words: metric_writer(account_id, client, description=words))
-        if scrub is None and indexing else None), None
+        if scrub is None and indexing else None, industry=industry_of(account_id),
+        waiting=lambda: waiting_metrics(account_id, tables)), None
 
 
 def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "") -> str | None:

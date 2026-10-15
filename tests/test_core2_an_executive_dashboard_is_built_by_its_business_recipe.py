@@ -36,6 +36,7 @@ from evals.core2.compile_eval import learn
 
 TODAY = dt.date(2026, 6, 15)
 KINDS = {"retail": "Sales executive dashboard", "purchasing": "Purchasing executive dashboard",
+         "bank": "Banking executive dashboard",
          "hr": "Workforce executive dashboard", "subscriptions": "Subscriptions executive dashboard",
          "compounding_pharmacy": "Pharmacy executive dashboard", "inventory": "Inventory executive dashboard",
          "finance": "Finance executive dashboard", "networking": "Network operations executive dashboard",
@@ -82,7 +83,9 @@ def test_each_business_gets_its_recipe_the_same_shape_and_a_proper_name_with_no_
     assert payload["type"] == "dashboard_built" and payload["name"] == KINDS[name]
     assert payload["not_built"] == []                      # each tile's plan was checked before it was built
     tiles = payload["dashboard_tiles"]
-    assert payload["tabs"][0] == "Overview" and 2 <= len(payload["tabs"]) <= 4 and len(tiles) <= 16
+    # As many areas as the business has, up to the recipe's limits: tabs of planned tiles, no AI call each.
+    assert payload["tabs"][0] == "Overview" and 2 <= len(payload["tabs"]) <= recipes.MOST_TABS
+    assert len(tiles) <= recipes.MOST_TILES
     assert {t["tab"] for t in tiles} == set(payload["tabs"])
     overview = [t["kind"] for t in tiles if t["tab"] == "Overview"]
     assert overview.count("number") >= 2 and "trend" in overview and "breakdown" in overview

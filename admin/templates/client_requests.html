@@ -37,6 +37,12 @@
 .rq-empty{color:var(--text-muted);font-style:italic}
 .rq-warn{grid-column:3/-1;margin:0;font-size:var(--font-xs);color:var(--warning-ink, var(--text))}
 .rq-note{border-top:1px solid var(--grid-line);padding-top:8px;font-size:var(--font-sm)}
+.rq-months{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.rq-months .rq-month{padding:2px 8px;border-radius:999px;background:var(--surface-2, var(--primary-soft));font-size:var(--font-xs);
+  color:var(--text);font-variant-numeric:tabular-nums}
+.rq-months b{font-weight:var(--weight-semibold);color:var(--text-muted);margin-right:4px}
+.rq-suggest{display:grid;gap:6px;justify-items:end;max-width:360px}
+.rq-suggest p{font-size:var(--font-sm);text-align:right}
 .rq-note small{display:block;font-size:var(--font-xs);color:var(--text-muted);margin-bottom:3px}
 .rq-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .rq-status{font-size:var(--font-sm);color:var(--text-muted)}
@@ -49,10 +55,16 @@
 <div class="rq-head">
   <div>
     <h1>Requests</h1>
-    <p>Changes readers asked for, from the Data guide. Accepting one applies it from the next answer and tells the
-      person who asked. Readers with the portal's admin role edit directly; their changes are listed under Accepted
-      and can be undone.</p>
+    <p>Changes readers asked for, from the Data guide, and business metrics Solviz found the data holds. Accepting one
+      applies it from the next answer and tells the person who asked. Readers with the portal's admin role edit
+      directly; their changes are listed under Accepted and can be undone.</p>
   </div>
+  {% if learned %}
+  <div class="rq-suggest">
+    <button type="button" class="btn btn-secondary btn-sm" id="rq-suggest">{{ ic("sparkles", 14) }} Suggest business metrics</button>
+    <p class="rq-status" id="rq-suggest-said" role="status" hidden></p>
+  </div>
+  {% endif %}
 </div>
 
 <div class="rq-bar">
@@ -74,13 +86,13 @@
 {% else %}
 <div class="rq-list">
   {% for c in cards %}
-  <article class="rq-card" data-request="{{ c.id }}">
+  <article class="rq-card" data-request="{{ c.id }}" data-source="{{ c.source }}">
     <div class="rq-card-head">
       <span class="badge {{ 'badge-accent' if c.kind == 'new_metric' else 'badge-brand' }}">{{
         'New metric' if c.kind == 'new_metric' else {'measure': 'Metric', 'attribute': 'Field', 'entity': 'Field',
         'date_role': 'Date'}.get(c.target_kind, 'Change') }}</span>
       <strong>{{ c.target_name }}</strong>
-      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'the Data guide' }},
+      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'what Learn found' if c.source == 'learn' else 'the Data guide' }},
         {{ (c.created_at or '')[:16] }}</span>
       {% if c.status != 'waiting' %}
       <span class="status-pill {{ {'accepted': 'success', 'rejected': 'danger', 'undone': 'neutral'}.get(c.status, 'neutral') }}">{{
@@ -126,12 +138,16 @@
         {% else %}<p>{{ c.target_name }}</p>{% endif %}
       </div>
     </div>
-    <div class="rq-note"><small>How it is counted (made in the chat, checked against the model)</small>
+    <div class="rq-note"><small>How it is counted ({{ 'written from the workspace\'s fields, checked on the data' if c.source == 'learn' else 'made in the chat, checked against the model' }})</small>
       <code>{{ c.made.formula }}</code><br>{{ c.made.reads_as }}
       {% if c.made.only %}<br>Only: {{ c.made.only | join('; ') }}{% endif %}</div>
+    {% if c.made.checked and c.made.checked.months %}
+    <div class="rq-note"><small>{% if c.made.checked.months | length == 1 and not c.made.checked.months[0].period %}On all the data{% else %}Its last months on the data{% if c.made.checked.date %}, by {{ c.made.checked.date }}{% endif %}{% endif %}{% if c.made.checked.on %} (checked {{ c.made.checked.on }}){% endif %}</small>
+      <div class="rq-months">{% for m in c.made.checked.months %}<span class="rq-month">{% if m.period %}<b>{{ m.period }}</b>{% endif %}{{ m.shown }}</span>{% endfor %}</div></div>
+    {% endif %}
     {% endif %}
     {% if c.note %}
-    <div class="rq-note"><small>{{ 'In the reader\'s words' if c.made else 'What it counts' if c.kind == 'new_metric' else 'How it should be counted' if c.target_kind == 'measure' else 'Note' }}</small>{{ c.note }}</div>
+    <div class="rq-note"><small>{{ 'What it counts' if c.source == 'learn' else 'In the reader\'s words' if c.made else 'What it counts' if c.kind == 'new_metric' else 'How it should be counted' if c.target_kind == 'measure' else 'Note' }}</small>{{ c.note }}</div>
     {% endif %}
     {% if c.example %}<div class="rq-note"><small>Example question</small>{{ c.example }}</div>{% endif %}
     {% if c.reason %}<div class="rq-note"><small>Why it was not accepted</small>{{ c.reason }}</div>{% endif %}
@@ -173,6 +189,27 @@
       body: JSON.stringify(body || {})}).then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
       .catch(function () { return {ok: false, error: 'The server could not be reached.'}; });
   }
+  var suggest = document.getElementById('rq-suggest');
+  if (suggest) {
+    suggest.addEventListener('click', function () {
+      var said = document.getElementById('rq-suggest-said');
+      suggest.disabled = true;
+      said.hidden = false;
+      said.textContent = 'Checking the business metrics this data holds…';
+      post('suggest').then(function (r) {
+        suggest.disabled = false;
+        if (!r || !r.ok) { said.textContent = (r && r.error) || 'It could not be checked.'; return; }
+        var parts = [];
+        parts.push(r.filed.length ? r.filed.length + ' new suggestion' + (r.filed.length > 1 ? 's' : '') + ': ' + r.filed.join(', ') + '.'
+                                  : 'No new business metric to suggest.');
+        if (r.skipped.length) {
+          parts.push('Not suggested: ' + r.skipped.map(function (s) { return s.name + ' (' + s.why + ')'; }).join('; ') + '.');
+        }
+        said.textContent = parts.join(' ');
+        if (r.filed.length) { setTimeout(function () { window.location.reload(); }, 2500); }
+      });
+    });
+  }
   document.querySelectorAll('.rq-card').forEach(function (card) {
     var id = card.getAttribute('data-request');
     var error = card.querySelector('.rq-error');
@@ -190,7 +227,10 @@
           card.querySelectorAll('[data-take]').forEach(function (el) { if (!el.checked) skip.push(Number(el.getAttribute('data-take'))); });
           post(id + '/accept', {edits: edits, skip: skip}).then(done);
         } else if (act === 'reject') {
-          window.qbConfirm({title: 'Reject this request?', body: 'Say why: the reader who asked is shown this.',
+          var learned = card.getAttribute('data-source') === 'learn';
+          window.qbConfirm({title: 'Reject this request?', body: learned
+                              ? 'Say why, for the record: Solviz will not suggest this metric again.'
+                              : 'Say why: the reader who asked is shown this.',
                             confirm: 'Reject', variant: 'danger', input: {placeholder: 'Why it is not accepted'}})
             .then(function (reason) { if (reason !== false) post(id + '/reject', {reason: reason}).then(done); });
         } else if (act === 'undo') {

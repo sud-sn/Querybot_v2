@@ -253,9 +253,11 @@ def figures(user: dict, client: dict, *, today: dt.date, lang: str = "en") -> li
         if hit and hit[0] > now:
             return hit[1]
     from core2 import recipes
+    from core2.kpi_proposals import industry_of
     from core2.service import portal_replay
 
-    found = recipes.executive(model, today=today, language=lang, allowed=allowed)
+    found = recipes.executive(model, today=today, language=lang, allowed=allowed,
+                              industry=industry_of(str(user["account_id"])))
     if not found:
         return []
     _, tiles = found

@@ -43,7 +43,7 @@ log = logging.getLogger("core2.dashboards")
 
 MOST_TILES = 12           # on one tab
 MOST_ALL = 16             # on a dashboard: each tile is a planner call, and a workspace's AI has a rate a minute
-MOST_TABS = 6
+MOST_TABS = 8
 FEWEST = 3                # tiles a subject's or the whole business's dashboard has at least
 MOST_NUMBERS = 6          # in the row of numbers
 AT_ONCE = 4               # tiles built at the same time
@@ -195,6 +195,7 @@ class Draft:
     checks: list[dict[str, Any]] = field(default_factory=list)   # each headline number against its trend
     missing: list[str] = field(default_factory=list)     # what its recipe wanted and the data has not, as said
     instead: list[str] = field(default_factory=list)     # the recipe's tiles drawn in the place of those
+    executive: bool = False                               # the whole business's, by the recipe of its kind
 
 
 @dataclass
@@ -310,7 +311,8 @@ def language(request: str) -> str:
         else "en"
 
 
-def executive(model, request: str, *, today: dt.date, allowed: set[str] | None = None) -> tuple[str, list[Tile]] | None:
+def executive(model, request: str, *, today: dt.date, allowed: set[str] | None = None,
+              industry: str = "") -> tuple[str, list[Tile]] | None:
     """The whole business's dashboard by the recipe of its kind, when the request asks for the whole business
     ("an executive dashboard", "a CFO dashboard for 2025", a dashboard of nothing named)."""
     from core2 import recipes
@@ -321,7 +323,8 @@ def executive(model, request: str, *, today: dt.date, allowed: set[str] | None =
     whole, year = recipes.whole_business(about)
     if not whole:
         return None
-    made = recipes.executive(model, today=today, year=year, language=language(request), allowed=allowed)
+    made = recipes.executive(model, today=today, year=year, language=language(request), allowed=allowed,
+                             industry=industry)
     if made is None:
         return None
     name, tiles = made
@@ -397,7 +400,7 @@ def _plan_words(model, plan: dict[str, Any]) -> str:
 def build(model, request: str, complete: Callable[[str, str], str], answer: Callable[..., dict], *,
           scrub: Callable[[str], str] | None = None, personal_shown: bool = False,
           progress: Callable[[Draft], None] | None = None, today: dt.date | None = None,
-          allowed: set[str] | None = None, shown: Shown | None = None) -> Draft:
+          allowed: set[str] | None = None, shown: Shown | None = None, industry: str = "") -> Draft:
     """The dashboard: around the answer on screen (``shown``, for "create a dashboard using this"), the recipe the
     request names, the recipe of the business's kind, or designed by one AI call; each tile answered on its own
     (several at once), laid out, and its headline numbers checked against their trends.
@@ -409,16 +412,20 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     day = today or dt.date.today()
     lang = language(request)
     lacking: list[str] = []
+    whole = None
     replaced: list[str] = []
     if shown is not None:
         name, tiles = around(model, shown, complete, today=day, lang=language(request), allowed=allowed, scrub=scrub,
                              personal_shown=personal_shown)
     else:
-        made = from_book(model, request, today=day, allowed=allowed, missing=lacking, instead=replaced) \
-            or executive(model, request, today=day, allowed=allowed)
+        made = from_book(model, request, today=day, allowed=allowed, missing=lacking, instead=replaced)
+        whole = None if made is not None else executive(model, request, today=day, allowed=allowed,
+                                                        industry=industry)
+        made = made or whole
         name, tiles = made if made is not None else design(model, request, complete, scrub=scrub,
                                                            personal_shown=personal_shown)
-    draft = Draft(name=name, request=request, tiles=tiles, missing=lacking, instead=replaced)
+    draft = Draft(name=name, request=request, tiles=tiles, missing=lacking, instead=replaced,
+                  executive=shown is None and whole is not None)
     draft.tabs = lay_out(list(tiles))              # where each tile goes, while they are built
     told = threading.Lock()
 
@@ -550,8 +557,8 @@ def answered(tile: Tile, answer: Callable[..., dict], *, lang: str = "en") -> Ti
 
 def lay_out(tiles: list[Tile]) -> list[str]:
     """Grid places, tab by tab: the numbers in a row, trends and breakdowns two side by side (one alone across),
-    tables across. The tabs are the design's, "Overview" first, at most six; a tile with none (or on a tab past
-    the sixth) goes on the first, and a tab of more than 12 tiles goes on over a second ("Revenue 2"). Each tile's
+    tables across. The tabs are the design's, "Overview" first, at most eight; a tile with none (or on a tab past
+    the eighth) goes on the first, and a tab of more than 12 tiles goes on over a second ("Revenue 2"). Each tile's
     tab is set to the one it is on. Returns the tabs' names in order."""
     order = {"number": 0, "trend": 1, "breakdown": 2, "table": 3}
     named: dict[str, str] = {}                      # the tab's name as compared, as written first
