@@ -132,20 +132,17 @@ def _more_buttons(html: str) -> list[bool]:
 
 
 class TestTheSuggestedQuestionsOnThePage:
+    """The strip of four questions from the old suggester is gone: a new conversation opens on the reader's start
+    page (core2/suggest.py), whose questions are checked for them on the data
+    (tests/test_a_new_conversation_starts_on_questions_checked_for_the_reader.py)."""
 
-    def test_every_question_is_on_the_page_four_at_a_time(self):
+    def test_a_new_conversation_opens_on_the_start_page_not_a_strip_of_questions(self):
         account, user_id = _workspace(METRICS)
         html = _client(user_id).get("/portal/chat?new=1").text
-        chips = _chips(html)
-        assert len(chips) == len(METRICS), chips
-        assert [chip["hidden"] for chip in chips] == [False] * 4 + [True] * (len(METRICS) - 4)
-        assert _more_buttons(html) == [False, False]
-
-    def test_refresh_is_not_offered_when_there_is_nothing_else_to_show(self):
-        account, user_id = _workspace(METRICS[:2])
-        html = _client(user_id).get("/portal/chat?new=1").text
-        assert len(_chips(html)) == 2
-        assert _more_buttons(html) == [True, True]
+        assert 'id="startPage"' in html and 'id="startForYouCards"' in html
+        assert _chips(html) == [] if 'id="suggestions"' in html else True
+        markup = re.sub(r"<script\b.*?</script>", "", html, flags=re.S)
+        assert 'class="suggestion-chip"' not in markup and "data-suggestions-more" not in markup
 
     def test_a_reader_with_no_table_access_is_offered_nothing(self):
         from portal.routes import _build_chat_suggestions
@@ -208,7 +205,7 @@ function _el(extra) {{ return Object.assign({{style: {{display: ''}}, hidden: fa
 const _chips = {json.dumps(panel)}.map((c, i) => _el({{
   dataset: {{question: c[0], fqn: c[1]}}, textContent: c[0], style: {{display: i < 4 ? '' : 'none'}}}}));
 const _more = [_el({{hidden: _chips.length <= 4}}), _el({{hidden: _chips.length <= 4}})];
-const _nodes = {{welcomeState: _el(), suggestionsWrap: _el(), suggestions: _el()}};
+const _nodes = {{welcomeState: _el(), startPage: _el(), suggestionsWrap: _el(), suggestions: _el()}};
 var document = {{
   getElementById: id => _nodes[id] || null,
   querySelectorAll: sel => sel.indexOf('suggestion-chip') >= 0 ? _chips
@@ -259,14 +256,14 @@ class TestThePageShowsDifferentQuestions:
         assert state == [[["Stock A?", "Any?", "Stock B?"], [True, True]],
                          [["Stock A?", "Sales A?", "Any?", "Stock B?"], [False, False]]]
 
-    def test_the_greeting_keeps_the_questions_and_an_answer_clears_them(self):
+    def test_the_greeting_keeps_the_start_page_and_an_answer_clears_it(self):
         state = _page("""
             hideWelcome({keepSuggestions: true});
-            const afterGreeting = _nodes.suggestionsWrap.style.display;
+            const afterGreeting = _nodes.startPage.hidden;
             hideWelcome();
-            JSON.stringify([afterGreeting, _nodes.suggestionsWrap.style.display,
-                            _nodes.welcomeState.style.display]);""", chips=TEN)
-        assert state == ["", "none", "none"]
+            JSON.stringify([afterGreeting, _nodes.startPage.hidden, _nodes.welcomeState.style.display]);""",
+                      chips=TEN)
+        assert state == [False, True, "none"]
 
     def test_only_the_questions_on_screen_count_as_seen(self):
         """The behavioural ranker marks the chips a reader passed over as

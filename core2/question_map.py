@@ -203,7 +203,7 @@ def _entries(model: SemanticModel, today: dt.date, may: May) -> list[Entry]:
         found = []
     # Every analysis of every other party's activity (patients' prescriptions, payers' claims), not only the
     # main one's: what a reader can ask of any table of dated rows that names them.
-    from core2.plan.analyses import activities, of_activity
+    from core2.plan.analyses import activities, in_french, of_activity
 
     shown = {json.dumps(plan, sort_keys=True) for _, plan in found}
     for act in activities(model, may)[1:MOST_ACTIVITIES]:
@@ -219,7 +219,7 @@ def _entries(model: SemanticModel, today: dt.date, may: May) -> list[Entry]:
         m = next((x for x in model.measures.values() if x.slug == measure), None)
         subject = (model.tables[m.table].business_name if m is not None and m.table in model.tables else "") or ""
         entries.append(_judge(Entry(key=f"analysis:{kind}:{i}", kind="analysis", question=question,
-                                    question_fr=question, plan=plan, subject=subject, measure=measure,
+                                    question_fr=in_french(question), plan=plan, subject=subject, measure=measure,
                                     analysis=kind), model, today, m))
     return entries
 

@@ -1840,6 +1840,29 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             created_at      TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_core2_request_account ON core2_request (account_id, status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_core2_answer_user ON core2_answer (account_id, user_id, created_at);
+
+        -- A reader's start page (core2/suggest.py): the questions offered in a new conversation, checked for them
+        -- on the data once a day, and when they last opened one (what is new since).
+        CREATE TABLE IF NOT EXISTS core2_start_page (
+            account_id     TEXT NOT NULL,
+            user_id        TEXT NOT NULL,
+            day            TEXT NOT NULL DEFAULT '',
+            stamp          TEXT NOT NULL DEFAULT '',
+            page_json      TEXT NOT NULL DEFAULT '{}',
+            seen_at        TEXT NOT NULL DEFAULT '',
+            updated_at     TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (account_id, user_id)
+        );
+        -- How often each kind of suggestion was offered to a reader and asked: asked kinds rise, ignored ones fall.
+        CREATE TABLE IF NOT EXISTS core2_suggest_kind (
+            account_id     TEXT NOT NULL,
+            user_id        TEXT NOT NULL,
+            kind           TEXT NOT NULL,
+            shown          INTEGER NOT NULL DEFAULT 0,
+            clicked        INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (account_id, user_id, kind)
+        );
         """
     )
     # The new core is the only engine: decisions brought over from the earlier setup are its own (adopted), so

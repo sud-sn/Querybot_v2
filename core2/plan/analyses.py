@@ -18,6 +18,7 @@ the learned-data page) are built from the same findings, so a question offered i
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -232,6 +233,38 @@ def suggestions(model: SemanticModel, *, this_year: int, may: May = _all) -> lis
                     {"kind": "query", "intent": "trend", "target": {"actual": actual.slug, "target": target.slug},
                      "time": {"grain": "month", **({"window": window} if window else {})}}))
     return out
+
+
+# The same questions in French, read back from the English ones above (the workspace's own names are kept as they
+# are): a question offered to a French reader names what it asks in French.
+_FRENCH = [
+    (re.compile(r"^Average days between (?P<a>.+?) per (?P<b>.+?)$"), "Jours moyens entre deux {a} par {b}"),
+    (re.compile(r"^New, returning and lapsed (?P<a>.+?) by month$"), "{A} nouveaux, de retour et perdus par mois"),
+    (re.compile(r"^(?P<a>.+?) retention by month of first (?P<b>.+?)$"),
+     "Rétention des {a_} selon leur premier mois"),
+    (re.compile(r"^(?P<a>.+?) at each month end$"), "{A} à chaque fin de mois"),
+    (re.compile(r"^Share of (?P<a>.+?) on time$"), "Part des {a} à temps"),
+    (re.compile(r"^(?P<a>.+?) making 80% of (?P<b>.+?)$"), "{A} qui font 80 % de {b}"),
+    (re.compile(r"^(?P<a>.+?) bought together$"), "{A} achetés ensemble"),
+    (re.compile(r"^(?P<a>.+?) against (?P<b>.+?) by month$"), "{A} par rapport à {b} par mois"),
+    (re.compile(r"^(?P<a>.+?) through (?P<b>.+?)$"), "{A} : étapes {b}"),
+]
+_IN_YEAR = re.compile(r" in (\d{4})$")
+
+
+def in_french(question: str) -> str:
+    """An analysis question above in French ("Average days between orders per customer in 2026" ->
+    "Jours moyens entre deux orders par customer en 2026"); the English when it is none of them."""
+    year = _IN_YEAR.search(question)
+    body = question[:year.start()] if year else question
+    for pattern, french in _FRENCH:
+        found = pattern.match(body)
+        if found:
+            parts = {k: v.replace(" and ", " et ") for k, v in found.groupdict().items()}
+            said = french.format(**parts, **{k.upper(): v[:1].upper() + v[1:] for k, v in parts.items()},
+                                 **{k + "_": v[:1].lower() + v[1:] for k, v in parts.items()})
+            return said + (f" en {year.group(1)}" if year else "")
+    return question
 
 
 def questions(model: SemanticModel, *, this_year: int, may: May = _all) -> list[str]:

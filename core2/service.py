@@ -382,8 +382,10 @@ def changes_data(question: str) -> str | None:
     return f"{lead}{rest}" if rest else ""
 
 
-def answer_question(question: str, services: Services, session: Session, *, question_id: str = "") -> dict[str, Any]:
-    """The portal frame answering ``question``; the session keeps the plan for follow-ups.
+def answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
+                    planned: Plan | None = None) -> dict[str, Any]:
+    """The portal frame answering ``question``; the session keeps the plan for follow-ups. ``planned``: the plan
+    written for it in code (a start-page card's), run as it is with no AI.
 
     A question that defines a metric ("X = how it is counted. Show it by month") has it written by the
     workspace's AI and kept in this chat (core2.plan.own_metric); the rest of the question is answered with it,
@@ -424,7 +426,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     kept_before = session.turns[-1] if session.turns else None
     try:
         payload = _answer_question(defined.ask if defined is not None else question, services, session,
-                                   question_id=question_id)
+                                   question_id=question_id, planned=planned if defined is None else None)
     except Exception:
         # No answer came back (the AI rate limited or timed out): the question still stays in the conversation, so
         # the next one ("the late ones") goes on with it rather than with the answer before it. Kept once: a turn
@@ -2017,7 +2019,9 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
         return refused or _frame(question, "The new core cannot answer here yet.")
     if progress is not None:
         services = replace(services, progress=progress)
-    payload = answer_question(question, services, _session(session_key), question_id=question_id)
+    session = _session(session_key)
+    payload = answer_question(question, services, session, question_id=question_id,
+                              planned=_card_asked(account_id, portal_user, question, session))
     if getattr(services.warehouse, "released", False):
         # People's data went out as stored, to a cleared reader: kept with the answer, so a reopened thread
         # never shows it again once the clearance ends (core/compliance/kept_answers.py).
@@ -2034,6 +2038,22 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
             figure["token"] = _own_token(account_id, str((portal_user or {}).get("id") or ""), session_key,
                                          figure.pop("measure"), figure.get("formula", ""), question_id)
     return payload
+
+
+def _card_asked(account_id: str, portal_user: dict[str, Any] | None, question: str, session: Session) -> Plan | None:
+    """The plan of a start-page card asked as a new conversation's first question (core2/suggest.py): the card
+    was checked for this reader with it, so the answer is the one checked, with no AI. Any other question, and a
+    card's words typed later in a conversation (read with what came before), is planned as usual."""
+    if session.turns or session.pending is not None or not portal_user or not portal_user.get("id"):
+        return None
+    try:
+        from core2.suggest import card_plan
+
+        found = card_plan(account_id, str(portal_user["id"]), question)
+        return parse_plan({"kind": "query", **found[0]}) if found else None
+    except Exception as exc:  # noqa: BLE001 - planned as any question
+        log.warning("core2: a start-page card could not be read for %s: %s", account_id, exc)
+        return None
 
 
 # A reader's metric made in a chat, by token: "Ask my admin to save it for everyone" and "Don't keep it".

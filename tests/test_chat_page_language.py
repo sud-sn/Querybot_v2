@@ -33,12 +33,13 @@ class TestPlainEnglishMeansPlainLanguage:
         assert "anglais" not in markup.lower()
 
     def test_the_welcome_copy_says_the_same_thing(self):
+        # The start page greets the reader (core2/suggest.py); its heading until the page knows their name and hour.
         markup = visible(render(lang="fr"))
-        assert "Posez une question métier en langage courant" in markup
+        assert "Comment puis-je vous aider aujourd'hui ?" in markup and "Pour vous" in markup
 
     def test_english_is_unchanged(self):
         markup = visible(render(lang="en"))
-        assert "Ask a business question in plain English" in markup
+        assert "How can I help you today?" in markup and "For you" in markup
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -117,11 +118,15 @@ class TestCustomerDataIsNeverTranslated:
         assert "Your workspace" not in markup
 
     def test_the_suggestions_are_the_workspace_s_own_questions(self):
-        """Generated from the customer's schema. Translating one would ask a
-        question the warehouse cannot answer."""
-        markup = visible(render(lang="fr", suggestions=[
-            {"question": "revenue by region", "fqn": "DW.SALES"}]))
-        assert "revenue by region" in markup
+        """Made from the workspace's own names (core2/suggest.py). In French the words around them are French; the
+        names stay as the workspace has them -- translated, they would name nothing the warehouse holds."""
+        from core2.suggest import view
+
+        card = {"kind": "breakdown", "question": "Net revenue by region", "question_fr": "Net revenue par region",
+                "plan": {"intent": "breakdown", "measures": ["net_revenue"], "group_by": ["region"]}}
+        page = view({"state": "ready", "for_you": [[card]], "explore": []}, "fr")
+        assert page["for_you"][0][0]["question"] == "Net revenue par region"
+        assert page["for_you"][0][0]["label"] == "Répartition"
 
     def test_the_schema_names_are_shown_as_stored(self):
         markup = visible(render(lang="fr", schemas=[

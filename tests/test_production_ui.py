@@ -238,7 +238,7 @@ def test_chat_uses_unified_portal_sidebar_and_responsive_drawer():
     assert "translateX(-101%)" not in stylesheet
 
 
-def test_chat_empty_state_uses_workspace_suggestions_and_large_composer():
+def test_chat_empty_state_opens_on_the_start_page_and_large_composer():
     template = _read("portal/templates/portal_chat.html")
     stylesheet = _read("static/css/chat_workspace.css")
 
@@ -246,14 +246,11 @@ def test_chat_empty_state_uses_workspace_suggestions_and_large_composer():
     # in the source now, and the catalogue is injected into the page as JSON --
     # so a source assertion would pass against a page that renders nothing.
     from tests.chat_render import render as render_chat, visible as visible_chat
-    assert "How can I help you today?" in visible_chat(render_chat())
-    # Four on screen, the rest behind Refresh.
-    import re
-    many = render_chat(suggestions=[{"question": f"Question {n}?", "fqn": ""} for n in range(6)])
-    chips = re.findall(r'<button class="suggestion-chip"(.*?)data-question="([^"]*)"', many, re.S)
-    assert [("display:none" in attrs, question) for attrs, question in chips] == [
-        (n >= 4, f"Question {n}?") for n in range(6)]
-    assert 'class="suggestion-card-copy"' in template
+    page = render_chat()
+    assert "How can I help you today?" in visible_chat(page)
+    # The reader's own questions (core2/suggest.py), not a strip of the workspace's: For you, Explore, Continue.
+    assert "For you" in visible_chat(page) and 'id="startPage"' in page
+    assert 'class="suggestion-chip"' not in page
     assert 'id="input" class="chat-input"' in template
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in stylesheet
     assert ".data-table { min-width: 620px; }" in stylesheet

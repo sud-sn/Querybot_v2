@@ -861,10 +861,12 @@ body:has(.chat-page) .main { background: var(--bg); }
       <div class="chat-wrap">
         <div class="chat-thread" id="thread">
           <div class="msg-system">{{ t('ui.chat.system_line', workspace=client.client_name or t('ui.chat.your_workspace')) }}</div>
+          {# A new conversation's start page (core2/suggest.py): the greeting and how fresh the data is here, the
+             question box under them, then questions checked for this reader (#startPage). #}
           <div class="empty-state" id="welcomeState">
             <span class="welcome-kicker">{{ client.client_name or t('ui.chat.your_workspace') }}</span>
-            <h2>{{ t('ui.chat.welcome_title') }}</h2>
-            <p>{{ t('ui.chat.welcome_body') }}</p>
+            <h2 id="startGreeting" data-name="{{ (user.name or '').split(' ')[0] }}">{{ t('ui.chat.welcome_title') }}</h2>
+            <p class="start-dataline" id="startDataLine" hidden></p>
           </div>
         </div>
 
@@ -875,28 +877,33 @@ body:has(.chat-page) .main { background: var(--bg); }
           </div>
         </div>
 
-        {% if suggestions %}
-        <div class="suggestions-wrap" id="suggestionsWrap">
-          <div class="suggestions-heading">
-            <span class="suggestions-label">{{ t('ui.chat.suggestions_label') }}</span>
-            <button type="button" class="suggestions-shuffle" onclick="shuffleSuggestions()" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>{{ ic("refresh", 14) }} {{ t('ui.chat.refresh') }}</button>
+        <div class="start-page" id="startPage" data-state="loading" aria-busy="true">
+          <p class="start-note" id="startNoAi"{% if ai_ready %} hidden{% endif %}>{{ t('ui.start.no_ai') }}</p>
+          <p class="start-newbar" id="startNew" hidden></p>
+          <section class="start-block" id="startForYou" aria-labelledby="startForYouTitle">
+            <div class="start-block-head">
+              <h3 id="startForYouTitle">{{ t('ui.start.for_you') }}</h3>
+              <button type="button" class="start-more" id="startOthers" hidden>{{ ic("refresh", 13) }} {{ t('ui.start.others') }}</button>
+            </div>
+            <div class="start-cards" id="startForYouCards">
+              {% for _ in range(3) %}<div class="start-card is-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>{% endfor %}
+            </div>
+            <p class="start-loading sr-only" role="status">{{ t('ui.start.loading') }}</p>
+          </section>
+          <section class="start-block" id="startExplore" aria-labelledby="startExploreTitle" hidden>
+            <div class="start-block-head"><h3 id="startExploreTitle">{{ t('ui.start.explore') }}</h3></div>
+            <div class="start-subjects" role="tablist" aria-label="{{ t('ui.start.subjects') }}" id="startSubjects"></div>
+            <div class="start-cards two" id="startExploreCards" role="tabpanel"></div>
+          </section>
+          <section class="start-block" id="startContinue" aria-labelledby="startContinueTitle" hidden>
+            <div class="start-block-head"><h3 id="startContinueTitle">{{ t('ui.start.continue') }}</h3></div>
+            <div class="start-continue" id="startContinueRows"></div>
+          </section>
+          <div class="start-state" id="startState" hidden>
+            <strong id="startStateTitle"></strong>
+            <p id="startStateBody"></p>
           </div>
-          <div class="suggestions" id="suggestions">
-            {% for s in suggestions %}
-            <button class="suggestion-chip" type="button"
-                    onclick="sendSuggestion(this)"{% if loop.index0 >= 4 %}
-                    style="display:none"{% endif %}
-                    data-fqn="{{ s.fqn | default('') }}"
-                    data-question="{{ s.question }}"
-                    title="{{ s.question }}">
-              <span class="suggestion-card-icon">{{ ic("sparkles", 16) }}</span>
-              <span class="suggestion-card-copy"><small>{{ t('ui.chat.workspace_insight') }}</small><strong>{{ s.question }}</strong></span>
-            </button>
-            {% endfor %}
-          </div>
-          <button type="button" onclick="shuffleSuggestions()" style="font-size:var(--font-xs);font-weight:var(--weight-bold);padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;flex-shrink:0" title="{{ t('ui.chat.shuffle') }}" data-suggestions-more{% if suggestions|length <= 4 %} hidden{% endif %}>{{ ic("refresh", 14) }}</button>
         </div>
-        {% endif %}
       </div>
 
       <div id="queryLimitNotice"
@@ -1118,10 +1125,184 @@ function timeLabel(ts){ return ts || nowLabel(); }
 // greeting, and nothing to click.
 function hideWelcome(opts = {}){
   const el = document.getElementById('welcomeState');
-  const suggestions = document.getElementById('suggestionsWrap');
+  const start = document.getElementById('startPage');
   if (el) el.style.display = 'none';
-  if (suggestions && !opts.keepSuggestions) suggestions.style.display = 'none';
+  if (start && !opts.keepSuggestions) start.hidden = true;
 }
+
+// ── A new conversation's start page (core2/suggest.py) ──────────────────────
+// Questions checked for this reader on the data, in their language: For you (what they ask, from a new angle, with
+// its answer now), Explore by subject, and their last conversations. A card asks its question; the server answers
+// it from the plan it was checked with. While the page is being made the server says "building" and it is asked
+// again; a page that cannot be had leaves the box to type in.
+let _startData = null;
+let _startSet = 0;
+let _startTries = 0;
+const _START_ICONS = {number: '#', trend: '\u2197', breakdown: '\u25a4', rank: '\u2261', segment: '\u25d0', analysis: '\u2731'};
+function _startGreeting(now, name){
+  const hour = (now || new Date()).getHours();
+  const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+  return t('ui.start.greet.' + part) + (name ? ', ' + name : '');
+}
+function _startDate(iso){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? window.qbDate(+m[1], +m[2], +m[3], 'day_month_short_year') : '';
+}
+function _startDaysAgo(iso, today){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const d = today || new Date();
+  return Math.max(0, Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())
+                                 - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 86400000));
+}
+function _startDataLine(data, today){
+  const parts = [];
+  if (data && data.until) parts.push(t('ui.start.data.until', {date: _startDate(data.until)}));
+  if (data && data.tables) parts.push(window.qbPlural('ui.start.data.tables', data.tables));
+  const ago = data && data.learned ? _startDaysAgo(data.learned, today) : null;
+  if (ago !== null) {
+    parts.push(ago === 0 ? t('ui.start.data.learned_today') : ago === 1 ? t('ui.start.data.learned_yesterday')
+      : ago <= 30 ? t('ui.start.data.learned_days', {count: ago})
+      : t('ui.start.data.learned_on', {date: _startDate(data.learned)}));
+  }
+  return parts;
+}
+function _startWhen(at, today){
+  const ago = _startDaysAgo(at, today);
+  return ago === null ? '' : ago === 0 ? t('ui.start.today') : ago === 1 ? t('ui.start.yesterday')
+    : t('ui.start.days_ago', {count: ago});
+}
+function _startCardHtml(card, withNumber){
+  const change = withNumber && card.change && card.change.pct ? card.change : null;
+  const tone = change ? (change.good === true ? 'good' : change.good === false ? 'bad' : 'flat') : '';
+  const arrow = change ? (change.direction === 'up' ? '\u25b2' : change.direction === 'down' ? '\u25bc' : '') : '';
+  const spark = withNumber && card.spark && card.spark.path
+    ? `<svg class="qb-graphic start-spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true">`
+      + (card.spark.area ? `<path class="a" d="${escHtml(card.spark.area)}"/>` : '')
+      + `<path class="l" d="${escHtml(card.spark.path)}"/>`
+      + (card.spark.tail ? `<path class="t" d="${escHtml(card.spark.tail)}"/>` : '') + `</svg>` : '';
+  const value = withNumber && card.value
+    ? `<span class="start-card-now"><b>${escHtml(card.value)}</b>`
+      + (change ? `<span class="start-chg ${tone}" title="${escHtml(change.vs ? t('ui.start.vs', {period: change.vs}) : '')}">${arrow} ${escHtml(change.pct.replace(/^[+-]/, ''))}</span>` : '')
+      + `</span>${spark}` : '';
+  return `<button type="button" class="start-card" data-kind="${escHtml(card.kind)}" data-question="${escHtml(card.question)}"`
+    + ` aria-label="${escHtml(t('ui.start.ask', {question: card.question}))}">`
+    + `<span class="start-kind"><i aria-hidden="true">${_START_ICONS[card.kind] || '#'}</i>${escHtml(card.label || '')}</span>`
+    + `<strong>${escHtml(card.question)}</strong>`
+    + (value ? `<span class="start-card-prev">${value}</span>` : '')
+    + (card.why ? `<span class="start-why">${escHtml(card.why)}</span>` : '')
+    + `</button>`;
+}
+function _startShowSet(){
+  const sets = (_startData && _startData.for_you) || [];
+  const box = document.getElementById('startForYouCards');
+  if (!box) return;
+  const set = sets.length ? sets[_startSet % sets.length] : [];
+  box.innerHTML = set.map(card => _startCardHtml(card, true)).join('');
+  document.getElementById('startForYou').hidden = !set.length;
+  document.getElementById('startOthers').hidden = sets.length < 2;
+}
+function _startPickSubject(index){
+  const subjects = (_startData && _startData.explore) || [];
+  const tabs = document.getElementById('startSubjects');
+  Array.prototype.forEach.call(tabs.children, (tab, i) => {
+    tab.setAttribute('aria-selected', String(i === index));
+    tab.tabIndex = i === index ? 0 : -1;
+  });
+  const subject = subjects[index];
+  document.getElementById('startExploreCards').innerHTML = subject
+    ? subject.cards.map(card => _startCardHtml(card, false)).join('') : '';
+}
+function _startState(title, body){
+  const box = document.getElementById('startState');
+  ['startForYou', 'startExplore', 'startContinue'].forEach(id => { const el = document.getElementById(id); if (el) el.hidden = true; });
+  document.getElementById('startStateTitle').textContent = title || '';
+  document.getElementById('startStateBody').textContent = body || '';
+  box.hidden = !(title || body);
+}
+function _renderStartPage(reply, today){
+  const root = document.getElementById('startPage');
+  if (!root) return;
+  const page = (reply && reply.page) || {};
+  _startData = page;
+  root.dataset.state = page.state || 'failed';
+  root.setAttribute('aria-busy', 'false');
+  const line = document.getElementById('startDataLine');
+  const parts = _startDataLine(page.data || {}, today);
+  line.innerHTML = parts.map(p => `<span>${escHtml(p)}</span>`).join('');
+  line.hidden = !parts.length;
+  const fresh = document.getElementById('startNew');
+  const news = page.new || null;
+  const said = [];
+  if (news && news.count) said.push(window.qbPlural('ui.start.new_metrics', news.count, {names: (news.metrics || []).slice(0, 2).join(', ')}));
+  if (news && news.relearned) said.push(t('ui.start.new_relearned', {date: _startDate(news.relearned)}));
+  fresh.innerHTML = said.length ? `<b>${escHtml(t('ui.start.new'))}</b> ${escHtml(said.join(' '))}` : '';
+  fresh.hidden = !said.length;
+  const threads = (reply && reply.continue) || [];
+  document.getElementById('startContinueRows').innerHTML = threads.map(th =>
+    `<a class="start-row" href="${location.pathname}?thread=${encodeURIComponent(th.id)}"><span>${escHtml(th.question)}</span>`
+    + `<span class="start-when">${escHtml(_startWhen(th.at, today))}</span></a>`).join('');
+  if (page.state === 'learning') { _startState(t('ui.start.learning_title'), t('ui.start.learning_body')); return; }
+  if (page.state === 'no_access') { _startState(t('ui.start.no_access_title'), t('ui.start.no_access_body')); return; }
+  if (page.state === 'mapping' || page.state === 'failed') {
+    _startState('', page.state === 'mapping' ? t('ui.start.mapping') : t('ui.start.failed'));
+    document.getElementById('startContinue').hidden = !threads.length;
+    return;
+  }
+  _startState('', '');
+  document.getElementById('startContinue').hidden = !threads.length;
+  _startSet = 0;
+  _startShowSet();
+  const subjects = page.explore || [];
+  const tabs = document.getElementById('startSubjects');
+  tabs.innerHTML = subjects.map((s, i) => `<button type="button" role="tab" class="start-subject" data-index="${i}"`
+    + ` aria-controls="startExploreCards">${escHtml(s.subject)}</button>`).join('');
+  document.getElementById('startExplore').hidden = !subjects.length;
+  if (subjects.length) _startPickSubject(0);
+  if (!(page.for_you || []).length && !subjects.length) _startState('', t('ui.start.none'));
+}
+function loadStartPage(){
+  const welcome = document.getElementById('welcomeState');
+  const root = document.getElementById('startPage');
+  if (!root || !welcome || welcome.style.display === 'none') return;
+  const greeting = document.getElementById('startGreeting');
+  greeting.textContent = _startGreeting(new Date(), greeting.dataset.name || '');
+  fetch('/portal/api/start', {credentials: 'same-origin'})
+    .then(r => r.json())
+    .then(reply => {
+      if (welcome.style.display === 'none') return;
+      if (reply && reply.ok && reply.page && reply.page.state === 'building' && _startTries < 8) {
+        _startTries += 1;
+        window.setTimeout(loadStartPage, 2500);
+        return;
+      }
+      _renderStartPage(reply && reply.ok ? reply : {page: {state: 'failed'}});
+    })
+    .catch(() => _renderStartPage({page: {state: 'failed'}}));
+}
+function askStartCard(button){
+  const question = (button.dataset.question || '').trim();
+  if (!question || processingActive) return;
+  prefillComposer(question);
+  sendMessage();
+}
+document.addEventListener('click', (event) => {
+  const card = event.target.closest && event.target.closest('#startPage .start-card:not(.is-skeleton)');
+  if (card) { askStartCard(card); return; }
+  const tab = event.target.closest && event.target.closest('#startSubjects .start-subject');
+  if (tab) { _startPickSubject(Number(tab.dataset.index || 0)); return; }
+  if (event.target.closest && event.target.closest('#startOthers')) { _startSet += 1; _startShowSet(); }
+});
+document.addEventListener('keydown', (event) => {
+  // Arrow keys move along the subjects, as a tab list does.
+  const tab = event.target.closest && event.target.closest('#startSubjects .start-subject');
+  if (!tab || (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return;
+  const tabs = Array.from(document.querySelectorAll('#startSubjects .start-subject'));
+  const next = (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+  _startPickSubject(next);
+  tabs[next].focus();
+  event.preventDefault();
+});
 // Short confirmations and longer notices, through the shared toast (qb-ui.js).
 function toast(msg){ window.qbToast.notify({body: msg, tone: 'success', duration: 4000}); }
 function toastLong(msg){ window.qbToast.notify({body: msg, tone: 'info', duration: 7000}); }
@@ -5482,12 +5663,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // in the browser console and keep the empty-thread state purely local
     // until the first governed answer is persisted.
     restoreChatCache();
+    loadStartPage();
   } else if (_validThreadId(_threadFromUrl)) {
-    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); });
+    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); }).finally(loadStartPage);
   } else {
     // Restore the active server thread first; session cache remains a fallback
     // for transient messages that were never part of a successful trace.
-    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); });
+    restoreServerThread(THREAD_ID).then(restored => { if (!restored) restoreChatCache(); }).finally(loadStartPage);
   }
   connect();
 });

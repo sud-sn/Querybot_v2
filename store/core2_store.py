@@ -438,3 +438,85 @@ def load_core2_question_map(account_id: str, db_config_id: int | None) -> dict[s
         row = conn.execute("SELECT stamp, built_at, map_json FROM core2_question_map WHERE account_id = ? AND "
                            "db_config_id = ?", (account_id, int(db_config_id or 0))).fetchone()
     return {"stamp": row["stamp"], "built_at": row["built_at"], "map_json": row["map_json"]} if row else None
+
+
+# ── a reader's start page (core2/suggest.py) ────────────────────────────────
+
+
+def list_core2_answers_of(account_id: str, user_id: str, since: str, limit: int = 400) -> list[dict[str, Any]]:
+    """One reader's new-core questions since ``since`` (newest first): what they asked and the plan it was answered
+    with. Read by code for their suggestions; never sent to the AI."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT question, status, plan_json, created_at FROM core2_answer
+               WHERE account_id = ? AND user_id = ? AND created_at >= ? ORDER BY id DESC LIMIT ?""",
+            (account_id, str(user_id), since, int(limit))).fetchall()
+    out = []
+    for r in rows:
+        try:
+            plan = json.loads(r["plan_json"] or "{}")
+        except (TypeError, ValueError):
+            plan = {}
+        out.append({"question": r["question"], "status": r["status"], "plan": plan if isinstance(plan, dict) else {},
+                    "created_at": r["created_at"]})
+    return out
+
+
+def load_core2_start_page(account_id: str, user_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("""SELECT day, stamp, page_json, seen_at, updated_at FROM core2_start_page
+                              WHERE account_id = ? AND user_id = ?""", (account_id, str(user_id))).fetchone()
+    if not row:
+        return None
+    try:
+        page = json.loads(row["page_json"] or "{}")
+    except (TypeError, ValueError):
+        page = {}
+    return {"day": row["day"], "stamp": row["stamp"], "page": page if isinstance(page, dict) else {},
+            "seen_at": row["seen_at"], "updated_at": row["updated_at"]}
+
+
+def save_core2_start_page(account_id: str, user_id: str, *, day: str, stamp: str, page: dict[str, Any],
+                          seen_at: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_start_page (account_id, user_id, day, stamp, page_json, seen_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(account_id, user_id) DO UPDATE SET day = excluded.day, stamp = excluded.stamp,
+                   page_json = excluded.page_json, seen_at = excluded.seen_at, updated_at = excluded.updated_at""",
+            (account_id, str(user_id), day, stamp, json.dumps(page, default=str), seen_at, _now()))
+
+
+def core2_suggest_kinds(account_id: str, user_id: str) -> dict[str, tuple[int, int]]:
+    """``{kind: (times offered, times asked)}`` of a reader's suggestions."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT kind, shown, clicked FROM core2_suggest_kind WHERE account_id = ? AND user_id = ?",
+                            (account_id, str(user_id))).fetchall()
+    return {r["kind"]: (int(r["shown"]), int(r["clicked"])) for r in rows}
+
+
+def count_core2_suggest_kind(account_id: str, user_id: str, kind: str, *, shown: int = 0, clicked: int = 0) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_suggest_kind (account_id, user_id, kind, shown, clicked) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(account_id, user_id, kind) DO UPDATE SET shown = shown + excluded.shown,
+                   clicked = clicked + excluded.clicked""",
+            (account_id, str(user_id), kind, int(shown), int(clicked)))
+
+
+def core2_metrics_accepted_since(account_id: str, db_config_id: int | None, since: str) -> list[str]:
+    """The measures (by key) an admin accepted or wrote after ``since``, newest first."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT object_key, field, value_json FROM core2_override
+               WHERE account_id = ? AND db_config_id = ? AND object_key LIKE 'measure:%' AND updated_at > ?
+                     AND field IN ('status', 'define') ORDER BY updated_at DESC""",
+            (account_id, int(db_config_id or 0), since)).fetchall()
+    out: list[str] = []
+    for r in rows:
+        if r["field"] == "status" and str(r["value_json"]).strip('"') != "approved":
+            continue
+        key = str(r["object_key"]).partition(":")[2]
+        if key and key not in out:
+            out.append(key)
+    return out

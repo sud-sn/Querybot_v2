@@ -3994,6 +3994,11 @@ async def portal_query_history(request: Request):
     user = _get_portal_user(request)
     if not user:
         return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    return JSONResponse({"ok": True, "items": _reader_threads(user, MAX_LISTED_THREADS)})
+
+
+def _reader_threads(user: dict, most: int) -> list[dict]:
+    """A reader's threads with an answer, newest first, each named by its first question."""
     heads = store.list_thread_heads(user["account_id"], int(user["id"]))
     grouped: dict[str, dict] = {}
     from core.clarification import extract_original_question
@@ -4011,7 +4016,7 @@ async def portal_query_history(request: Request):
             str(t.get("question_text_sanitized") or "")
         ) or "Untitled thread"
         if thread_id not in grouped:
-            if len(grouped) >= MAX_LISTED_THREADS:
+            if len(grouped) >= most:
                 continue
             grouped[thread_id] = {
                 "id": thread_id,
@@ -4027,7 +4032,7 @@ async def portal_query_history(request: Request):
         else:
             grouped[thread_id]["question"] = question
             grouped[thread_id]["turn_count"] += 1
-    return JSONResponse({"ok": True, "items": list(grouped.values())})
+    return list(grouped.values())
 
 
 def _kept_answer(trace: dict) -> dict | None:
@@ -4538,15 +4543,8 @@ async def portal_chat(request: Request):
             "client":  client,
         })
 
-    suggestions = _build_chat_suggestions(user)
-
-    # Record impression events for Genie signal engine (fire-and-forget).
-    # Intentionally placed after _build_chat_suggestions so the display call
-    # uses the already-resolved (ranked) suggestion list.
-    if client.get("enable_genie_suggestions") and suggestions:
-        # The first four are the ones on screen; the rest wait behind Refresh.
-        _record_suggestions_displayed(user, suggestions[:4])
-
+    # A new conversation opens on the reader's own start page (core2/suggest.py): the page asks for it from
+    # /portal/api/start once it knows the conversation is empty.
     # No schema picker: the new core answers every question across the tables the person may read, in every
     # schema; the picker only steered today's pipeline, which no longer answers (gateway/core2_bridge.py).
     available_schemas: list[dict] = []
@@ -4566,12 +4564,49 @@ async def portal_chat(request: Request):
         "user":               user,
         "enabled":            True,
         "client":             client,
-        "suggestions":        suggestions,
         "available_schemas":  available_schemas,
+        "ai_ready":           _ai_ready(client),
         "query_status":       query_status,
         "token_usage":        token_usage,
         "selected_dashboard": selected_dashboard,
     })
+
+
+def _ai_ready(client: dict) -> bool:
+    """Can a question the reader types reach the workspace's AI? A start page's questions answer without it."""
+    try:
+        from core.llm import resolve_provider
+
+        name, _model, key, _extra = resolve_provider(client, purpose="query")
+    except Exception:  # noqa: BLE001 - not set up
+        return False
+    return bool(key) or name == "local"
+
+
+@router.get("/api/start")
+async def portal_start_page(request: Request):
+    """The reader's start page for a new conversation (core2/suggest.py): questions checked for them on the data,
+    their last conversations, and how fresh the data is. While it is being made the state is "building" and the
+    page asks again."""
+    user = _get_portal_user(request)
+    if not user:
+        return JSONResponse({"ok": False, "error": "Authentication required."}, status_code=401)
+    from core2.suggest import page as start_page
+
+    lang = _request_language(request)
+    try:
+        page = await asyncio.to_thread(start_page, user["account_id"], user, lang=lang, wait_seconds=6.0)
+    except Exception as exc:  # noqa: BLE001 - the composer works without it
+        log.warning("The start page of %s could not be made: %s", user.get("id"), exc, exc_info=True)
+        page = {"state": "failed"}
+    try:
+        threads = await asyncio.to_thread(_reader_threads, user, 3)
+    except Exception as exc:  # noqa: BLE001 - shown without them
+        log.warning("The threads of %s could not be read: %s", user.get("id"), exc)
+        threads = []
+    return JSONResponse({"ok": True, "page": page,
+                         "continue": [{"id": t["thread_id"], "question": t["question"], "at": t["created_at"]}
+                                      for t in threads]})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
