@@ -674,6 +674,20 @@ body:has(.chat-page) .main { background: var(--bg); }
 .analyst-note .note-how li { font-size: var(--font-xs); color: var(--text-soft); line-height: 1.5; }
 .analyst-note .note-how-fact { display: block; color: var(--text); }
 .analyst-note .note-how-way { display: block; color: var(--text-muted); }
+/* What the answer saw when it looked at itself, said in the chat (core2/agent/look.py, talk.py). */
+.answer-reply { display: flex; flex-direction: column; gap: 10px; max-width: 76ch; }
+.answer-reply .reply-text { margin: 0; font-size: var(--font-md); line-height: 1.6; color: var(--text-strong); text-wrap: pretty; }
+.answer-reply .reply-offers { display: flex; flex-wrap: wrap; gap: 8px; }
+.answer-reply .reply-offers .follow-up-chip { min-height: 32px; display: inline-flex; align-items: center; padding: 0 12px;
+  border-radius: var(--radius-pill); border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line)); background: var(--primary-soft);
+  color: var(--primary-ink); font-size: var(--font-sm); font-weight: var(--weight-medium); cursor: pointer; text-align: left; box-shadow: none; }
+.answer-reply .reply-offers .follow-up-chip::before { content: "\21B3"; margin-right: 6px; opacity: .7; }
+.answer-reply .reply-offers .follow-up-chip:hover { border-color: var(--primary); }
+.answer-reply .reply-offers .follow-up-chip:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+@media (pointer: coarse) { .answer-reply .reply-offers .follow-up-chip { min-height: 44px; } }
+.answer-reply .reply-checked summary { cursor: pointer; font-size: var(--font-xs); color: var(--text-muted); width: fit-content; }
+.answer-reply .reply-checked ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.answer-reply .reply-checked li { font-size: var(--font-xs); color: var(--text-soft); line-height: 1.5; }
 .answer-summary p { margin: 0; color: var(--text); line-height: 1.6; }
 .answer-insights .answer-note { background: none; border: 0; padding: 0; color: var(--text); }
 .answer-insights .answer-note .an-icon { display: none; }
@@ -3726,6 +3740,42 @@ function _placeAnswerNote(questionId, note) {
   return true;
 }
 
+// What the answer saw when it looked at itself before it was shown (core2/agent/look.py): nothing found and why,
+// a figure resting on a few days, a period starting before the data -- said in the chat, its next questions as
+// buttons right under it, and what was checked one click away. The workspace's AI's wording of it, every figure
+// checked, replaces the code's own sentences when it arrives ('answer_reply').
+function _replyText(reply) {
+  const fr = window.QB_LANG === 'fr';
+  if (reply.said && reply.said_lang === (fr ? 'fr' : 'en')) return String(reply.said);
+  return String((fr ? (reply.fr || reply.en) : reply.en) || '');
+}
+function _answerReplyHtml(msg) {
+  const reply = msg.reply;
+  if (!reply || typeof reply !== 'object' || !(reply.en || reply.fr)) return '';
+  const offers = (Array.isArray(reply.offers) ? reply.offers : []).map(_followUpChip);
+  const checked = Array.isArray(reply.checked) ? reply.checked : [];
+  const fr = window.QB_LANG === 'fr';
+  return `<section class="answer-reply" aria-label="${escHtml(t('ui.chat.reply.label'))}">`
+    + `<p class="reply-text">${escHtml(_replyText(reply))}</p>`
+    + (offers.length ? `<div class="reply-offers" role="group" aria-label="${escHtml(t('ui.chat.reply.next'))}">`
+        + offers.map(c => `<button class="follow-up-chip" type="button" data-question="${escHtml(c.question)}" data-follow-up="${escHtml(c.label)}">${escHtml(c.label)}</button>`).join('')
+        + `</div>` : '')
+    + (checked.length ? `<details class="reply-checked"><summary>${escHtml(t('ui.chat.reply.checked'))}</summary><ul>`
+        + checked.map(c => `<li>${escHtml(String((fr && c.fr) || c.en || ''))}</li>`).join('') + `</ul></details>` : '')
+    + `</section>`;
+}
+function _placeAnswerReply(questionId, reply) {
+  if (!questionId || !reply || typeof reply !== 'object') return false;
+  const card = [...document.querySelectorAll('.msg.msg-bot')]
+    .find(el => el.dataset.questionId === questionId)?.querySelector('.answer-card');
+  const holder = card && card.querySelector('.answer-reply .reply-text');
+  if (!holder) return false;
+  const payload = card.closest('.msg-content')?._querybotPayload;
+  if (payload) payload.reply = reply;
+  holder.textContent = _replyText(reply);
+  return true;
+}
+
 // What the answer means, in a few sentences by the workspace's AI from the answer
 // itself (core2/answer/summary.py). It follows the answer: placed under the chart,
 // so nothing the reader is looking at moves when it arrives.
@@ -4030,7 +4080,9 @@ function answerCardHtml(msg, ids, env) {
     : '';
   // A question back, a smalltalk reply or an answer with nothing to draw: the
   // sentence is the whole answer and nothing else belongs here.
-  const visualHtml = tiles.length ? '' : _answerVisualHtml(msg, ids);
+  const saidNothing = !!(msg.reply && msg.reply.nothing && (msg.reply.en || msg.reply.fr));
+  if (saidNothing) leadHtml = '';
+  const visualHtml = (tiles.length || saidNothing) ? '' : _answerVisualHtml(msg, ids);
   const bodyHtml = (!visualHtml && !tiles.length && msg.question && !answer.headline)
     ? `<div class="msg-bubble">${formatBotText(msg.question)}</div>` : '';
 
@@ -4083,7 +4135,9 @@ function answerCardHtml(msg, ids, env) {
   // to the latest result could run an old card's button against a newer answer.
   const nextActions = actionResultId && Array.isArray(msg.next_actions) ? msg.next_actions : [];
   // The chips that change one setting of this answer, then up to three next questions.
-  const offered = (Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : []).map(_followUpChip);
+  const replied = !!(msg.reply && (msg.reply.en || msg.reply.fr));
+  const offered = (Array.isArray(msg.follow_up_suggestions) ? msg.follow_up_suggestions : [])
+    .filter(e => !(replied && e && e.kind === 'look')).map(_followUpChip);
   const follow = [...offered.filter(c => c.setting).slice(0, 3), ...offered.filter(c => !c.setting).slice(0, 3)];
   const chipsHtml = (nextActions.length || follow.length)
     ? `<div class="answer-next" role="group" aria-label="${escHtml(t('ui.chat.suggestions.label'))}">`
@@ -4097,6 +4151,7 @@ function answerCardHtml(msg, ids, env) {
     + _standingHtml(msg)
     + _ownMetricHtml(msg)
     + _figuresHtml(msg)
+    + _answerReplyHtml(msg)
     + _answerBadgesHtml(msg)
     + leadHtml + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
@@ -5140,6 +5195,8 @@ function connect(){
       }
     } else if (msg.type === 'answer_summary') {
       _placeAnswerSummary(String(msg.question_id || ''), String(msg.summary || ''));
+    } else if (msg.type === 'answer_reply') {
+      _placeAnswerReply(String(msg.question_id || ''), msg.reply || null);
     } else if (msg.type === 'answer_note') {
       _placeAnswerNote(String(msg.question_id || ''), msg.note || null);
     } else if (msg.type === 'assistant_response') {

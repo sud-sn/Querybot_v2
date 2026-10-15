@@ -117,6 +117,9 @@ class Session:
     # ones from their profile taken off for this conversation only (core2/standing.py).
     standing: list[Standing] = field(default_factory=list)
     paused: set[str] = field(default_factory=set)
+    # The first next question the answer on screen offered after looking at itself (core2/agent/look.py): what
+    # "yes" runs, with no AI.
+    yes: Plan | None = None
 
 
 _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
@@ -403,6 +406,28 @@ def changes_data(question: str) -> str | None:
     return f"{lead}{rest}" if rest else ""
 
 
+# A message that only thanks or greets, in English or French: answered as a person would, with no AI.
+_THANKS = re.compile(r"^\s*(?:thanks|thank\s+you|thx|ty|cheers|great|perfect|awesome|excellent|merci|parfait|génial|"
+                     r"super)(?:[\s,!.]+(?:so\s+much|a\s+lot|very\s+much|again|thanks|thank\s+you|beaucoup|bien|encore|"
+                     r"merci|c'est\s+parfait|that's\s+(?:great|perfect)))*[\s!.]*$", re.IGNORECASE)
+_HELLO = re.compile(r"^\s*(?:hi|hello|hey|good\s+(?:morning|afternoon|evening)|bonjour|salut|bonsoir)"
+                    r"(?:[\s,!.]+(?:there|solviz|à\s+vous|tout\s+le\s+monde))*[\s!.]*$", re.IGNORECASE)
+_FRENCH_TALK = re.compile(r"\b(?:merci|parfait|génial|bonjour|salut|bonsoir|beaucoup)\b", re.IGNORECASE)
+
+
+def small_talk(question: str, *, french: bool | None = None) -> str | None:
+    """The reply to a message that only thanks or greets ("thanks!", "merci beaucoup", "hi"); None for a question."""
+    thanks, hello = bool(_THANKS.match(question or "")), bool(_HELLO.match(question or ""))
+    if not thanks and not hello:
+        return None
+    fr = bool(_FRENCH_TALK.search(question)) if french is None else french
+    if thanks:
+        return "Avec plaisir. Voulez-vous regarder autre chose ?" if fr else \
+            "You're welcome. Is there anything else you'd like to look at?"
+    return ("Bonjour ! Posez-moi une question sur vos données, par exemple un total, une tendance ou un classement."
+            if fr else "Hello! Ask me about your data, for example a total, a trend or a ranking.")
+
+
 def answer_question(question: str, services: Services, session: Session, *, question_id: str = "",
                     planned: Plan | None = None) -> dict[str, Any]:
     """The portal frame answering ``question``; the session keeps the plan for follow-ups. ``planned``: the plan
@@ -426,6 +451,9 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         gone = S.letting_go(question, _standing_now(services, session))
         if gone is not None:
             return _standing_dropped(question, gone, services, session)
+    small = small_talk(question) if planned is None else None
+    if small is not None:
+        return _frame(question, small, kind="smalltalk")     # "thanks!", "bonjour": answered with no AI
     shown = changes_data(question)
     if shown is not None:
         french = shown.startswith(_SHOW["fr"])
@@ -605,6 +633,9 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     matches: list[ValueMatch] = []
     picked = choose(question, pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
+    yes, session.yes = session.yes, None
+    if offer is None and yes is not None and forced is None and pending is None and _YES.match(question):
+        offer = yes             # "yes please" to the answer's own question: its first offer, with no AI
     if planned is not None:
         outcome = Outcome(planned)
     elif offer is not None and (pending is None or picked is None) and seen is not None:
@@ -660,8 +691,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
-        return _frame(question, "Hello! Ask me about your data, for example a total, a trend or a ranking.",
-                      kind="smalltalk")
+        said = small_talk(question) or small_talk("hello", french=bool(S.french(question)))
+        return _frame(question, said or "", kind="smalltalk")
     if plan.kind == "describe_data":
         return _describe(question, plan, services)
     if plan.kind == "unsupported":
@@ -796,6 +827,10 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         # A count of nothing too: "How many invoice lines were cancelled in 2025?" said 0, every cancelled line
         # being left out by default, under a filter that asked for exactly those.
         plan = _say_left_out(payload, question, plan, services, ctx, question_id=question_id, shown=shown)
+    # Looked at before it is shown, as an analyst would (core2/agent/look.py): nothing found, and why; a figure
+    # resting on a few days; a period starting before the data.
+    empty = _found_nothing(payload, zero=True)
+    looked = _look(plan, payload, services, ctx, empty=empty)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
     chips = offered(plan, model)
     if chips:
@@ -807,6 +842,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         payload["follow_up_suggestions"] = [*({"label": words, "question": words, "label_fr": chip_french(words),
                                                "question_fr": chip_french(words), "kind": "setting"}
                                               for words, _ in chips), *rest]
+    if looked:
+        _offer(payload, session, looked, empty=empty)
     if unquoted:
         _say_unquoted(payload, question, unquoted,
                       _visible(services.index.match(question), model, services.allowed_tables))
@@ -1541,6 +1578,54 @@ def _by_key(payload: dict[str, Any], question: str, plan: Plan, services: Servic
         shown[:] = members
 
 
+# "Yes", "ok, show me", "oui merci": the whole message says yes to the answer's own offer, and nothing more ("yes,
+# and by store" is a question of its own).
+_YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|do that|show me|let'?s see|"
+                  r"oui|ouais|d'accord|vas-y|allez-y|volontiers|bien sûr)(?:[\s,!.]+(?:yes|please|thanks|thank you|"
+                  r"do it|do that|show me|go ahead|show it|s'il te plaît|s'il vous plaît|merci|montre|montrez))*"
+                  r"[\s!.]*$", re.IGNORECASE)
+
+
+def _look(plan: Plan, payload: dict[str, Any], services: Services, ctx: Context, *, empty: bool) -> Any:
+    """The answer looked at before it is shown (core2/agent/look.py); None when there is nothing to say, or the
+    answer already says why it found nothing (the data ends before the period, the rows are left out)."""
+    from core2.agent.look import look
+
+    headline = str((payload.get("answer") or {}).get("headline") or "")
+    if payload.get("beyond_data") or "left out by default" in headline or payload.get("kind") == "which_end":
+        return None
+    rules = replace(ctx, split_units=services.split_units)
+    warehouse = Guarded(services.warehouse)
+    try:
+        logical = resolve(plan, services.model, rules)
+    except Exception:  # noqa: BLE001 - nothing to look at
+        return None
+
+    def run(asked: Plan) -> tuple[Any, Any, Any]:
+        lg = resolve(asked, services.model, rules)
+        compiled = compile_query(lg, services.model, warehouse.dialect)
+        return lg, compiled, warehouse.query(compiled.sql, max_rows=min(compiled.row_cap or 500, 500))
+
+    return look(plan, logical, payload, run, empty=empty)
+
+
+def _offer(payload: dict[str, Any], session: Session, looked: Any, *, empty: bool) -> None:
+    """What the answer saw, said on it, and its next questions as buttons the conversation runs with no AI (the
+    first one is what "yes" runs). An answer that found nothing offers only these: "why did it change?" has
+    nothing to explain."""
+    reply = looked.reply()
+    reply["nothing"] = empty        # the reply says it all: no empty figure or table under it
+    payload["reply"] = reply
+    offers = [{**o, "kind": "look"} for o in reply["offers"]]
+    for o in looked.offers:
+        for words in (o.en, o.fr):
+            session.offers[_plain(words)] = o.plan
+    session.yes = looked.offers[0].plan if looked.offers else None
+    rest = [] if empty else [s for s in payload.get("follow_up_suggestions") or []
+                             if s.get("question") not in {o["question"] for o in offers}]
+    payload["follow_up_suggestions"] = [*offers, *rest][:6]
+
+
 def _found_nothing(payload: dict[str, Any], *, zero: bool = False) -> bool:
     """No rows, or only empty values: a total over nothing comes back as one row with no value (``zero``: or
     a count of nothing, as 0)."""
@@ -2247,6 +2332,36 @@ def portal_note(account_id: str, question: str, payload: dict[str, Any], *, ques
     complete = summary_writer(account_id, client, question=asked, question_id=question_id) \
         if would_ask and _answers_may_reach_ai(account_id, asked, "core2_summary") else None
     return write(reading, complete, lang=lang, values_allowed=values_allowed, personal=personal)
+
+
+def portal_reply(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "",
+                 lang: str = "en") -> str | None:
+    """The answer's reply in the chat, in the workspace's AI's words (core2/agent/talk.py), or None: the facts' own
+    sentences stand.
+
+    The AI is given what the checks found, never the rows, and only where it may see them: never where the answer
+    names people, and where member values are kept from it (a tenant under compliance, or value indexing off) only
+    when the reply names no member; never for a workspace whose answers may not reach the AI."""
+    import store
+    from core.value_index import value_index_enabled
+    from core2.agent.talk import names_members, write
+    from core2.bootstrap.ai import summary_writer
+
+    reply = payload.get("reply")
+    if not isinstance(reply, dict) or not reply.get("seen") or payload.get("engine") != "core2" \
+            or payload.get("personal"):
+        return None
+    client = store.get_client(account_id) or {}
+    scrub = question_scrubber(account_id)
+    values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
+    if names_members(reply) and not values_allowed:
+        return None
+    asked = scrub(question) if scrub else question
+    if not _answers_may_reach_ai(account_id, asked, "core2_summary"):
+        return None
+    complete = summary_writer(account_id, client, question=asked, question_id=question_id)
+    headline = str((payload.get("answer") or {}).get("headline") or "")
+    return write(reply, asked, headline, complete, lang=lang)
 
 
 def _answers_may_reach_ai(account_id: str, question: str, component: str) -> bool:

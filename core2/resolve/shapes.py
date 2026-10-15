@@ -1793,6 +1793,28 @@ def _on_target(plan: Plan, actual: Measure, target: Measure) -> list:
     return out
 
 
+def _set_per(plan: Plan, model: SemanticModel, actual: Measure, target: Measure) -> None:
+    """A target is set per what its rows reach (a store, a month): one product's sales against the store's whole
+    target said "0.1% of its target". A condition on something the target's rows do not reach is refused, never
+    applied to the actual alone."""
+    from core2.resolve import paths as P
+
+    for f in plan.filters:
+        attribute = model.attributes.get(f.field)
+        column = model.columns.get(attribute.column) if attribute is not None else None
+        if column is None or column.table == target.table:
+            continue
+        try:
+            way = P.best_path(model, target.table, column.table)
+        except P.Ambiguous:
+            continue
+        if way is None:
+            # Said as it is, never sent back to the planner to "fix": the data keeps no such target.
+            raise ResolveError("empty", f"There is no {target.business_name.lower()} per "
+                               f"{attribute.business_name.lower()} here, so {actual.business_name.lower()} for one "
+                               "is not set against a target")
+
+
 def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
     """The plan of a figure against its target: both figures, their difference, the actual as a % of the target."""
     from core2.plan.ir import Derived
@@ -1820,6 +1842,7 @@ def with_target(plan: Plan, model: SemanticModel) -> tuple[Plan, TargetInfo]:
         raise ResolveError("unsupported", f"{target.business_name} is no target, budget or quota. For "
                            f"{actual.business_name} and {target.business_name} side by side, put both in measures; "
                            "for one as a share of the other, a derived ratio")
+    _set_per(plan, model, actual, target)
     derived = [Derived(name=TARGET_DIFFERENCE, op="difference", measures=[actual.slug, target.slug]),
                Derived(name=TARGET_SHARE, op="ratio", measures=[actual.slug, target.slug], scale=100.0)]
     plan = _by_period(plan, model, (actual.table, target.table))

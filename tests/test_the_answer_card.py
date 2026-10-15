@@ -49,6 +49,8 @@ FUNCTIONS = [
     "function _oneOffs(msg)",
     "function _oneOffToggleHtml(msg)",
     "function _answerSummaryHtml(text)",
+    "function _replyText(reply)",
+    "function _answerReplyHtml(msg)",
     "function _noteFromReading(reading)",
     "function _analystNoteInner(note)",
     "function _analystNoteHtml(msg)",

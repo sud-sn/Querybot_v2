@@ -829,9 +829,28 @@ async def _summarize(adapter: Any, websocket: Any, account_id: str, question: st
                      lang: str = "en") -> None:
     """The answer's analyst note (or, for an answer with no facts, its written summary), sent after it (the answer
     never waits for the AI) and kept with it."""
-    from core2.service import portal_note, portal_summary
+    from core2.service import portal_note, portal_reply, portal_summary
 
     question_id = str((payload.get("trust") or {}).get("question_id") or "")
+    if payload.get("reply"):
+        # What the answer saw when it looked at itself, said as a person would: it replaces the facts' own
+        # sentences in place, and stands for the summary (core2/agent/talk.py).
+        try:
+            said = await asyncio.wait_for(asyncio.to_thread(portal_reply, account_id, question, payload,
+                                                            question_id=question_id, lang=lang), TIMEOUT_SECONDS)
+        except Exception as exc:     # noqa: BLE001 - the facts' own sentences stand
+            log.warning("core2 could not write the reply of an answer for %s: %s", account_id, exc)
+            said = None
+        if said:
+            reply = {**payload["reply"], "said": said, "said_lang": lang, "by": "ai"}
+            await _send(adapter, websocket, {"type": "answer_reply", "question_id": question_id, "reply": reply})
+            if payload.get("trace_id"):
+                try:
+                    await asyncio.to_thread(_keep_frame_part, int(payload["trace_id"]), "reply", reply)
+                except Exception as exc:     # noqa: BLE001 - shown; only a reopened thread will lack it
+                    log.warning("core2 could not keep the reply of trace %s: %s", payload.get("trace_id"), exc)
+        if not payload.get("reading"):
+            return
     if payload.get("reading"):
         try:
             note = await asyncio.wait_for(asyncio.to_thread(portal_note, account_id, question, payload,
