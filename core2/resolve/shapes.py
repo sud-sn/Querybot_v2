@@ -771,6 +771,7 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     without, absent_in, absent_on = period(a.without)
     if absent_in is not None and plan.time.window.kind == "all":
         window, role = absent_in, absent_on        # "not in Q2", the period written as a date filter
+        _after_the_data(window, _first_last(role)[1] if role is not None else last)
     act, act_key = activity([*rest, *without], window)
     shape = AbsentShape(entity=listed, key=key, activity=act, activity_key=act_key, member=entity.business_name.lower(),
                         activity_label=measure.business_name, member_key=key_name, counted=plan.intent == "count")

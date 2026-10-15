@@ -632,3 +632,42 @@ def test_how_many_new_customers_stays_their_number(retail):
                 lifecycle=Lifecycle(of="customer", measure="number_of_orders", status="new"))
     assert figure_of_those(plan, retail[1], "how many new customers did we get in Q2").lifecycle is not None
     assert figure_of_those(plan, retail[1], "how many orders did new customers place in Q2").segment is not None
+
+
+def test_customers_created_under_a_standing_period(retail):
+    # Banking BP-04.2: "How many accounts did we open?" under "from now on the last 2 months" asked which date to
+    # count by: the AI planned no period (the standing one is put on after it), so the verb was never read.
+    chat = Chat(retail, today=dt.date(2026, 6, 15))
+    chat.ask("From now on use the last 2 months")
+    got = chat.ask("How many customers did we create?", {"measures": ["number_of_customers"]})
+    # Counted by the customers' own date; it stops in April 2024, so the 2 months are counted back from there.
+    want = retail[0].con.execute("""SELECT COUNT(*) FROM customers
+        WHERE created_at >= TIMESTAMP '2024-02-01' AND created_at < TIMESTAMP '2024-04-01'""").fetchone()[0]
+    assert got.get("kpi") and float(got["kpi"]["value"]) == want, got.get("answer", {}).get("headline")
+    assert "Feb 2024 to Mar 2024" in got["answer"]["headline"]
+
+
+def test_a_cancellation_rate_on_the_status_list_itself(home):
+    # Home services HP-01.6 again: the rate's condition named the status list ("booking_status"), not its name field.
+    chat = Chat(home)
+    got = chat.ask("Quel a été le taux d'annulation des réservations en 2025 ?",
+                   {"rates": [{"name": "Cancellation Rate", "measure": "number_of_bookings",
+                               "where": [{"field": "booking_status", "op": "eq", "values": ["Closed - Cancelled"]}]}],
+                    "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}})
+    want = home[0].con.execute("""SELECT 100.0 * COUNT(*) FILTER (WHERE k.status_id = 4) / COUNT(*)
+        FROM bookings k JOIN calendar d ON k.booked_date_key = d.date_key WHERE d.year = 2025""").fetchone()[0]
+    assert float(got["kpi"]["value"]) == pytest.approx(float(want)), got["answer"]["headline"]
+
+
+def test_none_after_the_data_named_as_a_date_condition_is_said(home):
+    # Home services HP-08.4: "which of them are going to cancel their plan next month?" was planned as the members
+    # with no renewal between 1 and 30 November 2026, as a condition on the renewal date, not the question's
+    # period: "543 customers ... had none in November 2026". The data ends in June: said, never answered.
+    chat = Chat(home)
+    got = chat.ask("which of them are going to cancel their plan next month?",
+                   {"intent": "list", "absent": {
+                       "of": "customer", "measure": "number_of_plan_renewals",
+                       "without": [{"field": "renewal_date", "op": "between", "values": ["2026-11-01", "2026-11-30"]}],
+                       "had": [{"field": "renewal_date", "op": "between", "values": ["2024-01-01", "2024-12-31"]}]}})
+    said = got.get("answer", {}).get("headline") or got.get("text") or ""
+    assert "Your data ends" in said and "had none" not in said, said

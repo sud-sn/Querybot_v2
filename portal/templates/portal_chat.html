@@ -743,7 +743,8 @@ body:has(.chat-page) .main { background: var(--bg); }
 /* Standing conditions: chips above the box, each answer given under them says so (core2/standing.py). */
 .standing-row { width: var(--chat-column); max-width: 100%; margin: 0 auto .5rem; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .standing-label { font-size: var(--font-xs); color: var(--text-muted); margin-right: 2px; }
-.standing-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; max-width: 100%; padding: 0 2px 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-bold, 600); }
+/* The shared chip (.ui-chip, base.css); the page only lays it out. */
+.standing-chip { gap: 4px; min-height: 28px; max-width: 100%; padding: 0 2px 0 10px; color: var(--text); }
 .standing-chip.always { border-style: dashed; }
 .standing-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .standing-off { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 15px; line-height: 1; }
@@ -3930,8 +3931,8 @@ function renderStanding(list) {
   row.hidden = !kept.length;
   row.innerHTML = kept.length
     ? `<span class="standing-label">${escHtml(t('ui.chat.standing.label'))}</span>`
-      + kept.map(s => `<span class="standing-chip${s.scope === 'always' ? ' always' : ''}" title="${escHtml(t(s.scope === 'always' ? 'ui.chat.standing.always' : 'ui.chat.standing.here'))}"><span>${escHtml(_inLang(s, 'words'))}</span>`
-        + `<button type="button" class="standing-off" data-standing-id="${escHtml(s.id)}" aria-label="${escHtml(t('ui.chat.standing.remove', {words: _inLang(s, 'words')}))}">&times;</button></span>`).join('')
+      + kept.map(s => `<span class="ui-chip standing-chip${s.scope === 'always' ? ' always' : ''}" title="${escHtml(t(s.scope === 'always' ? 'ui.chat.standing.always' : 'ui.chat.standing.here'))}"><span>${escHtml(_inLang(s, 'words'))}</span>`
+        + `<button type="button" class="standing-off" data-standing-id="${escHtml(s.id)}" aria-label="${escHtml(t('ui.chat.standing.remove', {words: _inLang(s, 'words')}))}">${qbIcon('x', 12)}</button></span>`).join('')
     : '';
 }
 async function loadStanding() {

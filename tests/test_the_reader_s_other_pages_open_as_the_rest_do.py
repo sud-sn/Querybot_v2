@@ -113,7 +113,8 @@ def test_the_data_guide_s_questions_are_links_that_wrap():
     rule = _rule(PORTAL_CSS, ".try-question")
     assert "nowrap" not in rule and "max-width: 100%" in rule, "a long question wraps inside its card"
     source = (ROOT / "portal/templates/portal_kb.html").read_text(encoding="utf-8")
-    assert source.count('class="try-question"') == 2, "the guide's side card and the learned summary alike"
+    assert source.count('class="try-question"') == 3, \
+        "the guide's side card, the learned summary and the saved segments alike"
     assert "border-radius:var(--radius-pill);background:var(--surface-alt)" in source, "subjects: one control"
     assert ".ask-tab.active{background:var(--surface-raised)" in source
     assert 'class="ask-tab{% if loop.first %} active{% endif %}" role="tab"' in source, "a tab of its own, not a chip"

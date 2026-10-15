@@ -1985,12 +1985,21 @@ def period_meant(plan: Plan, model: SemanticModel | None, question: str) -> Plan
     distinct = {json.dumps(f, sort_keys=True) for f in found}
     if len(distinct) == 1 and not (found[0]["kind"] == "last" and _INCLUDING_THIS.search(question)):
         meant = Window(**found[0], fiscal=window.fiscal and found[0]["unit"] in ("quarter", "year"))
-        if meant.model_dump(exclude_defaults=True) != window.model_dump(exclude_defaults=True):
+        if _same_dates(meant) != _same_dates(window):
             update["window"] = meant
     if _SAME_TIME_LAST_YEAR.search(question) and plan.time.compare is None and \
             (update.get("window") or window).kind != "all":
         update["compare"] = Compare(kind="same_period_last_year")
     return plan.model_copy(update={"time": plan.time.model_copy(update=update)}) if update else plan
+
+
+def _same_dates(window: Window) -> dict:
+    """A window as the dates it stands for: "previous month" and "the last 1 month" are the one month."""
+    if window.kind == "previous":
+        window = window.model_copy(update={"kind": "last", "n": 1})
+    if window.kind == "last" and window.n is None:
+        window = window.model_copy(update={"n": 1})
+    return window.model_dump(exclude_defaults=True)
 
 
 def late_asked(plan: Plan, question: str) -> Plan:
@@ -2802,7 +2811,7 @@ def ways_on(tried: Plan | None, model: SemanticModel) -> list[str]:
 # did on the invoices of that year (a customer invoiced in 2025 may have signed up in 2022).
 _STARTED = re.compile(r"\b(?:sign(?:ed|s|ing)?[\s-]*ups?|join(?:ed|s|ing)?|start(?:ed|s|ing)?|began|begin|"
                       r"add(?:ed|s|ing)?|acquir(?:ed|es|e|ing)|gain(?:ed|s)?|won|ajout(?:é|ée|és|ées)|acquis|"
-                      r"open(?:ed|s)?|creat(?:ed|es|ion)|regist(?:ered|ers|ration)|enroll?(?:ed|s|ment)?|hired?|"
+                      r"open(?:ed|s)?|creat(?:e|ed|es|ion)|regist(?:ered|ers|ration)|enroll?(?:ed|s|ment)?|hired?|"
                       r"onboard(?:ed)?|inscri(?:ts?|tes?|ption)|embauch(?:é|ée|és|ées))\b", re.IGNORECASE)
 _ENDED = re.compile(r"\b(?:cancel(?:l?ed|s|l?ation)?|churn(?:ed|s)?|terminat(?:ed|es|ion)|end(?:ed|s)?|clos(?:ed|es)|"
                     r"left|leav(?:e|es|ing)|quit|expir(?:ed|es|y|ation)|lapsed|résili(?:é|ée|és|ées|ation)|"
@@ -2849,8 +2858,11 @@ def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
     for rate in plan.rates:
         for f in rate.where:
             found = find_slug(model, f.field)
-            column = getattr(found[1], "column", None) if found is not None else None
-            if column in left_out or column in model.columns and model.columns[column].table in lookups:
+            thing = found[1] if found is not None else None
+            # A field, or a list named by itself ("booking_status"): its name, code and key columns.
+            columns = {getattr(thing, "column", None), getattr(thing, "label_column", None),
+                       getattr(thing, "code_column", None), *(getattr(thing, "key_columns", None) or [])} - {None}
+            if any(c in left_out or c in model.columns and model.columns[c].table in lookups for c in columns):
                 return True
     return False
 
@@ -2991,7 +3003,8 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
     if plan.rates and not plan.include_left_out and _rate_on_left_out(plan, model):
         # "Cancellation rate": the rows a table leaves out by default (cancelled ones) are what it counts.
         update["include_left_out"] = True
-    own = _lists_own_date(plan, model, question) if not time.date and time.window.kind != "all" else None
+    # Under no period too: a standing one is put on after the plan ("how many accounts did we open?").
+    own = _lists_own_date(plan, model, question) if not time.date else None
     if own is not None and plan.lifecycle is not None and plan.lifecycle.status == "new":
         # "How many new customers did we add in 2023?": the customers created then, by their own date -- not
         # those whose first order fell then (every customer is "new" in the data's first month).
