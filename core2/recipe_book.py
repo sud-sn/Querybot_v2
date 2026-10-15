@@ -1569,7 +1569,7 @@ def _short(window: dict[str, Any]) -> bool:
             return (dt.date.fromisoformat(str(window["end"])) - dt.date.fromisoformat(str(window["start"]))).days < 80
         except ValueError:
             return False
-    if kind in ("last", "this", "previous", "to_date"):
+    if kind in ("last", "rolling", "this", "previous", "to_date"):
         return unit in _SHORT or unit == "month" and int(window.get("n") or 1) < 3
     return False
 

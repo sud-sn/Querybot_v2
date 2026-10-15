@@ -9,6 +9,7 @@ Fiscal units use the model's fiscal year start month.
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 from dataclasses import dataclass, field
 
@@ -67,6 +68,15 @@ def add_units(day: dt.date, unit: str, n: int) -> dt.date:
     raise ValueError(f"no such unit: {unit}")
 
 
+def same_day_back(day: dt.date, unit: str, n: int) -> dt.date:
+    """The same day ``n`` units earlier: 16 June back 2 months is 16 April; 31 March back a month, 28 February."""
+    if unit in ("day", "week"):
+        return add_units(day, unit, -n)
+    index = day.year * 12 + (day.month - 1) - {"month": 1, "quarter": 3, "year": 12}[unit] * n
+    year, month = divmod(index, 12)
+    return dt.date(year, month + 1, min(day.day, calendar.monthrange(year, month + 1)[1]))
+
+
 def anchor(today: dt.date, last_data: dt.date | None) -> tuple[dt.date, str]:
     """The day relative windows count back from, and a note when it is not today."""
     if last_data is not None and today - last_data > STALE_AFTER:
@@ -107,6 +117,11 @@ def resolve_window(window: Window, *, today: dt.date, first_data: dt.date | None
         if window.include_current:
             return Range(add_units(holding, unit, -(n - 1)), base + DAY if base == today else base, notes, ended)
         return Range(add_units(current, unit, -n), current, notes, ended)
+    if kind == "rolling":
+        # Up to and including the day counted back from: "the last 2 months from today" on 15 June is 16 April to
+        # 15 June; "the past 60 days", the 60 days ending today.
+        end = base + DAY if base == today else base
+        return Range(same_day_back(end, unit, window.n or 1), end, notes, ended)
     if kind in ("this", "to_date"):
         return Range(holding, (base + DAY) if base == today else base, notes, ended)
     if kind == "previous":

@@ -102,6 +102,11 @@ How to plan:
    when unsaid). No grain for one total.
 5. time.window, written as the user said it; never compute relative dates yourself:
    "last 6 months" -> {"kind": "last", "unit": "month", "n": 6} (complete months before the current one);
+   "the last 12 months", "trailing 12 months", "trailing year", "TTM" -> {"kind": "last", "unit": "month", "n": 12};
+   "the last 2 months from today", "rolling 3 months", "the past 60 days", "the last 30 days" -> {"kind":
+   "rolling", "unit": "month" or "day", "n": ...} (up to today, today included; days always run up to today);
+   "this month so far", "month to date", "MTD" -> {"kind": "to_date", "unit": "month"};
+   "the same time last year" beside a period -> that period with time.compare {"kind": "same_period_last_year"};
    "this year", "year to date", "so far this year" -> {"kind": "this", "unit": "year"}; "so far", "to date" or
    "ever" with no period named is everything up to now: no window;
    "last month" -> {"kind": "previous", "unit": "month"}; "last year" -> {"kind": "previous", "unit": "year"};
@@ -1491,6 +1496,98 @@ def all_time_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
     return plan.model_copy(update={"time": plan.time.model_copy(update={"window": Window()})})
 
 
+_COUNTS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+           "ten": 10, "eleven": 11, "twelve": 12, "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5,
+           "sept": 7, "huit": 8, "neuf": 9, "dix": 10, "onze": 11, "douze": 12}
+_COUNT = r"(\d{1,3}|" + "|".join(_COUNTS) + r")"
+_UNIT_OF = {"day": "day", "week": "week", "month": "month", "quarter": "quarter", "year": "year", "jour": "day",
+            "semaine": "week", "mois": "month", "trimestre": "quarter", "an": "year", "annee": "year"}
+_EN_UNIT = r"(days?|weeks?|months?|quarters?|years?)"
+_FR_UNIT = r"(jours?|semaines?|mois|trimestres?|ans|ann(?:é|e)es?)"
+_UP_TO_TODAY = r"(?:from|up\s+to|until|till|to|through|including)\s+(?:today|now)"
+# "The last 2 months from today", "rolling 3 months", "the past 60 days": n units up to today, today included.
+_ROLLING = [
+    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+{_EN_UNIT}\s+{_UP_TO_TODAY}\b", re.I),
+    re.compile(rf"\brolling\s+{_COUNT}[\s-]+{_EN_UNIT}\b", re.I),
+    re.compile(rf"\b{_COUNT}[\s-]+{_EN_UNIT}\s+rolling\b", re.I),
+    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+(days?)\b", re.I),
+    re.compile(rf"\b{_COUNT}\s+derni(?:er|ère)s?\s+{_FR_UNIT}\s+(?:jusqu['’](?:à|a)\s+aujourd['’]hui|(?:à|a)\s+ce\s+jour)",
+               re.I),
+    re.compile(rf"\b{_COUNT}\s+{_FR_UNIT}\s+glissant(?:e)?s?\b", re.I),
+    re.compile(rf"\b{_COUNT}\s+derniers\s+(jours)\b", re.I),
+    re.compile(rf"\bdepuis\s+{_COUNT}\s+(jours)\b", re.I),
+]
+# "The last 2 months", "the trailing 12 months": n complete units before the current one.
+_COMPLETE = [
+    re.compile(rf"\b(?:last|past|previous|trailing)\s+{_COUNT}\s+(weeks?|months?|quarters?|years?)\b", re.I),
+    re.compile(rf"\b{_COUNT}\s+derni(?:er|ère)s?\s+(semaines?|mois|trimestres?|ans|ann(?:é|e)es?)\b", re.I),
+]
+_TRAILING_YEAR = re.compile(r"\b(?:trailing\s+(?:year|twelve\s+months)|ttm|ltm)\b", re.I)
+_INCLUDING_THIS = re.compile(r"\b(?:including|incl\.?|with)\s+(?:this|the\s+current|the\s+present)\b|"
+                             r"\by\s+compris\s+(?:ce|cette|le|la)\b", re.I)
+# "This month so far", "month to date", "MTD": from the period's first day to today.
+_SO_FAR = [
+    (re.compile(r"\bthis\s+(week|month|quarter|year)\s+so\s+far\b|\bso\s+far\s+this\s+(week|month|quarter|year)\b|"
+                r"\b(week|month|quarter|year)[\s-]+to[\s-]+date\b", re.I), None),
+    (re.compile(r"\b(wtd|mtd|qtd|ytd)\b", re.I), {"wtd": "week", "mtd": "month", "qtd": "quarter", "ytd": "year"}),
+    (re.compile(r"\bdepuis\s+le\s+d(?:é|e)but\s+(?:du|de\s+la|de\s+l')\s*(semaine|mois|trimestre|ann(?:é|e)e)\b", re.I),
+     None),
+]
+_SAME_TIME_LAST_YEAR = re.compile(r"\bsame\s+(?:time|period|dates?|days?)\s+(?:last\s+year|a\s+year\s+(?:ago|before|"
+                                  r"earlier))\b|\bm(?:ê|e)me\s+p(?:é|e)riode\s+(?:de\s+)?l['’](?:an|ann(?:é|e)e)\s+"
+                                  r"(?:dernier|derni(?:è|e)re|pr(?:é|e)c(?:é|e)dente?)\b", re.I)
+# A date of its own beside the words ("the last 2 months of 2025"): the planner's dates stand.
+_DATES_NAMED = re.compile(r"\b(?:(?:19|20)\d\d|fy\s?\d{2,4}|q[1-4]|h[12]|jan(?:uary)?|feb(?:ruary)?|march|apr(?:il)?|"
+                          r"june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|janvier|"
+                          r"f(?:é|e)vrier|mars|avril|juin|juillet|ao(?:û|u)t|septembre|octobre|novembre|d(?:é|e)cembre)\b",
+                          re.I)
+
+
+def _unit(word: str) -> str:
+    word = word.casefold().replace("é", "e")
+    word = word[:-1] if word.endswith("s") and word not in ("mois",) else word
+    return _UNIT_OF.get(word, word)
+
+
+def _count(word: str) -> int:
+    return int(word) if word.isdigit() else _COUNTS[word.casefold()]
+
+
+def period_meant(plan: Plan, model: SemanticModel | None, question: str) -> Plan:
+    """The period the reader's words give, one meaning each, put right where the planner read it otherwise:
+    "the last 2 months" are the two complete months before this one; "the last 2 months from today", "rolling 2
+    months" and "the past 60 days" run up to today; "this month so far" and "MTD" from the month's first day;
+    "the trailing year" and "TTM" are the twelve complete months; "the same time last year" is a comparison. A
+    question naming dates of its own, or two periods, keeps the planner's."""
+    if plan.kind != "query" or _DATES_NAMED.search(question):
+        return plan
+    found: list[dict] = []
+    for pattern in _ROLLING:
+        for m in pattern.finditer(question):
+            found.append({"kind": "rolling", "unit": _unit(m.group(2)), "n": _count(m.group(1))})
+    if not found:
+        for pattern in _COMPLETE:
+            for m in pattern.finditer(question):
+                found.append({"kind": "last", "unit": _unit(m.group(2)), "n": _count(m.group(1))})
+        if _TRAILING_YEAR.search(question):
+            found.append({"kind": "last", "unit": "month", "n": 12})
+    for pattern, short in _SO_FAR:
+        for m in pattern.finditer(question):
+            word = next(g for g in m.groups() if g)
+            found.append({"kind": "to_date", "unit": short[word.casefold()] if short else _unit(word)})
+    window = plan.time.window
+    update: dict = {}
+    distinct = {json.dumps(f, sort_keys=True) for f in found}
+    if len(distinct) == 1 and not (found[0]["kind"] == "last" and _INCLUDING_THIS.search(question)):
+        meant = Window(**found[0], fiscal=window.fiscal and found[0]["unit"] in ("quarter", "year"))
+        if meant.model_dump(exclude_defaults=True) != window.model_dump(exclude_defaults=True):
+            update["window"] = meant
+    if _SAME_TIME_LAST_YEAR.search(question) and plan.time.compare is None and \
+            (update.get("window") or window).kind != "all":
+        update["compare"] = Compare(kind="same_period_last_year")
+    return plan.model_copy(update={"time": plan.time.model_copy(update=update)}) if update else plan
+
+
 def late_asked(plan: Plan, question: str) -> Plan:
     """The on-time share or the late share, as the question words it: "What share of order lines had a confirmed
     delivery date later than the requested one?" was answered with the share on time (the profitability stress test)."""
@@ -2166,7 +2263,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (route_named, all_time_asked, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+        for rule in (route_named, all_time_asked, period_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out):
@@ -2230,8 +2327,13 @@ def period_words(window: Window) -> str:
     if window.kind == "last" and window.unit:
         n = window.n or 1
         return f"in the last {n} {window.unit}s" if n > 1 else f"in the last {window.unit}"
+    if window.kind == "rolling" and window.unit:
+        n = window.n or 1
+        return f"in the last {n} {window.unit}{'s' if n > 1 else ''} up to today"
     if window.kind == "this" and window.unit:
         return f"this {window.unit}"
+    if window.kind == "to_date" and window.unit:
+        return f"this {window.unit} so far"
     return ""
 
 

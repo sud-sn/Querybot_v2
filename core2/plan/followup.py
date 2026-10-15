@@ -92,7 +92,8 @@ _ABOUT_DATA = re.compile(r"^\s*(?:what\s+(?:data|information|tables)|what can i 
 _SUPERLATIVE = re.compile(r"\b(?:most|least|highest|lowest|biggest|smallest|largest|best|worst|top|bottom|cheapest|"
                           r"dearest|furthest|fastest|slowest|first|last)\b", re.IGNORECASE)
 _WHEN = re.compile(
-    r"\b(?:today|yesterday|tomorrow|this|last|next|previous|past|latest|current|ytd|mtd|qtd|so far|since|until|"
+    r"\b(?:today|yesterday|tomorrow|this|last|next|previous|past|latest|current|ytd|mtd|qtd|ttm|ltm|so far|since|until|"
+    r"rolling|trailing|"
     r"between|(?:19|20)\d{2}|q[1-4]|t[1-4]\s+(?:19|20)\d{2}|h[12]|fy\s?\d{2,4}|january|february|march|april|may|june|july|august|september|"
     r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec|week|weekly|month|monthly|quarter|"
     r"quarterly|year|yearly|annual|daily|right now|currently|at the end of)\b", re.IGNORECASE)
@@ -215,7 +216,8 @@ _WHEN_FR = re.compile(r"\b(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[
 # A period the question names itself, never a series word ("by month", "par mois"): a year, a quarter, a month,
 # "last quarter", "this year", "so far", "for all time"; in French "l'an dernier", "cette année", "en mai".
 _OWN_PERIOD = re.compile(
-    r"\b(?:(?:this|last|next|previous|past|current)\s+(?:\d+\s+)?(?:fiscal\s+)?(?:day|week|month|quarter|half|year)s?|"
+    r"\b(?:(?:this|last|next|previous|past|current|rolling|trailing)\s+(?:\d+\s+)?(?:fiscal\s+)?"
+    r"(?:day|week|month|quarter|half|year)s?|ttm|ltm|"
     r"today|yesterday|ytd|mtd|qtd|year\s+to\s+date|so\s+far|since\s+\w+|until\s+\w+|right\s+now|currently|"
     r"at\s+the\s+end\s+of|all\s+time|ever|overall|whole\s+period|"
     r"(?:cette|cet|ce)\s+(?:ann[ée]e|an|mois|trimestre|semestre|semaine)|"

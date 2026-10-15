@@ -32,9 +32,11 @@ class _Strict(BaseModel):
 
 
 class Window(_Strict):
-    """When. ``between`` dates are inclusive, as the user means them."""
+    """When. ``between`` dates are inclusive, as the user means them. ``last`` is n complete units before the current
+    one ("the last 2 months"); ``rolling`` is n units up to and including today ("the last 2 months from today",
+    "the past 60 days")."""
 
-    kind: Literal["all", "between", "since", "until", "last", "this", "to_date", "previous"] = "all"
+    kind: Literal["all", "between", "since", "until", "last", "rolling", "this", "to_date", "previous"] = "all"
     start: dt.date | None = None
     end: dt.date | None = None
     unit: Unit | None = None

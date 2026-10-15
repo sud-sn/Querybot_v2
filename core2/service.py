@@ -226,6 +226,7 @@ def _span(window: Window) -> str:
     n = window.n or 1
     return {"between": f"{window.start} to {window.end}", "since": f"since {window.start}",
             "until": f"until {window.end}", "last": f"the last {n} {unit}{'s' if n > 1 else ''}",
+            "rolling": f"the last {n} {unit}{'s' if n > 1 else ''} up to today",
             "this": f"this {unit}", "to_date": f"{unit} to date", "previous": f"the previous {unit}"}.get(window.kind, "")
 
 

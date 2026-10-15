@@ -490,4 +490,6 @@ def _period_words(window: dict[str, Any]) -> str:
         return f"the last {window.get('n')} {window.get('unit')}s"
     if kind == "to_date":
         return f"{window.get('unit')} to date"
+    if kind == "rolling":
+        return f"the last {window.get('n')} {window.get('unit')}s up to today"
     return "all time"
