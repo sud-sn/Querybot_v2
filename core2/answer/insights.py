@@ -30,7 +30,7 @@ import statistics
 from core2.answer.builder import _Columns, _day, _lower, _noun, _number, _Units, fmt
 from core2.compile.compiler import OutColumn
 from core2.resolve.resolver import Logical, OutMeasure, adds_up
-from core2.resolve.shapes import FunnelShape, ParetoShape, TogetherShape
+from core2.resolve.shapes import CohortShape, FunnelShape, ParetoShape, TogetherShape
 from core2.resolve.time import label as period_label
 
 MAX_FINDINGS = 3
@@ -46,8 +46,10 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
         return []
     if getattr(logical.shape, "kind", None) == "running":
         return []      # a running total of what adds up only grows: "up 4 months in a row" would say nothing
-    if isinstance(logical.shape, (ParetoShape, FunnelShape, TogetherShape)):
-        return []      # the sentence says what classes, stages and pairs show; "the top 3 of the 10 deciles" says less
+    if isinstance(logical.shape, (ParetoShape, FunnelShape, TogetherShape, CohortShape)):
+        # The sentence says what classes, stages, pairs and cohorts show; "the top 3 of the 10 deciles" says less,
+        # and "0 led in every month" took the months after a cohort's first for members.
+        return []
     periods = cols.of("period")
     members = [c for c in cols.of("attribute") if c.name != logical.unit_group]
     rows = units.main_rows(raw)

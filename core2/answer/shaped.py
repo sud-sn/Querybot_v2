@@ -21,7 +21,7 @@ from core2.resolve.shapes import (AbsentShape, ActiveShape, CohortShape, FunnelS
                                   OnTimeShape, ParetoShape, PerShape, RollingShape, TargetInfo, TogetherShape,
                                   WithinShape, active_definition, cohort_definition, condition_words,
                                   funnel_definition, gap_definition, lifecycle_definition, on_time_definition,
-                                  pareto_definition, together_definition)
+                                  pareto_definition, together_definition, _singular)
 
 
 def _day(value: Any) -> dt.date | None:
@@ -164,6 +164,9 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
     elif isinstance(shape, LifecycleShape):
         definition = lifecycle_definition(shape)
     elif isinstance(shape, CohortShape):
+        said = cohort_headline(payload, logical, shape)
+        if said:
+            answer["headline"] = said
         definition = cohort_definition(shape, span)
     elif isinstance(shape, ActiveShape):
         definition = active_definition(shape)
@@ -398,6 +401,65 @@ def pareto_headline(payload: dict[str, Any], shape: ParetoShape, span: str, tota
         else:
             parts.append(f"{name}: {int(n):,}, {_pct_words(share)}")
     return "; ".join(parts) + "."
+
+
+_EVERY = {"day": "daily", "week": "weekly", "month": "monthly", "quarter": "quarterly", "year": "yearly"}
+
+
+def cohort_headline(payload: dict[str, Any], logical: Logical, shape: CohortShape) -> str:
+    """What a cohort grid is read for, along the periods after the first and never as who led (the periods after
+    the first are no members): "On average 49% of customers had orders again 1 month after their first order, and
+    59% 6 months after, across the 3 monthly cohorts from Jan 2023 to Mar 2023." Counted cohorts say how many came
+    and what share of them came back. The later figure is at the last period after the first that at least half
+    the cohorts have reached, each average over the cohorts that reached it."""
+    from core2.resolve.time import label as period_label
+
+    value = "retained" if shape.value == "share" else "members"
+    cells: dict[dt.date, dict[int, float]] = {}
+    for r in _records(payload):
+        day, age, v = _day(r.get(shape.cohort)), _float(r.get(shape.age)), _float(r.get(value))
+        if day is not None and age is not None and v is not None:
+            cells.setdefault(day, {})[int(age)] = v
+    if not cells:
+        return ""
+    e = shape.events
+    grain = e.grain or "month"
+    unit = grain.replace("fiscal_", "fiscal ").replace("_", " ")
+    days = sorted(cells)
+    names = [period_label(d, grain, fiscal_start=logical.fiscal_start) for d in (days[0], days[-1])]
+    things, single = plural(e.member), _singular(e.activity)
+    reached = sorted({a for c in cells.values() for a in c if a > 0})
+    if not reached:
+        return (f"The {names[0]} cohort is still in its first {unit}." if len(days) == 1 else
+                f"Every cohort from {names[0]} to {names[1]} is still in its first {unit}.")
+    late = max((a for a in reached if 2 * sum(1 for c in cells.values() if a in c) >= len(cells)), default=reached[0])
+
+    def after(n: int) -> str:
+        return f"{n} {unit}{'' if n == 1 else 's'}"
+    if shape.value == "share":
+        def share(age: int) -> float:
+            values = [c[age] for c in cells.values() if age in c]
+            return sum(values) / len(values)
+        later = f", and {_target_pct(share(late))} {after(late)} after" if late > reached[0] else ""
+        if len(days) == 1:
+            return (f"{_target_pct(share(reached[0]))} of the {things} whose first {single} was in {names[0]} had "
+                    f"{e.activity} again {after(reached[0])} after it{later}.")
+        every = _EVERY.get(grain)
+        cohorts = f"{len(days)} {every} cohorts" if every else f"{len(days)} cohorts by {unit}"
+        return (f"On average {_target_pct(share(reached[0]))} of {things} had {e.activity} again {after(reached[0])} "
+                f"after their first {single}{later}, across the {cohorts} from {names[0]} to {names[1]}.")
+
+    def back(age: int) -> float | None:
+        came = sum(c.get(0, 0.0) for c in cells.values() if age in c)
+        return 100.0 * sum(c[age] for c in cells.values() if age in c) / came if came else None
+    came = int(sum(c.get(0, 0.0) for c in cells.values()))
+    first, last = back(reached[0]), back(late)
+    if not came or first is None:
+        return ""
+    when = f"in {names[0]}" if len(days) == 1 else f"from {names[0]} to {names[1]}"
+    later = f", and {_target_pct(last)} {after(late)} after" if late > reached[0] and last is not None else ""
+    return (f"{came:,} {things if came != 1 else e.member} had their first {single} {when}; "
+            f"{_target_pct(first)} of them had {e.activity} again {after(reached[0])} after it{later}.")
 
 
 def funnel_headline(payload: dict[str, Any], shape: FunnelShape, span: str) -> str:

@@ -1476,7 +1476,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
     if not measures or len(records) < 2 or logical.intent == "list":
         return None
-    from core2.resolve.shapes import FunnelShape, TogetherShape
+    from core2.resolve.shapes import CohortShape, FunnelShape, TogetherShape
 
     together = isinstance(logical.shape, TogetherShape)
     funnel = isinstance(logical.shape, FunnelShape)
@@ -1511,6 +1511,8 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             ys = [m.name, prior.name]
             compare = {"prior": prior.name, "current": m.name, "prior_label": _period_badge(logical.compare),
                        "current_label": _period_badge(logical.window)}
+        if members and isinstance(logical.shape, CohortShape):   # a cohort by the periods after its first
+            return _cohort_grid(logical, periods[0], members[0], m, records, formats, labels, unit=unit)
         if members:   # one line per member
             return _pivot(logical, periods[0], members[0], m, records, formats, labels, display, unit=unit)
     elif len(members) == 2 and len(measures) == 1 and pair is None:
@@ -1721,6 +1723,58 @@ def _cross(logical: Logical, first: OutColumn, second: OutColumn, m: OutColumn, 
             "grouped_by": down.name,
             "grouped_measure": m.name, "compare": None, "facets": [], "share_key": None,
             "forecast_meta": None, "chart_warnings": warnings}
+
+
+def _cohort_grid(logical: Logical, first: OutColumn, age: OutColumn, m: OutColumn, records: list[dict],
+                 formats: dict[str, str], labels: dict[str, str], *, unit: str = "") -> dict:
+    """A cohort grid as a grid: a row for each cohort in calendar order, a column for each period after its first
+    ("Month 0" ... "Month 6"), each cell its share or count, darker for more. Never a line per period after the
+    first: those are no members, and lines of shares near the top told nothing apart. The latest cohorts are drawn
+    when there are more than fit, said so; a share's period 0 (all of the cohort) gives way to the later ones when
+    the columns do not fit. A period not reached yet is an empty cell; the table keeps every row."""
+    grain = first.grain or "month"
+    head = grain.replace("fiscal_", "fiscal ").replace("_", " ")
+    cells: dict[dt.date, dict[int, Any]] = {}
+    for r in records:
+        day = _day(r[first.name])
+        try:                              # the periods after the first come as written in the table ("3")
+            n = int(float(str(r[age.name])))
+        except (TypeError, ValueError):
+            continue
+        if day is not None:
+            cells.setdefault(day, {})[n] = _number(r[m.name])
+    ages = sorted({n for row in cells.values() for n in row})
+    share = getattr(logical.shape, "value", "") == "share"
+    if len(ages) > GRID_COLUMNS and share and ages[0] == 0:
+        ages = ages[1:]
+    warnings: list[str] = []
+    if len(ages) > GRID_COLUMNS:
+        ages = ages[:GRID_COLUMNS]
+        warnings.append(f"Showing {head}s {ages[0]} to {ages[-1]} after the first: every one is in the table.")
+    days = sorted(cells)
+    if len(days) > GRID_ROWS:
+        warnings.append(f"Showing the latest {GRID_ROWS} of {len(days)} first {head}s: every one is in the table.")
+        days = days[-GRID_ROWS:]
+
+    def named(day: dt.date) -> str:      # a month as the chart names it in the reader's language
+        return day.strftime("%Y-%m") if grain == "month" else period_label(day, grain, fiscal_start=logical.fiscal_start)
+    columns = [f"{head.capitalize()} {n}" for n in ages]
+    rows = [{first.name: named(d), **{c: cells[d].get(n) for c, n in zip(columns, ages)}} for d in days]
+    roles: dict[str, dict] = {first.name: {"column": first.name, "label": labels[first.name], "role": "dimension",
+                                           "format": "text"},
+                              m.name: {"column": m.name, "label": labels[m.name], "role": "measure",
+                                       "format": formats[m.name]}}
+    for c in columns:
+        roles[c] = {"column": c, "label": c, "role": "measure", "format": formats[m.name]}
+    pair = [_by_words(first, labels), _thing(labels[age.name])]
+    return {"title": chart_title(logical, labels[m.name], pair, unit),
+            "title_fr": chart_title(logical, labels[m.name], pair, unit, lang="fr"),
+            "chart_type": "heatmap", "x_key": first.name, "y_keys": columns, "rows": rows, "other": None,
+            "x_style": "", "column_roles": roles, "column_formats": {k: v["format"] for k, v in roles.items()},
+            "renderable_types": ["heatmap"], "allowed_types": ["heatmap"], "recommended_type": "heatmap",
+            "chart_spec": {"x": {"column": first.name, "role": "dimension"}, "column_roles": roles},
+            "x_order": "", "intent": logical.intent, "grouped_by": age.name, "grouped_measure": m.name,
+            "compare": None, "facets": [], "share_key": None, "forecast_meta": None, "chart_warnings": warnings}
 
 
 def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn, records: list[dict],
