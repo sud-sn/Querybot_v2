@@ -274,6 +274,20 @@ def test_an_answer_whose_rows_are_all_left_out_by_default_says_so_and_offers_the
     assert round(then["kpi"]["value"], 2) == want
 
 
+def test_a_count_of_nothing_at_all_never_says_the_rows_are_left_out(shop):
+    # "How many bookings did Northgate take in June 2026?" said "0: every row that matches is left out by default":
+    # with the left-out rows in, the count was 0 too, and 0 was read as rows found.
+    day, store = _sql(shop, """SELECT d::DATE, s.store_name FROM range(DATE '2025-02-01', DATE '2025-11-30',
+        INTERVAL 1 DAY) r(d) CROSS JOIN stores s WHERE NOT EXISTS (SELECT 1 FROM sales x WHERE x.order_date = d::DATE
+        AND x.store_id = s.store_id) ORDER BY 1, 2 LIMIT 1""")[0]
+    plan = {"intent": "value", "measures": ["number_of_sales"],
+            "filters": [{"field": "store.name", "op": "eq", "values": [store]}],
+            "time": {"window": {"kind": "between", "start": day.isoformat(), "end": day.isoformat()}}}
+    answer = _ask(shop, Recorded(plan), f'how many sales did "{store}" make on {day:%d %b %Y}?')[0]
+    assert answer["kpi"]["value"] == 0
+    assert "left out by default" not in answer["answer"]["headline"], answer["answer"]["headline"]
+
+
 def test_an_empty_answer_with_nothing_left_out_is_just_empty(shop):
     nothing = {"intent": "value", "measures": ["amount"], "time": {"window": {"kind": "between",
                                                                                "start": "2030-01-01",

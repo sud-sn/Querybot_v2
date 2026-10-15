@@ -242,9 +242,11 @@ def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks",
         out.checked.append((f"Looked without {said_cond} {scope}: {said}.".replace("  ", " "),
                             f"Cherché sans « {said_cond_fr} » {scope_fr} : {said_fr}.".replace("  ", " ")))
         if how == "carried":     # a standing condition is put on every answer again: removing it is said, not run
+            # First of the buttons: kept from the question before, the condition is likely the one no longer meant,
+            # and "yes" asks without it.
             tail = "".join(f", {w}" for w in (condition_words(c, quoted=True) for c in rest) if w)
             tail_fr = "".join(f", {w}" for w in (condition_words(c, quoted=True, lang="fr") for c in rest) if w)
-            out.offers.append(Offer(f"{words.label} {span}{tail}".replace("  ", " "),
+            out.offers.insert(0, Offer(f"{words.label} {span}{tail}".replace("  ", " "),
                                     f"{words.label} {span_fr}{tail_fr}".replace("  ", " "),
                                     _base(plan, filters=[g.model_dump(mode="json", exclude_defaults=True)
                                                          for g in others])))
@@ -324,8 +326,9 @@ def _thin(plan: Plan, logical: Logical, payload: dict[str, Any], words: "_Words"
             listed, listed_fr = _listed(shown), _listed(shown_fr, "et")
             days = [p.isoformat() for p in with_any]
         else:
-            listed = f"the first {shown[0]}, the last {shown[-1]}"
-            listed_fr = f"le premier {shown_fr[0]}, le dernier {shown_fr[-1]}"
+            # "the first 10 May 2026" was read back as "the 1st to the 10th": said so it reads one way only.
+            listed = f"the first is {shown[0]} and the last {shown[-1]}"
+            listed_fr = f"le premier : {shown_fr[0]}, le dernier : {shown_fr[-1]}"
             days = [with_any[0].isoformat(), with_any[-1].isoformat()]
         only_fr = ("Seule" if k == 1 else "Seules") if grain == "week" else ("Seul" if k == 1 else "Seuls")
         has, a = ("has", "a") if k == 1 else ("have", "ont")

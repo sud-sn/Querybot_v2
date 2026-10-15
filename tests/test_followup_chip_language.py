@@ -241,13 +241,14 @@ class TestTheBrowserRendersTheLabelAndWiresTheQuestion(unittest.TestCase):
     def test_both_render_sites_go_through_the_helper(self):
         """A source check, deliberately and narrowly.
 
-        The two chip builders write into innerHTML from a live websocket frame
-        and cannot be executed here. What can be pinned is that neither
-        decides for itself: one definition, two call sites, and no remaining
+        The chip builders write into innerHTML from a live websocket frame
+        and cannot be executed here. What can be pinned is that none
+        decides for itself: one definition, three call sites, and no remaining
         `.map(q => ...escHtml(q)...)` shape that would render a pair object as
         [object Object].
         """
         with open(self.PAGE, encoding="utf-8") as fh:
             page = fh.read()
-        self.assertEqual(page.count("_followUpChip"), 3)   # 1 def + 2 call sites
+        # 1 def + 3 call sites: the answer's chips, an analysis's chips, and the reply's next questions
+        self.assertEqual(page.count("_followUpChip"), 4)
         self.assertIn('data-question="${escHtml(c.question)}"', page)

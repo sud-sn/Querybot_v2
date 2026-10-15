@@ -761,7 +761,11 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     plan = S.quoted_unread(plan, question, model, services.index,
                            [f for s in _standing_now(services, session) for f in s.filters]
                            + (list(seen.plan.filters) if seen is not None and seen.plan is not None else []))
+    plan = _whole_names(plan, matches)
+    plan = _by_day(plan, question)
+    plan = _one_month_named(plan, question)
     plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
+    plan = _quoted_lost(plan, question, model, services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
     bare = plan
@@ -843,7 +847,7 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         # say so, not "No rows match", which reads as if that member bought nothing. (A member added since
         # is found by the query, so it is never refused for being new.)
         thing, value = missing
-        meant: list[tuple[str, str, str]] = []
+        meant: list[tuple[str, str, str, Plan]] = []
         if _points(str(value)):
             # The planner filtered on the words that point at a row ("lowest", "that division"): they name no member.
             text = (f'I could not tell which {thing} "{value}" means. Name it, or point at one in the answer above: '
@@ -854,7 +858,7 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
             if meant:
                 # "Downtwn Store": the members written most like it, each asked first through the reader's own
                 # access, so only one they can see is offered -- with its figure.
-                text += " Did you mean " + " or ".join(f'"{name}"' for name, _, _ in meant) + "?"
+                text += " Did you mean " + " or ".join(f'"{name}"' for name, _, _, _ in meant) + "?"
                 if len(meant) == 1:
                     text += f" {meant[0][2]}"
             elif plan.follow_up == "refine":
@@ -865,10 +869,10 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
                            session, outcome.masked, trust={"sql": (payload.get("trust") or {}).get("sql", "")})
         if meant:
             refused["follow_up_suggestions"] = [{"label": asked, "question": asked, "kind": "look"}
-                                                for _, asked, _ in meant]
-            for name, asked, _ in meant:
-                session.offers[_plain(asked)] = _named_instead(plan, str(value), name)
-            session.yes = _named_instead(plan, str(value), meant[0][0])
+                                                for _, asked, _, _ in meant]
+            for _, asked, _, instead in meant:
+                session.offers[_plain(asked)] = instead
+            session.yes = meant[0][3]
         return refused
     if payload.get("beyond_data") and _found_nothing(payload, zero=True):
         # "What will our total sales be in 2004?" said "no value": the data ends before the period asked for. The
@@ -1570,7 +1574,7 @@ def _say_left_out(payload: dict[str, Any], question: str, plan: Plan, services: 
     except Exception as exc:  # noqa: BLE001 - only a better sentence is lost; the answer stands as it is
         log.warning("core2: could not check the rows left out for %r: %s", question, exc)
         return plan
-    if _found_nothing(wider):
+    if _found_nothing(wider, zero=True):      # a count of nothing is 0 with them too: no row is left out
         return plan
     words = "; ".join(left_out_words(model, df) for _, df in rules)
     if _asks_for(question, rules):
@@ -1735,8 +1739,19 @@ def _one_step_down(question: str, plan: Plan, payload: dict[str, Any], services:
         fr += f" Dans {member}, rien ne se détache : la variation est répartie."
         checked.append({"en": f"Step 2, inside {member}: the change is spread out.",
                         "fr": f"Étape 2, dans {member} : la variation est répartie."})
-    ask = f'Why did it change, for {thing} "{member}"?'
-    ask_fr = f'Pourquoi cela a-t-il varié, pour {thing} « {member} » ?'
+    # The answer's own conditions said too: the words, typed or sent, ask the same ("for customer "X"").
+    tail = tail_fr = ""
+    try:
+        from core2.answer.builder import condition_words
+
+        conditions = [c for c in resolve(plan, model, replace(ctx, split_units=services.split_units)).conditions
+                      if c.kind != "by"]
+        tail = "".join(f", {w}" for w in (condition_words(c, quoted=True) for c in conditions) if w)
+        tail_fr = "".join(f", {w}" for w in (condition_words(c, quoted=True, lang="fr") for c in conditions) if w)
+    except Exception:  # noqa: BLE001 - the step is asked by its own words
+        pass
+    ask = f'Why did it change, for {thing} "{member}"{tail}?'
+    ask_fr = f'Pourquoi cela a-t-il varié, pour {thing} « {member} »{tail_fr} ?'
     seen = {"kind": "steps", "en": en, "fr": fr, "figures": figures, "days": [], "members": [member], "about": field}
     payload["reply"] = {"en": en, "fr": fr, "by": "facts", "seen": [seen], "checked": checked, "nothing": False,
                         "offers": [{"label": ask, "question": ask, "label_fr": ask_fr, "question_fr": ask_fr}]}
@@ -1831,26 +1846,45 @@ def _said_same_either_way(payload: dict[str, Any], message: str, figures: dict[s
                             "offers": [], "nothing": False}
 
 
-def _named_instead(plan: Plan, value: str, name: str) -> Plan:
-    """The plan with the member ``value`` it names replaced by ``name``."""
-    filters = [f.model_copy(update={"values": [name if str(v) == value else v for v in f.values]})
+def _named_instead(plan: Plan, value: str, name: str, field: str | None = None) -> Plan:
+    """The plan with the member ``value`` it names replaced by ``name`` (of the grouping ``field``, when the name
+    is another grouping's)."""
+    filters = [f.model_copy(update={"values": [name if str(v) == value else v for v in f.values],
+                                    **({"field": field} if field and any(str(v) == value for v in f.values) else {})})
                for f in plan.filters]
     return plan.model_copy(update={"filters": filters, "follow_up": "new"})
 
 
 def _did_you_mean(question: str, plan: Plan, value: str, services: Services, ctx: Context, *,
-                  question_id: str = "", most: int = 2) -> list[tuple[str, str, str]]:
+                  question_id: str = "", most: int = 2) -> list[tuple[str, str, str, Plan]]:
     """The members written most like a name the data does not have, each asked first through the reader's own
-    access and kept only when it has rows: (its name, the question asked with it, its answer's sentence). Never
-    for a person's name."""
+    access and kept only when it has rows: (its name, the question asked with it, its answer's sentence, its
+    plan). The grouping's own members first; else the one other grouping holding names written like it ("Key
+    Acounts" put on the account, for the cost centre Key Accounts). Never for a person's name."""
+    from core2.resolve.resolver import find_slug
+
+    model = services.model
     f = next((f for f in plan.filters if any(str(v) == value for v in f.values)), None)
-    if f is None or about_people(services.model, f.field):
+    if f is None or about_people(model, f.field):
         return []
+    # A filter on the store itself ("store") is on its name: the index keeps the members by their name's field.
+    found = find_slug(model, f.field)
+    field = f.field
+    if found is not None and isinstance(found[1], Entity):
+        column = found[1].label_column or found[1].code_column
+        field = next((a.slug for a in model.attributes.values() if a.column == column), field)
+        if about_people(model, field):
+            return []
     out = []
-    for name in services.index.nearest(f.field, value)[:most]:
+    near = [(None, name) for name in services.index.nearest(field, value)]
+    if not near:
+        anywhere = services.index.nearest_anywhere(value)
+        if len({a for a, _ in anywhere}) == 1 and not about_people(model, anywhere[0][0]):
+            near = list(anywhere)
+    for home, name in near[:most]:
+        meant = _named_instead(plan, value, name, home)
         try:
-            got = _compute(question, _named_instead(plan, value, name), services, ctx, question_id=question_id,
-                           started=time.perf_counter())
+            got = _compute(question, meant, services, ctx, question_id=question_id, started=time.perf_counter())
         except Exception as exc:  # noqa: BLE001 - only the suggestion is lost
             log.info("core2: could not check %r as the member meant: %s", name, exc)
             continue
@@ -1860,7 +1894,7 @@ def _did_you_mean(question: str, plan: Plan, value: str, services: Services, ctx
             re.sub(re.escape(value), f'"{name}"', question, count=1, flags=re.IGNORECASE)
         if asked == question:
             asked = f'{question.rstrip(" ?")} for "{name}"'
-        out.append((name, asked, str((got.get("answer") or {}).get("headline") or "")))
+        out.append((name, asked, str((got.get("answer") or {}).get("headline") or ""), meant))
     return out
 
 
@@ -2139,6 +2173,110 @@ def _member_form(index: MemberIndex, attribute: str, value: object) -> object:
         if found is not None:
             return found
     return value
+
+
+_MONTH_WORDS = {**{m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct",
+                                                "nov", "dec"), 1)},
+                **{m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july",
+                                                "august", "september", "october", "november", "december"), 1)},
+                **{m: i for i, m in enumerate(("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+                                                "septembre", "octobre", "novembre", "décembre"), 1)},
+                "sept": 9, "fevrier": 2, "aout": 8, "decembre": 12}
+_MONTH_YEAR = re.compile(r"\b(" + "|".join(sorted(_MONTH_WORDS, key=len, reverse=True)) + r")\.?\s+((?:19|20)\d{2})\b",
+                         re.IGNORECASE)
+# Words that make a month one end of a span, or set it against another period: the AI's window stands.
+_SPAN_WORDS = re.compile(r"\b(?:since|from|to|until|till|through|thru|between|before|after|vs\.?|versus|against|"
+                         r"compared?|than|and|depuis|jusqu|entre|avant|après|contre|par\s+rapport|et|ytd|to\s+date|"
+                         r"last|previous|past|rolling|trailing)\b|-|–", re.IGNORECASE)
+
+
+def _one_month_named(plan: Plan, question: str) -> Plan:
+    """ "Why did spend spike in nov 2025?" after an answer for 2025 was planned for all of 2025, and the why
+    compared December with November. A question naming one month and no other period, nor any span, is that
+    month."""
+    if plan.kind != "query" or plan.time.compare is not None:
+        return plan
+    named = _MONTH_YEAR.findall(question)
+    years = re.findall(r"\b(?:19|20)\d{2}\b", question)
+    if len(named) != 1 or len(years) != 1 or _SPAN_WORDS.search(_MONTH_YEAR.sub(" ", question)):
+        return plan
+    month, year = _MONTH_WORDS[named[0][0].lower()], int(named[0][1])
+    start = dt.date(year, month, 1)
+    end = (start.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+    window = plan.time.window
+    if window.kind == "between" and window.start == start and window.end == end:
+        return plan
+    if not (window.kind == "between" and window.start and window.end and window.start <= start and end <= window.end
+            and (window.start, window.end) != (start, end)):
+        return plan          # only a window that holds the month and more: the AI kept a wider period
+    time = plan.time.model_copy(update={"window": Window(kind="between", start=start, end=end),
+                                        "grain": None if plan.intent == "drivers" else plan.time.grain})
+    return plan.model_copy(update={"time": time})
+
+
+_BY_DAY = re.compile(r"\b(?:by|per|each|every)\s+day\b|\bdaily\b|\bday[- ]by[- ]day\b|\bpar\s+jour\b|"
+                     r"\bjour\s+par\s+jour\b|\bquotidien", re.IGNORECASE)
+_WEEKDAY = re.compile(r"\bday\s+of\s+(?:the\s+)?week\b|\bweekdays?\b|\bweekends?\b|\bjours?\s+de\s+la\s+semaine\b|"
+                      r"\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?\b|\b(?:lundi|mardi|mercredi|jeudi|vendredi|"
+                      r"samedi|dimanche)s?\b", re.IGNORECASE)
+
+
+def _by_day(plan: Plan, question: str) -> Plan:
+    """ "Paid amount by day in June 2026" is each day of June, never Monday to Sunday: the AI added the day of
+    the week to the days, and the answer ranked weekdays. Taken off unless the question names the week's days."""
+    if plan.time.grain != "day" or "time:day_of_week" not in plan.group_by or not _BY_DAY.search(question) \
+            or _WEEKDAY.search(question):
+        return plan
+    return plan.model_copy(update={"group_by": [g for g in plan.group_by if g != "time:day_of_week"],
+                                   "intent": "trend" if plan.intent == "breakdown" else plan.intent})
+
+
+def _quoted_lost(plan: Plan, question: str, model: SemanticModel, index: MemberIndex) -> Plan:
+    """A name the reader quoted that the data does not have, and that no condition of the plan holds: the AI left
+    it out ('spend on "Home improvment"', for "Home improvement"), and the answer was for every one. It goes back
+    on as written, on the grouping whose member is written most like it, so the answer says there is none and
+    offers that one. Never on a person's name, and never when two groupings hold names as close."""
+    if plan.kind != "query":
+        return plan
+    held = [normalise(str(v)) for f in plan.filters for v in f.values]
+    # A figure's or a grouping's own name in quotes ('"net sales" by month') is no member written wrong.
+    named = {normalise(str(x.business_name)) for x in [*model.measures.values(), *model.attributes.values(),
+                                                        *model.entities.values()] if x.business_name}
+    added: list[Filter] = []
+    for a, b in quoted_spans(question):
+        text = question[a:b].strip()
+        key = normalise(text)
+        if len(key) < 4 or key in named or index.quoted(f'"{text}"') \
+                or any(h and (key in h or h in key) for h in held):
+            continue
+        near = index.nearest_anywhere(text)
+        fields = {field for field, _ in near}
+        if len(fields) != 1 or about_people(model, next(iter(fields))):
+            continue
+        added.append(Filter(field=next(iter(fields)), op="eq", values=[text]))
+    return plan.model_copy(update={"filters": [*plan.filters, *added]}) if added else plan
+
+
+def _whole_names(plan: Plan, matches: list[ValueMatch]) -> Plan:
+    """A name the reader quoted whole filters as written, never as its pieces: "VersaBase cream", an ingredient,
+    was planned as an FDA name "VersaBase" and a dosage form "Cream", and the answer said there was no
+    "VersaBase". Filters whose every value is a piece of the quoted name give way to the name itself."""
+    written = {normalise(m.text) for m in matches}
+    for m in matches:
+        quoted = normalise(str(m.value))
+        if not m.exact or normalise(m.text) != quoted or len({x.attribute for x in matches
+                                                              if normalise(str(x.value)) == quoted}) > 1:
+            continue     # a containment, or a name two fields hold: the AI's reading stands
+        filters = list(plan.filters)
+        if any(normalise(str(v)) == quoted for f in filters for v in f.values):
+            continue
+        pieces = [f for f in filters if f.op in ("eq", "in") and f.values and all(
+            isinstance(v, str) and len(normalise(v)) >= 3 and normalise(v) in quoted and normalise(v) not in written
+            for v in f.values)]      # a name quoted on its own is never a piece of another
+        if pieces:
+            kept = [f for f in filters if f not in pieces]
+            plan = plan.model_copy(update={"filters": [*kept, Filter(field=m.attribute, op="eq", values=[m.value])]})
+    return plan
 
 
 def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: set[str],

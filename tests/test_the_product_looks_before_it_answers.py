@@ -141,6 +141,39 @@ def test_a_figure_resting_on_two_days_of_the_month_says_so(retail):
     assert float(got["kpi"]["value"]) == pytest.approx(float(want))
 
 
+def test_a_why_naming_one_month_is_that_month_not_the_year_kept_from_above(retail):
+    # "why did spend spike in nov 2025??" after an answer for 2025 was planned for all of 2025 by month, and the why
+    # compared December with November.
+    chat = Chat(retail)
+    got = chat.ask("why did net sales drop in may 2026??", {
+        "intent": "drivers", "measures": ["net_amount"], "follow_up": "refine",
+        "time": {"grain": "month", "window": {"kind": "between", "start": "2026-01-01", "end": "2026-12-31"}}})
+    whole = float(_one(retail, f"SELECT {CHANGE} FROM ({LINES}) l"))
+    assert float(got["drivers"]["change"]) == pytest.approx(whole, abs=0.01)
+    # A span is the AI's to read.
+    span = Chat(retail).ask("net sales from jan 2026 to may 2026", {
+        "measures": ["net_amount"], "time": {"window": {"kind": "between", "start": "2026-01-01",
+                                                        "end": "2026-05-31"}}})
+    assert span["plan"]["time"]["window"]["start"] == "2026-01-01"
+
+
+def test_by_day_is_each_day_never_the_days_of_the_week(retail):
+    # "... by day in June 2026" was planned with the day of the week too: the answer ranked Monday to Sunday.
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Toothpaste Small" by day in May 2026', {
+        **_net(product="Toothpaste Small"), "intent": "breakdown", "group_by": ["time:day_of_week"],
+        "time": {**MAY, "grain": "day"}})
+    days = _days(retail, "Toothpaste Small")
+    assert [str(r["period"])[:10] for r in got["export_rows"]] == days
+    seen = _seen(got, "few_days")
+    assert seen["days"] == days
+    # Asked by weekday, it stays by weekday.
+    weekday = Chat(retail).ask("Net sales by day of the week in May 2026", {
+        "measures": ["net_amount"], "intent": "breakdown", "group_by": ["time:day_of_week"],
+        "time": {**MAY, "grain": "day"}})
+    assert "day_of_week" in weekday["export_rows"][0]
+
+
 def test_a_series_with_few_days_says_so_from_its_own_rows(retail):
     chat = Chat(retail)
     got = chat.ask('Net sales of "Toothpaste Small" by day in May 2026',
@@ -221,6 +254,44 @@ def test_the_ai_says_the_reply_in_its_own_words_and_every_figure_is_checked(reta
         assert talk.write(reply, "q", headline, says(bad)) is None, bad
 
 
+def test_the_ais_words_are_checked_as_people_write_figures():
+    from core2.agent import talk
+
+    steps = {"seen": [{"kind": "steps", "figures": [-12330.23, -5796.81, -5053.9], "days": [],
+                       "members": ["Lakeshore Store"]}], "offers": [{"label": "Why did it change, for store?"}]}
+    # A fall said as a fall ("down $12.3K"), and French figures ("5 797 $", "12,3 k $") are the checks' own.
+    for said, lang in (("Net sales fell by $5,796.81: Lakeshore Store was down $12.3K, Online $5,054. Look closer?",
+                        "en"),
+                       ("Les ventes ont baissé de 5 797 $, dont 12,3 k $ pour Lakeshore Store. On regarde de plus près ?",
+                        "fr")):
+        assert talk.checked(said, steps, "", lang) == said, said
+    assert talk.checked("Lakeshore Store fell by 5 900 $.", steps, "", "fr") is None
+    # No next question offered: a question it ends on has no button to answer it, and is left out.
+    late = {"seen": [{"kind": "starts_late", "figures": [], "days": ["2023-01-01"]}], "offers": []}
+    assert talk.checked("The data starts on 1 Jan 2023. Would you like to change the period?", late, "") == \
+        "The data starts on 1 Jan 2023."
+    # An inference the checks never made: data missing, demand low.
+    few = {"seen": [{"kind": "few_days", "figures": [2, 31], "days": ["2026-05-17", "2026-05-27"]}], "offers": []}
+    for guess, lang in (("Sales came on 2 of the 31 days. This suggests demand was limited.", "en"),
+                        ("Seuls 2 des 31 jours ont des ventes : les chiffres pourraient ne pas refléter tout le mois.",
+                         "fr"),
+                        ("Only 2 of the 31 days have sales; the figures may not reflect the whole month.", "en"),
+                        # the pharmacy book: lots received in 3 months of 2025 said as data missing for the others
+                        ("Nous avons reçu 3 lots en 2025, mais les données ne couvrent que les mois d'avril, "
+                         "septembre et décembre.", "fr"),
+                        ("Les informations pour les autres mois ne sont pas disponibles.", "fr"),
+                        ("Sales happened on 2 of the 31 days, so the data is incomplete for May.", "en")):
+        assert talk.checked(guess, few, "", lang) is None, guess
+    # A day said as an ordinal is one of the days seen: "the first 10 May" was read back as "the 1st to the 10th".
+    seven = {"seen": [{"kind": "few_days", "figures": [7, 31], "days": ["2026-05-10", "2026-05-28"]}], "offers": []}
+    assert talk.checked("It comes from 7 days in May: the 1st to the 10th and the 28th.", seven, "") is None
+    assert talk.checked("It comes from 7 days in May, the first on the 10th and the last on the 28th.", seven, "")
+    # Where the data itself starts inside the period, saying it does not cover all of it is what was found.
+    assert talk.checked("The figure is only from 2 Oct 2023: the data does not cover the months before.",
+                        {"seen": [{"kind": "starts_late", "figures": [], "days": ["2023-10-02"]}], "offers": []},
+                        "") is not None
+
+
 def test_the_ai_is_never_asked_where_the_reply_names_people_or_kept_members():
     from core2.agent import talk
 
@@ -296,6 +367,61 @@ def test_a_name_written_wrong_offers_the_nearest_with_its_figure(retail):
     again = chat.ask("yes")
     assert chat.asked == asked
     assert float(again["kpi"]["value"]) == pytest.approx(float(want))
+
+
+def test_a_name_written_wrong_on_the_store_itself_offers_the_nearest(retail):
+    # gpt-4o put "Lakeshore Stor" on the store, not the store's name field: the answer said "there is no store
+    # called ..." and offered nothing. The store's members are its names.
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Lakeshore Stor" in May 2026', {
+        "measures": ["net_amount"], "time": MAY, "filters": [{"field": "store", "op": "eq", "values": ["Lakeshore Stor"]}]})
+    assert 'Did you mean "Lakeshore Store"?' in got["answer"]["headline"]
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE store_name = 'Lakeshore Store' AND {IN_MAY}")
+    asked = chat.asked
+    again = chat.ask("yes")
+    assert chat.asked == asked and float(again["kpi"]["value"]) == pytest.approx(float(want))
+
+
+def test_a_quoted_name_the_ai_left_out_is_never_answered_for_every_one(retail):
+    # 'How much did customers spend on "Home improvment" in May 2026?' was planned with no condition at all, and
+    # answered for every category: the name written wrong was dropped without a word.
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Downtwn Store" in May 2026', {"measures": ["net_amount"], "time": MAY})
+    assert 'Did you mean "Downtown Store"?' in got["answer"]["headline"]
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE store_name = 'Downtown Store' AND {IN_MAY}")
+    asked = chat.asked
+    again = chat.ask("yes")
+    assert chat.asked == asked and float(again["kpi"]["value"]) == pytest.approx(float(want))
+    # Quoted words that are no name of the data, nor written like one, are left as the AI read them.
+    plain = Chat(retail).ask('What were "net sales" in May 2026?', {"measures": ["net_amount"], "time": MAY})
+    total = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE {IN_MAY}")
+    assert float(plain["kpi"]["value"]) == pytest.approx(float(total))
+
+
+def test_a_name_written_wrong_on_another_grouping_offers_the_nearest_where_it_is(retail):
+    # "Key Acounts" was put on the account, where no name is written like it: the cost centre "Key Accounts" is.
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Downtwn Store" in May 2026', {
+        "measures": ["net_amount"], "time": MAY, "filters": [{"field": "product.name", "op": "eq",
+                                                               "values": ["Downtwn Store"]}]})
+    assert 'Did you mean "Downtown Store"?' in got["answer"]["headline"]
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE store_name = 'Downtown Store' AND {IN_MAY}")
+    asked = chat.asked
+    again = chat.ask("yes")
+    assert chat.asked == asked and float(again["kpi"]["value"]) == pytest.approx(float(want))
+    assert again["plan"]["filters"] == [{"field": "store.name", "op": "eq", "values": ["Downtown Store"]}]
+
+
+def test_a_quoted_name_is_filtered_whole_never_as_its_pieces(retail):
+    # gpt-4o split "VersaBase cream" (an ingredient) into an FDA name "VersaBase" and a dosage form "Cream", and
+    # the answer said there was no "VersaBase".
+    chat = Chat(retail)
+    got = chat.ask('Net sales of "Toothpaste Small" in May 2026', {
+        "measures": ["net_amount"], "time": MAY, "filters": [{"field": "product.name", "op": "eq",
+                                                               "values": ["Toothpaste"]}]})
+    want = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE product_name = 'Toothpaste Small' AND {IN_MAY}")
+    assert float(got["kpi"]["value"]) == pytest.approx(float(want))
+    assert got["plan"]["filters"] == [{"field": "product.name", "op": "eq", "values": ["Toothpaste Small"]}]
 
 
 def test_a_name_never_offers_one_the_reader_cannot_see(retail):
@@ -410,9 +536,19 @@ def test_nothing_found_because_of_a_condition_kept_from_the_question_before_is_s
     others = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE {IN_MAY}")
     assert seen["figures"][0] == pytest.approx(float(others))
     offer = next(o for o in got["reply"]["offers"] if "Lakeside" not in o["label"])
+    assert got["reply"]["offers"][0] == offer        # the first button: likely the condition is no longer meant
     asked = chat.asked
     plain = chat.ask(offer["question"])
     assert chat.asked == asked and float(plain["kpi"]["value"]) == pytest.approx(float(others))
+    # "yes" asks the same
+    again = Chat(retail)
+    again.ask('Net sales for "Lakeside Wholesale" in January 2026', {
+        **_net(customer="Lakeside Wholesale"), "time": {"window": {"kind": "between", "start": "2026-01-01",
+                                                                   "end": "2026-01-31"}}})
+    again.ask("and in May 2026?", {**_net(customer="Lakeside Wholesale"), "time": MAY, "follow_up": "refine"})
+    asked = again.asked
+    said_yes = again.ask("yes")
+    assert again.asked == asked and float(said_yes["kpi"]["value"]) == pytest.approx(float(others))
 
 
 # ── two fair readings: each one worked out before asking ─────────────────────

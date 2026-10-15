@@ -174,6 +174,21 @@ class MemberIndex:
         best = difflib.SequenceMatcher(None, key, found[0]).ratio()
         return [stored[k] for k in found if difflib.SequenceMatcher(None, key, k).ratio() >= best - 0.05]
 
+    def nearest_anywhere(self, value: str) -> list[tuple[str, str]]:
+        """The members of any grouping written most like ``value``, as (grouping, member), closest first; none
+        past a list too long to read through on a question."""
+        import difflib
+
+        if sum(len(entries) for entries in self.names.values()) > NEAREST_MOST:
+            return []
+        key = normalise(value)
+        found = difflib.get_close_matches(key, list(self.names), n=5, cutoff=0.72)
+        if not found:
+            return []
+        best = difflib.SequenceMatcher(None, key, found[0]).ratio()
+        return [entry for k in found if difflib.SequenceMatcher(None, key, k).ratio() >= best - 0.05
+                for entry in self.names[k]]
+
     def homes(self, value: str) -> list[tuple[str, str]]:
         """Every grouping with a member ``value`` names, whole or by its own words, and that member."""
         out = {(a, v) for a, v in self._entries(normalise(value))}

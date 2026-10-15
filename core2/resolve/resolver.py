@@ -33,6 +33,7 @@ from core2.model.schema import (
     RefExpr,
     SemanticModel,
     SqlExpr,
+    Table,
     value_names,
 )
 from core2.plan.catalog import left_out_note, left_out_words
