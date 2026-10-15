@@ -110,6 +110,9 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
                 filters.append(f)
     if filters != list(plan.filters):
         update["filters"] = filters
+    if previous.segment is not None and plan.segment is None and not _OVERALL.search(question) \
+            and not _LET_GO.search(question) and answers(plan.model_copy(update={"segment": previous.segment})):
+        update["segment"] = previous.segment       # "and by month" after returning customers' sales: still theirs
     time = plan.time
     if time.compare is not None and time.compare == previous.time.compare and plan.intent != "drivers" \
             and names_own_period(question) and not _COMPARES.search(question):

@@ -182,6 +182,7 @@ class PartGroup:
     age_on: dt.date | None = None                          # a band of people's ages on this day, from a birth date
     # A member named by the key its rows hold when the table that names it has no row for it: (alias, column key).
     by_key: tuple[str, str] | None = None
+    segment: "SegmentUse | None" = None    # kind "segment": each row under its member's segment (New, Returning)
 
 
 @dataclass
@@ -225,6 +226,23 @@ class Semi:
 
 
 @dataclass
+class SegmentUse:
+    """Only (or split by) the members of a segment, decided by each member's own activity (core2/resolve/segments.py,
+    compiled in core2/compile/shapes.py segment_summary): joined to the rows by the member's key."""
+
+    alias: str                     # the part's alias holding the member's key
+    column: str                    # the member's key column
+    events: object                 # shapes.Events: each member's days of activity, up to the period's end
+    status: str                    # new | returning | won_back | repeat | one_time
+    window: Range                  # the question's period
+    per_row: str                   # "window": against the period's start; a grain: each row's period; "day": its day
+    date: DateUse | None = None    # the rows' date, for per_row other than "window"
+    prior: Range | None = None     # won back: the period before
+    split: tuple[str, str] | None = None    # a grouping by it: the two names (New, Returning)
+    name: str = "sg0"              # its members' summary, as the query names it
+
+
+@dataclass
 class Part:
     table: str
     alias: str
@@ -242,6 +260,7 @@ class Part:
     distinct_only: bool = False
     reached: dict[str, str] = field(default_factory=dict)   # table key -> alias, for columns a measure reads there
     row_level: bool = False  # each row's own value, not added up (a figure per row, summarised over the rows)
+    segments: list[SegmentUse] = field(default_factory=list)   # only (or split by) new, returning... members
 
 
 @dataclass
@@ -2207,6 +2226,10 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not "
                          "add up across its groups (an average or a ratio): no share of a total is worked out.")
+    if plan.segment is not None:
+        from core2.resolve.segments import attach
+
+        intent = attach(plan, model, ctx, builders, groups, conditions, window, intent, set(group_names.values()))
     for b, _ in builders:
         cautions.extend(c for c in b.cautions if c not in cautions)
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,

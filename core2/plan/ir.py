@@ -203,6 +203,19 @@ class Lifecycle(_Strict):
                     "loyal"] = "all"
 
 
+class Segment(_Strict):
+    """Only the members of a segment, or a split by it, for any other figure: "net sales from returning customers by
+    store" (status returning), "net sales: new vs returning customers" (status new, split). A member's own activity
+    decides it -- all of it, not only the rows the figure counts: new when their first ever was in the period (each
+    row's own period in a series), returning when they had some before it; won back, repeat and one-time over the
+    question's whole period."""
+
+    of: str                          # an entity slug: whose segment (customer)
+    measure: str                     # a measure slug whose rows are their activity (number of orders)
+    status: Literal["new", "returning", "won_back", "repeat", "one_time"] = "returning"
+    split: bool = False              # a grouping by it (new against returning, repeat against one-time)
+
+
 class Cohort(_Strict):
     """Members grouped by the period of their first activity (time.grain, a month by default), and how many are
     active in each period after it: "retention by month of first purchase", "subscription retention by start
@@ -301,6 +314,7 @@ class Plan(_Strict):
     # "unsure": the AI could not tell; decided in code (a follow-up when an answer precedes it), never asked of the reader
     follow_up: Literal["new", "refine", "unsure"] = "new"
     include_left_out: bool = False      # "including cancelled orders": the rows tables leave out by default
+    segment: Segment | None = None      # only (or split by) new, returning, repeat... members: core2/resolve/segments.py
     # Analytical shapes (core2/resolve/shapes.py), each optional so every stored plan still reads.
     per: PerMember | None = None
     rolling: Rolling | None = None

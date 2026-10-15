@@ -358,6 +358,12 @@ class _Compiler:
             if g.date is None or g.time_attr is None:
                 raise CompileError("a time attribute needs a date")
             return self.time_attribute(g.date, g.time_attr)
+        if g.kind == "segment":
+            from core2.compile.shapes import segment_label
+
+            if g.segment is None:
+                raise CompileError(f"{g.name} has no segment")
+            return segment_label(self, g.segment)
         if g.column is None:
             raise CompileError(f"{g.name} has no column")
         named = self.named_values(self.col(g.alias, g.column), g.column)
@@ -535,8 +541,18 @@ class _Compiler:
         for j in part.joins:
             select = select.join(self.table(j.table, j.alias), on=self.on(j),
                                  join_type="inner" if j.kind == "inner" else "left")
+        for seg in part.segments:
+            # Each member's activity in one row (their first day, their days in the period), joined by their key.
+            from core2.compile.shapes import segment_summary
+
+            select = select.join(segment_summary(self, seg), join_type="left", on=exp.EQ(
+                this=self.col(seg.alias, seg.column), expression=self.out(seg.name, "k")))
         conds: list[exp.Expr] = [self.predicate(self.col(p.alias, p.column), p.op, p.values, p.column)
                                        for p in part.preds]
+        if part.segments:
+            from core2.compile.shapes import segment_test
+
+            conds += [segment_test(self, seg, seg.status) for seg in part.segments if seg.split is None]
         conds += [self.exists(semi) for semi in part.semis]
         conds += [self.days_condition(p) for p in part.day_preds]
         conds += [self.predicate(self.time_attribute(t.date, t.name), t.op, list(t.values)) for t in part.time_preds]

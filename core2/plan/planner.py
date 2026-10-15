@@ -27,7 +27,7 @@ from core2.plan.catalog import catalog_text
 from core2.plan.followup import (asks_series, keeps_period, measures_named, names_own_period, points_at_period,
                                  the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
-from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
+from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Segment, Sort, Window, schema_text
 from core2.plan.thread import figures_carried, kept_from_above, member_of
 from core2.plan.values import Masked, ValueMatch, about_people, mask, placeholder, unmask
 from core2.resolve import paths as P
@@ -370,6 +370,19 @@ def _analyses(model: SemanticModel) -> str:
                 "time": {"window": {"kind": "this", "unit": "year"}}}
         lines.append(f"Q: average days between {things} per {e.business_name.lower()} this year\n"
                      f"A: {json.dumps(plan)}")
+        lines.append(
+            "- segment: any figure for only some members, by what they did: status new (first activity ever in the "
+            "period) | returning (active before it) | won_back | repeat (2 or more days with activity in it) | "
+            "one_time; of the entity, measure whose rows are their activity; the figure stays in measures, with its "
+            "own groupings. split true: a grouping by it instead (\"net sales: new vs returning customers\", \"repeat "
+            "vs one-time\"). Not for counting the members themselves (that is lifecycle).")
+        figure = next((x for x in model.measures.values() if x.table == count.table and not x.hidden
+                       and getattr(x.expr, "agg", "") == "sum"), count)
+        plan = {"kind": "query", "intent": "value", "measures": [figure.slug],
+                "segment": {"of": e.slug, "measure": count.slug, "status": "returning"},
+                "time": {"window": {"kind": "last", "unit": "month", "n": 2}}}
+        lines.append(f"Q: {figure.business_name.lower()} from returning {names.plural(e.business_name.lower())} in "
+                     f"the last 2 months\nA: {json.dumps(plan)}")
         lines.append(
             "- lifecycle: members by their activity over the window; no measures. No time.grain: one figure for the "
             "whole window (\"returning customers in the last 2 months\"); time.grain only when the question asks "
@@ -998,6 +1011,66 @@ def active_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
         "measures": [act.measure.slug], "intent": "count",
         "per": PerMember(of=act.entity.slug, summary="count", op="gte", values=[1.0]),
         "time": plan.time.model_copy(update={"date": None})})
+
+
+# Members of a segment named on a figure: "net sales from returning customers", "new vs returning customers".
+_SEGMENT_BEFORE = (("won_back", r"won[-\s]back|reactivated|reconquis"), ("one_time", r"one[-\s]time|single[-\s]purchase"),
+                   ("repeat", r"repeat"), ("returning", r"returning|existing|anciens?|anciennes?"),
+                   ("new", r"new|first[-\s]time|nouveaux|nouvelles?|nouvel"))
+_SEGMENT_AFTER = (("one_time", r"ponctuels?|ponctuelles?"), ("repeat", r"r[ée]currents?|r[ée]guliers?|fid[eè]les?"),
+                  ("returning", r"existants?|de\s+retour|qui\s+reviennent"))
+_SEGMENT_SPLIT = re.compile(r"\b(?:new|repeat|one[-\s]time|returning|nouveaux|r[ée]currents?)\s+(?:vs\.?|versus|against|"
+                            r"and|or|compared\s+(?:to|with)|et|ou|contre)\s+(?:new|returning|existing|repeat|one[-\s]time|"
+                            r"anciens|r[ée]currents?|ponctuels?)\b", re.IGNORECASE)
+
+
+def _segment_named(question: str, things: list[str]) -> str | None:
+    """The segment a question names of members called by any of ``things`` ("returning customers"), or None."""
+    words = "|".join(re.escape(t) for t in sorted(things, key=len, reverse=True))
+    for status, before in _SEGMENT_BEFORE:
+        if re.search(rf"\b(?:{before})\s+(?:{words})\b", question, re.IGNORECASE):
+            return status
+    for status, after in _SEGMENT_AFTER:
+        if re.search(rf"\b(?:{words})\s+(?:{after})\b", question, re.IGNORECASE):
+            return status
+    return None
+
+
+def segment_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Net sales from returning customers by store" planned as net sales by store, every customer counted: a
+    figure said of new, returning, repeat, one-time or won-back members is narrowed to them (split for "new vs
+    returning"), decided by each member's own activity. Never a count of the members themselves (lifecycle), nor
+    where a field of the data holds the word ("Returning" as a customer type the reader filtered on)."""
+    if plan.kind != "query" or plan.segment is not None or plan.shaped() or not plan.measures or not question:
+        return plan
+    if any(str(v).casefold() in question.casefold() for f in plan.filters for v in f.values
+           if isinstance(v, str) and len(v) >= 3):
+        return plan
+    from core2.plan.analyses import activities
+    from core2.plan.words import _EVERYDAY
+
+    figure = next((m for m in model.measures.values() if m.slug == plan.measures[0]), None)
+    for act in activities(model):
+        name = act.entity.business_name.lower()
+        said = {name, *_EVERYDAY.get(name, ()), *(w.lower() for ws in act.entity.synonyms.values() for w in ws)}
+        status = _segment_named(question, sorted({*said, *(names.plural(w) for w in said)}))
+        if status is None:
+            continue
+        if figure is not None and (figure.table == act.entity.table
+                                   or getattr(figure.expr, "agg", "") == "count_distinct"
+                                   and act.entity.key_columns[0].split(".")[-1] in str(getattr(figure.expr, "column", ""))):
+            return plan                 # the members counted: "how many returning customers" is a lifecycle
+        pair = _SEGMENT_SPLIT.search(question)
+        split = pair is not None and status in ("new", "returning", "repeat", "one_time")
+        if split and pair is not None:      # "new vs returning": the first one said
+            status = next((st for st, w in (*_SEGMENT_BEFORE, *_SEGMENT_AFTER)
+                           if re.fullmatch(w, pair.group(0).split()[0], re.IGNORECASE)), status)
+            status = "returning" if status == "won_back" else status
+        own = next((a for a in activities(model) if a.entity.slug == act.entity.slug and figure is not None
+                    and a.measure.table == figure.table), act)
+        return plan.model_copy(update={"segment": Segment(of=own.entity.slug, measure=own.measure.slug, status=status,
+                                                          split=split)})
+    return plan
 
 
 _MARGIN = re.compile(r"\bmargin|\bmarge\b", re.IGNORECASE)
@@ -2298,7 +2371,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
         for rule in (route_named, all_time_asked, period_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
-                     counted_where_done, active_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+                     counted_where_done, active_counted, segment_asked, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which

@@ -225,6 +225,11 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
             band = next(g for g in logical.groups if g.bands)
             definition = (f"Each row is put in the range of its own {band.label[:1].lower() + band.label[1:]}; a "
                           "range holds its lower edge and stops before the next.")
+    split = next((u for p in logical.parts for u in p.segments if u.split), None)
+    if split is not None:
+        said = segment_headline(payload, logical, split, span)
+        if said:
+            answer["headline"] = said
     if definition:
         payload["definition"] = definition
         answer["definition"] = definition
@@ -418,6 +423,31 @@ def lifecycle_headline(payload: dict[str, Any], shape: LifecycleShape, span: str
     when = f" {span}" if span else ""
     return (f"{v['active']:,} {things} had {shape.events.activity}{when}: {v['new']:,} new and {v['returning']:,} "
             f"returning ({v['won_back']:,} of them won back); {v['lapsed']:,} lapsed.")
+
+
+def segment_headline(payload: dict[str, Any], logical: Logical, split: Any, span: str) -> str:
+    """A figure split by a segment, both sides in one sentence: "Net amount in Q2 2023: $29.5K from new customers
+    (7.1%), $388.2K from returning customers (92.9%)." Only when the split is the answer's one grouping."""
+    from core2.answer.builder import fmt
+    from core2.resolve.resolver import adds_up
+
+    records = _records(payload)
+    shown = [m for m in logical.measures if not m.hidden]
+    if len(shown) != 1 or len(logical.groups) != 1 or not records:
+        return ""
+    m, name = shown[0], logical.groups[0].name
+    values = {str(r.get(name)): _float(r.get(m.name)) for r in records}
+    total = sum(v for v in values.values() if v is not None)
+    things = plural(split.events.member)
+    parts = []
+    for side in split.split:
+        v = values.get(side)
+        if v is None:
+            continue
+        share = f" ({_pct_words(100.0 * v / total)})" if adds_up(m) and total else ""
+        parts.append(f"{fmt(v, m.format, rounded=True)} from {side.lower()} {things}{share}")
+    when = f" {span}" if span else ""
+    return f"{m.label}{when}: {', '.join(parts)}." if parts else ""
 
 
 _EVERY = {"day": "daily", "week": "weekly", "month": "monthly", "quarter": "quarterly", "year": "yearly"}

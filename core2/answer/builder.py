@@ -191,6 +191,8 @@ def condition_words(c: Condition, *, quoted: bool = False, lang: str = "en") -> 
         return _condition_fr(c, quoted)
     if c.kind == "activity":
         return f"with {article(c.label)} {c.label}"
+    if c.kind == "segment":
+        return f"for {c.label}"              # "for returning customers"
     if c.kind == "by":
         return f"by {c.label}"
     if c.kind == "snapshot":
@@ -238,9 +240,16 @@ def condition_words(c: Condition, *, quoted: bool = False, lang: str = "en") -> 
     return f"where {c.label} is {_compared(c.op, [str(v) for v in c.values])}"
 
 
+_SEGMENT_FR = {"new": "nouveaux", "returning": "revenus", "won_back": "reconquis", "repeat": "réguliers",
+               "one_time": "ponctuels"}
+
+
 def _condition_fr(c: Condition, quoted: bool) -> str:
     if c.kind == "activity":
         return f"avec {c.label}"
+    if c.kind == "segment":
+        things = str(c.values[0]) if c.values else c.label
+        return f"pour les {things} {_SEGMENT_FR.get(c.op, '')}".strip()
     if c.kind == "by":
         return f"selon {c.label}"
     if c.kind == "snapshot":
@@ -678,7 +687,8 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
         # the one-offs set apart in the reading.
         framed["reading"] = reading.as_dict()
-    if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups):
+    if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups) \
+            or any(s.split for p in logical.parts for s in p.segments):
         from core2.answer.shaped import explain
 
         explain(framed, logical, list(columns), list(rows))

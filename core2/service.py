@@ -319,6 +319,15 @@ def _kept_said(plan: Plan, previous: Plan | None, question: str, model: Semantic
         name = getattr(thing, "business_name", "") or getattr(thing, "name", "") or f.field.split(".")[-1].replace("_", " ")
         values = ", ".join(str(v) for v in f.values)
         said.append(f"{name} {_OPS.get(f.op, f.op)} {values}".strip())
+    seg = plan.segment
+    if seg is not None and previous is not None and previous.segment == seg and plan.follow_up == "refine":
+        from core2.resolve.segments import WORDS
+
+        found = find_slug(model, seg.of)
+        thing = getattr(found[1], "business_name", "") if found is not None else ""
+        words = f"{WORDS[seg.status]} {names.plural((thing or seg.of).lower())}"
+        if not seg.split and words.casefold() not in question.casefold():
+            said.append(words)
     if window is not None:
         words = period_words(window)
         if words:

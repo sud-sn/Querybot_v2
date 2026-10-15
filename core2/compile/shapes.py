@@ -24,7 +24,7 @@ from sqlglot import exp
 from core2.compile.compiler import CompileError, OutColumn, _Compiler, _double, _num, equal_keys
 from core2.model.schema import AggExpr
 from core2.resolve import bands as B
-from core2.resolve.resolver import Logical, OutMeasure, Part, PartGroup
+from core2.resolve.resolver import Logical, OutMeasure, Part, PartGroup, SegmentUse
 from core2.resolve.shapes import (ABC, AGEING, AbsentShape, ActiveShape, CohortShape, Events, FunnelShape, GapShape,
                                   LifecycleShape, OnTimeShape, ParetoShape, PerShape, RollingShape, TogetherShape,
                                   WithinShape)
@@ -937,3 +937,59 @@ def _together(c: _Compiler, shape: TogetherShape) -> tuple[exp.Select, list[OutC
                                                          for m in c.q.measures]
     outer = exp.select(*[c.out("q", col.name) for col in columns])
     return outer.from_(level.subquery(c.name("q"))).with_(c.name("b"), as_=cleaned), columns, "q"
+
+
+# ── a segment narrowing any figure ─────────────────────────────────────────
+
+
+def segment_summary(c: _Compiler, seg: SegmentUse) -> exp.Subquery:
+    """Each member in one row: their first day of activity ever, their days with activity in the period, and
+    (won back) whether they had any in the period before it."""
+    e = seg.events
+    inner = f"{seg.name}e"
+    ev = c.part_select(e.part).subquery(c.name(inner))
+    day, key = c.out(inner, e.day), c.out(inner, e.key)
+    cols = [key.copy().as_(c.name("k")), exp.Min(this=day.copy()).as_(c.name("first_day"))]
+    if seg.window.start is not None and seg.window.end is not None:
+        now = exp.and_(exp.GTE(this=day.copy(), expression=D.date_literal(seg.window.start, c.d)),
+                       exp.LT(this=day.copy(), expression=D.date_literal(seg.window.end, c.d)))
+        cols.append(exp.Count(this=exp.Distinct(expressions=[exp.Case(ifs=[exp.If(this=now, true=day.copy())])]))
+                    .as_(c.name("days_now")))
+    if seg.prior is not None and seg.prior.start is not None and seg.window.start is not None:
+        was = exp.and_(exp.GTE(this=day.copy(), expression=D.date_literal(seg.prior.start, c.d)),
+                       exp.LT(this=day.copy(), expression=D.date_literal(seg.window.start, c.d)))
+        cols.append(exp.Max(this=_flag(was)).as_(c.name("was_active")))
+    return exp.select(*cols).from_(ev).group_by(key.copy()).subquery(c.name(seg.name))
+
+
+def segment_test(c: _Compiler, seg: SegmentUse, status: str) -> exp.Expr:
+    """Is a row's member in the segment: new when their first day is in the row's period (or the question's), and
+    so on."""
+    if status in ("new", "returning", "won_back"):
+        first = c.out(seg.name, "first_day")
+        if seg.per_row == "window":
+            assert seg.window.start is not None
+            start = D.date_literal(seg.window.start, c.d)
+        else:
+            assert seg.date is not None
+            start = D.day_start(c.date_value(seg.date), c.d) if seg.per_row == "day" else \
+                c.bucket(seg.date, seg.per_row)
+        if status == "new":
+            return exp.GTE(this=first, expression=start)
+        before = exp.LT(this=first, expression=start)
+        if status == "won_back":
+            return exp.and_(before, exp.EQ(this=c.out(seg.name, "was_active"), expression=_num(0)))
+        return before
+    days = c.out(seg.name, "days_now")
+    return exp.GTE(this=days, expression=_num(2)) if status == "repeat" else exp.EQ(this=days, expression=_num(1))
+
+
+_SPLIT_STATUS = {"New": "new", "Returning": "returning", "Repeat": "repeat", "One-time": "one_time"}
+
+
+def segment_label(c: _Compiler, seg: SegmentUse) -> exp.Expression:
+    """A row's member's segment by name: New or Returning, Repeat or One-time (none when they had no activity)."""
+    assert seg.split is not None
+    first, second = seg.split
+    return exp.Case(ifs=[exp.If(this=segment_test(c, seg, _SPLIT_STATUS[first]), true=exp.Literal.string(first)),
+                         exp.If(this=segment_test(c, seg, _SPLIT_STATUS[second]), true=exp.Literal.string(second))])
