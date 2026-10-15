@@ -403,6 +403,13 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
             propose(account_id, client, model=load_model(account_id, db_id), say=say, budget=LEARN_BUDGET)
         except Exception as exc:  # noqa: BLE001 - an admin can ask for them on the Requests page
             log.warning("core2: business metrics of %s not proposed after Learn: %s", account_id, exc, exc_info=True)
+        say("Mapping every question this data answers, and checking them on the data")
+        try:
+            from core2.question_map import build_for
+
+            build_for(account_id, client, say=say)
+        except Exception as exc:  # noqa: BLE001 - it is built again the first time it is needed
+            log.warning("core2: question map of %s not built after Learn: %s", account_id, exc, exc_info=True)
         left_out =sum("was left out" in note for note in model.notes)
         say(f"Done in {_took(began)}: version {version}, {len(model.tables)} tables, {len(model.measures)} measures"
             + (f"; {left_out} left out, each named in the notes below" if left_out else ""))

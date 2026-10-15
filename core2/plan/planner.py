@@ -458,11 +458,13 @@ def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | 
     return (default, later[0]) if later else None
 
 
-def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal_shown: bool = False) -> str:
-    """Rules, schema, catalog and examples: identical for every question on a model version."""
+def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal_shown: bool = False,
+                  routes: str = "") -> str:
+    """Rules, schema, catalog and examples: identical for every question on a model version. ``routes``: the
+    figures the question map counts on rows that name both lists (core2/question_map.py), by name only."""
     return "\n\n".join(part for part in (
         RULES, "PLAN SCHEMA (JSON Schema)\n" + schema_text(),
-        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), _examples(model),
+        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), routes, _examples(model),
         _analyses(model)) if part)
 
 
@@ -1953,7 +1955,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                   values_allowed: bool = True, scrub: Callable[[str], str] | None = None,
                   hidden: list[ValueMatch] | None = None,
                   reading: str | None = None, on_screen: list[tuple] | None = None,
-                  written: list[ValueMatch] | None = None, defined: list | None = None) -> Outcome:
+                  written: list[ValueMatch] | None = None, defined: list | None = None,
+                  routes: str = "") -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
@@ -1979,7 +1982,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             t.plan.model_dump(mode="json", exclude_defaults=True), model)) for t in history)
     masked = None if values_allowed and not people else mask(question, [*matches, *(hidden or [])], known=known)
     # A workspace under compliance (its questions scrubbed) shows people's details masked, never refuses them.
-    stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None)
+    stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None, routes=routes)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
                          scrub=scrub, model=model, reading=reading)
     raw: list[str] = []

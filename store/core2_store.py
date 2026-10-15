@@ -419,3 +419,22 @@ def get_core2_override(account_id: str, db_config_id: int | None, object_key: st
         return {"value": json.loads(row["value_json"]), "author": row["author"], "note": row["note"]}
     except (TypeError, ValueError):
         return None
+
+
+def save_core2_question_map(account_id: str, db_config_id: int | None, stamp: str, map_json: str) -> None:
+    """Keep a workspace's question map (core2/question_map.py), replacing the one before."""
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_question_map(account_id, db_config_id, stamp, built_at, map_json)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(account_id, db_config_id) DO UPDATE SET stamp = excluded.stamp,
+                   built_at = excluded.built_at, map_json = excluded.map_json""",
+            (account_id, int(db_config_id or 0), stamp, _now(), map_json))
+
+
+def load_core2_question_map(account_id: str, db_config_id: int | None) -> dict[str, Any] | None:
+    """``{stamp, built_at, map_json}`` of a workspace's question map, or None before the first."""
+    with get_db() as conn:
+        row = conn.execute("SELECT stamp, built_at, map_json FROM core2_question_map WHERE account_id = ? AND "
+                           "db_config_id = ?", (account_id, int(db_config_id or 0))).fetchone()
+    return {"stamp": row["stamp"], "built_at": row["built_at"], "map_json": row["map_json"]} if row else None

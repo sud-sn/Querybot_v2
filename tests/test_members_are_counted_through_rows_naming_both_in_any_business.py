@@ -98,6 +98,34 @@ def test_each_business_counts_the_members_on_the_rows_that_name_both(name, measu
     assert _by_member(got) == sorted(con.execute(by_hand).fetchall())
 
 
+def test_by_a_field_of_the_rows_themselves():
+    """A patient has no unit of measure; each fill has one and names its prescription, the prescription its
+    patient: the patients of a unit are the distinct patients of its fills. A prescription has several fills: its
+    count by their unit counts each prescription once per unit."""
+    con, _ = _domain("compounding_pharmacy")
+    _, sql, got = _run("compounding_pharmacy", {"intent": "breakdown", "measures": ["number_of_patients"],
+                                                "group_by": ["fill.unit_of_measure"]})
+    assert _by_member(got) == sorted(con.execute("""
+        SELECT f.unit_of_measure, COUNT(DISTINCT p.patient_id) FROM fills f
+        JOIN prescriptions p ON f.rx_number = p.rx_number GROUP BY 1""").fetchall())
+    _, _, got = _run("compounding_pharmacy", {"intent": "breakdown", "measures": ["number_of_prescriptions"],
+                                              "group_by": ["fill.unit_of_measure"]})
+    assert _by_member(got) == sorted(con.execute("""
+        SELECT unit_of_measure, COUNT(DISTINCT rx_number) FROM fills GROUP BY 1""").fetchall())
+
+
+def test_across_a_recipe_on_its_own_lines():
+    """A formula's ingredients are on its recipe lines: the ingredients of a dosage form are the distinct
+    ingredients of its formulas' lines, never only those of formulas someone was prescribed or holds stock of."""
+    con, _ = _domain("compounding_pharmacy")
+    logical, sql, got = _run("compounding_pharmacy", {"intent": "breakdown", "measures": ["number_of_ingredients"],
+                                                      "group_by": ["formula.dosage_form"]})
+    assert "formula_ingredients" in sql and "prescriptions" not in sql
+    assert _by_member(got) == sorted(con.execute("""
+        SELECT f.dosage_form, COUNT(DISTINCT fi.ingredient_id) FROM formula_ingredients fi
+        JOIN formulas f ON fi.formula_id = f.formula_id GROUP BY 1""").fetchall())
+
+
 def test_finance_counts_on_what_was_posted_never_on_the_budget():
     """Budgets name an account and a cost centre too; what the accounts of a division are is what was posted."""
     _, sql, _ = _run("finance", {"intent": "breakdown", "measures": ["number_of_accounts"],

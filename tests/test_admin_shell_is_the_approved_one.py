@@ -97,7 +97,7 @@ def test_a_workspace_page_says_where_it_is_and_whether_the_workspace_answers(adm
     menu = html[html.index('class="client-workspace-secondary ws-menu"'):]
     assert re.findall(r'>([^<>]+?)</a>', menu[:menu.index("</nav>")]) == [
         "Setup", "What Solviz learned", "Knowledge base", "Relationships", "Dates", "Metrics",
-        "Requests"]
+        "What readers can ask", "Requests"]
     # The header says where the page is: the page's own trail is not drawn twice.
     assert 'class="breadcrumb"' not in html
     # A page below one of the menu's pages names that page too.

@@ -194,7 +194,8 @@ from store.core2_store import (
     keep_core2_learn_table, resume_core2_learn, forget_core2_learn,
     get_query_engine, set_query_engine, log_core2_answer, get_core2_answer_plan, list_core2_answers, set_core2_import_report,
     core2_measure_uses, add_core2_request, get_core2_request, list_core2_requests, count_core2_requests,
-    waiting_core2_requests, decide_core2_request, get_core2_override,
+    waiting_core2_requests, decide_core2_request, get_core2_override, save_core2_question_map,
+    load_core2_question_map,
 )
 from store.llm_usage_store import (
     record_llm_usage, question_usage, usage_by_question, usage_totals, usage_daily, user_usage_this_month,
@@ -345,6 +346,7 @@ __all__ = [
     "get_query_engine","set_query_engine","log_core2_answer","get_core2_answer_plan","list_core2_answers","set_core2_import_report",
     "core2_measure_uses", "add_core2_request", "get_core2_request", "list_core2_requests",
     "count_core2_requests", "waiting_core2_requests", "decide_core2_request", "get_core2_override",
+    "save_core2_question_map", "load_core2_question_map",
     "record_llm_usage","question_usage","usage_by_question","usage_totals","usage_daily","user_usage_this_month",
     "list_llm_prices","save_llm_price","delete_llm_price","unpriced_models","deployments_used",
     "reprice_unpriced",

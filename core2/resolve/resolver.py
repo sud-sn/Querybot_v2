@@ -981,10 +981,12 @@ def _grouped_tables(model: SemanticModel, plan: Plan) -> set[str]:
 
 
 def _out_of_reach(model: SemanticModel, plan: Plan, table: str) -> set[str]:
-    """The tables of the plan's groupings and conditions a table's rows have no link to, not even one waiting for
-    an admin (a patient has no doctor of their own: the prescriptions name both)."""
+    """The tables of the plan's groupings and conditions a table's rows have no link to of their own, not even one
+    waiting for an admin (a patient has no doctor of their own: the prescriptions name both). One reached only
+    across a bridge is out of reach too: an ingredient's dosage forms are those of the formulas that use it, each
+    counted once on the rows that name both."""
     return {t for t in _grouped_tables(model, plan)
-            if t != table and not P.all_paths(model, table, t, unconfirmed=True) and not P.crossings(model, table, t)}
+            if t != table and not P.all_paths(model, table, t, unconfirmed=True)}
 
 
 def _ways(model: SemanticModel, start: str, goal: str) -> list[P.Path]:
@@ -1059,7 +1061,10 @@ def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, all
     if not _counts_members(model, measure):
         return None
     needed = _out_of_reach(model, plan, measure.table)
-    if not needed or any(P.all_paths(model, t, measure.table) for t in needed):
+    # A grouping on a list under the counted one (regions by customer) is not this question; one on rows that
+    # name the members (patients by the unit of their fills) is.
+    if not needed or any(P.all_paths(model, t, measure.table) and model.tables[t].kind not in _ROWS_FIRST
+                         for t in needed):
         return None
     # A date the question names says whose rows (fills by fill date); without one, rows of what happened before
     # plans and balances (journal lines before budgets).
@@ -1080,7 +1085,7 @@ def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, all
         if route is None or not _lands_on_members(model, measure, route.joins[-1]) \
                 or (allowed is not None and any(t not in allowed for t in route.tables)):
             continue
-        steps = len(route.joins)
+        steps, crossed = len(route.joins), bridged
         for t in needed:
             if t == key:
                 continue
@@ -1088,6 +1093,7 @@ def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, all
             if not ways or (allowed is not None and any(x not in allowed for x in ways[0].tables)):
                 break
             steps += len(ways[0].joins)
+            crossed = crossed or not P.all_paths(model, key, t)
         else:
             if on_date is not None and on_date.table != key and on_date.table not in _documents(model, key):
                 continue
@@ -1101,13 +1107,15 @@ def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, all
             # The member's id where the route reaches it: on the row that names it, or, across a bridge, on the
             # member's own row (the bridge is crossed only to reach a table beyond it).
             counted_column = last.to_columns[0] if bridged else last.from_columns[0]
-            candidates.append((_ROWS_FIRST.get(table.kind, 2), steps, _happened(model, table),
+            # Rows that name both lists themselves before rows that reach one across a bridge: an ingredient's
+            # dosage forms are read on the recipe's own lines, not on stock or prescriptions of some recipes.
+            candidates.append((crossed, _ROWS_FIRST.get(table.kind, 2), steps, _happened(model, table),
                                -(last.trust in ("admin", "declared", "verified")), -(table.row_count or 0), key,
                                counted_column))
     if not candidates:
         return None
-    best = min(candidates, key=lambda c: c[:6])
-    rows, column, counted = model.tables[best[5]], best[6], model.tables[measure.table]
+    best = min(candidates, key=lambda c: c[:7])
+    rows, column, counted = model.tables[best[6]], best[7], model.tables[measure.table]
     whole = f"{counted.business_name.lower()} list" if counted.kind == "dimension" else \
         f"{counted.business_name.lower()} table"
     # What the count leaves out on its own table (cancelled bookings), it leaves out here too: a technician's
@@ -1122,8 +1130,8 @@ def _members_by_links(model: SemanticModel, plan: Plan, measure: Measure, *, all
                     "; ".join(left_out_words(model, f) for f in counted.default_filters) + "), as asked.")
     # Rows as near and as much what happened that name both too (loans and cards, beside loan applications):
     # each holds its own members, so the answer says which it did not count on.
-    also = list(dict.fromkeys(model.tables[c[5]].business_name.lower() for c in sorted(candidates)
-                              if c[:3] == best[:3] and c[5] != best[5]))
+    also = list(dict.fromkeys(model.tables[c[6]].business_name.lower() for c in sorted(candidates)
+                              if c[:4] == best[:4] and c[6] != best[6]))
     if also:
         joined = also[0] if len(also) == 1 else ", ".join(also[:-1]) + " and " + also[-1]
         said.append(f"{joined[0].upper()}{joined[1:]} rows name both too; they are not counted here.")

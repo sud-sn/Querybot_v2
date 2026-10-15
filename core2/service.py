@@ -80,6 +80,9 @@ class Services:
     # The business metrics suggested from the data and waiting for an admin (core2/kpi_proposals.py), by name:
     # an executive dashboard says they are coming.
     waiting: Callable[[], list[str]] | None = None
+    # Every question the data answers, worked out and checked (core2/question_map.py): the planner is told the
+    # routes counted on rows that name both lists, and a question that cannot be answered offers the nearest.
+    question_map: Any = None
 
 
 @dataclass
@@ -488,6 +491,37 @@ def _described(question: str, services: Services, session: Session | None = None
             "widened": dashboards.widened(draft), "waiting": _waiting(services) if draft.executive else []}
 
 
+def _routes(services: Services) -> str:
+    if services.question_map is None:
+        return ""
+    from core2.question_map import routes_text
+
+    return routes_text(services.question_map)
+
+
+def _nearest(services: Services, plan: Plan | None) -> list[str]:
+    """The questions closest to one that cannot be answered, that this reader can ask: the same figure by
+    another grouping, or the same grouping of another figure (core2/question_map.py)."""
+    if services.question_map is None or plan is None or plan.kind != "query":
+        return []
+    from core2.question_map import nearest
+
+    found = nearest(services.question_map, measure=plan.measures[0] if plan.measures else "",
+                    group=plan.group_by[0] if plan.group_by else "", allowed=services.allowed_tables)
+    return [e.question for e in found]
+
+
+def _answerable_options(services: Services, options: list[str], tried: Plan | None, most: int = 6) -> list[str]:
+    """A question back's options with none the question map knows cannot be answered, and the nearest questions
+    that can be put first."""
+    from core2.question_map import ANSWERABLE
+
+    failing = {e.question.casefold() for e in services.question_map.entries if e.status != ANSWERABLE}
+    nearest = _nearest(services, tried)
+    kept = [o for o in options if o and o.casefold() not in failing and o not in nearest]
+    return [*nearest, *kept][:most]
+
+
 def _waiting(services: Services) -> list[str]:
     if services.waiting is None:
         return []
@@ -586,7 +620,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                 written=_visible(services.index.match(question), model, services.allowed_tables),
                                 defined=[d for t in session.turns[-HISTORY:] if t.plan is not None for d in t.plan.derived],
                                 reading=reading.kind if reading.kind in ("refine", "new") else None,
-                                on_screen=list(seen.shown) if seen is not None and reading.kind != "new" else None)
+                                on_screen=list(seen.shown) if seen is not None and reading.kind != "new" else None,
+                                routes=_routes(services))
         following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
@@ -613,6 +648,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         if clarify.about != "member" and clarify.options:
             # "number_of_doctors" is what the planner calls it; the reader sees, and clicks, "Number of doctors".
             clarify = clarify.model_copy(update={"options": _named_options(model, clarify.options)})
+        if outcome.problems and services.question_map is not None:
+            # The plans did not check out: never offer one the data cannot answer either, and offer the nearest
+            # it can (core2/question_map.py).
+            clarify = clarify.model_copy(update={"options": _answerable_options(services, clarify.options,
+                                                                                 outcome.tried)})
         asked = _clarification(question, clarify)
         if outcome.problems:      # the planner's plans did not check out: what it tried, and why not
             asked["trust"] = {**asked["trust"], "considered": _considered(outcome.tried, model),
@@ -640,8 +680,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
                                                     options=exc.options))
         template = _REFUSALS.get(exc.kind, "{message}.")
         stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options else "")
+        instead = _nearest(services, plan)
         return _refused(question, template.format(message=exc.message), plan, services, stopped, session,
-                        outcome.masked, unsupported=exc.kind == "unsupported")
+                        outcome.masked, unsupported=exc.kind == "unsupported",
+                        **({"follow_up_suggestions": [{"label": q, "question": q} for q in instead]} if instead
+                           else {}))
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
@@ -1849,7 +1892,18 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         # offered only where the question itself may reach the AI as typed.
         write_metric=(lambda words: metric_writer(account_id, client, description=words))
         if scrub is None and indexing else None, industry=industry_of(account_id),
-        waiting=lambda: waiting_metrics(account_id, tables)), None
+        waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client)), None
+
+
+def _question_map(account_id: str, client: dict[str, Any]):
+    """The workspace's question map when it was built on the model as it is now; None while it is rebuilt."""
+    try:
+        from core2.question_map import current
+
+        return current(account_id, client)
+    except Exception as exc:  # noqa: BLE001 - the question is answered without it
+        log.warning("core2: the question map of %s could not be read: %s", account_id, exc)
+        return None
 
 
 def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "") -> str | None:

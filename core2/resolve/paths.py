@@ -20,8 +20,11 @@ default, so an admin decides by naming the role of the route not wanted.
 
 from __future__ import annotations
 
+import contextvars
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import Any, Iterator
 
 from core2.model.schema import Join, SemanticModel
 
@@ -91,9 +94,35 @@ def unchecked(j: Join) -> bool:
     return not j.target_checked and j.provenance != "profile" and not j.to_calendar
 
 
+# While one model is read many times and not changed (a question map judging thousands of questions), each way
+# of reading its links is built once. Held for one thread of work, and only for the model it was read from.
+_FIXED: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("core2_links_fixed", default=None)
+
+
+@contextmanager
+def fixed(model: SemanticModel) -> Iterator[None]:
+    """Inside, ``model``'s links are taken not to change: its link graph is built once for each way it is read."""
+    token = _FIXED.set({"model": model, "edges": {}})
+    try:
+        yield
+    finally:
+        _FIXED.reset(token)
+
+
 def _edges(model: SemanticModel, unconfirmed: bool = False, skip: frozenset[str] = frozenset(),
            repeating: bool = False) -> dict[str, list[Join]]:
     """``repeating``: also the links that would count a row more than once -- to say why a question stops."""
+    held = _FIXED.get()
+    if held is None or held["model"] is not model:
+        return _read_edges(model, unconfirmed, skip, repeating)
+    key = (unconfirmed, frozenset(skip), repeating)
+    if key not in held["edges"]:
+        held["edges"][key] = _read_edges(model, unconfirmed, skip, repeating)
+    return held["edges"][key]
+
+
+def _read_edges(model: SemanticModel, unconfirmed: bool, skip: frozenset[str],
+                repeating: bool) -> dict[str, list[Join]]:
     out: dict[str, list[Join]] = {}
     for j in sorted(model.joins.values(), key=lambda j: j.key):
         allowed = usable(j) or (unconfirmed and j.trust != "rejected")
@@ -115,7 +144,10 @@ def all_paths(model: SemanticModel, start: str, goal: str, *, through: str | Non
     """
     if start == goal:
         return [Path([])]
-    edges = _edges(model, unconfirmed, skip, repeating)
+    return _walk(_edges(model, unconfirmed, skip, repeating), start, goal, through)
+
+
+def _walk(edges: dict[str, list[Join]], start: str, goal: str, through: str | None = None) -> list[Path]:
     found: list[Path] = []
     stack: list[tuple[str, list[Join]]] = [(start, [])]
     while stack:
@@ -196,6 +228,21 @@ def crossings(model: SemanticModel, start: str, goal: str, *, through: str | Non
     counted once for each (``overlaps``), unless the bridge holds one row for each of the entered table's.
     """
     found: list[Path] = []
+    edges: dict[str, list[Join]] | None = None
+    walked: dict[tuple[str, str], list[Path]] = {}
+
+    def paths(a: str, b: str) -> list[Path]:
+        # The model does not change while the bridges are tried: its links are read once, each route walked once
+        # (a schema of 70 tables otherwise read them hundreds of thousands of times for one question map).
+        nonlocal edges
+        if a == b:
+            return [Path([])]
+        if (a, b) not in walked:
+            if edges is None:
+                edges = _edges(model, False, skip, False)
+            walked[(a, b)] = _walk(edges, a, b)
+        return walked[(a, b)]
+
     for bridge in sorted(model.tables.values(), key=lambda t: t.key):
         if bridge.kind != "bridge" or not bridge.primary_key or bridge.key in (start, goal):
             continue
@@ -207,8 +254,8 @@ def crossings(model: SemanticModel, start: str, goal: str, *, through: str | Non
                     continue
                 if not set(bridge.primary_key) <= set(entered.from_columns) | set(left.from_columns):
                     continue          # a pair could be held twice: a row would count twice under one member
-                before = all_paths(model, start, entered.to_table, skip=skip)
-                after = all_paths(model, left.to_table, goal, skip=skip)
+                before = paths(start, entered.to_table)
+                after = paths(left.to_table, goal)
                 if not before or not after:
                     continue
                 joins = before[0].joins + [reverse(entered), left] + after[0].joins

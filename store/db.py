@@ -1778,6 +1778,15 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (account_id, db_config_id, started_at)
         );
 
+        CREATE TABLE IF NOT EXISTS core2_question_map (
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            stamp          TEXT NOT NULL DEFAULT '',
+            built_at       TEXT NOT NULL DEFAULT '',
+            map_json       TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (account_id, db_config_id)
+        );
+
         CREATE TABLE IF NOT EXISTS core2_learn_table (
             account_id     TEXT NOT NULL,
             db_config_id   INTEGER NOT NULL DEFAULT 0,

@@ -1,0 +1,122 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import badge, breadcrumb, empty_state %}
+{% from "icons.html" import ic %}
+{% block title %}What readers can ask — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "What readers can ask", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* Every question the data answers, by subject, and each one it cannot with why (core2/question_map.py). */
+.qa-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.qa-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.qa-head p{margin:0;color:var(--text-muted);max-width:640px;font-size:var(--font-base)}
+.qa-check{display:grid;gap:6px;justify-items:end;max-width:360px}
+.qa-check p{font-size:var(--font-sm);text-align:right;margin:0;color:var(--text-muted)}
+.qa-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px}
+.qa-stat{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;padding:12px 14px;display:grid;gap:2px}
+.qa-stat b{font-size:var(--font-2xl);color:var(--text-strong);font-variant-numeric:tabular-nums}
+.qa-stat span{font-size:var(--font-sm);color:var(--text-muted)}
+.qa-stale{margin:0 0 14px;padding:10px 14px;border-radius:10px;background:var(--warning-soft, var(--primary-soft));color:var(--text);font-size:var(--font-sm)}
+.qa-list{display:grid;gap:10px}
+.qa-subject{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;overflow:hidden}
+.qa-subject summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 16px;flex-wrap:wrap}
+.qa-subject summary::-webkit-details-marker{display:none}
+.qa-subject summary strong{font-size:var(--font-md);color:var(--text-strong);flex:1;min-width:0}
+.qa-gaps{border-top:1px solid var(--grid-line);display:grid}
+.qa-gap{display:grid;grid-template-columns:minmax(0,1.2fr) 130px minmax(0,1.6fr);gap:12px;padding:10px 16px;border-top:1px solid var(--grid-line);font-size:var(--font-sm);align-items:start}
+.qa-gap:first-child{border-top:0}
+.qa-gap .q{color:var(--text-strong);font-weight:var(--weight-semibold)}
+.qa-gap .why{color:var(--text-muted)}
+.qa-gap .why a{white-space:nowrap}
+.qa-kind{font-size:var(--font-xs);font-weight:var(--weight-semibold);color:var(--text-muted)}
+.qa-none{padding:10px 16px;font-size:var(--font-sm);color:var(--text-muted);border-top:1px solid var(--grid-line)}
+@media(max-width:760px){.qa-gap{grid-template-columns:minmax(0,1fr)}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="qa-head">
+  <div>
+    <h1>What readers can ask</h1>
+    <p>Every question this data answers, worked out from what Solviz learned and checked on the data, and each one it
+      cannot answer with the reason. Suggested questions and the chat use this list; it is rebuilt after Learn and a
+      few seconds after any change to metrics, links or dates.</p>
+  </div>
+  {% if learned %}
+  <div class="qa-check">
+    <button type="button" class="btn btn-secondary btn-sm" id="qa-check">{{ ic("refresh", 14) }} Check now</button>
+    <p id="qa-check-said" role="status" hidden></p>
+  </div>
+  {% endif %}
+</div>
+
+{% if not learned %}
+  {{ empty_state("Not learned yet", "Run Learn on the Setup page; the questions this data answers are listed here when it finishes.") }}
+{% elif qmap is none %}
+  {{ empty_state("Not mapped yet", "Press Check now to work out every question this data answers.") }}
+{% else %}
+  {% if not fresh %}<p class="qa-stale">The data's metrics, links or dates changed since this list was made; it is being rebuilt. Check now rebuilds it at once.</p>{% endif %}
+  <div class="qa-stats">
+    <div class="qa-stat"><b>{{ answerable }}</b><span>questions answered</span></div>
+    <div class="qa-stat"><b>{{ on_rows }}</b><span>counted on rows that name both lists</span></div>
+    <div class="qa-stat"><b>{{ gaps }}</b><span>that cannot be answered, each with why</span></div>
+    <div class="qa-stat"><b>{{ qmap.checked_at[:16] if qmap.checked_at else qmap.built_at[:16] }}</b><span>{{ "checked on the data" if qmap.checked_at else "worked out" }} (UTC)</span></div>
+  </div>
+  <div class="qa-list">
+    {% for s in subjects %}
+    <details class="qa-subject"{% if loop.first and s.gaps %} open{% endif %}>
+      <summary>
+        <strong>{{ s.subject }}</strong>
+        {{ badge(s.answerable ~ " answered", "success") }}
+        {% if s.empty %}{{ badge(s.empty ~ " with no rows", "neutral") }}{% endif %}
+        {% if s.gaps %}{{ badge(s.gaps|length ~ " not answered", "neutral") }}{% endif %}
+      </summary>
+      <div class="qa-gaps">
+        {% for g in s.gaps[:60] %}
+        {% set words = gap_words.get(g.status, ("Not answered", "", "")) %}
+        <div class="qa-gap">
+          <span class="q">{{ g.question }}</span>
+          <span class="qa-kind">{{ words[0] }}</span>
+          <span class="why">{{ g.reason or words[1] }}{% if g.options %} ({{ g.options|join(", ") }}){% endif %}
+            {% if words[2] == "relationships" %} · <a href="/admin/clients/{{ client.account_id }}/relationships">Relationships</a>{% endif %}</span>
+        </div>
+        {% else %}
+        <p class="qa-none">Every question about {{ s.subject|lower }} is answered.</p>
+        {% endfor %}
+        {% if s.gaps|length > 60 %}<p class="qa-none">And {{ s.gaps|length - 60 }} more of the same kinds.</p>{% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<script type="application/json" id="qa-data">{{ {"account": client.account_id} | tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var data = JSON.parse(document.getElementById('qa-data').textContent);
+  var button = document.getElementById('qa-check');
+  if (!button) { return; }
+  button.addEventListener('click', function () {
+    var said = document.getElementById('qa-check-said');
+    button.disabled = true;
+    said.hidden = false;
+    said.textContent = 'Working out every question this data answers, and checking them on the data…';
+    fetch('/admin/clients/' + encodeURIComponent(data.account) + '/askable/api/check', {method: 'POST', credentials: 'same-origin'})
+      .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'The server did not answer.'}; }); })
+      .catch(function () { return {ok: false, error: 'The server could not be reached.'}; })
+      .then(function (r) {
+        button.disabled = false;
+        if (!r || !r.ok) { said.textContent = (r && r.error) || 'It could not be checked.'; return; }
+        said.textContent = r.answerable + ' questions answered; ' + r.gaps + ' cannot be.';
+        setTimeout(function () { window.location.reload(); }, 1500);
+      });
+  });
+})();
+</script>
+{% endblock %}
