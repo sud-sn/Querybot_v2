@@ -1331,12 +1331,74 @@ def _named_for_readers(plan: Plan) -> Plan:
 
 
 def resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
-    from core2.resolve import age
+    from core2.resolve import age, figures
 
     plan = _named_for_readers(plan)
+    plan = _each_row_compared(plan, model)
+    # Figures no metric holds, worked out for this question from the formula the plan carries.
+    plan, model, worked = figures.worked_out(plan, model, ctx)
+    plan = _extreme(plan, model)
     if age.uses_age(plan, model):
-        return age.resolve_with_age(plan, model, ctx)       # type: ignore[return-value]
-    return _resolve(plan, model, ctx)
+        logical = age.resolve_with_age(plan, model, ctx)       # type: ignore[assignment]
+    else:
+        logical = _resolve(plan, model, ctx)
+    if worked and isinstance(getattr(logical, "notes", None), list):
+        logical.notes[:0] = [n for n in worked if n not in logical.notes]
+    return logical
+
+
+def _each_row_compared(plan: Plan, model: SemanticModel) -> Plan:
+    """"The average ingredient cost of a fill this year against last year", planned as each fill's cost averaged
+    over the fills and compared, was refused: a figure worked out over members is not compared over two periods.
+    Over each row of the figure's own table it is no figure over members at all but the field's own average (or
+    lowest, or highest): worked out as that, it is compared like any figure."""
+    from core2.model import authoring
+    from core2.plan.ir import Figure
+
+    per = plan.per
+    if (per is None or plan.time.compare is None or per.summary not in ("avg", "min", "max") or per.op is not None
+            or per.everyone or len(plan.measures) != 1 or plan.derived or plan.rates):
+        return plan
+    found = find_slug(model, plan.measures[0])
+    if not found or found[0] != "measure":
+        return plan
+    m = found[1]
+    if not (isinstance(m.expr, AggExpr) and m.expr.agg == "sum" and m.expr.column and not m.expr.filters
+            and not m.filters):
+        return plan
+    if per.of:
+        counted = find_slug(model, per.of)
+        c = counted[1] if counted and counted[0] == "measure" else None
+        if c is None or c.table != m.table or c.filters or not (
+                isinstance(c.expr, AggExpr) and c.expr.agg == "count" and c.expr.column is None
+                and c.expr.table in (None, m.table) and not c.expr.filters):
+            return plan          # each member of a list ("per customer"), not each row: not the field's own figure
+    word = {"avg": "Average", "min": "Lowest", "max": "Highest"}[per.summary]
+    figure = Figure(name=f"{word} {m.business_name[:1].lower()}{m.business_name[1:]}",
+                    formula=f"{per.summary.upper()}([{authoring.field_ref(model, m.expr.column)}])", format=m.format)
+    return plan.model_copy(update={"per": None, "measures": [], "figures": [*plan.figures, figure],
+                                   "sort": [s for s in plan.sort if s.by not in (m.slug, plan.measures[0])]})
+
+
+def _extreme(plan: Plan, model: SemanticModel) -> Plan:
+    """"The lowest batch yield" planned as the yield sorted with one row kept, and nothing to rank: one row was all
+    there ever was, the yield over every batch, and its average was shown as the lowest. With nothing grouped, the
+    lowest (or highest) of a figure read from one field is the smallest (or largest) value that field takes."""
+    from core2.plan.ir import PerMember
+
+    if (len(plan.measures) != 1 or len(plan.sort) != 1 or plan.limit is None or plan.group_by or plan.shaped()
+            or plan.time.grain or plan.time.compare is not None or plan.derived or plan.rates or plan.durations
+            or plan.intent in ("drivers", "forecast")):
+        return plan
+    found = find_slug(model, plan.measures[0])
+    by = find_slug(model, plan.sort[0].by)
+    if not found or found[0] != "measure" or not by or by[1] is not found[1]:
+        return plan
+    m = found[1]
+    if not (isinstance(m.expr, AggExpr) and m.expr.column and m.expr.agg in ("sum", "avg", "min", "max")):
+        return plan
+    return plan.model_copy(update={"per": PerMember(summary="max" if plan.sort[0].desc else "min"), "sort": [],
+                                   "limit": None})
 
 
 # A part of the calendar each period of a grain falls in once: by it, a series of those periods says nothing more

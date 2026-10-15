@@ -222,3 +222,16 @@ def test_learn_ends_by_mapping_the_questions():
 
     source = inspect.getsource(service.build_workspace)
     assert "from core2.question_map import build_for" in source
+
+
+def test_every_partys_activity_has_its_analyses_not_only_the_main_one():
+    # Returning patients were asked of fills alone; prescribers' prescriptions, payers' claims are activity too.
+    from core2.plan.analyses import activities
+
+    _, model, qmap = _domain("compounding_pharmacy")
+    acts = activities(model)
+    assert len(acts) >= 2
+    gaps = [e for e in qmap.entries if e.kind == "analysis" and e.analysis == "gap"]
+    assert {e.plan["gap"]["of"] for e in gaps} >= {a.entity.slug for a in acts[:2]}
+    assert all(e.status == Q.ANSWERABLE and e.ran for e in qmap.entries
+               if e.kind == "analysis" and e.analysis in ("gap", "lifecycle", "cohort"))

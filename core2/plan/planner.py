@@ -28,7 +28,7 @@ from core2.plan.followup import (asks_series, keeps_period, measures_named, name
                                  the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Sort, Window, schema_text
-from core2.plan.thread import kept_from_above, member_of
+from core2.plan.thread import figures_carried, kept_from_above, member_of
 from core2.plan.values import Masked, ValueMatch, about_people, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -72,6 +72,26 @@ How to plan:
    keep groups by their figure instead ("carriers whose average delivery takes over 4 days", "ship methods
    with a transit time of 3 days" when no field holds it), keep the duration as a measure and set total
    true on its filter. Sort by a duration with its name.
+   FIGURES WORKED OUT FOR THE QUESTION: when no measure in the catalog is the figure asked and none can be
+   made with derived or rates, never refuse and never answer with a near figure: put it in "figures", a short
+   name the reader would use and a formula in this language. Fields are written [Subject · Field], the subject
+   as its MEASURES heading names it and the field as a measure's definition names it ("sum of Price charged"
+   under "## Fill" is [Fill · Price charged]). SUM, AVG, MIN, MAX, COUNT(field), COUNT(DISTINCT field) add a
+   field up; + - * / work on each row inside them; CASE WHEN field > 100 THEN 1 END counts or adds rows that meet
+   a condition. "The lowest yield": MIN([Batch · Yield percent]). "The largest single claim paid":
+   MAX([Claim · Paid amount]). "Average margin per fill, price charged minus ingredient cost":
+   AVG([Fill · Price charged] - [Fill · Ingredient cost]). "The smallest and largest quantity dispensed": two
+   figures, MIN and MAX. "Average ingredient cost of a fill this year against last year": AVG([Fill · Ingredient
+   cost]) with time.compare. A figure's name is then used like a measure slug (sort.by, filters, derived);
+   grouping, periods, comparisons and the table's left-out rows apply to it as to any measure. A median or a
+   percentile stays in per (summary median or percentile); a figure per member ("per customer") stays in per
+   with of; a share of rows meeting a condition stays in rates. A field marked personal is never in a formula.
+   A figure stands in for the measure it is worked out from: "the largest single claim" is the MAX figure alone,
+   never with the claims' total beside it unless the question asks for both; the fields a figure is made of
+   ("price charged minus ingredient cost") are its definition, not measures of the plan, unless the question asks
+   for them on their own as well. Name it in words ("Largest claim paid"), never as a slug. "The highest
+   interest rate on a loan, by product" is each product's highest: MAX([Loan · Interest rate]) grouped by product,
+   never the products ranked by their average rate.
 3. group_by: attribute or entity slugs for "by X", "per X", "each X", "which X"; an entity slug groups by
    its name. A time: attribute for "by weekday", "by month of the year", "weekends". When the catalog lists
    roles for an entity and the question names one ("by ship-to customer", "the customer's home store"),
@@ -1207,9 +1227,60 @@ def average_asked(plan: Plan, model: SemanticModel, question: str) -> Plan:
     if getattr(measure.expr, "agg", "") != "sum":
         return plan
     rest = re.split(r"[?.;!]", question[hit.end():], maxsplit=1)[0]
-    if _PER_SOMETHING.search(rest) or measure.slug not in measures_named(model, rest):
+    # "Average term in months of loans by product": the figure's words (Loan term) are all there, not side by side.
+    named = measure.slug in measures_named(model, rest) or (_words(measure.business_name)
+                                                            and _words(measure.business_name) <= _words(rest))
+    if _PER_SOMETHING.search(rest) or not named:
         return plan
     return plan.model_copy(update={"per": PerMember(of=None, summary="avg")})
+
+
+# A figure the question defines as it asks for it: "price charged minus ingredient cost", "paid divided by billed".
+_DEFINES = re.compile(r"\b(?:minus|less(?!\s+than)|plus|times|multiplied\s+by|divided\s+by|over(?!\s+(?:the\s+)?"
+                      r"(?:last|past|next|time|\d)))\b\s+(?:the\s+)?[a-z]", re.I)
+
+
+def figure_parts_left_out(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """"Average margin per fill, price charged minus ingredient cost minus labor cost" was answered with the margin
+    and the three totals it is made of: the fields a figure is worked out from, named in the question only to define
+    it, are no figures of the answer. Asked for on their own too ("price charged, ingredient cost and their
+    difference") there is no defining word between them, and they stay."""
+    if plan.kind != "query" or not plan.figures or not _DEFINES.search(question or ""):
+        return plan
+    from core2.model import authoring
+    from core2.model.schema import AggExpr
+
+    reads: set[str] = set()
+    for figure in plan.figures:
+        try:
+            reads.update(authoring.read(model, figure.formula).columns)
+        except authoring.AuthoringError:
+            return plan
+    parts = {m.slug for m in model.measures.values()
+             if isinstance(m.expr, AggExpr) and m.expr.column in reads and not m.filters}
+    kept = [s for s in plan.measures if s not in parts]
+    if kept == plan.measures or not kept:
+        return plan
+    return plan.model_copy(update={"measures": kept, "sort": [s for s in plan.sort if s.by not in parts]})
+
+
+def series_in_a_name(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """"Average monthly payment on loans funded in 2025" was answered month by month: "monthly" there is part of
+    the figure's name (Monthly payment), not a series asked for. A grain whose only series words sit inside the
+    names of the figures the plan counts is dropped: one figure over the period."""
+    if plan.kind != "query" or plan.time.grain is None or not asks_series(question):
+        return plan
+    text = question
+    for name in [*(m.business_name for m in model.measures.values() if m.slug in plan.measures),
+                 *(f.name for f in plan.figures)]:
+        if name:
+            text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+    if asks_series(text):
+        return plan
+    update: dict = {"time": plan.time.model_copy(update={"grain": None})}
+    if plan.intent == "trend":
+        update["intent"] = "breakdown" if plan.group_by else "value"
+    return plan.model_copy(update=update)
 
 
 def _plain_words(text: str) -> str:
@@ -1778,6 +1849,15 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
         return ([] if plan.clarify and plan.clarify.question else ["a clarify plan needs clarify.question"]), ""
     if plan.kind != "query":
         return [], ""
+    if plan.figures:
+        # Figures worked out for the question: read first, so a formula that cannot be read goes back to be
+        # written again, and the checks below find the figures by their names.
+        from core2.resolve.figures import worked_out
+
+        try:
+            plan, model, _ = worked_out(plan, model, Context(today=today))
+        except ResolveError as exc:
+            return [f"{exc.message}."], ""
     shape = _shape(plan, model, question)
     if shape:
         return shape, ""
@@ -2075,6 +2155,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         plan = fill_in(plan, model, before if history and reading is None else None,
                         '"follow_up"' in text, question)
         plan = carried(plan, before, reading)
+        if before is not None and before.kind == "query" and plan.kind == "query":
+            plan = figures_carried(plan, before)       # "and by formula" after a figure worked out above
         plan = late_asked(plan, question)
         plan = pointed_in(plan, model, matches, question, on_screen)
         plan = ratio_alone(plan, model, question)
@@ -2086,7 +2168,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             plan = snapped
         for rule in (route_named, all_time_asked, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
-                     list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales):
+                     list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
+                     series_in_a_name, figure_parts_left_out):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice

@@ -45,6 +45,7 @@ from core2.plan.planner import Complete, Outcome, Turn, last_plan, period_words,
 from core2.plan.thread import kept_parts
 from core2.plan.values import (Masked, MemberIndex, ValueMatch, about_people, build_index, listable, normalise,
                                 people_column, placed, quoted_spans, which_end, slugs_in)
+from core2.resolve.figures import worked_out
 from core2.resolve.resolver import Context, ResolveError, find_slug, resolve
 from core2.resolve.time import Range, label as period_label, periods
 from core2.warehouse.runner import Guarded, QueryFailed, Warehouse
@@ -669,6 +670,11 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     shown: list[tuple] = []
     periods: list[str] = []
     try:
+        if plan.figures:
+            # Figures no metric holds, worked out for this question (core2/resolve/figures.py): the whole answer
+            # counts and names them like any other.
+            plan, model, _ = worked_out(plan, model, ctx)
+            services = replace(services, model=model)
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown,
                            periods=periods, notes=True)
     except ResolveError as exc:
@@ -699,6 +705,8 @@ def _answer_question(question: str, services: Services, session: Session, *, que
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
                         session, outcome.masked, unsupported=True)
+    if plan.figures:
+        payload["figures"] = _figures_shown(plan, model)
     for thing, value in unknown_left_out[:3]:
         payload.setdefault("coverage_caveats", []).append(
             f'No {thing} is called "{value}" in the data, so leaving it out changed nothing. Name it as the data '
@@ -776,6 +784,23 @@ def _marked(payload: dict[str, Any], plan: Plan, model: SemanticModel) -> dict[s
     if any(about_people(model, slug) for slug in slugs_in(plan.model_dump(mode="json", exclude_defaults=True))):
         payload["personal"] = True
     return payload
+
+
+def _figures_shown(plan: Plan, model: SemanticModel) -> list[dict[str, Any]]:
+    """The figures an answer worked out for its question, as the reader sees them: each name and how it was
+    counted, in the formula language an admin would save it in (for "Save as a metric")."""
+    from core2.model import authoring
+    from core2.resolve.figures import PREFIX
+    from core2.resolve.resolver import _readable
+
+    shown = []
+    for figure in plan.figures:
+        m = next((m for m in model.measures.values()
+                  if m.key.startswith(PREFIX) and m.business_name == _readable(figure.name)), None)
+        if m is not None:
+            shown.append({"name": m.business_name, "formula": authoring.to_text(model, m.expr), "format": m.format,
+                          "tables": authoring.counted_on(model, m), "measure": m})
+    return shown
 
 
 def _shown_title(payload: dict[str, Any]) -> str:
@@ -2002,6 +2027,12 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
         # The definition stays on the server; the reader's buttons name it by a token only they can use.
         own["token"] = _own_token(account_id, str((portal_user or {}).get("id") or ""), session_key,
                                   own.pop("measure"), own.get("words", ""), question_id)
+    for figure in payload.get("figures") or []:
+        # A figure worked out for the question: its definition stays here too, and "Ask my admin to save it"
+        # names it by a token, as a reader's own metric is (core2/request_service.py re-keys it on acceptance).
+        if isinstance(figure.get("measure"), Measure):
+            figure["token"] = _own_token(account_id, str((portal_user or {}).get("id") or ""), session_key,
+                                         figure.pop("measure"), figure.get("formula", ""), question_id)
     return payload
 
 

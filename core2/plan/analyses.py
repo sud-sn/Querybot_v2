@@ -59,22 +59,49 @@ def party(entity: Entity) -> bool:
 def activity(model: SemanticModel, may: May = _all) -> Activity | None:
     """The main activity: the largest table with a dated count of its own (orders, fills), and the party with the
     most members its rows reach (customers, patients)."""
+    found = activities(model, may, most=1)
+    return found[0] if found else None
+
+
+def activities(model: SemanticModel, may: May = _all, most: int | None = None) -> list[Activity]:
+    """Every party's activity on every table of dated rows that reaches it, the main one first: the largest table
+    with a dated count of its own (orders, fills) and, for each, the parties its rows reach, most members first
+    (patients' fills, prescribers' prescriptions, payers' claims). Returning members, retention and the time between
+    events are asked of any of them, not only the main one."""
     counts = [m for m in model.measures.values() if not m.hidden and m.table in model.tables and may(m.table)
               and m.default_date and (getattr(m.expr, "agg", "") == "count_distinct" and getattr(m.expr, "column", None)
                                       or getattr(m.expr, "agg", "") == "count" and not getattr(m.expr, "column", None)
                                       and len(model.tables[m.table].primary_key or model.tables[m.table].grain) == 1)]
     counts.sort(key=lambda m: (-(model.tables[m.table].row_count or 0), getattr(m.expr, "agg", "") != "count_distinct",
                                m.slug))
+    out: list[Activity] = []
     for m in counts:
         entities = sorted((e for e in model.entities.values() if e.table != m.table and may(e.table) and party(e)
                            and len(e.key_columns) == 1 and P.all_paths(model, m.table, e.table)),
                           key=lambda e: (-(e.members or 0), e.slug))
-        if entities:
-            e = entities[0]
-            things = m.business_name.lower().removeprefix("number of ").removeprefix("count of ")
-            date = next((r for r in model.date_roles.values() if r.key == m.default_date), None)
-            return Activity(e, m, things, e.business_name.lower(), date)
-    return None
+        things = m.business_name.lower().removeprefix("number of ").removeprefix("count of ")
+        date = next((r for r in model.date_roles.values() if r.key == m.default_date), None)
+        for e in entities:
+            out.append(Activity(e, m, things, e.business_name.lower(), date))
+            if most is not None and len(out) >= most:
+                return out
+    return out
+
+
+def of_activity(act: Activity, when: str = "", window: dict | None = None) -> list[tuple[str, dict]]:
+    """The questions an activity answers about its members, with their plans: the time between their events, the
+    new, returning and lapsed ones each month, and how many come back after their first."""
+    members = names.plural(act.member)
+    single = names.singular(act.things)
+    of = {"of": act.entity.slug, "measure": act.measure.slug}
+    return [(f"Average days between {act.things} per {act.member}{when}",
+             {"kind": "query", "intent": "value", "gap": of, "time": {"window": window} if window else {}}),
+            (f"New, returning and lapsed {members} by month{when}",
+             {"kind": "query", "intent": "trend", "lifecycle": of,
+              "time": {"grain": "month", **({"window": window} if window else {})}}),
+            # Every month's newcomers: a year's may hold none (customers all signed up when the shop opened).
+            (f"{act.member[:1].upper()}{act.member[1:]} retention by month of first {single}",
+             {"kind": "query", "intent": "breakdown", "cohort": {**of, "periods": 6}, "time": {"grain": "month"}})]
 
 
 # Words of a date that ends what another date of the same rows started.
@@ -148,18 +175,7 @@ def suggestions(model: SemanticModel, *, this_year: int, may: May = _all) -> lis
     act = activity(model, may)
     if act is not None:
         when, window = year(act.date)
-        members = names.plural(act.member)
-        single = names.singular(act.things)
-        of = {"of": act.entity.slug, "measure": act.measure.slug}
-        out.append((f"Average days between {act.things} per {act.member}{when}",
-                    {"kind": "query", "intent": "value", "gap": of, "time": {"window": window} if window else {}}))
-        out.append((f"New, returning and lapsed {members} by month{when}",
-                    {"kind": "query", "intent": "trend", "lifecycle": of,
-                     "time": {"grain": "month", **({"window": window} if window else {})}}))
-        # Every month's newcomers: a year's may hold none (customers all signed up when the shop opened).
-        out.append((f"{act.member[:1].upper()}{act.member[1:]} retention by month of first {single}",
-                    {"kind": "query", "intent": "breakdown", "cohort": {**of, "periods": 6},
-                     "time": {"grain": "month"}}))
+        out.extend(of_activity(act, when, window))
     pair = start_and_end(model, may)
     if pair is not None:
         start, end = pair

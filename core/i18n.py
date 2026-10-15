@@ -5690,6 +5690,14 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.own.failed": {"en": "It could not be done: {error}", "fr": "Cela n'a pas pu être fait : {error}"},
     "ui.chat.own.counted_with": {"en": "Counted with your own metric: {names}",
                                  "fr": "Compté avec votre propre indicateur : {names}"},
+    # A figure no saved metric holds, worked out for the question (core2/resolve/figures.py).
+    "ui.chat.figure.title": {"en": "Worked out for this question", "fr": "Calculé pour cette question"},
+    "ui.chat.figure.note": {
+        "en": "No saved metric holds this figure, so it was worked out from the data's fields as shown. Ask your "
+              "admin to save it and everyone's answers can use it.",
+        "fr": "Aucun indicateur enregistré ne donne ce chiffre : il a été calculé à partir des champs des données, "
+              "comme indiqué. Demandez à votre administrateur de l'enregistrer pour que tous puissent l'utiliser.",
+    },
     # A follow-up answer says which answer it changed, and offers the same question asked on its own.
     "ui.chat.following": {"en": "Following: {question}", "fr": "Suite de : {question}"},
     "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},

@@ -89,6 +89,17 @@ class Rate(_Strict):
     where: list[Filter] = Field(min_length=1)    # the condition on its rows: status eq ["CANCELLED"]
 
 
+class Figure(_Strict):
+    """A figure no metric holds, worked out for this question: a formula in the admin's formula language
+    (core2/model/authoring.py), read and checked in code like a metric an admin writes. "The lowest yield" is
+    MIN([Batch · Yield percent]); "average margin per fill" AVG([Fill · Price charged] - [Fill · Ingredient cost]);
+    "fills over 100" COUNT(CASE WHEN [Fill · Price charged] > 100 THEN 1 END). Its name is used like a measure's."""
+
+    name: str = Field(min_length=1, max_length=80)
+    formula: str = Field(min_length=1, max_length=600)
+    format: Literal["number", "integer", "currency", "percent", "count"] | None = None
+
+
 class Duration(_Strict):
     """Days from one date of the same rows to another: "days from order to invoice"."""
 
@@ -267,6 +278,7 @@ class Plan(_Strict):
     intent: Intent | None = None
     measures: list[str] = Field(default_factory=list)
     derived: list[Derived] = Field(default_factory=list)
+    figures: list[Figure] = Field(default_factory=list)     # worked out for this question, by formula
     rates: list[Rate] = Field(default_factory=list)
     durations: list[Duration] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)       # attribute slugs and time:... attributes

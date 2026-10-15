@@ -90,6 +90,7 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     """
     if plan.kind != "query" or previous is None or previous.kind != "query":
         return plan
+    plan = figures_carried(plan, previous)
     if plan.follow_up == "new":
         return _nothing_carried(plan, question, previous)
     if plan.follow_up != "refine":
@@ -127,6 +128,18 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     if time != plan.time:
         update["time"] = time
     return plan.model_copy(update=update) if update else plan
+
+
+def figures_carried(plan: Plan, previous: Plan) -> Plan:
+    """A figure worked out for the answer above and named again ("and by formula" after "the lowest yield"): its
+    formula comes with its name, whatever the thread rule keeps, since the name means nothing without it."""
+    from core2 import ids
+
+    have = {ids.slug(f.name) for f in plan.figures}
+    named = {ids.slug(x) for x in [*plan.measures, *(s.by for s in plan.sort), *(f.field for f in plan.filters),
+                                   *(m for d in plan.derived for m in d.measures), *(r.measure for r in plan.rates)]}
+    carried = [f for f in previous.figures if ids.slug(f.name) not in have and ids.slug(f.name) in named]
+    return plan.model_copy(update={"figures": [*plan.figures, *carried]}) if carried else plan
 
 
 def _nothing_carried(plan: Plan, question: str, previous: Plan) -> Plan:

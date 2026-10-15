@@ -248,6 +248,9 @@ def _kept_frame(payload: dict[str, Any], question: str) -> dict[str, Any] | None
     frame["question"] = question
     if isinstance(frame.get("own_metric"), dict):
         frame["own_metric"] = {k: v for k, v in frame["own_metric"].items() if k != "token"}
+    if isinstance(frame.get("figures"), list):
+        frame["figures"] = [{k: v for k, v in f.items() if k not in ("token", "measure")}
+                            for f in frame["figures"] if isinstance(f, dict)]
     if isinstance(frame.get("chart"), dict):
         frame["chart"] = {k: v for k, v in frame["chart"].items() if k != "pin_token"}
     if isinstance(frame.get("follow_up_suggestions"), list):

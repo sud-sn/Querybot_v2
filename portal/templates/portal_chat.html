@@ -631,6 +631,9 @@ body:has(.chat-page) .main { background: var(--bg); }
 .own-metric-only, .own-metric-note, .own-metric-done { font-size: var(--font-sm); color: var(--text-muted); margin: 0; }
 .own-metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .own-metric-used { font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
+.answer-figures { gap: 10px; }
+.answer-figure { display: grid; gap: 4px; }
+.answer-figure + .answer-figure { border-top: 1px solid var(--line); padding-top: 8px; }
 /* A follow-up answer: the answer it changed, and the same question asked on its own. */
 .answer-following { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
 .answer-following-text { min-width: 0; overflow-wrap: anywhere; }
@@ -3685,6 +3688,45 @@ function _wireOwnMetric(root) {
   }));
 }
 
+// Figures no saved metric holds, worked out for this question: each with how it was counted, and one click to
+// ask the admin to save it for everyone (the same request a reader's own metric sends).
+function _figuresHtml(msg) {
+  const figures = (Array.isArray(msg.figures) ? msg.figures : []).filter(f => f && f.name);
+  if (!figures.length) return '';
+  return `<section class="own-metric answer-figures" aria-label="${escHtml(t('ui.chat.figure.title'))}">`
+    + `<div class="own-metric-title">${qbIcon('plus', 14)}${escHtml(t('ui.chat.figure.title'))}</div>`
+    + figures.map(f => `<div class="answer-figure" data-figure-token="${escHtml(f.token || '')}">`
+      + `<div class="own-metric-name">${escHtml(f.name)}</div>`
+      + (f.formula ? `<div class="own-metric-formula">${escHtml(f.formula)}</div>` : '')
+      + (f.token ? `<div class="own-metric-actions"><button type="button" class="btn btn-secondary btn-sm" data-figure-ask>`
+        + `${qbIcon('users', 14)}${escHtml(t('ui.chat.own.ask'))}</button></div>` : '')
+      + `<p class="own-metric-done" role="status" hidden></p></div>`).join('')
+    + `<p class="own-metric-note">${escHtml(t('ui.chat.figure.note'))}</p>`
+    + `</section>`;
+}
+
+function _wireFigures(root) {
+  root.querySelectorAll('.answer-figure[data-figure-token]').forEach(box => {
+    const button = box.querySelector('[data-figure-ask]');
+    if (!button || !box.dataset.figureToken) return;
+    const done = box.querySelector('.own-metric-done');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      let data;
+      try {
+        const response = await fetch('/portal/api/requests', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({kind: 'new_metric', token: box.dataset.figureToken})});
+        data = await response.json();
+      } catch (exc) { data = {ok: false, error: exc.message}; }
+      done.hidden = false;
+      if (!data.ok) { button.disabled = false; done.textContent = t('ui.chat.own.failed', {error: data.error || ''}); return; }
+      box.querySelector('.own-metric-actions')?.remove();
+      done.textContent = t(data.request && data.request.status === 'accepted' ? 'ui.chat.own.saved' : 'ui.chat.own.asked');
+    });
+  });
+}
+
 // A follow-up answer says which answer it changed and what it kept from it ("Region is North; in 2025"); asking
 // it on its own is one click (sent as "New question: ...").
 function _followingHtml(msg) {
@@ -3818,6 +3860,7 @@ function answerCardHtml(msg, ids, env) {
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
     + _followingHtml(msg)
     + _ownMetricHtml(msg)
+    + _figuresHtml(msg)
     + _answerBadgesHtml(msg)
     + leadHtml + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
     + localOperationProofHtml + dashboardConfirmHtml
@@ -3911,6 +3954,7 @@ function appendAssistantResponse(msg, opts = {}){
     renderChartInto(chartEl, updated);
   }));
   _wireOwnMetric(div);
+  _wireFigures(div);
 
   // How it was counted opens in place, from the link in the action row.
   const howBtn = div.querySelector('[data-open-how]');

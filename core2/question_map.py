@@ -34,6 +34,7 @@ MOST_GROUPS = 30          # groupings worked out for each figure
 MOST_CHECKED = 400        # entries run on the data in one check
 CHECK_BUDGET = 120.0      # seconds a check may take (Learn's last step)
 MOST_ROUTES = 40          # rows-routes named to the planner
+MOST_ACTIVITIES = 12      # the parties' activities whose analyses the map lists
 
 ANSWERABLE = "answerable"
 NEEDS_PICK = "needs_pick"         # two routes to the grouping: the reader is asked which
@@ -200,6 +201,16 @@ def _entries(model: SemanticModel, today: dt.date, may: May) -> list[Entry]:
     except Exception as exc:  # noqa: BLE001 - the figures stand without the analyses
         log.warning("core2: the analyses of a model could not be read for its question map: %s", exc)
         found = []
+    # Every analysis of every other party's activity (patients' prescriptions, payers' claims), not only the
+    # main one's: what a reader can ask of any table of dated rows that names them.
+    from core2.plan.analyses import activities, of_activity
+
+    shown = {json.dumps(plan, sort_keys=True) for _, plan in found}
+    for act in activities(model, may)[1:MOST_ACTIVITIES]:
+        for question, plan in of_activity(act):
+            if json.dumps(plan, sort_keys=True) not in shown:
+                shown.add(json.dumps(plan, sort_keys=True))
+                found.append((question, plan))
     for i, (question, plan) in enumerate(found):
         plan = {k: v for k, v in plan.items() if k != "kind"}
         kind = next((k for k in ANALYSES if plan.get(k)), "analysis")

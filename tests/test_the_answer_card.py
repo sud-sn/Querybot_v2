@@ -34,6 +34,7 @@ FUNCTIONS = [
     "function _clarifyCardHtml(msg)",
     "function _answerBadgesHtml(msg)",
     "function _ownMetricHtml(msg)",
+    "function _figuresHtml(msg)",
     "function _followingHtml(msg)",
     "function _answerTiles(msg)",
     "function _answerTilesHtml(tiles)",
@@ -308,3 +309,17 @@ def test_a_question_back_is_a_question_card_with_its_choices():
     assert [c["attrs"]["data-question"] for c in choices] == ["Customers who ordered", "Customers who returned something"]
     assert shown.first("answer-actions") is None, "a question has nothing to pin or count yet"
     assert len(shown.all("follow-up-chip")) == 2, "each choice once, not again as a chip"
+
+
+def test_a_figure_worked_out_for_the_question_shows_how_and_offers_to_save_it():
+    # A figure no saved metric holds (core2/resolve/figures.py): its name, its formula, and the request to the admin.
+    msg = {**BY_STORE, "figures": [{"name": "Margin per fill", "formula": "AVG([Fill · Price] - [Fill · Cost])",
+                                    "token": "t0k"}]}
+    markup = card(msg)
+    assert "Worked out for this question" in markup and "Margin per fill" in markup
+    assert "AVG([Fill · Price] - [Fill · Cost])" in markup and 'data-figure-token="t0k"' in markup
+    assert "Ask my admin to save it for everyone" in markup
+    # Kept with a reopened answer, the token is gone: the figure is shown, with no button.
+    msg["figures"][0].pop("token")
+    assert "data-figure-ask" not in card(msg) and "Margin per fill" in card(msg)
+    assert "Worked out for this question" not in card(BY_STORE)
