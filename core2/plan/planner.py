@@ -1829,9 +1829,10 @@ _LATE = re.compile(r"\b(?:late|later\s+than|delayed|delays?|missed|behind\s+sche
 _ON_TIME = re.compile(r"\bon[\s-]time\b", re.IGNORECASE)
 
 
-# "So far", "to date", "ever": everything up to now, when no period is named with it.
-_ALL_TIME = re.compile(r"\b(?:so far|to date|to this day|ever|all[- ]time|of all time|jusqu'(?:à|a) (?:pr(?:é|e)sent|"
-                       r"maintenant)|(?:à|a) ce jour|depuis (?:toujours|le d(?:é|e)but))\b", re.I)
+# "So far", "to date", "ever", "in total": everything up to now, when no period is named with it.
+_ALL_TIME = re.compile(r"\b(?:so far|to date|to this day|ever|all[- ]time|of all time|in total|in all|altogether|"
+                       r"jusqu'(?:à|a) (?:pr(?:é|e)sent|maintenant)|(?:à|a) ce jour|au total|en tout|"
+                       r"depuis (?:toujours|le d(?:é|e)but))\b", re.I)
 # A period named in the question: a year, a quarter, a month, "this", "last", "since".
 _PERIOD_SAID = re.compile(r"\b(?:year|years|month|months|quarter|quarters|week|weeks|today|yesterday|this|last|past|"
                           r"previous|since|ytd|mtd|qtd|fy\s?\d{2,4}|(?:19|20)\d\d|q[1-4]|h[12]|t[1-4]|s[12]|"
@@ -2327,10 +2328,28 @@ def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow
     return plan.model_copy(update=update) if update else plan
 
 
+_COUNT_ASKED = re.compile(r"\b(?:how\s+many|count\s+of|the\s+count\s+of)\s+|(?<!\w)#\s*of\s+", re.IGNORECASE)
+
+
+_SAID_PERIOD = re.compile(r"\b(?:in|for|during|over)\s+((?:the\s+)?(?:(?:19|20)\d{2}|(?:this|current|last|previous|past)"
+                          r"\s+(?:day|week|month|quarter|year)|(?:last|past|previous)\s+\d{1,3}\s+(?:days|weeks|months|"
+                          r"quarters|years)|year\s+to\s+date|ytd|all\s+time))\b", re.IGNORECASE)
+
+
+def _window_said(question: str) -> dict:
+    """The period a question says in so many words ("in 2024", "last quarter", "over the last 3 months"), as a
+    window; all of the data when it says none."""
+    from core2.dashboard_talk import period
+
+    found = _SAID_PERIOD.search(question or "")
+    return (period(found.group(1)) if found else None) or {"kind": "all"}
+
+
 def _named_in_full(model: SemanticModel, question: str):
     """The one measure the question names by its whole name ("scrapped quantity"), or None: none, or several of the
     same name (an order quantity of sales, of purchases and of work orders)."""
-    text = " ".join(re.findall(r"[a-z0-9]+", question.casefold()))
+    # "How many orders", "count of orders", "# of orders": "Number of orders" by its whole name.
+    text = " ".join(re.findall(r"[a-z0-9]+", _COUNT_ASKED.sub(" number of ", question.casefold())))
     said = [m for m in model.measures.values() if not m.hidden and m.business_name and len(m.business_name) > 3
             and re.search(rf"\b{re.escape(' '.join(re.findall(r'[a-z0-9]+', m.business_name.casefold())))}\b", text)]
     # A longer name holds a shorter one ("net sales amount" holds "sales amount"): the longest is the one named.
@@ -2653,6 +2672,12 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [f'The question names the measure {spelled.slug} by its own name '
                               f'("{spelled.business_name}"): plan it with that measure rather than asking which one.'], ""
             continue
+        named = _named_in_full(model, question) if attempt > 0 and plan.kind == "clarify" and \
+            plan.clarify is not None and plan.clarify.about == "measure" else None
+        if named is not None:
+            # Asked back again when told ("how many orders did we take?"): the figure named is planned in code, its
+            # period and the rest read from the question's words by the rules below.
+            plan = Plan(kind="query", intent="value", measures=[named.slug], time={"window": _window_said(question)})
         refused = plan.kind in ("unsupported", "clarify") and (plan.clarify is None or plan.clarify.about != "member")
         reuse = _derived_named(question, defined or []) if attempt == 0 and refused else []
         if reuse:
@@ -2670,6 +2695,15 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             what = " and ".join(f'"{w}"' for w in said) if values_allowed else f"{len(said)} words of the question"
             problems, hint = [f"{what} are members of the field {slug}, not measures: compare them by grouping the "
                               f"measure by {slug}."], ""
+            continue
+        if attempt == 0 and plan.kind == "unsupported" and not plan.rates and _A_RATE.search(question) \
+                and any(c.role in ("status", "flag") for c in model.columns.values()):
+            # "Quel a été le taux d'annulation des réservations le mois dernier ?" was refused as no metric of the
+            # catalog: a rate of a condition never is one. It is the share of the rows that meet it.
+            problems, hint = ['The question asks a rate of a condition ("taux d\'annulation" is the cancellation '
+                              'rate, "% of orders returned"): no metric holds it. Plan it in "rates": the figure '
+                              'counted and the condition on its rows (a status or a flag that says it), rather than '
+                              'refusing.'], ""
             continue
         if (plan.kind == "unsupported" and _VAGUE.search(" ".join(plan.notes)) or plan.kind == "describe_data"
                 and not plan.about and not _ABOUT_THE_DATA.search(question)) and main_figures(model, question):
@@ -2694,7 +2728,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         for rule in (route_named, all_time_asked, period_meant, calendar_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
-                     series_in_a_name, figure_parts_left_out):
+                     series_in_a_name, figure_parts_left_out, shape_said):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice
@@ -3052,7 +3086,141 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
     unbarred = _figure_by_members(plan.model_copy(update=update) if update else plan, model, question)
     if unbarred is not None:
         update.update(unbarred)
+    unsplit = _filter_not_split(plan.model_copy(update=update) if update else plan, model, question)
+    if unsplit is not None:
+        update.update(unsplit)
+    return shape_said(plan.model_copy(update=update) if update else plan, model, question)
+
+
+def shape_said(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """The plan with the figure, the shape and the date the question's own words say: an average of a thing's value
+    is over those things, a rolling period with no series asked is one figure, a split by new against returning is
+    two rows, a date named is the date counted by. Tried before the plan's check as well: "avg po value over a
+    rolling 3 months" planned as a per-PO average and a 3-month moving average was refused as two analytical shapes
+    at once, and the AI, asked again, planned it the same way; the words settle it with no second call."""
+    if plan.kind != "query":
+        return plan
+    update: dict[str, Any] = {}
+    for rule in (_average_thing_named, _segment_split_alone, _rolling_is_the_period, _date_said):
+        changed = rule(plan.model_copy(update=update) if update else plan, model, question)
+        if changed is not None:
+            update.update(changed)
     return plan.model_copy(update=update) if update else plan
+
+
+def _date_said(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "Net sales by month in 2025, counted by ship date", "selon la date d'expédition": the date the question says
+    to count by is the one used, whatever the AI planned, when the figure's own rows have it (core2/standing.py
+    reads the same words)."""
+    from core2.standing import counted_on, date_named
+
+    if not question or plan.kind != "query":
+        return None
+    role = date_named(question, model)
+    if role is None or role.name.lower() in ("date", "day") or role.table not in counted_on(plan, model) \
+            or plan.time.date in (role.slug, role.key):
+        return None
+    return {"time": plan.time.model_copy(update={"date": role.slug})}
+
+
+# "Average order value", "avg booking size": the thing named right after the average is what is averaged over.
+_AVERAGE_THING = re.compile(r"\b(?:average|avg|mean)\s+([a-z][\w-]*)\s+(?:value|amount|size|total|spend|revenue|"
+                            r"price|cost|worth)\b", re.IGNORECASE)
+
+
+def _average_thing_named(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "avg booking value of repeat customers in 2025?" was each customer's total averaged, where the average
+    booking's value was asked: the thing an average names ("booking value") is what it is over -- each one a count
+    measure counts ("number of bookings"). "... per customer" says otherwise, and stands. Planned as the plain total
+    ("avg po value over a rolling 3 months" as the PO lines' amount), it is that total over the number of them."""
+    hit = _AVERAGE_THING.search(question or "")
+    if plan.kind != "query" or hit is None or _PER_SOMETHING.search(question[hit.end():]):
+        return None
+    thing = names.singular(hit.group(1).lower())
+    per_of = plan.per.of if plan.per is not None else None
+    counted = [m for m in model.measures.values() if not m.hidden and m.slug != per_of
+               and re.fullmatch(rf"number of {re.escape(thing)}s?(?: (?:numbers?|ids?|codes?|nos?))?",
+                                (m.business_name or "").casefold())]
+    if len(counted) != 1 or thing in {names.singular(w) for w in (per_of or "").split("_")}:
+        return None
+    own = next((m for m in model.measures.values() if plan.measures and m.slug == plan.measures[0]), None)
+    if plan.per is None:
+        # The total alone, where its average over the things was asked: the total over the number of them.
+        if own is None or len(plan.measures) != 1 or plan.derived or getattr(own.expr, "agg", None) != "sum" \
+                or plan.group_by:
+            return None
+        return {"measures": [], "derived": [Derived(name=f"{own.business_name} per {thing}", op="ratio",
+                                                    measures=[own.slug, counted[0].slug])]}
+    if plan.per.summary != "avg":
+        return None
+    if own is not None and len(plan.measures) == 1 and own.table != counted[0].table:
+        # The amounts sit on another table than the things counted (booking lines, bookings): each one's own
+        # amount is not on its rows, so the average is the amount over the number of them.
+        return {"per": None, "measures": [], "derived": [*plan.derived, Derived(
+            name=f"{own.business_name} per {thing}", op="ratio", measures=[own.slug, counted[0].slug])]}
+    return {"per": plan.per.model_copy(update={"of": counted[0].slug})}
+
+
+# What asks for a series smoothed or added up as it goes: "moving average", "running total", "by month".
+_SMOOTHED = re.compile(r"\b(?:moving|running|cumulative|trailing\s+average|rolling\s+(?:\d+[\s-]*\w+\s+)?"
+                       r"(?:average|avg|mean|sum|total)|by\s+(?:day|week|month|quarter|year)|daily|weekly|monthly|"
+                       r"quarterly|each\s+(?:day|week|month|quarter)|per\s+(?:day|week|month|quarter)|over\s+time|"
+                       r"trend)\b", re.IGNORECASE)
+
+
+def _rolling_is_the_period(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "avg po value over a rolling 3 months" was drawn as a 3-month moving average, month by month: "rolling 3
+    months" names the period, up to today. With nothing asking for a series ("moving", "running", "by month"), it is
+    one figure over that period."""
+    moving = plan.rolling is not None and plan.rolling.kind in ("moving_average", "moving_sum")
+    if plan.kind != "query" or not (moving or plan.rolling is None and plan.time.grain is not None) \
+            or plan.time.window.kind != "rolling" or _SMOOTHED.search(question or "") or not any(p.search(question or "") for p in _ROLLING):
+        return None
+    # Drawn month by month with no moving average, the period is one figure too.
+    update: dict[str, Any] = {"rolling": None, "time": plan.time.model_copy(update={"grain": None})}
+    if plan.intent == "trend":
+        update["intent"] = "breakdown" if any(not g.startswith("time:") for g in plan.group_by) else "value"
+    return update
+
+
+def _segment_split_alone(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "Spend from new vs returning customers in 2025" came back by customer as well: a split by new against
+    returning is two rows, not one per customer, unless the question splits by them too ("by customer")."""
+    segment = plan.segment
+    if plan.kind != "query" or segment is None or not segment.split or not plan.group_by:
+        return None
+    entity = model.entities.get(segment.of)
+    words = {segment.of} | ({names.singular(w) for w in re.findall(r"[a-z]+", entity.business_name.lower())}
+                            if entity is not None and entity.business_name else set())
+    by = {names.singular(w) for w in re.findall(r"\b(?:by|per|each|every|for\s+each)\s+([a-z]+)", question.lower())}
+    dropped = [g for g in plan.group_by if member_of(model, g) == segment.of and not by & words]
+    if not dropped:
+        return None
+    return {"group_by": [g for g in plan.group_by if g not in dropped]}
+
+
+def _filter_not_split(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "Show me vet revenue by month" was split by species as well as filtered on the two species "vet" means: a
+    field the plan filters on, by members the reader did not quote, is no split unless the question names the
+    field ("by species"). Members compared by name ("compare "Wholesale" and "Retail"") keep theirs."""
+    from core2.plan.thread import _field_words
+    from core2.plan.values import normalise, quoted_spans
+
+    if not question or plan.kind != "query" or not plan.group_by:
+        return None
+    said = {normalise(question[a:b]) for a, b in quoted_spans(question)}
+    words = {names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", question.lower())}
+    dropped = [g for g in plan.group_by if not g.startswith("time:") and any(
+        f.field == g and f.op in ("eq", "in") and f.values
+        and not any(isinstance(v, str) and normalise(v) in said for v in f.values) for f in plan.filters)
+        and not _field_words(model, g) & words]
+    if not dropped:
+        return None
+    group_by = [g for g in plan.group_by if g not in dropped]
+    update: dict[str, Any] = {"group_by": group_by}
+    if not [g for g in group_by if not g.startswith("time:")] and plan.intent in ("breakdown", "rank"):
+        update["intent"] = "trend" if plan.time.grain or group_by else "value"
+    return update
 
 
 # A bar on each member's figure the question sets in words: "at least one", "3 or more", "more than 5".

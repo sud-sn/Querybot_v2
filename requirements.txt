@@ -42,6 +42,10 @@ rank-bm25>=0.2.2
 # In-memory analytics for result follow-up queries
 duckdb>=1.0.0
 
+# Excel workbooks as a data source (core/workbook_source.py): each sheet read into a DuckDB table
+openpyxl>=3.1.0
+pandas>=2.0
+
 # Charts
 matplotlib>=3.9.0
 

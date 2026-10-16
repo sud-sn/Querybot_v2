@@ -242,11 +242,12 @@ def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks",
         out.checked.append((f"Looked without {said_cond} {scope}: {said}.".replace("  ", " "),
                             f"Cherché sans « {said_cond_fr} » {scope_fr} : {said_fr}.".replace("  ", " ")))
         if how == "carried":     # a standing condition is put on every answer again: removing it is said, not run
-            # First of the buttons: kept from the question before, the condition is likely the one no longer meant,
-            # and "yes" asks without it.
+            # A button, after the member month by month: the figure without the condition is already said above,
+            # so "yes" looks at when the member had any rather than repeating it.
             tail = "".join(f", {w}" for w in (condition_words(c, quoted=True) for c in rest) if w)
             tail_fr = "".join(f", {w}" for w in (condition_words(c, quoted=True, lang="fr") for c in rest) if w)
-            out.offers.insert(0, Offer(f"{words.label} {span}{tail}".replace("  ", " "),
+            by_month = next((i + 1 for i, o in enumerate(out.offers) if o.plan.intent == "trend"), 0)
+            out.offers.insert(by_month, Offer(f"{words.label} {span}{tail}".replace("  ", " "),
                                     f"{words.label} {span_fr}{tail_fr}".replace("  ", " "),
                                     _base(plan, filters=[g.model_dump(mode="json", exclude_defaults=True)
                                                          for g in others])))

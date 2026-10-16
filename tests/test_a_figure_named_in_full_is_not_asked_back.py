@@ -63,3 +63,16 @@ def test_a_question_naming_no_figure_in_full_is_still_asked(model):
     complete, _ = _planner(model, clarify)
     outcome = plan_question(model, "quantity lost by reason in 2024", complete, today=dt.date(2025, 3, 1))
     assert outcome.plan.kind == "clarify"
+
+
+def test_asked_back_twice_the_figure_named_in_full_is_planned_in_code(model):
+    # "how many orders did we tkae" was asked back -- number of orders or number of order lines? -- though the
+    # question names one in full, and gpt-4o asked again when told so. The second time, code plans it.
+    slug = next(m.slug for m in model.measures.values() if m.business_name.casefold() == "scrapped quantity")
+    clarify = json.dumps({"kind": "clarify", "clarify": {"about": "measure", "question": "Which measure do you mean?",
+                                                         "options": ["scrapped_quantity", "rejected_quantity"]}})
+    answers = [clarify, clarify]
+    outcome = plan_question(model, "Scrapped quantity in 2024", lambda s, u: answers.pop(0),
+                            today=dt.date(2025, 3, 1))
+    assert outcome.plan.kind == "query" and outcome.plan.measures == [slug], outcome.plan
+    assert outcome.plan.time.window.kind == "between" and str(outcome.plan.time.window.start) == "2024-01-01"

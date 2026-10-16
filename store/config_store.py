@@ -339,6 +339,9 @@ DB_REQUIRED_FIELDS: dict[str, list[str]] = {
     # A PostgreSQL connection reads one database (a query cannot name another); port defaults to 5432,
     # sslmode to "prefer", and "schemas" (comma-separated) limits discovery to those schemas.
     "postgres":  ["host", "database", "user", "password"],
+    # An Excel workbook: an uploaded file (its stored copy), or a SharePoint / OneDrive link read through
+    # Microsoft Graph with an app of its own or the email app (core/workbook_source.py): see db_required_fields.
+    "excel":     [],
 }
 
 DB_DIALECT: dict[str, str] = {
@@ -346,6 +349,7 @@ DB_DIALECT: dict[str, str] = {
     "oracle":    "oracle",
     "azure_sql": "tsql",
     "postgres":  "postgres",
+    "excel":     "duckdb",
 }
 
 DB_LABEL: dict[str, str] = {
@@ -353,6 +357,7 @@ DB_LABEL: dict[str, str] = {
     "oracle":    "Oracle",
     "azure_sql": "Azure SQL",
     "postgres":  "PostgreSQL",
+    "excel":     "Excel workbook",
 }
 
 
@@ -363,6 +368,11 @@ def db_required_fields(db_type: str, credentials: dict) -> list[str]:
     if db_type == "snowflake":
         from core.snowflake_auth import required_fields
         return required_fields(credentials)
+    if db_type == "excel":
+        if credentials.get("source") == "link":
+            app = [] if credentials.get("graph") == "mail" else ["tenant_id", "client_id", "client_secret"]
+            return ["link", *app]
+        return ["workbook"]
     return list(DB_REQUIRED_FIELDS.get(db_type) or [])
 
 

@@ -31,6 +31,9 @@ THIS_YEAR = Plan(kind="query", measures=["loan_count"], time=TimeSpec(window=Win
     "total charge-offs to date",
     "have we ever charged off a mortgage?",
     "Combien de prêts avons-nous passés en perte jusqu'à présent ?",
+    # "ok so how many bookings have we taken in total?" kept the quarter of the answer above.
+    "ok so how many loans have we charged off in total?",
+    "combien de prêts au total ?",
 ])
 def test_so_far_with_no_period_is_everything(question):
     assert all_time_asked(THIS_YEAR, None, question).time.window.kind == "all"
@@ -41,6 +44,7 @@ def test_so_far_with_no_period_is_everything(question):
     "charge-offs to date in 2025",
     "how many loans this year",
     "charge-offs since March",
+    "total charge-offs in total for this year",
 ])
 def test_a_period_named_beside_it_stands(question):
     assert all_time_asked(THIS_YEAR, None, question) is THIS_YEAR

@@ -89,8 +89,8 @@ def test_the_discovery_counter_counts_tables_only():
     assert len(discovered_tables(master)) == 2
 
     source = pathlib.Path("core/schema.py").read_text(encoding="utf-8")
-    # One per database discovery reads: Snowflake, Oracle, Azure SQL and PostgreSQL.
-    assert source.count("return len(discovered_tables(master))") == 4
+    # One per source discovery reads: Snowflake, Oracle, Azure SQL, PostgreSQL and Excel workbooks.
+    assert source.count("return len(discovered_tables(master))") == 5
     assert "    return len(master)" not in source
 
 

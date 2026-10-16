@@ -5689,6 +5689,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.own.asked": {"en": "Sent to your admin. You'll be told when it's saved for everyone.",
                           "fr": "Envoyé à votre administrateur. Vous serez prévenu quand il sera enregistré pour tous."},
     "ui.chat.own.saved": {"en": "Saved for everyone.", "fr": "Enregistré pour tous."},
+    "ui.chat.dates.others": {"en": "Count the same rows by another of their dates:",
+                             "fr": "Compter les mêmes lignes selon une autre de leurs dates :"},
     "ui.chat.own.forgotten": {"en": "Removed from this chat.", "fr": "Retiré de ce chat."},
     "ui.chat.own.failed": {"en": "It could not be done: {error}", "fr": "Cela n'a pas pu être fait : {error}"},
     "ui.chat.own.counted_with": {"en": "Counted with your own metric: {names}",

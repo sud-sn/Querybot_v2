@@ -54,3 +54,30 @@ def test_contact_details_stay_held_whatever_the_table(monkeypatch):
     assert not allowed("stores", "email") and not allowed("stores", "phone")
     assert not allowed("customers", "customer_name") and not allowed("customers", "city")
     assert allowed("customers", "segment")
+
+
+@pytest.mark.parametrize("table, column", [("ingredients", "ingredient_name"), ("formulas", "compound_name"),
+                                           ("fills", "drug_name"), ("products", "generic_name")])
+def test_a_drugs_name_in_a_catalogue_is_a_things(table, column):
+    # "VersaBase cream" is an ingredient the pharmacy buys: the planner must see it to put "lots of 'VersaBase
+    # cream'" on the ingredient, not on another field it then refuses as having no such name.
+    assert _a_things_name(table, column, "drug_name")
+
+
+@pytest.mark.parametrize("table, column", [("patients", "medication_name"), ("patient_meds", "drug_name"),
+                                           ("members", "rx_name")])
+def test_a_drugs_name_about_a_person_stays_held(table, column):
+    assert not _a_things_name(table, column, "drug_name")
+
+
+def test_a_drugs_name_reaches_the_index_beside_its_catalogue(monkeypatch):
+    import core.value_index as value_index
+
+    monkeypatch.setattr(value_index, "_clearance_gate", lambda account_id: (None, ""))
+    inventory = Inventory(tables={
+        "ingredients": _table("ingredients", "ingredient_name", "fda_listed_name"),
+        "patients": _table("patients", "patient_name", "medication_name"),
+    })
+    allowed = values_gate("acct-test", inventory, {})
+    assert allowed("ingredients", "ingredient_name")
+    assert not allowed("patients", "patient_name") and not allowed("patients", "medication_name")

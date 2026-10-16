@@ -37,6 +37,7 @@ from core2.answer.snapshots import complete_snapshots
 from core2.answer.suggestions import breakdowns, drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query, repeats_sql
 from core2.compile.shapes import fill_edges
+from core2.date_choice import choices as date_choices
 from core2.plan.chips import french as chip_french, offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
@@ -120,6 +121,9 @@ class Session:
     # The first next question the answer on screen offered after looking at itself (core2/agent/look.py): what
     # "yes" runs, with no AI.
     yes: Plan | None = None
+    # The other dates the answer on screen could be counted by, by the words of their choice ("By ship date
+    # instead"): the date a click picks, kept for the conversation (core2/date_choice.py).
+    dates: dict[str, str] = field(default_factory=dict)
 
 
 _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3,
@@ -313,6 +317,20 @@ def _unanswered(session: Session, question: str, why: str, masked: Masked | None
     session.turns = [t for t in session.turns if not t.unanswered]
     session.turns.append(Turn(question, None, masked, unanswered=why))
     del session.turns[:-(HISTORY + 1)]
+
+
+def _keep_date(session: Session, model: SemanticModel, date: str, *, asked: bool = False) -> None:
+    """The date the reader picked, kept for the rest of the conversation for the figures on its rows (a standing
+    condition, shown above the box): it takes the place of any date kept before for those rows. Picking the rows'
+    own date again on the badge lets the kept one go; a date picked when the answer asked which one is kept, the
+    question having had no date of its own to fall back on."""
+    role = model.date_roles.get(date) or next((r for r in model.date_roles.values() if r.slug == date), None)
+    if role is None:
+        return
+    session.standing = [s for s in session.standing
+                        if not (s.date and getattr(model.date_roles.get(s.date), "table", None) == role.table)]
+    if asked or model.tables[role.table].default_date != role.key:
+        session.standing.append(S.dated(role))
 
 
 def _keep(session: Session, turn: Turn) -> None:
@@ -668,6 +686,9 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     matches: list[ValueMatch] = []
     picked = choose(question, pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
+    date_pick, session.dates = (session.dates.get(_plain(question)) if forced is None else None), {}
+    kept_date: str | None = None
+    asked_date = False          # picked as the answer to "which date?", where no date was the rows' own
     yes, session.yes = session.yes, None
     if offer is None and yes is not None and forced is None and pending is None and _YES.match(question):
         offer = yes             # "yes please" to the answer's own question: its first offer, with no AI
@@ -677,10 +698,14 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         # A chip of the answer on screen (or of a reply that found no answer, "Did you mean ...?"): its plan, run
         # as it is (no AI).
         outcome = Outcome(offer, masked=seen.masked if seen is not None else None)  # the chip says what it changed
+        kept_date = date_pick
     elif pending is not None and picked is not None:
         # The reply names one of the links or dates offered: the waiting plan, completed by code.
         outcome = Outcome(_completed(pending.plan, pending.field, picked, model).model_copy(
             update={"follow_up": "refine"}), masked=pending.masked)
+        if pending.field == "time.date":
+            kept_date = outcome.plan.time.date       # the date picked counts the rest of the conversation too
+            asked_date = True
     else:
         # Only a name the reader put in quotes is a member: ordinary words never narrow the answer. Every
         # name written, quoted or not, is still withheld from the AI where member values may not reach it.
@@ -764,13 +789,15 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     plan = _whole_names(plan, matches)
     plan = _by_day(plan, question)
     plan = _one_month_named(plan, question)
-    plan, unquoted = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
+    plan, unquoted, no_such = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     plan = _quoted_lost(plan, question, model, services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
     bare = plan
     from core2.plan.planner import check
 
+    if kept_date:
+        _keep_date(session, model, kept_date, asked=asked_date)
     plan, applied, aside = S.apply(plan, _standing_now(services, session), question, model,
                                    lambda p: not check(p, model, services.today)[0],
                                    seen.plan if seen is not None else None)
@@ -916,6 +943,14 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         payload["follow_up_suggestions"] = [*({"label": words, "question": words, "label_fr": chip_french(words),
                                                "question_fr": chip_french(words), "kind": "setting"}
                                               for words, _ in chips), *rest]
+    for other in (payload.get("dates") or {}).get("others") or []:
+        # Another date of the same rows, a click on the date badge: the same plan counted by it, with no AI, and
+        # the date kept for the conversation.
+        counted = plan.model_copy(update={"time": plan.time.model_copy(update={"date": other["slug"]}),
+                                          "follow_up": "refine"})
+        for words in (other["words"], other["words_fr"]):
+            session.offers[_plain(words)] = counted
+            session.dates[_plain(words)] = other["key"]
     if looked:
         _offer(payload, session, looked, empty=empty)
     dig = payload.pop("_dig", None)
@@ -927,9 +962,9 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
             session.offers[_plain(o["question_fr"])] = dig
         session.yes = dig
         payload["follow_up_suggestions"] = [*steps, *(payload.get("follow_up_suggestions") or [])][:6]
-    if unquoted:
+    if unquoted or no_such:
         _say_unquoted(payload, question, unquoted,
-                      _visible(services.index.match(question), model, services.allowed_tables))
+                      _visible(services.index.match(question), model, services.allowed_tables), no_such=no_such)
     if outcome.repaired:
         payload["trust"]["plan_repaired"] = True
     if following and plan.follow_up == "refine" and seen is not None:
@@ -1186,6 +1221,9 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     payload = build_answer(question, logical, compiled, result.columns, _with_a_figure(compiled, result.columns, result.rows),
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
+    dates = date_choices(plan, logical, model)
+    if dates:
+        payload["dates"] = dates       # the badge's other dates of the same rows, and the metric's own put right
     if logical.beyond:
         payload["beyond_data"] = logical.beyond.isoformat()     # the period asked for starts after the data ends
     if logical.share:
@@ -2282,7 +2320,7 @@ def _whole_names(plan: Plan, matches: list[ValueMatch]) -> Plan:
 
 
 def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: set[str],
-                    index: MemberIndex) -> tuple[Plan, list[tuple[str, str]]]:
+                    index: MemberIndex) -> tuple[Plan, list[tuple[str, str]], list[tuple[str, str]]]:
     """The plan without any filter whose member is a word of the question the reader did not quote, and what
     was left out.
 
@@ -2293,7 +2331,10 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     code the AI chose for what the question means, not one of its words ("units received" -> movement
     type RCV), still filters, and the answer names it. A number or a flag (cancelled = 1) is no name. A name
     the data does not have is kept too: the AI made it up ("those same customers", whose names it was never
-    given), and the answer says there is none and asks which one the reader means, never a total for all.
+    given), and the answer says there is none and asks which one the reader means, never a total for all. A word
+    the reader wrote in lower case that no member is called describes what is asked about ("which referral
+    partner", where every partner refers): it is left out as well, and returned apart, said with no button to quote
+    it.
     """
     said = [normalise(question[a:b]) for a, b in quoted_spans(question)]
     words = {w for w in re.findall(r"[\w#&'.+-]+", normalise(question)) if len(w) >= 3 or w.isdigit()}
@@ -2312,6 +2353,7 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
         return v in grounded or any(v == q or (len(q) >= 3 and (q in v or v in q)) for q in said)
 
     dropped: list[tuple[str, str]] = []
+    no_such: list[tuple[str, str]] = []     # words that describe, which no member of the data is called
     # The rows a table leaves out by default ("Invoice status is CANCELLED"): a filter that asks for them is the
     # question's point ("revenue on cancelled lines"), never a stray word of it.
     left_out = {normalise(str(v)) for t in model.tables.values() for df in t.default_filters
@@ -2339,14 +2381,31 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
         def unknown(value: str) -> bool:      # a member the data does not have: said, never answered for all
             return read and index.stored(attribute.slug, value) is None   # type: ignore[union-attr]
 
+        def described(value: str) -> bool:
+            """Written by the reader in lower case, unquoted, right before the word for the things it describes: it
+            says what kind ("which referral partner", "the loyal customers"), never a name. A name written with its
+            capital ("Wholsale") is asked about when the data has none, and so is a word that is itself what is
+            counted ("how many directors in each department": no level is called so)."""
+            low = question.lower()
+            at = low.find(value.lower())
+            if at < 0 or question[at:at + len(value)] != value.lower() or quoted(value):
+                return False
+            entity = found if isinstance(found, Entity) else \
+                model.entities.get(attribute.entity or "") if attribute is not None else None
+            after = re.match(r"\s+([a-zà-ÿ]+)", low[at + len(value):])
+            nouns = {names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", (entity.business_name or "").lower())} \
+                if entity is not None else set()
+            return after is not None and names.singular(after.group(1)) in nouns
+
         amount = attribute is not None and attribute.kind == "number"    # "exactly 3 days": a value, no name
         if read:
             # "Bike" for the category stored as "Bikes": the member it names, then read as any name is.
             f = f.model_copy(update={"values": [_member_form(index, attribute.slug, v) for v in f.values]})  # type: ignore[union-attr]
         kept = [v for v in f.values
-                if not isinstance(v, str) or amount or quoted(v) or unknown(v) or not written(v)
+                if not isinstance(v, str) or amount or quoted(v) or unknown(v) and not described(v) or not written(v)
                 or f.op in ("eq", "in") and normalise(v) in left_out]
-        dropped.extend((thing, v) for v in f.values if v not in kept)
+        dropped.extend((thing, v) for v in f.values if v not in kept and not unknown(v))
+        no_such.extend((thing, v) for v in f.values if v not in kept and unknown(v))
         return kept
 
     filters = kept_of(plan.filters)
@@ -2354,18 +2413,20 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     absent = plan.absent.model_copy(update={"without": kept_of(plan.absent.without),
                                             "had": kept_of(plan.absent.had)}) if plan.absent is not None else None
     if not dropped and filters == plan.filters and (absent is None or absent == plan.absent):
-        return plan, []
-    return plan.model_copy(update={"filters": filters, "absent": absent}), dropped
+        return plan, [], []
+    return plan.model_copy(update={"filters": filters, "absent": absent}), dropped, no_such
 
 
 def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]],
-                  written: list[ValueMatch] | None = None) -> None:
+                  written: list[ValueMatch] | None = None, *, no_such: list[tuple[str, str]] = ()) -> None:
     """Said on the answer: which names did not narrow it, and the question again with them in quotes.
 
     A name dropped from inside a longer member name the question wrote ("Northfield" of "Northfield Industrial and
     Eastgate Industrial", read by the AI as a region and a division) is offered as the whole names written, all of
     that field's at once: quoting "Northfield" alone asked for the region again."""
     notes = payload.setdefault("trust", {}).setdefault("date_context", [])
+    for thing, value in no_such:
+        notes.append(f'No {thing} is called "{value}": the answer is not narrowed by it.')
     chips = []
     whole: list[ValueMatch] = []
     for thing, value in dropped:
@@ -2836,6 +2897,10 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
         # People's data went out as stored, to a cleared reader: kept with the answer, so a reopened thread
         # never shows it again once the clearance ends (core/compliance/kept_answers.py).
         payload["released"] = True
+    fix = (payload.get("dates") or {}).get("fix")
+    if fix:
+        # An admin's click makes it the metric's date at once; a reader's is a suggestion (core2/request_service.py).
+        fix["admin"] = str((portal_user or {}).get("role") or "") == "admin"
     own = payload.get("own_metric")
     if own and isinstance(own.get("measure"), Measure):
         # The definition stays on the server; the reader's buttons name it by a token only they can use.

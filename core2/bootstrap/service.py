@@ -61,10 +61,12 @@ _THINGS = {"category", "categ", "cat", "store", "region", "product", "prod", "it
 def _a_things_name(table: str, column: str, strategy: str) -> bool:
     """Is a column the old masking rule reads as a person's name or city ("category_name", "store city") the name
     of a thing? It is when the column names a thing, or when neither it nor its table is about people. People's
-    names stay out of the AI's view by this rule and by Learn's own reading of the values (personal.py)."""
+    names stay out of the AI's view by this rule and by Learn's own reading of the values (personal.py). A drug's
+    or an ingredient's name, which the rule holds back only so that its fake copy looks like a drug, is read the
+    same way: an ingredient a pharmacy buys is its own vocabulary; a patient's medication stays held back."""
     from core2.bootstrap import names, personal
 
-    if strategy not in ("name", "city"):
+    if strategy not in ("name", "city", "drug_name"):
         return False
     own = {names.singular(w) for w in names.tokens(column)}
     if own & (_THINGS | personal.ORG_WORDS) and not own & (_PEOPLE | personal.PERSON_WORDS):
@@ -73,31 +75,76 @@ def _a_things_name(table: str, column: str, strategy: str) -> bool:
     return not about & (_PEOPLE | personal.PERSON_WORDS)
 
 
-def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any]) -> Callable[[str, str], bool]:
+def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any],
+                sample: Callable[[str, str], list[str]] | None = None) -> Callable[[str, str], bool]:
     """May common values of this column be read and shown? The value index's own rules, and masking.
 
-    An admin who turned value indexing off gets none: no column's values are read or kept.
+    An admin who turned value indexing off gets none: no column's values are read or kept. A name the masking
+    rule holds back only because its table or column may be about people ("customer name", "buyer name") is told
+    by its own values when ``sample`` reads them: businesses or teams ("Harbor Trading", "Facilities Desk") are
+    named, people never (personal.organisations_named). Each such column is read once, in the app.
     """
     from core.masking import detect_sensitive_columns
     from core.value_index import _clearance_gate, value_index_enabled
+    from core2.bootstrap import names, personal
 
     if not value_index_enabled(state):
         return lambda _table, _column: False
     cleared, industry = _clearance_gate(account_id)
     sensitive: dict[str, set[str]] = {}
+    by_values: dict[str, set[str]] = {}
     for key, table in inventory.tables.items():
         found = detect_sensitive_columns([{"name": c.name, "type": c.raw_type} for c in table.columns], industry)
         sensitive[key] = {c.casefold() for c, strategy in found.items() if not _a_things_name(table.name, c, strategy)}
+        by_values[key] = {c.casefold() for c, strategy in found.items()
+                          if strategy == "name" and c.casefold() in sensitive[key]
+                          and not {names.singular(w) for w in names.tokens(c)} & personal.PERSON_WORDS
+                          and not personal.is_first_name(c) and not personal.is_last_name(c)}
+    told: dict[tuple[str, str], bool] = {}
+
+    def businesses(table_key: str, column: str) -> bool:
+        if sample is None or column.casefold() not in by_values.get(table_key, set()):
+            return False
+        if (table_key, column) not in told:
+            try:
+                told[(table_key, column)] = personal.organisations_named(sample(table_key, column))
+            except Exception as exc:  # noqa: BLE001 - unread, the column stays held back
+                log.warning("core2: the values of %s.%s could not be read to tell a business's name from a "
+                            "person's: %s", table_key, column, exc)
+                told[(table_key, column)] = False
+        return told[(table_key, column)]
 
     def allowed(table_key: str, column: str) -> bool:
         table = inventory.tables.get(table_key)
         if table is None or table.mask_all or column in table.masked:
             return False
-        if column.casefold() in sensitive.get(table_key, set()):
+        if column.casefold() in sensitive.get(table_key, set()) and not businesses(table_key, column):
             return False
         return cleared is None or bool(cleared(table.source_key, column))
 
     return allowed
+
+
+def value_sampler(warehouse: Any, inventory: Inventory, limit: int = 200) -> Callable[[str, str], list[str]]:
+    """Up to ``limit`` distinct values of one column, read in the warehouse for the app's own use (values_gate):
+    never kept, never sent."""
+    from sqlglot import exp
+
+    from core2.bootstrap.profiler import _readable
+    from core2.warehouse import dialect as D
+
+    def read(table_key: str, column: str) -> list[str]:
+        table = inventory.tables[table_key]
+        found = next(c for c in table.columns if c.name == column)
+        dialect = warehouse.dialect
+        value = _readable(found, dialect)
+        query = (exp.select(value.copy()).distinct().from_("__SRC__")
+                 .where(exp.Not(this=exp.Is(this=value.copy(), expression=exp.Null()))).limit(limit))
+        sql = query.sql(dialect=dialect).replace("__SRC__", D.table_sql(table.database, table.schema, table.name,
+                                                                         dialect), 1)
+        return [str(row[0]) for row in warehouse.query(sql, max_rows=limit).rows if row[0] is not None]
+
+    return read
 
 
 def _labeler(account_id: str, client: dict[str, Any], inventory: Inventory) -> Callable[[str, str], str] | None:
@@ -366,14 +413,15 @@ def build_workspace(account_id: str, started: str | None = None) -> int:
         if not inventory.tables:
             raise ValueError("Discovery found no tables to learn from.")
         kept = StoredProfiles(account_id, db_id, started)
-        options = BuildOptions(profile=ProfileOptions(values_allowed=values_gate(account_id, inventory, _state(client))),
-                               labeler=_labeler(account_id, client, inventory), progress=say, workers=learn_workers(),
-                               kept=kept)
         if len(kept):
             say(f"Starting where the Learn that stopped was: {len(kept)} table(s) it read are kept, unless "
                 "their columns or masking changed since")
         say(f"Connecting to the {config['db_type'].replace('_', ' ')} database")
         with QueryBotWarehouse(config["db_type"], config.get("credentials") or {}) as warehouse:
+            gate = values_gate(account_id, inventory, _state(client), sample=value_sampler(warehouse, inventory))
+            options = BuildOptions(profile=ProfileOptions(values_allowed=gate),
+                                   labeler=_labeler(account_id, client, inventory), progress=say,
+                                   workers=learn_workers(), kept=kept)
             model = build_model(warehouse, inventory, client_id=account_id, db_id=db_id, options=options)
         # Stored as learned: decisions are a layer applied when the model is read, so
         # undoing one brings back exactly what the data said.

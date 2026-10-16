@@ -12,6 +12,10 @@ hold is said, never guessed.
 A question that names its own period, or its own member of the same field, is answered for those, and the answer
 says the standing one was set aside for it. A condition that cannot apply to a question's rows (a field they do not
 reach) is set aside for that answer and said too.
+
+A date to count by is one too: "count by ship date from now on", or the reader's pick of another date on an answer
+("By ship date instead"), or of a date the answer asked about. It holds for every figure counted on that date's rows
+in the conversation, and for nothing else; a question that names its own date wins, and is said.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
-from core2.model.schema import Attribute, SemanticModel
+from core2.model.schema import Attribute, DateRole, SemanticModel
 from core2.plan.followup import names_own_period
 from core2.plan.ir import Filter, Plan, TimeSpec, Window
 from core2.plan.values import MemberIndex, ValueMatch
@@ -84,6 +88,7 @@ class Standing:
     window: Window | None = None
     filters: list[Filter] = field(default_factory=list)
     words_fr: str = ""                  # "les 2 derniers mois", "Store est Downtown"
+    date: str | None = None             # a date role's key: the figures on its rows are counted by it
 
     def shown(self) -> dict[str, Any]:
         """For the screen: the chip's words (a French reader's too), and where it is kept."""
@@ -93,14 +98,15 @@ class Standing:
         """As kept in a profile."""
         return {**self.shown(), "window": self.window.model_dump(mode="json", exclude_defaults=True)
                 if self.window is not None else None,
-                "filters": [f.model_dump(mode="json", exclude_defaults=True) for f in self.filters]}
+                "filters": [f.model_dump(mode="json", exclude_defaults=True) for f in self.filters],
+                "date": self.date}
 
     @classmethod
     def of(cls, data: dict[str, Any]) -> Standing:
         return cls(id=str(data["id"]), words=str(data.get("words") or ""), scope=data.get("scope") or "always",
                    window=Window(**data["window"]) if data.get("window") else None,
                    filters=[Filter(**f) for f in data.get("filters") or []],
-                   words_fr=str(data.get("words_fr") or ""))
+                   words_fr=str(data.get("words_fr") or ""), date=data.get("date") or None)
 
 
 @dataclass
@@ -144,7 +150,7 @@ def letting_go(question: str, kept: list[Standing]) -> list[Standing] | None:
     if not kept:
         return [] if about else None          # "remove the Germany condition" with none kept: said, never answered
     rest = found.group(1).strip(" .!?")
-    rest = re.sub(r"^(?:using|applying|with|the\s+standing|standing)\s+", "", rest, flags=re.IGNORECASE)
+    rest = re.sub(r"^(?:using|applying|with|counting|the\s+standing|standing)\s+", "", rest, flags=re.IGNORECASE)
     if not rest or _ALL_OF_THEM.match(rest):
         return list(kept)
     said = set(_plain(rest).split()) - _FILLER
@@ -165,6 +171,9 @@ def read(scope: Scope, words: str, model: SemanticModel, index: MemberIndex, tod
     if window is not None and window.kind != "all":
         out.append(Standing(_id(scope, "period", window.model_dump_json()), period_words(window).removeprefix("in ")
                             or "the period said", scope, window=window, words_fr=_period_fr(window)))
+    role = date_named(words, model)
+    if role is not None:
+        out.append(dated(role, scope))
     filters, unknown, unquoted = _members(words, model, index)
     for f in filters:
         out.append(Standing(_id(scope, f.model_dump_json()), _filter_words(f, model), scope, filters=[f],
@@ -186,6 +195,24 @@ def apply(plan: Plan, kept: list[Standing], question: str, model: SemanticModel,
         aside.append((f"{s.words} ({why})", f"{s.words_fr or s.words} ({_WHY_FR[why]})"))
 
     for s in kept:
+        if s.date is not None:
+            role = model.date_roles.get(s.date)
+            tables = counted_on(plan, model)
+            # Its own rows' figures, or a list counted by what its members did on those rows ("customers in Q1",
+            # counted on the returns after "Return date" was picked).
+            reached = role is not None and (role.table in tables or any(
+                j.from_table == role.table and j.to_table in tables and j.trust != "rejected"
+                for j in model.joins.values()))
+            if not reached or not _dated(plan):
+                continue        # another table's date, or a figure over no period: nothing to say for these rows
+            if plan.time.date not in (None, s.date, role.slug):
+                set_aside(s, "your question names its own date")
+                continue
+            trial = plan.model_copy(update={"time": plan.time.model_copy(update={"date": role.slug})})
+            if answers(trial):
+                plan = trial
+                applied.append(s)
+            continue
         if s.window is not None:
             window = plan.time.window
             carried = previous is not None and plan.follow_up == "refine" and window.kind != "all" \
@@ -244,9 +271,54 @@ def without(plan: Plan, applied: list[Standing], bare: Plan) -> Plan:
         return plan
     added = [f for s in applied for f in s.filters if f not in bare.filters]
     update: dict[str, Any] = {"filters": [f for f in plan.filters if f not in added]}
+    time = plan.time
     if any(s.window is not None for s in applied):
-        update["time"] = plan.time.model_copy(update={"window": bare.time.window})
+        time = time.model_copy(update={"window": bare.time.window})
+    if any(s.date is not None for s in applied):
+        time = time.model_copy(update={"date": bare.time.date})
+    update["time"] = time
     return plan.model_copy(update=update)
+
+
+def dated(role: DateRole, scope: Scope = "conversation") -> Standing:
+    """The standing condition "count by this date": its chip's words in English and in French."""
+    name = role.name.lower()
+    return Standing(_id(scope, "date", role.key), f"by {name}", scope, date=role.key, words_fr=f"selon {name}")
+
+
+def counted_on(plan: Plan, model: SemanticModel) -> set[str]:
+    """The tables whose rows a plan's figures are counted on."""
+    from core2.resolve.resolver import find_slug
+
+    slugs = [*plan.measures, *(s for d in plan.derived for s in d.measures), *(r.measure for r in plan.rates)]
+    found = [find_slug(model, s) for s in slugs]
+    return {f[1].table for f in found if f is not None and f[0] == "measure"}
+
+
+def _dated(plan: Plan) -> bool:
+    """Is a figure counted by a date at all: over a period, or month by month?"""
+    return plan.time.window.kind != "all" or plan.time.grain is not None or plan.time.compare is not None
+
+
+# "Count by ship date", "by the order date", "using invoice date", "selon la date d'expédition": a date of the data
+# by its name (or another name it goes by), said as the date to count by.
+_BY_A_DATE = r"(?:(?:count(?:ed|ing)?|figures?|numbers?)\s+)?(?:by|on|using|use|based\s+on|according\s+to|per|selon|" \
+             r"d['’]apr[eè]s|en\s+fonction\s+de|par|sur)\s+(?:the\s+|its\s+|their\s+|la\s+|le\s+|l['’])?"
+
+
+def date_named(words: str, model: SemanticModel) -> DateRole | None:
+    """The date role the words say to count by, when exactly one is named; None otherwise."""
+    low = " " + " ".join(words.lower().split()) + " "
+    found: dict[str, DateRole] = {}
+    for role in model.date_roles.values():
+        if role.kind == "audit" or not role.name:
+            continue
+        names = {role.name, *(w for said in (role.synonyms or {}).values() for w in said)}
+        for name in names:
+            name = " ".join(str(name).lower().split())
+            if len(name) >= 4 and re.search(rf"{_BY_A_DATE}{re.escape(name)}s?\b", low):
+                found[role.key] = role
+    return next(iter(found.values())) if len(found) == 1 else None
 
 
 # ── reading the words ───────────────────────────────────────────────────────
@@ -438,7 +510,8 @@ def _field_words(model: SemanticModel, slug: str) -> set[str]:
 _WHY_FR = {"your question names its own period": "votre question nomme sa propre période",
            "the period of the answer above is kept": "la période de la réponse précédente est gardée",
            "your question names its own": "votre question nomme le sien",
-           "not for these rows": "ne s’applique pas à ces lignes"}
+           "not for these rows": "ne s’applique pas à ces lignes",
+           "your question names its own date": "votre question nomme sa propre date"}
 # A reader writing in French: "désormais ...", "toujours exclure ...", "enlève les 2 derniers mois".
 _FRENCH = re.compile(r"\b(?:d(?:é|e)sormais|dor(?:é|e)navant|(?:à|a)\s+partir\s+de\s+maintenant|toujours|par\s+d(?:é|e)faut|"
                      r"seulement|uniquement|exclu(?:re|ez|s)|sans|sauf|les|des|derni(?:er|ère)s?|mois|cette|enl(?:è|e)ve|"

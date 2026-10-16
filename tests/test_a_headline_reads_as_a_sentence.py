@@ -66,12 +66,12 @@ def retail():
     return built.con, model
 
 
-def _answer(retail, plan: dict) -> dict:
+def _answer(retail, plan: dict, question: str = "q") -> dict:
     con, model = retail
     answers = [json.dumps({"kind": "query", **plan})]
     services = Services(model=model, warehouse=DuckDBWarehouse(con), complete=lambda s, t: answers.pop(0),
                         index=MemberIndex(), today=TODAY)
-    return answer_question("q", services, Session())["answer"]
+    return answer_question(question, services, Session())["answer"]
 
 
 def test_a_breakdown_headline_says_its_amounts_as_the_note_does(retail):
@@ -105,8 +105,8 @@ def test_one_member_and_nothing_to_lead_is_said_as_all_there_is(retail):
     """A reader whose rows are one region's (row access), asking by region: "North leads with" its total led nothing."""
     said = _answer(retail, {"measures": ["net_amount"], "group_by": ["region.name"],
                             "filters": [{"field": "region.name", "op": "eq", "values": ["North"]}],
-                            "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}}
-                   )["headline"]
+                            "time": {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}},
+                   "Net amount by region in 2025")["headline"]
     assert "leads with" not in said and re.search(r": North, \$\d", said), said
 
 

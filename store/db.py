@@ -63,11 +63,11 @@ CREATE TABLE IF NOT EXISTS platform_config (
 );
 
 -- ── Database connection credentials ──────────────────────────────────────────
--- db_type: snowflake | oracle | azure_sql | postgres
+-- db_type: snowflake | oracle | azure_sql | postgres | excel (a workbook, read on this server)
 CREATE TABLE IF NOT EXISTS db_config (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     name                  TEXT    NOT NULL,
-    db_type               TEXT    NOT NULL CHECK(db_type IN ('snowflake','oracle','azure_sql','postgres')),
+    db_type               TEXT    NOT NULL CHECK(db_type IN ('snowflake','oracle','azure_sql','postgres','excel')),
     credentials_encrypted TEXT    NOT NULL,
     created_at            TEXT    DEFAULT (datetime('now')),
     updated_at            TEXT    DEFAULT (datetime('now'))
@@ -1127,7 +1127,7 @@ def init_db() -> None:
 
 
 # The database types a connection may be: db_config's CHECK names each one.
-DB_TYPES = ("snowflake", "oracle", "azure_sql", "postgres")
+DB_TYPES = ("snowflake", "oracle", "azure_sql", "postgres", "excel")
 _DB_TYPE_CHECK = re.compile(r"CHECK\s*\(\s*db_type\s+IN\s*\([^)]*\)\s*\)", re.IGNORECASE)
 
 

@@ -30,7 +30,7 @@ def learn_timeout_seconds() -> int:
 
 @dataclass
 class QueryBotWarehouse:
-    db_type: str                     # snowflake | azure_sql | oracle | postgres
+    db_type: str                     # snowflake | azure_sql | oracle | postgres | excel
     credentials: dict[str, Any]
     timeout_seconds: int = field(default_factory=learn_timeout_seconds)
     # Azure SQL answers 40613 while a paused database resumes (a minute or so) and during a failover:
@@ -67,6 +67,10 @@ class QueryBotWarehouse:
         elif self.db_type in ("postgres", "postgresql"):
             conn = _pg_connect(self.credentials, max_retries=self.connect_retries,
                                statement_timeout=int(self.timeout_seconds))
+        elif self.db_type == "excel":
+            from core.workbook_source import connect
+
+            conn = connect(self.credentials)      # the workbook's tables in DuckDB, read only, on this server
         else:
             raise ValueError(f"core2 cannot profile a {self.db_type!r} database")
         self._local.conn = conn

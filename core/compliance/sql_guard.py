@@ -18,6 +18,7 @@ _DIALECT = {
     "snowflake": "snowflake",
     "oracle": "oracle",
     "postgres": "postgres",
+    "excel": "duckdb",
 }
 
 

@@ -13,6 +13,8 @@ An admin can release any of it from the Knowledge base page.
 
 from __future__ import annotations
 
+import re
+
 from core2.bootstrap import names
 from core2.bootstrap.inventory import InvTable
 from core2.bootstrap.profiler import TableProfile
@@ -163,3 +165,44 @@ def read_table(table: InvTable, profile: TableProfile) -> dict[str, str]:
                 and (_like(words, PERSON_WORDS) or people and not words - _NAME - subject - _NAME_EXTRA):
             out[column.name] = NAME     # "patient name" in a patients table, a partner's "contact name" anywhere
     return out
+
+
+# The words a business's or a team's own name is made of: what it is ("Harbor Trading", "Quarry Supply Co",
+# "Kestrel Clinics") or which part of a company it is ("Facilities Desk", "Capital Projects"). None is a common
+# surname: "Power", "Law" and "Hall" are left out.
+ORGANISATION_NAME_WORDS = frozenset("""
+inc incorporated llc llp lp ltd limited plc co corp corporation company companies gmbh ag sa sarl sas bv nv pty pvt
+group holdings enterprises ventures partners partnership capital industries industrial manufacturing works
+market markets mart store stores shop shops outlet outlets supermarket grocer grocers grocery foods food provisions
+goods trading traders trade wholesale wholesalers retail retailers distribution distributors distributor supply
+supplies suppliers imports exports logistics freight transport shipping
+labs laboratories systems solutions services technologies technology tech software digital media design designs
+studio studios analytics consulting consultants advisors advisory agency legal energy motors automotive
+health healthcare clinic clinics hospital hospitals pharmacy pharma medical dental bank banking financial finance
+insurance realty properties construction builders engineering electric electronics farms farm dairy bakery cafe
+restaurant restaurants kitchen hotel hotels travel airlines academy university college institute foundation
+association club center centre centers centres office department dept team teams desk unit division operations
+projects procurement purchasing buying sourcing spend maintenance facilities
+""".split())
+# What only a person's name has: a title before it, a degree or a generation after a comma ("Dr. Ana Ruiz",
+# "Ana Ruiz, MD"), or a surname written first ("Ruiz, Ana").
+_PERSON_TITLE = re.compile(r"^\s*(?:dr|mr|mrs|ms|miss|mx|prof|sir|madam)\b\.?\s", re.IGNORECASE)
+_PERSON_SUFFIX = re.compile(r",\s*(?:md|do|pa|pa-c|np|rn|lpn|pharmd|rph|dds|dmd|dvm|od|phd|jr|sr|ii|iii|iv)\.?\s*$",
+                            re.IGNORECASE)
+_SURNAME_FIRST = re.compile(r"^\s*[A-Z][a-z'’\-]+,\s*[A-Z][a-z'’\-]+\s*$")
+
+
+def organisations_named(values: list[str]) -> bool:
+    """Do these values (a sample of one column's) name businesses or teams, not people? Only when there are at
+    least three, nine in ten or more carry a business's or a team's word (or an "&"), and none reads as a
+    person's name. Read in the app: no value is sent anywhere."""
+    seen = [v.strip() for v in values if isinstance(v, str) and v.strip()]
+    if len(seen) < 3:
+        return False
+    if any(_PERSON_TITLE.search(v) or _PERSON_SUFFIX.search(v) or _SURNAME_FIRST.match(v) for v in seen):
+        return False
+    named = sum("&" in v or bool({names.singular(w) for w in names.tokens(v)} & _ORGANISATION_SINGULAR) for v in seen)
+    return named >= 0.9 * len(seen)
+
+
+_ORGANISATION_SINGULAR = frozenset(names.singular(w) for w in ORGANISATION_NAME_WORDS)

@@ -1639,7 +1639,7 @@ def _db_connection_error_message(db_type: str, err: Exception | str) -> str:
 
 
 # Stored database secrets: shown masked or not at all, and never sent back to the browser.
-_DB_SECRET_FIELDS = frozenset({"password", "private_key", "private_key_passphrase", "token"})
+_DB_SECRET_FIELDS = frozenset({"password", "private_key", "private_key_passphrase", "token", "client_secret"})
 # Key material is never shown, not even masked.
 _DB_KEY_FIELDS = frozenset({"private_key"})
 
@@ -1682,6 +1682,19 @@ def _db_credentials_from_form(form) -> tuple[str, str, int | None, dict]:
                  "database": g("pg_database"), "user": g("pg_user"), "password": g("pg_password"),
                  "sslmode": g("pg_sslmode") if g("pg_sslmode") in _PG_SSLMODES else "prefer",
                  "schemas": ", ".join(p.strip() for p in g("pg_schemas").split(",") if p.strip())}
+    elif db_type == "excel":
+        # A workbook uploaded on this page (its stored copy, by the hash the upload returned), or a SharePoint /
+        # OneDrive link read through Microsoft Graph, with an app of its own or the email app.
+        if g("xl_source") == "link":
+            graph = "mail" if g("xl_graph") == "mail" else "app"
+            creds = {"source": "link", "link": g("xl_link"), "graph": graph}
+            if graph == "app":
+                creds.update({"tenant_id": g("xl_tenant_id"), "client_id": g("xl_client_id"),
+                              "client_secret": g("xl_client_secret")})
+        else:
+            sha = g("xl_workbook").lower()
+            creds = {"source": "upload", "workbook": sha if re.fullmatch(r"[0-9a-f]{64}", sha) else "",
+                     "file_name": g("xl_file_name")[:200]}
     else:
         creds = {}
     if creds:
@@ -1721,6 +1734,9 @@ def _preserve_existing_db_secret_values(db_id: int | None, creds: dict, db_type:
         if "selected_schema_tables" not in creds and stored.get("selected_schema_tables"):
             creds["selected_schema_tables"] = stored["selected_schema_tables"]
             creds["selected_schemas"] = stored.get("selected_schemas", [])
+        if creds.get("source") == "upload" and not creds.get("workbook") and stored.get("source") == "upload":
+            # Saved again without a new file: the workbook stored is kept.
+            creds["workbook"], creds["file_name"] = stored.get("workbook", ""), stored.get("file_name", "")
     if "auth_method" in creds and not creds["auth_method"]:
         # A Snowflake form without a method: the secret it carries decides,
         # the way a connection saved before methods existed signs in.
@@ -1823,6 +1839,16 @@ async def databases_page(request: Request):
                 "user":   creds.get("user",   ""),
                 "schema": creds.get("schema", ""),
             }
+        elif db_type == "excel":
+            d["edit_creds"] = {
+                "source":    creds.get("source", "upload"),
+                "file_name": creds.get("file_name", ""),
+                "link":      creds.get("link", ""),
+                "graph":     creds.get("graph", "app"),
+                "tenant_id": creds.get("tenant_id", ""),
+                "client_id": creds.get("client_id", ""),
+                "has_client_secret": bool(creds.get("client_secret")),
+            }
         elif db_type == "postgres":
             d["edit_creds"] = {
                 "host":     creds.get("host",     ""),
@@ -1872,6 +1898,11 @@ async def database_save(request: Request, bg: BackgroundTasks):
     # Preserve existing encrypted values for blank fields when editing
     creds = _preserve_existing_db_secret_values(db_id, creds, db_type)
 
+    if db_type == "excel":
+        problem = _workbook_problem(creds)
+        if problem:
+            return RedirectResponse(f"/admin/databases?error={quote(problem)}", status_code=303)
+
     if db_type == "snowflake":
         # A key that cannot be read is refused now, with the reason, rather
         # than at the first question.
@@ -1892,6 +1923,52 @@ async def database_save(request: Request, bg: BackgroundTasks):
         return RedirectResponse(f"/admin/databases?saved={quote(saved_msg)}", status_code=303)
     except ValueError as e:
         return RedirectResponse(f"/admin/databases?error={quote(str(e))}", status_code=303)
+
+
+def _workbook_problem(creds: dict) -> str:
+    """Why an Excel connection cannot be saved as it is: no workbook uploaded, or a link that is no web address.
+    A link is read when the connection is tested, or at Learn: never at save, which must not wait on Graph."""
+    from core import workbook_source
+
+    if creds.get("source") == "link":
+        if not str(creds.get("link") or "").startswith("https://"):
+            return "Paste the workbook's SharePoint or OneDrive link (it starts with https://)."
+        return ""
+    if not creds.get("workbook"):
+        return "Upload the workbook first."
+    try:
+        workbook_source.load(str(creds["workbook"]), str(creds.get("file_name") or ""))
+    except workbook_source.WorkbookError:
+        return "That workbook is no longer on this server: upload it again."
+    return ""
+
+
+@router.post("/databases/workbook/upload")
+async def database_workbook_upload(request: Request):
+    """An Excel workbook for a connection: stored and read into tables now, so the page can say what it holds
+    (its sheets, their rows, what was left out) before the connection is saved. The form keeps its hash."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "message": "Not authenticated"}, status_code=401)
+    from core import workbook_source
+
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        return JSONResponse({"status": "error", "message": "Choose an .xlsx file to upload."}, status_code=400)
+    data = await upload.read(workbook_source.MAX_BYTES + 1)
+    name = os.path.basename(str(getattr(upload, "filename", "") or "workbook.xlsx"))[:200]
+    try:
+        loop = asyncio.get_running_loop()
+        loaded = await loop.run_in_executor(None, workbook_source.save, data, name)
+    except workbook_source.WorkbookError as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001 - said, never a page error
+        log.warning("Workbook upload failed: %s", exc)
+        return JSONResponse({"status": "error", "message": "The workbook could not be read."}, status_code=400)
+    return JSONResponse({"status": "ok", "workbook": loaded.sha256, "file_name": loaded.file_name or name,
+                         "tables": [{"sheet": t.sheet, "name": t.name, "rows": t.rows, "columns": len(t.columns),
+                                     "left_out": t.left_out} for t in loaded.tables],
+                         "skipped": loaded.skipped})
 
 
 @router.post("/databases/test")

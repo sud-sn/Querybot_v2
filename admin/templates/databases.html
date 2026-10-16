@@ -35,7 +35,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Database connections</h1>
-  <p>Configure Snowflake, Oracle, Azure SQL or PostgreSQL credentials.</p>
+  <p>Connect Snowflake, Oracle, Azure SQL, PostgreSQL or an Excel workbook.</p>
 </div>
 
 {% if saved %}<div class="alert alert-success">{{ saved }}</div>{% endif %}
@@ -56,6 +56,7 @@
             <option value="oracle">Oracle</option>
             <option value="azure_sql">Azure SQL</option>
             <option value="postgres">PostgreSQL</option>
+            <option value="excel">Excel workbook</option>
           </select>
         </div>
         <div class="form-group">
@@ -262,6 +263,63 @@ GRANT pg_read_all_stats TO querybot_reader;</pre>
         </details>
       </div>
 
+      <!-- ══ EXCEL WORKBOOK — all fields prefixed xl_ ══ -->
+      <div id="db-excel" style="display:none">
+        <div class="alert alert-info" style="margin-bottom:.75rem;font-size:var(--font-sm)">
+          Excel workbook — each sheet becomes a table, so a workspace can run before any database is ready, or on
+          data a team keeps in a shared drive. The workbook is read on this server and never changed.
+        </div>
+        <input type="hidden" name="xl_workbook" id="xl_workbook" value="">
+        <input type="hidden" name="xl_file_name" id="xl_file_name" value="">
+        <div class="form-group"><label>Where is the workbook?</label>
+          <div style="display:flex;gap:1.25rem;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:.4rem;font-weight:var(--weight-regular)">
+              <input type="radio" name="xl_source" value="upload" checked onchange="showXlSource(this.value)" style="width:auto"> Upload a file</label>
+            <label style="display:flex;align-items:center;gap:.4rem;font-weight:var(--weight-regular)">
+              <input type="radio" name="xl_source" value="link" onchange="showXlSource(this.value)" style="width:auto"> SharePoint or OneDrive link</label>
+          </div>
+        </div>
+        <div id="xl-upload">
+          <div class="form-group"><label for="xl_file">Workbook (.xlsx) *</label>
+            <input type="file" id="xl_file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <p class="form-note">Up to 100 MB. Each sheet's header is the first row that names its columns; a title above it and a totals row under it are left out. Hidden and empty sheets are skipped.</p>
+            <div id="xl-upload-result" role="status" aria-live="polite" style="display:none"></div>
+          </div>
+        </div>
+        <div id="xl-link" style="display:none">
+          <div class="form-group"><label>Link *</label>
+            <input type="url" name="xl_link" placeholder="https://contoso.sharepoint.com/:x:/s/finance/…">
+            <p class="form-note">In Excel, Share → Copy link. Solviz checks it every 15 minutes and reads it again only when the file changed; if it cannot be read, the last copy keeps answering.</p>
+          </div>
+          <div class="form-group"><label>Read it with</label>
+            <select name="xl_graph" id="xl_graph" onchange="showXlGraph(this.value)">
+              <option value="app">An app registered for this (tenant, client ID and secret)</option>
+              <option value="mail">The app already set up for sending email</option>
+            </select>
+          </div>
+          <div id="xl-app">
+            <div class="form-grid">
+              <div class="form-group"><label>Tenant ID *</label>
+                <input type="text" name="xl_tenant_id" placeholder="00000000-0000-0000-0000-000000000000"></div>
+              <div class="form-group"><label>Client ID *</label>
+                <input type="text" name="xl_client_id" placeholder="00000000-0000-0000-0000-000000000000"></div>
+            </div>
+            <div class="form-group"><label>Client secret *</label>
+              <input type="password" name="xl_client_secret" autocomplete="new-password">
+              <p class="form-note" id="xl-secret-note" style="display:none">A secret is stored. Leave blank to keep it.</p>
+            </div>
+          </div>
+          <details style="margin-top:.5rem">
+            <summary style="cursor:pointer;font-size:var(--font-sm)">Registering an app that can read the file (Microsoft Entra admin)</summary>
+            <ol style="font-size:var(--font-xs);margin:.5rem 0 0 1.1rem">
+              <li>Entra ID → App registrations → New registration (single tenant).</li>
+              <li>API permissions → Add → Microsoft Graph → Application permissions → <code>Files.Read.All</code>, or <code>Sites.Selected</code> with access to that one site. Grant admin consent.</li>
+              <li>Certificates &amp; secrets → New client secret. Paste the tenant ID, the application (client) ID and the secret here.</li>
+            </ol>
+          </details>
+        </div>
+      </div>
+
       <div class="alert alert-info" id="log-export-panel" style="margin-top:1rem;margin-bottom:0">
         <label style="display:flex;align-items:flex-start;gap:.55rem;font-weight:var(--weight-bold);color:var(--text-soft)">
           <input type="checkbox" name="log_export_enabled" value="1" style="width:auto;margin-top:2px">
@@ -351,6 +409,14 @@ GRANT pg_read_all_stats TO querybot_reader;</pre>
           {% endif %}
         {% elif d.db_type == "oracle" %}
           {{ d.credentials.get("dsn","—") }}
+        {% elif d.db_type == "excel" %}
+          {% if d.credentials.get("source") == "link" %}
+            {{ d.credentials.get("link","—")|truncate(64) }}
+            <div style="margin-top:4px"><span class="badge badge-blue">Linked, read every 15 min</span></div>
+          {% else %}
+            {{ d.credentials.get("file_name") or "Workbook" }}
+            <div style="margin-top:4px"><span class="badge badge-gray">Uploaded</span></div>
+          {% endif %}
         {% elif d.db_type == "postgres" %}
           {{ d.credentials.get("host","—") }}:{{ d.credentials.get("port", 5432) }} / {{ d.credentials.get("database","—") }}{% if d.credentials.get("schemas") %} / {{ d.credentials.get("schemas") }}{% endif %}
         {% else %}
@@ -504,14 +570,15 @@ showSfAuth(document.getElementById('sf_auth_method').value);
 window.addEventListener('pageshow', function(){ showSfAuth(document.getElementById('sf_auth_method').value); });
 
 function showDb(t){
-  ['snowflake','oracle','azure_sql','postgres'].forEach(x=>{
+  ['snowflake','oracle','azure_sql','postgres','excel'].forEach(x=>{
     document.getElementById('db-'+x).style.display=x===t?'block':'none';
   });
-  // Solviz opens every PostgreSQL session read only, so its logs cannot be
+  // Solviz opens every PostgreSQL session read only, and a workbook is read only, so logs cannot be
   // stored there: the option is not offered (the server does not keep it either).
   const logPanel = document.getElementById('log-export-panel');
-  logPanel.style.display = t === 'postgres' ? 'none' : '';
-  if (t === 'postgres') logPanel.querySelector('[name="log_export_enabled"]').checked = false;
+  const noLogs = t === 'postgres' || t === 'excel';
+  logPanel.style.display = noLogs ? 'none' : '';
+  if (noLogs) logPanel.querySelector('[name="log_export_enabled"]').checked = false;
   document.getElementById('save-btn').disabled=!t;
   document.getElementById('test-btn').disabled=!t;
   document.getElementById('browse-scope-btn').disabled=!t;
@@ -836,6 +903,45 @@ function row(label, value) {
   </tr>`;
 }
 
+function showXlSource(v) {
+  document.getElementById('xl-upload').style.display = v === 'link' ? 'none' : '';
+  document.getElementById('xl-link').style.display = v === 'link' ? '' : 'none';
+  document.querySelectorAll('[name="xl_source"]').forEach(r => { r.checked = r.value === (v === 'link' ? 'link' : 'upload'); });
+}
+function showXlGraph(v) {
+  document.getElementById('xl-app').style.display = v === 'mail' ? 'none' : '';
+}
+function xlSaid(kind, text) {
+  const box = document.getElementById('xl-upload-result');
+  const tone = {ok: 'green', error: 'red', info: 'blue'}[kind] || 'blue';
+  box.setAttribute('style', `display:block;margin-top:.5rem;font-size:var(--font-sm);padding:.6rem .75rem;border-radius:6px;background:var(--${tone}-light);border:1px solid color-mix(in srgb,var(--${tone}) 28%,transparent);color:var(--${tone});white-space:pre-line`);
+  box.textContent = text;
+}
+// The file goes up on its own as soon as it is chosen (never with the form): the page says what it holds, and
+// the form keeps only the stored copy's hash.
+document.getElementById('xl_file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  xlSaid('info', 'Reading ' + file.name + '…');
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    const resp = await fetch('/admin/databases/workbook/upload', {method: 'POST', credentials: 'same-origin', body});
+    const data = await resp.json();
+    if (data.status !== 'ok') { xlSaid('error', data.message || 'The workbook could not be read.'); return; }
+    document.getElementById('xl_workbook').value = data.workbook;
+    document.getElementById('xl_file_name').value = data.file_name;
+    const n = data.tables.length;
+    const lines = [data.file_name + ': ' + n + ' sheet' + (n !== 1 ? 's' : '') + ' read as tables.'];
+    data.tables.forEach(t => lines.push('• ' + t.sheet + ' → ' + t.name + ' (' + t.rows.toLocaleString() + ' rows, '
+      + t.columns + ' columns)' + (t.left_out.length ? '; left out: ' + t.left_out.join(', ') : '')));
+    if (data.skipped.length) lines.push('Skipped: ' + data.skipped.join('; ') + '.');
+    xlSaid(n ? 'ok' : 'error', n ? lines.join('\n') : 'No sheet with a header row and rows under it was found.');
+  } catch (err) {
+    xlSaid('error', 'Network error: ' + err.message);
+  }
+});
+
 function setField(name, val) {
   const el = document.querySelector('[name="' + name + '"]');
   if (el) el.value = val;
@@ -909,6 +1015,21 @@ function editDb(id, type, name, creds, logCfg, scope) {
     setField('az_driver',   creds.driver   || 'ODBC Driver 18 for SQL Server');
     setField('az_password', '');
     document.getElementById('az-pwd-note').style.display = '';
+  } else if (type === 'excel') {
+    showXlSource(creds.source || 'upload');
+    setField('xl_workbook', '');
+    setField('xl_file_name', '');
+    document.getElementById('xl_file').value = '';
+    if ((creds.source || 'upload') === 'upload' && creds.file_name) {
+      xlSaid('info', 'Stored: ' + creds.file_name + '. Choose a file only to replace it.');
+    }
+    setField('xl_link', creds.link || '');
+    setField('xl_graph', creds.graph || 'app');
+    showXlGraph(creds.graph || 'app');
+    setField('xl_tenant_id', creds.tenant_id || '');
+    setField('xl_client_id', creds.client_id || '');
+    setField('xl_client_secret', '');
+    document.getElementById('xl-secret-note').style.display = creds.has_client_secret ? '' : 'none';
   } else if (type === 'postgres') {
     setField('pg_host',     creds.host     || '');
     setField('pg_port',     creds.port     || '5432');
@@ -948,10 +1069,13 @@ function cancelEdit() {
   showDb('');
   showSfAuth('keypair');
   sfClearGeneratedKey();
-  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note','pg-pwd-note'].forEach(function(nid) {
+  ['sf-pwd-note','sf-key-note','sf-token-note','ora-pwd-note','az-pwd-note','pg-pwd-note','xl-secret-note'].forEach(function(nid) {
     const el = document.getElementById(nid);
     if (el) el.style.display = 'none';
   });
+  showXlSource('upload');
+  showXlGraph('app');
+  document.getElementById('xl-upload-result').style.display = 'none';
 }
 </script>
 {% endblock %}

@@ -251,3 +251,29 @@ def test_a_word_of_a_longer_name_is_offered_as_the_whole_names_written():
     payload = {}
     _say_unquoted(payload, question, [("profit centre", "Northfield Industrial")], written)
     assert payload["follow_up_suggestions"][0]["label"] == 'Only "Northfield Industrial"'
+
+
+def _by_customer_of_segment(segment: str) -> dict:
+    return {"intent": "rank", "measures": ["net_amount"], "group_by": ["customer.name"], "time": Y2025, "limit": 1,
+            "sort": [{"by": "net_amount", "desc": True}],
+            "filters": [{"field": "customer.segment", "op": "eq", "values": [segment]}]}
+
+
+def test_a_word_that_describes_and_names_nothing_is_left_out_and_said(retail):
+    # "Which referral partner sent us the most bookings?" was filtered on a partner type "Referral" the data does
+    # not have, and refused: every partner of that data refers bookings. A word the reader wrote in lower case,
+    # unquoted, that is no member's name describes what is asked about: it is left out, and said so.
+    every = _ask(retail, Recorded({**_by_customer_of_segment("x"), "filters": []}),
+                 "which customer bought the most in 2025?")[0]
+    payload = _ask(retail, Recorded(_by_customer_of_segment("Loyal")),
+                   "which loyal customer bought the most in 2025?")[0]
+    assert not payload["trust"].get("stopped") and payload["answer"]["headline"] == every["answer"]["headline"]
+    notes = payload["trust"]["date_context"]
+    assert any(n.startswith('No segment is called "Loyal"') for n in notes), notes
+    assert not any(s["label"].startswith("Only") for s in payload.get("follow_up_suggestions") or [])
+
+
+def test_a_name_written_with_a_capital_that_the_data_does_not_have_is_still_asked_about(retail):
+    payload = _ask(retail, Recorded(_by_customer_of_segment("Wholsale")),
+                   "which Wholsale customer bought the most in 2025?")[0]
+    assert payload["trust"].get("stopped") and "Wholsale" in payload["answer"]["headline"]

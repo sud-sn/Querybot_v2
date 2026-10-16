@@ -112,7 +112,10 @@ class SchemaThreadingTests(unittest.TestCase):
 
     def test_every_dialect_threads_industry(self):
         src = _src("core/schema.py")
-        fn_names = ["_discover_snowflake", "_discover_oracle", "_discover_azure_sql", "_discover_postgres"]
+        fn_names = ["_discover_snowflake", "_discover_oracle", "_discover_azure_sql", "_discover_postgres",
+                    "_discover_excel"]
+        # A workbook's sheets have no value scan to keep masked fields out of: only their sample rows are masked.
+        once = {"_discover_excel"}
         starts = [src.index(f"def {fn}(") for fn in fn_names]
         for name, start in zip(fn_names, starts):
             sig_line = src[start:src.index("\n", start)]
@@ -123,7 +126,7 @@ class SchemaThreadingTests(unittest.TestCase):
         for i, name in enumerate(fn_names):
             body = src[bounds[i]:bounds[i + 1]]
             self.assertEqual(
-                body.count("industry=industry"), 2,
+                body.count("industry=industry"), 1 if name in once else 2,
                 f"{name} should pass industry= to both _resolve_masking_fields and _apply_masking",
             )
         # discover_and_write's dispatcher passes industry= to every one.

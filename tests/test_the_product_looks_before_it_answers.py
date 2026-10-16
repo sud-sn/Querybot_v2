@@ -536,11 +536,12 @@ def test_nothing_found_because_of_a_condition_kept_from_the_question_before_is_s
     others = _one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l WHERE {IN_MAY}")
     assert seen["figures"][0] == pytest.approx(float(others))
     offer = next(o for o in got["reply"]["offers"] if "Lakeside" not in o["label"])
-    assert got["reply"]["offers"][0] == offer        # the first button: likely the condition is no longer meant
+    # The second button: the figure without the condition is said above already. The first is the customer month by
+    # month, which "yes" runs: when did Lakeside Wholesale buy at all?
+    assert got["reply"]["offers"][1] == offer and "by month" in got["reply"]["offers"][0]["label"]
     asked = chat.asked
     plain = chat.ask(offer["question"])
     assert chat.asked == asked and float(plain["kpi"]["value"]) == pytest.approx(float(others))
-    # "yes" asks the same
     again = Chat(retail)
     again.ask('Net sales for "Lakeside Wholesale" in January 2026', {
         **_net(customer="Lakeside Wholesale"), "time": {"window": {"kind": "between", "start": "2026-01-01",
@@ -548,7 +549,10 @@ def test_nothing_found_because_of_a_condition_kept_from_the_question_before_is_s
     again.ask("and in May 2026?", {**_net(customer="Lakeside Wholesale"), "time": MAY, "follow_up": "refine"})
     asked = again.asked
     said_yes = again.ask("yes")
-    assert again.asked == asked and float(said_yes["kpi"]["value"]) == pytest.approx(float(others))
+    monthly = _one(retail, f"SELECT COUNT(DISTINCT date_trunc('month', l.day)) FROM ({LINES}) l "
+                           "WHERE l.customer_name = 'Lakeside Wholesale'")
+    assert again.asked == asked and said_yes["plan"]["intent"] == "trend" \
+        and len(said_yes["data"]["rows"]) == monthly
 
 
 # ── two fair readings: each one worked out before asking ─────────────────────

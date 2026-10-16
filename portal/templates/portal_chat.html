@@ -607,6 +607,27 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .answer-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .answer-badges .badge { min-height: 24px; font-weight: var(--weight-medium); }
+/* The date an answer was counted by opens the rows' other dates: each a click that counts it again by that date. */
+.date-choice { position: relative; display: inline-flex; }
+.date-choice > summary { list-style: none; cursor: pointer; gap: 4px; }
+.date-choice > summary::-webkit-details-marker { display: none; }
+.date-choice > summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
+.date-choice[open] > summary { border-color: var(--primary); }
+.date-choice-menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 240px; max-width: min(320px, 86vw);
+  padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  box-shadow: var(--shadow-md); display: flex; flex-direction: column; gap: 4px; }
+.date-choice-menu .follow-up-chip { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 32px;
+  padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit;
+  font-size: var(--font-sm); font-weight: var(--weight-medium); text-align: left; cursor: pointer; }
+.date-choice-menu .follow-up-chip:hover { background: color-mix(in srgb, var(--primary) 10%, var(--surface)); color: var(--primary-ink); }
+.date-choice-menu .follow-up-chip:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+@media (pointer: coarse) { .date-choice-menu .follow-up-chip { min-height: 44px; } }
+.date-choice-note { margin: 2px 4px 4px; font-size: var(--font-xs); color: var(--text-muted); }
+.date-fix { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
+.date-fix button { width: 100%; justify-content: flex-start; height: auto; min-height: 32px; padding-block: 6px; white-space: normal;
+  text-align: left; line-height: 1.3; }
+.date-fix button svg { flex: none; }
+.date-fix-done { margin: 4px; font-size: var(--font-xs); color: var(--text-muted); }
 .answer-card .answer-headline { margin: 0; font-size: var(--font-lg); line-height: 1.5; color: var(--text-strong); font-weight: var(--weight-semibold); text-wrap: pretty; }
 .answer-card .answer-headline.is-lead { font-size: var(--font-xl); }
 .answer-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
@@ -3430,12 +3451,53 @@ const _NUMERIC_FORMATS = ['currency', 'number', 'integer', 'decimal', 'percent',
 function _answerBadgesHtml(msg) {
   const answer = msg.answer || {};
   const badges = (Array.isArray(answer.badges) ? answer.badges : []).filter(b => b && b.text);
+  const dates = msg.dates || {};
+  const others = Array.isArray(dates.others) ? dates.others : [];
   const items = badges.map(b => b.kind === 'period'
     ? `<span class="badge badge-brand">${qbIcon('calendar', 13)}${escHtml(_inLang(b, 'text'))}</span>`
+    : b.kind === 'date' && (others.length || dates.fix) ? _dateChoiceHtml(b, dates, others)
     : `<span class="badge">${escHtml(_inLang(b, 'text'))}</span>`);
   const scope = (msg.result_scope || {}).badge || answer.scope_badge || '';
   if (scope) items.push(`<span class="badge">${escHtml(scope)}</span>`);
   return items.length ? `<div class="answer-badges">${items.join('')}</div>` : '';
+}
+
+// The date badge as a menu: the rows' other dates (a click counts the same figure by it, and keeps it for the
+// conversation), and, when the answer is counted by a date that is not its metric's own, making it so -- at once
+// for an admin, as a suggestion for a reader.
+function _dateChoiceHtml(badge, dates, others) {
+  const fix = dates.fix;
+  const fixWords = fix ? _inLang(fix, fix.admin ? 'words_admin' : 'words_reader') : '';
+  return `<details class="date-choice"><summary class="badge" aria-haspopup="true">${escHtml(_inLang(badge, 'text'))}${qbIcon('chevron-down', 12)}</summary>`
+    + `<div class="date-choice-menu" role="menu">`
+    + (others.length ? `<p class="date-choice-note">${escHtml(t('ui.chat.dates.others'))}</p>` : '')
+    + others.map(o => `<button type="button" role="menuitem" class="follow-up-chip" data-question="${escHtml(_inLang(o, 'words'))}" data-follow-up="${escHtml(_inLang(o, 'words'))}">${escHtml(_inLang(o, 'words'))}</button>`).join('')
+    + (fix ? `<div class="date-fix" data-date-fix='${escHtml(JSON.stringify({target_kind: fix.target_kind, target_key: fix.target_key, date: fix.date}))}'>`
+      + `<button type="button" role="menuitem" class="btn btn-secondary btn-sm">${qbIcon(fix.admin ? 'check' : 'users', 14)}${escHtml(fixWords)}</button>`
+      + `<p class="date-fix-done" role="status" hidden></p></div>` : '')
+    + `</div></details>`;
+}
+
+function _wireDateFix(root, msg) {
+  root.querySelectorAll('[data-date-fix]').forEach(box => {
+    const button = box.querySelector('button');
+    const done = box.querySelector('.date-fix-done');
+    const fix = (msg.dates || {}).fix || {};
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      let data;
+      try {
+        const response = await fetch('/portal/api/requests', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({...JSON.parse(box.dataset.dateFix), source: 'answer', example: msg.question || ''})});
+        data = await response.json();
+      } catch (exc) { data = {ok: false, error: exc.message}; }
+      done.hidden = false;
+      if (!data.ok) { button.disabled = false; done.textContent = data.error || t('ui.chat.own.failed', {error: ''}); return; }
+      button.remove();
+      done.textContent = _inLang(fix, data.request && data.request.status === 'accepted' ? 'done_admin' : 'done_reader');
+    });
+  });
 }
 
 // The numbers of an answer that is only numbers: one tile each. A single value
@@ -4258,6 +4320,7 @@ function appendAssistantResponse(msg, opts = {}){
   }));
   _wireOwnMetric(div);
   _wireFigures(div);
+  _wireDateFix(div, msg);
 
   // How it was counted opens in place, from the link in the action row.
   const howBtn = div.querySelector('[data-open-how]');

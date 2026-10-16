@@ -23,7 +23,7 @@ from sqlglot import exp
 
 DIALECTS = ("snowflake", "tsql", "oracle", "postgres", "duckdb")
 _BY_DB_TYPE = {"snowflake": "snowflake", "azure_sql": "tsql", "oracle": "oracle", "postgres": "postgres",
-               "postgresql": "postgres", "duckdb": "duckdb"}
+               "postgresql": "postgres", "duckdb": "duckdb", "excel": "duckdb"}
 
 
 def for_db_type(db_type: str) -> str:

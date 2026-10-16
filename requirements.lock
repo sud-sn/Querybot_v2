@@ -58,6 +58,7 @@ cymem==2.0.13
 docstring_parser==0.18.0
 duckdb==1.5.5
 dukpy==0.6.0
+et_xmlfile==2.0.0
 faker==40.38.0
 fastapi==0.141.1
 filelock==3.32.7
@@ -94,6 +95,7 @@ narwhals==2.26.0
 networkx==3.6.1
 numpy==2.4.6
 openai==3.8.0
+openpyxl==3.1.5
 oracledb==26.0.1
 packaging==24.0
 pandas==3.0.6

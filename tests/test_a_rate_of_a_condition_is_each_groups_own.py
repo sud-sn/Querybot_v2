@@ -86,3 +86,24 @@ def test_the_condition_is_on_the_figures_own_rows(retail):
     with pytest.raises(ResolveError) as raised:
         resolve(plan, model, Context(today=dt.date(2026, 6, 14)))
     assert "own rows" in raised.value.message
+
+
+def test_a_rate_refused_as_not_in_the_catalog_is_planned_again(retail):
+    # "Quel a été le taux d'annulation des réservations le mois dernier ?" was refused: "Cancellation rate is not
+    # available in the data catalog". A rate of a condition is no metric of the catalog: it is planned in rates, the
+    # share of the rows that meet it. Asked again once, with that said.
+    from core2.plan.planner import plan_question
+
+    _, model = retail
+    answers = [json.dumps({"kind": "unsupported", "notes": ["Cancellation rate is not available in the data catalog."]}),
+               json.dumps({"kind": "query", "rates": [RATE], "time": Y25})]
+    asked: list[str] = []
+
+    def complete(system, user):
+        asked.append(user)
+        return answers.pop(0)
+
+    outcome = plan_question(model, "Quel a été le taux d'annulation des commandes en 2025 ?", complete,
+                            today=dt.date(2026, 6, 14))
+    assert outcome.plan.kind == "query" and outcome.plan.rates, outcome.plan
+    assert len(asked) == 2 and "rates" in asked[1]

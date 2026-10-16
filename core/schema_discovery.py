@@ -57,6 +57,8 @@ async def discover_schema_tree(
         fn = _discover_azure_sql
     elif db_type == "postgres":
         fn = _discover_postgres
+    elif db_type == "excel":
+        fn = _discover_excel
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -71,6 +73,19 @@ async def discover_schema_tree(
             f"check that the DB is reachable and credentials are correct."
         )
     return result
+
+
+# ── Excel workbook ────────────────────────────────────────────────────────────
+
+def _discover_excel(cfg: dict) -> dict:
+    """The workbook's sheets, each a table of workbook.main (core/workbook_source.py).
+
+    Returns:  { "WORKBOOK": { "MAIN": { "tables": [...], "views": [] } } }
+    """
+    from core.workbook_source import CATALOG, SCHEMA, current
+
+    loaded = current(cfg)
+    return {CATALOG.upper(): {SCHEMA.upper(): {"tables": [t.name for t in loaded.tables], "views": []}}}
 
 
 # ── PostgreSQL ────────────────────────────────────────────────────────────────

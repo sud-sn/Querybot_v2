@@ -345,6 +345,8 @@ def discover_and_write(
         return _discover_azure_sql(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     elif db_type == "postgres":
         return _discover_postgres(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
+    elif db_type == "excel":
+        return _discover_excel(credentials, out, allowed, mc, seed_key=seed_key, industry=industry)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -496,6 +498,10 @@ def test_connection(credentials: dict, db_type: str) -> dict:
             return details
         finally:
             conn.close()
+    elif db_type == "excel":
+        from core.workbook_source import describe
+
+        return describe(credentials)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -538,6 +544,8 @@ def run_query(credentials: dict, db_type: str, sql: str, max_rows: int = 200) ->
         fetched = _run_azure_sql(credentials, sql, probe)
     elif db_type == "postgres":
         fetched = _run_postgres(credentials, sql, probe)
+    elif db_type == "excel":
+        fetched = _run_excel(credentials, sql, probe)
     else:
         raise ValueError(f"Unsupported db_type: {db_type!r}")
 
@@ -958,7 +966,7 @@ def _fetch_fk_constraints_oracle(cur, owner: str) -> list[dict]:
         return []
 
 
-_JOIN_MAP_DIALECT = {"snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres"}
+_JOIN_MAP_DIALECT = {"snowflake": "snowflake", "oracle": "oracle", "postgres": "postgres", "excel": "duckdb"}
 
 
 def _join_map_names(db_type: str):
@@ -3744,6 +3752,111 @@ def _pg_md(name, meta, columns, sample, schema, distinct_map: dict, database: st
         for cname, st in stats_map.items():
             null_pct = f"{st['null_pct']}%" if st.get("null_pct") is not None else ""
             lines.append(f"| `{cname}` | {null_pct} | {st.get('min') or ''} | {st.get('max') or ''} |")
+    _append_sample(lines, sample)
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Excel workbook (core/workbook_source.py): each sheet a table, read in DuckDB on this server
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_excel(cfg: dict, sql: str, max_rows: int = 200) -> list[dict]:
+    """A query on the workbook's tables, stopped at the workspace's time limit (DuckDB has no statement timeout of
+    its own: the connection is interrupted). The connection reads the workbook only (core.workbook_source.connect)."""
+    import threading
+
+    from core.workbook_source import connect
+
+    con = connect(cfg)
+    timer = threading.Timer(_query_timeout_seconds(cfg), con.interrupt)
+    timer.start()
+    try:
+        cur = con.execute(sql)
+        col_names = [d[0] for d in cur.description or []]
+        return [dict(zip(col_names, row)) for row in cur.fetchmany(max_rows)]
+    finally:
+        timer.cancel()
+        con.close()
+
+
+def _discover_excel(cfg: dict, out: Path, allowed: set[str] | None = None, mc: dict | None = None, seed_key: str = "", industry: str = "") -> int:
+    """Each sheet of the workbook as a table of workbook.main, its headers as its columns' descriptions.
+
+    The workbook was read into DuckDB when it was uploaded or its link last changed (core/workbook_source.py);
+    discovery writes what the other warehouses' discovery writes, so Learn and the knowledge base read it as they
+    read any database. A sheet's sample rows are masked as any table's are.
+    """
+    from core.workbook_source import CATALOG, SCHEMA, connect, current
+
+    loaded = current(cfg)
+    database, schema = CATALOG, SCHEMA
+    db_upper = database.upper()
+    master: dict = {}
+    con = connect(cfg)
+    try:
+        for table in loaded.tables:
+            if not _allowed_table_match(allowed, table.name, schema, db_upper):
+                continue
+            columns = [{"COLUMN_NAME": c.name, "DATA_TYPE": c.type, "FULL_TYPE": c.type, "IS_NULLABLE": "YES",
+                        "COMMENT": c.header if c.header != c.name else ""} for c in table.columns]
+            _fqn = f"{db_upper}.{schema}.{table.name}".upper()
+            _tbl_cfg = (mc or {}).get(_fqn, {})
+            _mode = _tbl_cfg.get("mode", "auto")
+            col_defs = [{"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"]} for c in columns]
+            sql_name = f"{database}.{schema}.{table.name}"
+
+            def _xl_fetch(sql_name=sql_name):
+                try:
+                    cur = con.execute(f"SELECT * FROM {sql_name} LIMIT 5")
+                    names = [d[0] for d in cur.description]
+                    return [dict(zip(names, r)) for r in cur.fetchall()]
+                except Exception:
+                    return []
+
+            sample, _masked_set, _replacement_map, _synthetic_used = _apply_masking(
+                fetch_fn=_xl_fetch, col_defs=col_defs, mode=_mode,
+                explicit_fields=set(_tbl_cfg.get("masked_fields", [])), table_name=table.name, seed_key=seed_key,
+                allow_unmasked=bool(_tbl_cfg.get("allow_unmasked_kb", False)), industry=industry)
+            said = [f'Sheet "{table.sheet}" of {loaded.file_name or "the workbook"}, header on row {table.first_row}.']
+            if table.left_out:
+                said.append("Left out: " + "; ".join(table.left_out) + ".")
+            _comment = " ".join(said)
+            (out / f"{_safe_table_file_stem(table.name)}.md").write_text(
+                _xl_md(table.name, sql_name, _comment, columns, sample, table.rows), encoding="utf-8")
+            master[f"{db_upper}.{schema.upper()}.{table.name}"] = {
+                "columns": [{"name": c["COLUMN_NAME"], "type": c["FULL_TYPE"], "nullable": True,
+                             "comment": c["COMMENT"]} for c in columns],
+                "pk_columns": [],
+                "row_count": table.rows,
+                "comment": _comment,
+                "schema": schema,
+                "database": database,
+                "table_type": "BASE TABLE",
+                "distinct_columns_sent": [],
+                "fields_sent": [c["COLUMN_NAME"] for c in columns],
+                "row_count_sent": len(sample),
+                "masked_fields": sorted(_masked_set),
+                "mask_mode": _mode,
+                "mask_replacement_map": _replacement_map,
+                "synthetic_used": _synthetic_used,
+            }
+            log.info("Excel: discovered sheet %r as %s (%d cols, %d rows)", table.sheet, sql_name,
+                     len(columns), table.rows)
+    finally:
+        con.close()
+    _write_schema_json(out, master)
+    _write_join_map(out, master, "excel")
+    return len(discovered_tables(master))
+
+
+def _xl_md(name: str, sql_name: str, comment: str, columns: list[dict], sample: list[dict], rows: int) -> str:
+    lines = [f"# {sql_name}", f"\n{comment}", f"\n**Type:** Excel sheet  **SQL table name:** `{sql_name}`",
+             f"\n**Row count:** {rows:,}", _observed_at_note(), "\n## Columns\n",
+             "| Column | Type | Nullable | Notes | Distinct Values |",
+             "|--------|------|:--------:|-------|-----------------|"]
+    for c in columns:
+        note = (c.get("COMMENT") or "").replace("|", "\\|")
+        lines.append(f"| `{c['COLUMN_NAME']}` | {c['DATA_TYPE']} | Yes | {note} |  |")
     _append_sample(lines, sample)
     return "\n".join(lines)
 

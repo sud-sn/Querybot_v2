@@ -187,3 +187,181 @@ def test_a_figure_by_members_is_never_the_members_over_a_bar_it_never_sets(model
                                    "Number of stores with 1 or more order lines in May 2026"])
 def test_members_over_a_bar_the_question_sets_stay_counted(model, asked):
     assert settle(_at_least_one(), model, asked, None).per is not None
+
+
+@pytest.mark.parametrize("question, slug", [("how many orders did we tkae", "number_of_orders"),
+                                            ("count of order lines last month", "number_of_order_lines"),
+                                            ("# of orders in May", "number_of_orders"),
+                                            ("combien de commandes en mai ?", None),
+                                            ("how many customers", "number_of_customers")])
+def test_a_count_asked_as_how_many_names_its_measure_in_full(model, question, slug):
+    # "how many orders did we tkae" was asked back: number of orders or number of order lines? "How many orders" is
+    # "Number of orders" by its whole name; "order lines" are not said.
+    from core2.plan.planner import _named_in_full
+
+    found = _named_in_full(model, question)
+    assert (found.slug if found is not None else None) == slug
+
+
+def _trade_by_month(question: str):
+    from core2.plan.planner import settle
+
+    ai = Plan.model_validate({"kind": "query", "intent": "trend", "measures": ["net_amount"],
+                              "group_by": ["customer.segment"],
+                              "filters": [{"field": "customer.segment", "op": "in", "values": ["Wholesale", "Retail"]}],
+                              "time": {"grain": "month", "window": {"kind": "last", "n": 2, "unit": "month"}}})
+    return settle(ai, model_of_retail(), question, None)
+
+
+def model_of_retail():
+    return learn(domains.build("retail"), "descriptive")[1]
+
+
+def test_a_filter_the_reader_never_split_by_is_no_split():
+    # "Show me vet revenue by month for the last 2 months" was split by species too: "vet" read as two species
+    # (rightly) and the same field added to the split, which the question never asks for.
+    got = _trade_by_month("Show me trade revenue by month for the last 2 months")
+    assert got.group_by == [] and got.time.grain == "month" and got.filters[0].values == ["Wholesale", "Retail"]
+
+
+@pytest.mark.parametrize("question", ['compare "Wholesale" and "Retail" revenue by month for the last 2 months',
+                                      "trade revenue by segment by month for the last 2 months"])
+def test_a_split_the_reader_asks_for_stays(question):
+    assert _trade_by_month(question).group_by == ["customer.segment"]
+
+
+def _settled(plan: dict, question: str):
+    from core2.plan.planner import settle
+
+    return settle(Plan.model_validate({"kind": "query", **plan}), model_of_retail(), question, None)
+
+
+REPEAT = {"of": "customer", "measure": "number_of_orders", "status": "repeat"}
+Y25 = {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}}
+
+
+@pytest.mark.parametrize("question", ["avg order value of repeat customers in 2025?",
+                                      "what was the average order value for repeat customers in 2025"])
+def test_an_average_things_value_is_over_those_things(question):
+    # "avg booking value of repeat customers in 2025?" was each customer's total averaged ($1,179) where the average
+    # booking's value ($386) was asked: the thing named after "average" is what is averaged over.
+    got = _settled({"measures": ["net_amount"], "segment": REPEAT, "per": {"of": "customer", "summary": "avg"},
+                    "time": Y25}, question)
+    assert got.per is not None and got.per.of == "number_of_orders"
+
+
+def test_an_average_per_customer_stays_per_customer():
+    got = _settled({"measures": ["net_amount"], "segment": REPEAT, "per": {"of": "customer", "summary": "avg"},
+                    "time": Y25}, "average order value per customer of repeat customers in 2025")
+    assert got.per.of == "customer"
+
+
+def test_new_against_returning_is_not_split_by_each_customer_too():
+    # "Spend from new vs returning customers in 2025" came back by customer and by new or returning: 324 rows, where
+    # two were asked.
+    split = {"of": "customer", "measure": "number_of_orders", "status": "new", "split": True}
+    got = _settled({"intent": "breakdown", "measures": ["net_amount"], "segment": split, "group_by": ["customer"],
+                    "time": Y25}, "Spend from new vs returning customers in 2025")
+    assert got.group_by == [] and got.segment.split
+    kept = _settled({"intent": "breakdown", "measures": ["net_amount"], "segment": split, "group_by": ["customer"],
+                     "time": Y25}, "Spend by customer, new vs returning, in 2025")
+    assert kept.group_by == ["customer"]
+
+
+ROLLING3 = {"window": {"kind": "rolling", "unit": "month", "n": 3}, "grain": "month"}
+
+
+def test_a_rolling_period_with_no_series_asked_is_one_figure():
+    # "avg po value over a rolling 3 months" was drawn as a 3-month moving average by month: "rolling 3 months" is
+    # the period, up to today; nothing asks for a series.
+    got = _settled({"intent": "trend", "measures": ["net_amount"], "per": {"of": "number_of_orders", "summary": "avg"},
+                    "rolling": {"kind": "moving_average", "periods": 3}, "time": ROLLING3},
+                   "avg order value over a rolling 3 months")
+    assert got.rolling is None and got.time.grain is None and got.time.window.kind == "rolling"
+
+
+@pytest.mark.parametrize("question", ["3-month moving average of net sales over a rolling 12 months",
+                                      "net sales by month with a rolling 3 month average"])
+def test_a_moving_average_asked_for_stays(question):
+    got = _settled({"intent": "trend", "measures": ["net_amount"],
+                    "rolling": {"kind": "moving_average", "periods": 3}, "time": ROLLING3}, question)
+    assert got.rolling is not None
+
+
+def test_an_average_things_value_on_another_table_is_the_figure_over_the_count():
+    # Booking lines hold the amounts, the bookings table the bookings: each booking's own amount cannot be worked
+    # out per booking row, so "avg booking value" is the amount over the number of bookings.
+    got = _settled({"measures": ["refund_amount"], "per": {"of": "customer", "summary": "avg"}, "time": Y25},
+                   "average order amount refunded in 2025")
+    assert got.per is None and got.measures == []
+    assert [(d.op, d.measures) for d in got.derived] == [("ratio", ["refund_amount", "number_of_orders"])]
+
+
+_PURCHASING = {}
+
+
+def _purchasing():
+    if not _PURCHASING:
+        _PURCHASING["model"] = learn(domains.build("purchasing"), "descriptive")[1]
+    return _PURCHASING["model"]
+
+
+@pytest.mark.parametrize("question", ["avg po value over a rolling 3 months", "average PO value in 2025"])
+def test_a_total_planned_where_an_average_things_value_was_asked_is_over_the_things(question):
+    # "avg po value over a rolling 3 months" came back as the PO lines' total amount: the average PO's value is the
+    # amount over the number of POs ("Number of po numbers" counts them).
+    plan = Plan.model_validate({"kind": "query", "intent": "value", "measures": ["line_amount"], "time": Y25})
+    got = settle(plan, _purchasing(), question, None)
+    assert got.measures == [] and [(d.op, d.measures) for d in got.derived] == [
+        ("ratio", ["line_amount", "number_of_po_numbers"])]
+
+
+@pytest.mark.parametrize("question", ["po value in 2025", "avg po value per supplier in 2025",
+                                      "average unit price in 2025"])
+def test_a_total_asked_or_an_average_per_something_else_stands(question):
+    plan = Plan.model_validate({"kind": "query", "intent": "value", "measures": ["line_amount"], "time": Y25})
+    got = settle(plan, _purchasing(), question, None)
+    assert got.measures == ["line_amount"] and not got.derived
+
+
+@pytest.mark.parametrize("question", ["avg po value over a rolling 3 months", "net sales over a rolling 3 months"])
+def test_a_rolling_period_drawn_month_by_month_is_one_figure_too(question):
+    # "avg po value over a rolling 3 months" came back as each month's average: the rolling period is how long, and
+    # nothing in the words asks for its months.
+    got = _settled({"intent": "trend", "measures": ["net_amount"], "time": ROLLING3}, question)
+    assert got.time.grain is None and got.intent == "value"
+
+
+@pytest.mark.parametrize("question", ["net sales by month over a rolling 3 months", "monthly net sales, rolling 3 months"])
+def test_months_asked_over_a_rolling_period_stay(question):
+    got = _settled({"intent": "trend", "measures": ["net_amount"], "time": ROLLING3}, question)
+    assert got.time.grain == "month"
+
+
+def test_a_plan_refused_for_two_shapes_the_words_never_asked_is_put_right_without_asking_again():
+    # "avg po value over a rolling 3 months" was planned by gpt-4o, two times in six, as a per-PO average and a
+    # 3-month moving average, month by month: refused as two analytical shapes at once, and planned the same way when
+    # asked again, it ended in "I could not work out how to answer that". The question's words settle it before the
+    # AI is asked again: the amount over the number of POs, one figure for the 3 months up to today.
+    import json
+
+    from core2.plan.values import MemberIndex
+    from core2.service import Services, Session, answer_question
+    from core2.warehouse.runner import DuckDBWarehouse
+
+    built, model = learn(domains.build("purchasing"), "descriptive")
+    asked = []
+
+    def ai(stable: str, tail: str) -> str:
+        asked.append(tail)
+        return json.dumps({"kind": "query", "intent": "trend", "measures": ["line_amount"],
+                           "per": {"of": "number_of_po_numbers"}, "rolling": {"kind": "moving_average", "periods": 3},
+                           "time": {"grain": "month", "window": {"kind": "rolling", "unit": "month", "n": 3}}})
+
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=ai, index=MemberIndex(),
+                        today=dt.date(2026, 6, 15))
+    got = answer_question("avg po value over a rolling 3 months", services, Session())
+    assert len(asked) == 1, "the AI was asked again"
+    want = built.con.execute("SELECT SUM(line_amount) / COUNT(DISTINCT po_number) FROM purchase_order_lines "
+                             "WHERE order_date BETWEEN DATE '2026-03-16' AND DATE '2026-06-15'").fetchone()[0]
+    assert got["kpi"]["value"] == pytest.approx(float(want))

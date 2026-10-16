@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from core2.bootstrap.names import singular
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan
 from core2.plan.words import _SHAPE, _phrases, _same
@@ -306,6 +307,22 @@ _PLAIN_MEASURE_WORDS = {"amount", "number", "total", "count", "value", "sum", "o
                         "qty", "invoice", "line", "lines", "net", "gross", "cad", "usd", "sop", "customer", "order"}
 
 
+def _another_figure(model: SemanticModel | None, head: str, previous: Plan) -> bool:
+    """Does ``head`` name a figure ("value", "spend", "revenue") that no measure on screen is, by its name or by any
+    other name it goes by? "Spend" after line amount (spend is its other name) is the figure on screen."""
+    figures = {w.lower() for w in _FIGURE_WORD.findall(head)}
+    if model is None or not figures or not previous.measures or measures_named(model, head) & set(previous.measures):
+        return False
+    on_screen: set[str] = set()
+    for slug in previous.measures:
+        measure = next((m for m in model.measures.values() if m.slug == slug), None)
+        if measure is None:
+            return False
+        for name in (measure.business_name, *(w for said in (measure.synonyms or {}).values() for w in said)):
+            on_screen |= {singular(w) for w in re.findall(r"[a-zà-ÿ]+", str(name).lower())}
+    return not {singular(w) for f in figures for w in f.split()} & on_screen
+
+
 def _says_measure_on_screen(model: SemanticModel | None, words: str, previous: Plan) -> bool:
     """Does ``words`` name a measure of the answer on screen by a word of its own ("discount" of "invoice discount
     amount"), never one of the plain words every measure has?"""
@@ -332,6 +349,14 @@ _NO_FIGURE = re.compile(r"\b(?:break|split|cut|divide|slice|show|give|get|me|us|
 # "... by total spend?", "by revenue": a figure's word ends the question ("by sales rep" is a field).
 _BY_FIGURE = re.compile(r"\b(?:spend|spending|spent|revenue|revenues|sales|turnover|amount|value|cost|costs|profit|"
                         r"profits|margin|volume|takings|income|billing|billings)\s*[?.!]*\s*$", re.IGNORECASE)
+
+
+# A word for what is measured, in English or French, whether or not a measure of the data is called so.
+_FIGURE_WORD = re.compile(r"\b(?:spend|spending|spent|revenues?|sales|turnover|amount|value|costs?|profits?|margin|"
+                          r"volume|takings|income|billings?|earnings|payments?|paid|fees?|charges?|ventes|revenus?|"
+                          r"co[uû]ts?|d[ée]penses?|recettes|montants?|marges?|chiffre\s+d['’]affaires)\b", re.IGNORECASE)
+# A member the reader quotes: a name, spelt right or not.
+_QUOTED = re.compile(r"[\"“«]\s*[^\"”»]{2,}?\s*[\"”»]")
 
 
 def _names_a_figure(head: str) -> bool:
@@ -421,6 +446,13 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
     ranks_the_figure = bool(previous.measures and _RANKING.search(question)) and not (
         any(k == "measure" for k, _, _ in found) or _FIGURE.search(question) or ranked_count
         or _MONEY_VERB.search(question))
+    if not _QUESTION_WORD.match(question) and not pointing and narrowed(previous) and asks_series(question) \
+            and not own_members and not _QUOTED.search(question) and not _found(model, question, ("field",)) \
+            and measures_named(model, question) & set(previous.measures) \
+            and not measures_named(model, question) - set(previous.measures):
+        # "show me the monthly spend for the last 6 months" after what the lab spent in March: the figure on screen
+        # as a series over another period, split by nothing else, is still the lab's.
+        return Reading("refine", "the figure on screen as a series over another period")
     if not leading and not pointing and len(words) >= 4 and period and (head_found or asks and grouped) \
             and not ranks_the_figure:
         return Reading("new", "it names what it measures, how to split it and for when")
@@ -456,6 +488,16 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
                 return Reading("open", "it names a figure and a split but no period, after a narrowed answer")
             return Reading("new", "it names a measure or a thing and how to split it")
         if short and not head_measure and not any(k == "count" for k, _, _ in head_found):
+            if own_period and (own_members or _QUOTED.search(question)) and _FIGURE_WORD.search(head) \
+                    and not _says_measure_on_screen(model, head, previous):
+                # 'service revenue for "Plumbing repair" in 2025?' after a partner's bookings in September: a figure
+                # of its own (no measure is called so), a member it quotes and a period of its own ask afresh.
+                return Reading("new", "it names its own figure, a member and a period")
+            if own_period and _FIGURE.search(head) and _another_figure(model, head, previous):
+                # "avg po value over a rolling 3 months" after the purchase orders of last quarter by buying team:
+                # an average of a figure that is not the one on screen, for a period of its own, asks afresh (it
+                # keeps no split). "Spend over the last 3 months" changes only the period of the spend on screen.
+                return Reading("new", "it names a figure of its own and a period of its own")
             return Reading("refine", "a fragment that only changes the answer on screen")
     if (kinds & {"measure", "field"}) and not pointing:
         # A thing counted names a figure only when it is counted ("how many profit centres"), never when it is
@@ -489,4 +531,30 @@ def read_turn(question: str, *, previous: Plan | None, model: SemanticModel | No
             # one (new). Never asked back: the AI decides with the conversation in view, as a person would.
             return Reading("open", "a complete question after a narrowed answer: the conversation decides")
         return Reading("new", "it names what it measures, and the answer on screen narrowed nothing")
+    if asks and own_period and not pointing and (own_members or _QUOTED.search(question)) \
+            and (_FIGURE_WORD.search(question) or _COUNTING.search(question) or _COUNTING_FR.search(question)) \
+            and _another_year(question, previous):
+        # 'Combien de réclamations "Fraud" avons-nous reçues en janvier 2026 ?' after one branch's complaints by
+        # category in 2025: its words name no measure of the data (they are French), yet a question word, a member
+        # it quotes, a figure or a count, and a period other than the one on screen ask afresh.
+        return Reading("new", "a whole question with a member and a period of its own")
     return Reading("open", "left to the AI")
+
+
+# A question asked as a question, not a command ("show me ...") or a fragment.
+_QUESTION_WORD = re.compile(r"^\s*(?:what|what's|whats|which|who|whom|how|when|where|is|are|was|were|do|does|did|"
+                            r"quel|quelle|quels|quelles|combien|qui|où|quand|comment|est-ce)\b", re.IGNORECASE)
+_COUNTING_FR = re.compile(r"\b(?:combien|nombre\s+d[e'’])", re.IGNORECASE)
+
+
+def _another_year(question: str, previous: Plan) -> bool:
+    """Does the question name a year the answer on screen did not cover (or did the answer cover all time)? None
+    named: nothing says so."""
+    years = {int(y) for y in re.findall(r"\b((?:19|20)\d{2})\b", question)}
+    if not years:
+        return False
+    window = previous.time.window
+    if window.kind != "between" or not window.start or not window.end:
+        return window.kind == "all"
+    covered = range(int(str(window.start)[:4]), int(str(window.end)[:4]) + 1)
+    return any(y not in covered for y in years)

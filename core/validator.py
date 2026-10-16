@@ -115,6 +115,7 @@ _DIALECT: dict[str, str] = {
     "oracle": "oracle",
     "azure_sql": "tsql",
     "postgres": "postgres",
+    "excel": "duckdb",
 }
 
 
