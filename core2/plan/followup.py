@@ -156,7 +156,9 @@ def _phrases_said(model: SemanticModel) -> list[tuple[str, str, list[str]]]:
     return out
 
 
-def _found(model: SemanticModel | None, question: str, kinds: tuple[str, ...]) -> list[tuple[str, str, list[str]]]:
+def _spans(model: SemanticModel | None, question: str,
+           kinds: tuple[str, ...]) -> list[tuple[int, int, str, str, list[str]]]:
+    """Every name of ``kinds`` the question says: (first word, after its last, kind, slug, its words)."""
     if model is None:
         return []
     tokens = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9]*", question)]
@@ -172,9 +174,31 @@ def _found(model: SemanticModel | None, question: str, kinds: tuple[str, ...]) -
                     and all(_same(a, b, size > 1) for a, b in zip(run, phrase)):
                 spans.append((i, i + size, kind, slug, run))
                 break
+    return spans
+
+
+def _found(model: SemanticModel | None, question: str, kinds: tuple[str, ...]) -> list[tuple[str, str, list[str]]]:
+    spans = _spans(model, question, kinds)
     # The longer name wins: "profit centre" is the field, not the measure "profit" inside it.
     return [(kind, slug, run) for start, end, kind, slug, run in spans
             if not any(s <= start and end <= e and (e - s) > (end - start) for s, e, *_ in spans)]
+
+
+def named_longer(model: SemanticModel | None, question: str, slug: str) -> str | None:
+    """The measure the question names by a longer name holding ``slug``'s own, where it says ``slug`` nowhere else:
+    "how many ingredient lots" names "Number of ingredient lots", not the "Number of ingredients" inside it."""
+    spans = _spans(model, question, ("measure", "count"))
+    own = [(s, e) for s, e, _, found, _ in spans if found == slug]
+    if not own:
+        return None
+    holding: set[str] = set()
+    for start, end in own:
+        around = {found for s, e, _, found, _ in spans
+                  if found != slug and s <= start and end <= e and (e - s) > (end - start)}
+        if not around:
+            return None         # said on its own too ("orders and order lines")
+        holding |= around
+    return next(iter(holding)) if len(holding) == 1 else None
 
 
 def named(model: SemanticModel | None, question: str) -> set[str]:

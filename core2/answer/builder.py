@@ -420,6 +420,13 @@ def _period_badge(rng: Range, lang: str = "en") -> str:
     return words
 
 
+def named_members(logical: Logical) -> list[str]:
+    """The data's names the answer's own words state: the members its conditions name ("for customer Lakeside
+    Wholesale"). Its rows' names are in its rows. Where a workspace keeps member values from the AI, an answer naming
+    any is never written up by it (core2/answer/summary.py, core2/service.py portal_reply)."""
+    return list(dict.fromkeys(str(v) for c in logical.conditions if c.kind == "member" for v in c.values))
+
+
 def answer_badges(logical: Logical) -> list[dict[str, str]]:
     """What the answer counted, as short labels above its sentence: the period (and what it is compared
     with) and the date it was counted by. The sentence and the notes say the same at length."""
@@ -686,7 +693,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
-                 model_version=model_version, window=counted_days(logical))
+                 model_version=model_version, window=counted_days(logical), named=named_members(logical))
     if reading is not None and reading.facts:
         # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
         # the one-offs set apart in the reading.
@@ -738,13 +745,14 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
-          model_version: int, window: dict | None = None) -> dict[str, Any]:
+          model_version: int, window: dict | None = None, named: list[str] | None = None) -> dict[str, Any]:
     """The frame the web portal renders (the same shape today's pipeline sends). ``window``: the days counted
-    (``counted_days``)."""
+    (``counted_days``); ``named``: the data's names its words state (``named_members``)."""
     return {
         "type": "assistant_response",
         "engine": "core2",
         "question": question,
+        "named": list(named or []),
         "title": title,                  # the answer's name on a dashboard tile (its question is never one)
         # The portal's answer card: the value leads when there is one, the sentence otherwise.
         "answer": {"headline": headline, "short_value": short_value, "comparison": comparison,
@@ -1457,18 +1465,21 @@ def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None,
     def total(key: str, among: list[dict]) -> float | None:
         values = [r.get(key) for r in among if r.get(key) is not None]
         return sum(values) if values else None
-    label = f"Other ({len(rest):,})"
+    # "Unknown" is the rows with no member: in the rest's figure, never counted as one of the members.
+    named = sum(1 for r in rest if r.get(x) not in (None, "", "Unknown"))
+    label = f"Other ({named:,})"
     rest_total = total(ys[0], rest) or 0.0
     if abs(rest_total) <= max(abs(r.get(ys[0]) or 0.0) for r in kept):
         other = {x: label, **{y: total(y, rest) for y in ys}, **({share: total(share, rest)} if share else {})}
-        return [*kept, other], {"label": label, "count": len(rest)}, ""
+        return [*kept, other], {"label": label, "count": named}, ""
     whole = rest_total + (total(ys[0], kept) or 0.0)
     part = f", {rest_total / whole * 100:.0f}% of the total" if whole > 0 and all(
         (r.get(ys[0]) or 0) >= 0 for r in rows) else ""
     # Said as short as the chart's own labels: "$766.2K", never "$766,211.67".
     said = (f"{'-' if rest_total < 0 else ''}${abs(rest_total) / 1e3:,.1f}K"
             if format_ == "currency" and 1e3 <= abs(rest_total) < 1e6 else fmt(rest_total, format_))
-    return kept, None, (f"Showing the {keep} largest: the other {len(rest):,} {things} add up to "
+    unknown = " and Unknown" if named < len(rest) else ""
+    return kept, None, (f"Showing the {keep} largest: the other {named:,} {things}{unknown} add up to "
                         f"{said}{part}. Every one is in the table.")
 
 
@@ -1485,6 +1496,24 @@ def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date])
 
 
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
+           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "") -> dict | None:
+    """The chart for the kind of answer, then in the form its data asks for, with a note saying why
+    (core2/answer/shape_of_data.py): no one-point line, no pie of one slice, no forty thin bars."""
+    from core2.answer.shape_of_data import settle as shaped
+
+    chart = _drawn(logical, cols, records, formats, labels, display, gaps=gaps, unit=unit)
+    if chart is None:
+        return None
+    temporal = ((chart.get("chart_spec") or {}).get("x") or {}).get("role") == "temporal"
+    named = str((chart.get("grouped_by") if temporal else None) or chart.get("x_key") or "")
+    things = names.plural(_thing(labels[named])) if named in labels else "members"
+    period = (cols.of("period") or [None])[0]
+    measure = (cols.of("measure") or [None])[0]
+    return shaped(chart, grain=period.grain if period is not None else None, things=things,
+                  adds=measure is not None and _adds(logical, measure.name))
+
+
+def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
            labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "") -> dict | None:
     measures = cols.of("measure")
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
@@ -1585,6 +1614,7 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         if gaps:
             rows = _with_gaps(rows, x.name, ys, logical.expected)
     other: dict | None = None
+    shown_of: int | None = None
     warnings: list[str] = []
     in_order = kind == "bar" and not temporal and not ranked and x.ordinal and not logical.limit \
         and not logical.sort_asked
@@ -1601,10 +1631,12 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             other = {"label": "", "count": 0, "ranges": True}     # its bars are ranges, never one member to open
     elif kind == "bar" and not temporal and not ranked and compare is None and len(rows) > MOST_BARS \
             and pair is None and all(_adds(logical, y) for y in ys):     # pairs are never "the other products"
+        named = sum(1 for r in rows if r[x.name] not in (None, "", "Unknown"))
         rows, other, said = _fold(rows, x.name, ys, TOP_BARS, share.name if share is not None else None,
                                   format_=m.format, things=names.plural(_thing(labels[x.name])))
         if said:
             warnings.append(said)
+            shown_of = named           # the largest drawn, the rest said under the chart: "the 10 largest of 110"
     facets: list[list[str]] = []
     if len(ys) > 1 and kind in ("bar", "line") and compare is None:     # a trend in two units: a panel each
         by_unit: dict[str, list[str]] = {}
@@ -1661,7 +1693,11 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             "compare": compare, "facets": facets, "share_key": share.name if share is not None else None,
             "chart_spec": {"x": {"column": x.name, "role": roles[x.name]["role"]}, "column_roles": roles},
             "geo": geo, "x_order": "number" if in_order or in_calendar else "", "intent": logical.intent,
-            "x_pair": pair is not None,
+            "x_pair": pair is not None, "shown_of": shown_of,
+            # Every member, nothing cut and nothing below zero: the bars are the parts of one whole, which a donut
+            # may draw (core2/answer/shape_of_data.py), when the figure adds up across them.
+            "whole": whole and not funnel and not together and pair is None and kind == "bar" and not temporal
+            and other is None and shown_of is None and all((r[ys[0]] or 0) >= 0 for r in rows),
             "grouped_by": None,
             "forecast_meta": None, "chart_warnings": warnings}
 
@@ -1834,6 +1870,7 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
             "allowed_types": ["line", "bar", "area"], "recommended_type": "line",
             "chart_spec": {"x": {"column": period.name, "role": "temporal"}, "column_roles": roles},
             "intent": logical.intent, "grouped_by": member.name, "grouped_measure": m.name,
+            "member_label": labels[member.name], "measure_label": labels[m.name],
             "forecast_meta": None, "chart_warnings": [] if other is not None or len(totals) <= MOST_LINES else [
                 f"Showing the {MOST_LINES} largest of {len(totals)} {names.plural(_thing(labels[member.name]))}: "
                 "every one is in the table."]}

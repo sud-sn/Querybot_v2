@@ -145,6 +145,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .chart-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--surface-3)}
 .chart-canvas{height:340px;width:100%;border-radius:var(--radius);background:transparent}
 .chart-warnings{display:flex;flex-direction:column;gap:.35rem;margin-top:.55rem}
+.chart-why{font-size:var(--font-xs);color:var(--text-muted);line-height:1.35}
 .chart-warning{font-size:var(--font-xs);color:var(--warning);background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:7px;padding:.45rem .55rem;line-height:1.35}
 /* ── Chart type toggle ───────────────────────────────────────────────── */
 .chart-type-toggle{display:flex;gap:.3rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);flex-wrap:wrap}
@@ -2322,11 +2323,14 @@ function _qbMoney(body, symbol) {
 // The chart number formatter, the column label and format helpers and the
 // option builder itself live in /static/js/qb-charts.js, the one renderer this
 // page and the dashboard share (window.QBCharts).
+// What decided the chart's form, said under it ("A line: 24 months, rising."), in the reader's language
+// (core2/answer/shape_of_data.py), then anything the chart leaves out.
 function renderChartWarnings(payload) {
   const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
-  if (!warnings.length) return '';
-  return `<div class="chart-warnings">${warnings.slice(0, 2).map(w =>
-    `<div class="chart-warning">${escHtml(String(w))}</div>`).join('')}</div>`;
+  const why = payload?.why ? String((window.QB_LANG === 'fr' && payload.why.fr) || payload.why.en || '') : '';
+  if (!warnings.length && !why) return '';
+  return `<div class="chart-warnings">${why ? `<div class="chart-why">${escHtml(why)}</div>` : ''}${
+    warnings.slice(0, 2).map(w => `<div class="chart-warning">${escHtml(String(w))}</div>`).join('')}</div>`;
 }
 
 // Click-to-drill: bar/line/area only -- the chart types with a single
@@ -3313,7 +3317,8 @@ function dashboardMadeHtml(msg) {
   }
   const board = msg.dashboard || {};
   const tabs = (Array.isArray(msg.tabs) ? msg.tabs : []).filter(tab => tab && tab.name);
-  const failed = Array.isArray(msg.not_built) ? msg.not_built : [];
+  const failed = (Array.isArray(msg.not_built) ? msg.not_built : []).filter(tile => tile && !tile.left_out);
+  const leftOut = (Array.isArray(msg.not_built) ? msg.not_built : []).filter(tile => tile && tile.left_out);
   const count = String(msg.tiles || 0);
   const summary = tabs.length > 1 ? t('ui.chat.dashmade.summary_tabs', {count, tabs: String(tabs.length)})
                                   : t(count === '1' ? 'ui.chat.dashmade.summary_one' : 'ui.chat.dashmade.summary', {count});
@@ -3331,6 +3336,9 @@ function dashboardMadeHtml(msg) {
     + failed.map(tile => `<li><span class="dash-made-title">${escHtml(tile.title)}</span> <span class="dash-made-error">${escHtml(tile.error)}</span>`
       + (tile.definable ? ` <button type="button" class="btn btn-ghost btn-sm" data-dash-define="${escHtml(tile.title)}">${qbIcon('plus', 14)}${escHtml(t('ui.chat.dashmade.define'))}</button>` : '')
       + `</li>`).join('') + `</ul></div>` : '';
+  const leftOutList = leftOut.length ? `<div class="dash-made-failed dash-made-left"><p>${escHtml(t('ui.chat.dashmade.left_out', {count: String(leftOut.length)}))}</p><ul>`
+    + leftOut.map(tile => `<li><span class="dash-made-title">${escHtml(tile.title)}</span> <span class="dash-made-error">${escHtml(tile.error)}</span></li>`).join('')
+    + `</ul></div>` : '';
   // What the data could not give: what its recipe wanted and the data has not (and what is drawn in its place),
   // and the tiles whose period had nothing and are shown over all the data instead.
   const missing = (Array.isArray(msg.missing) ? msg.missing : []).filter(Boolean);
@@ -3346,7 +3354,7 @@ function dashboardMadeHtml(msg) {
     + `<span class="artifact-kicker">${escHtml(t('ui.chat.dashmade.kicker'))}</span>`
     + `<p class="answer-headline is-lead">${escHtml(t('ui.chat.dashmade.headline', {name: board.name || ''}))}</p>`
     + `<p class="answer-definition">${escHtml(summary)}</p>`
-    + checked + gaps + tabList + notBuilt
+    + checked + gaps + tabList + notBuilt + leftOutList
     + `<div class="answer-actions"><a class="btn btn-primary btn-sm" href="${escHtml(board.url || '/portal/dashboard')}">${qbIcon('layout-grid', 15)}${escHtml(t('ui.chat.dashmade.open'))}</a></div>`
     + `</article>`;
 }

@@ -81,7 +81,9 @@ def test_a_request_for_the_whole_business_is_told_from_a_subject(words, whole, y
 def test_each_business_gets_its_recipe_the_same_shape_and_a_proper_name_with_no_ai(name, learned):
     payload = answer_question("Create an executive dashboard", _services(learned(name)), Session())
     assert payload["type"] == "dashboard_built" and payload["name"] == KINDS[name]
-    assert payload["not_built"] == []                      # each tile's plan was checked before it was built
+    # Each tile's plan was checked before it was built; one left out shows nothing another does not, and says so.
+    assert [t for t in payload["not_built"] if not t["left_out"]] == []
+    assert all(t["error"] for t in payload["not_built"])
     tiles = payload["dashboard_tiles"]
     # As many areas as the business has, up to the recipe's limits: tabs of planned tiles, no AI call each.
     assert payload["tabs"][0] == "Overview" and 2 <= len(payload["tabs"]) <= recipes.MOST_TABS

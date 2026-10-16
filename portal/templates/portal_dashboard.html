@@ -666,11 +666,14 @@ function sortDashboardTable(button, columnIndex){
 // drifted: this one never learned the heatmap, the waterfall or the forecast
 // band, drew gradient bars with 10px rounded ends, and guessed whether an axis
 // was time from a label regex.
+// What decided the tile's chart ("A line: 24 months, rising."), in the reader's language, then anything it leaves out.
 function renderChartWarnings(payload){
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const warnings = Array.isArray(payload?.chart_warnings) ? payload.chart_warnings : [];
-  if (!warnings.length) return '';
-  return `<div class="chart-warnings">${warnings.slice(0, 2).map(w =>
-    `<div class="chart-warning">${String(w ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}</div>`).join('')}</div>`;
+  const why = payload?.why ? String((window.QB_LANG === 'fr' && payload.why.fr) || payload.why.en || '') : '';
+  if (!warnings.length && !why) return '';
+  return `<div class="chart-warnings">${why ? `<div class="chart-why">${esc(why)}</div>` : ''}${
+    warnings.slice(0, 2).map(w => `<div class="chart-warning">${esc(w)}</div>`).join('')}</div>`;
 }
 
 

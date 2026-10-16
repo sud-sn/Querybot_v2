@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import answer_badges, conditions_tail, fmt, frame, scoped_label, spoken
+from core2.answer.builder import answer_badges, conditions_tail, fmt, frame, named_members, scoped_label, spoken
 from core2.compile.compiler import compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Plan, TimeSpec
@@ -299,7 +299,8 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
                      records=[{k: r[k] for k in headers[:2]} for r in records],
                      formats={k: formats[k] for k in headers[:2]}, display=display, sql=sqls,
                      row_count=len(result.rows), duration_ms=(time.perf_counter() - started) * 1000,
-                     data_source=data_source, question_id=question_id, notes=notes, model_version=model_version)
+                     data_source=data_source, question_id=question_id, notes=notes, model_version=model_version,
+                     named=named_members(logical))
 
     season = SEASON.get(grain)
     odd = unusual(values, season)
@@ -367,6 +368,7 @@ def answer_forecast(question: str, plan: Plan, *, model: SemanticModel, warehous
                                  f"{m.label} by {unit} for the last 12 {unit}s{conditions_tail(logical)}"],
                     headers=headers, labels=labels, records=records, formats=formats, display=display, sql=sqls,
                     row_count=len(result.rows), duration_ms=(time.perf_counter() - started) * 1000,
-                    data_source=data_source, question_id=question_id, notes=notes, model_version=model_version)
+                    data_source=data_source, question_id=question_id, notes=notes, model_version=model_version,
+                    named=named_members(logical))
     payload["forecast_meta"] = chart["forecast_meta"]
     return payload

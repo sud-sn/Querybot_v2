@@ -138,6 +138,7 @@
   // is wrong for a translated phrase.
   function columnLabel(payload, col, fallback) {
     const role = roleOf(payload, col);
+    if (role.label_fr && String(global.QB_LANG || 'en') === 'fr') return String(role.label_fr);
     if (role.label) return String(role.label);
     if (!col) return fallback == null ? t('ui.chart.value') : String(fallback);
     return String(col).replace(/[_-]+/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
@@ -664,6 +665,10 @@
     const xKey = payload && payload.x_key;
     const xStyle = String((payload && payload.x_style) || '');
     let yKeys = Array.isArray(payload && payload.y_keys) ? payload.y_keys.slice() : [];
+    // A series' 3-period average is drawn only beside its line: as bars or an area it would read as a second figure.
+    const averageKey = payload && payload.average && payload.average.key;
+    const drawnType = String((payload && payload.chart_type) || '').toLowerCase();
+    if (averageKey && drawnType !== 'line') yKeys = yKeys.filter(k => k !== averageKey);
 
     const c = chrome();
     // A palette saved with a chart wins; otherwise the reader's own (their Settings page), else the default.
@@ -1615,7 +1620,11 @@
       // a second figure -- the series itself is still the one line labelled, washed and named at its end.
       const cmp = (payload && payload.compare && payload.compare.prior && yKeys.includes(payload.compare.prior))
         ? payload.compare : null;
-      const isPrior = k => Boolean(cmp) && k === cmp.prior;
+      // A series that swings is drawn with its 3-period average (core2/answer/shape_of_data.py): a quiet dashed
+      // line, as the period before is, named in the legend and the tooltip by its own label.
+      const avg = (payload && payload.average && payload.average.key && yKeys.includes(payload.average.key))
+        ? payload.average : null;
+      const isPrior = k => (Boolean(cmp) && k === cmp.prior) || (Boolean(avg) && k === avg.key);
       const single = yKeys.filter(k => !isPrior(k)).length === 1;
       // The members past the largest, added up as one line: drawn in a neutral ink, not a series hue.
       const otherName = payload && payload.other ? String(payload.other.label || '') : '';

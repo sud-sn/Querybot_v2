@@ -94,7 +94,8 @@ def test_states_are_a_map_of_the_states_named_as_the_map_names_them(shop):
 
 def test_a_code_is_a_place_only_under_a_name_that_says_so(shop):
     chart = _chart(shop, {"group_by": ["customer.channel_code"]})
-    assert chart["chart_type"] == "bar" and "map" not in chart["renderable_types"]
+    # Never a map; a few codes of a total are drawn as its parts (core2/answer/shape_of_data.py).
+    assert chart["chart_type"] in ("bar", "donut") and "map" not in chart["renderable_types"]
 
 
 def test_countries_are_a_world_map_and_one_it_has_not_is_said(shop):
@@ -120,7 +121,7 @@ def test_a_zip_code_kept_as_a_number_is_its_five_digits(shop):
 
 def test_five_digit_codes_that_are_no_us_zip_code_are_no_map(shop):
     chart = _chart(shop, {"group_by": ["customer.postal_code"]})
-    assert chart["chart_type"] == "bar" and "map" not in chart["renderable_types"]
+    assert chart["chart_type"] in ("bar", "donut") and "map" not in chart["renderable_types"]
 
 
 def test_a_zip_code_with_no_point_is_named_under_the_map():

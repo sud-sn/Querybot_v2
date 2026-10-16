@@ -202,9 +202,13 @@ def test_a_rest_that_would_dwarf_the_bars_is_said_under_them(retail):  # noqa: F
 
 
 def test_an_average_is_never_added_up_into_one_bar(retail):  # noqa: F811
+    # Never one "Other" bar of averages; past a dozen members, the ten largest, said so (core2/answer/shape_of_data.py),
+    # every one in the table.
     payload = _ask(retail, {"intent": "breakdown", "measures": ["unit_price"], "group_by": ["customer.name"],
                             "time": {"window": H1}})
-    assert payload["chart"]["other"] is None and len(payload["chart"]["rows"]) == payload["data"]["total_rows"]
+    chart = payload["chart"]
+    assert chart["other"] is None and len(chart["rows"]) == 10 < payload["data"]["total_rows"]
+    assert any("every one is in the table" in w for w in chart["chart_warnings"])
 
 
 def test_a_line_per_member_keeps_five_and_adds_up_the_rest(shipping):

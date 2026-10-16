@@ -24,8 +24,8 @@ from pydantic import ValidationError
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
 from core2.plan.catalog import catalog_text
-from core2.plan.followup import (asks_series, keeps_period, measures_named, names_own_period, points_at_period,
-                                 the_period)
+from core2.plan.followup import (asks_series, keeps_period, measures_named, named_longer, names_own_period,
+                                 points_at_period, the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Segment, Sort, Window, schema_text
 from core2.plan.thread import figures_carried, kept_from_above, member_of
@@ -2171,12 +2171,18 @@ def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> lis
             or plan.lifecycle is not None:
         return []
     problems = []
+    # "How many ingredient lots": the figure the question names in full ("Number of ingredient lots") is what it asks,
+    # never the ingredients its first word names.
+    named_in_full = measures_named(model, question or "") & set(plan.measures)
     for m in _HOW_MANY.finditer(question or ""):
         said = m.group(1).lower()
-        for e in model.entities.values():
+        # The longest name first: "how many item groups" is about item groups, not items.
+        for e in sorted(model.entities.values(), key=lambda e: -len(e.business_name or e.slug)):
             name = (e.business_name or e.slug).lower()
             if not (said.startswith(names.plural(name).lower()) or said == name or said.startswith(name + " ")):
                 continue
+            if named_in_full and not said.startswith(names.plural(name).lower()) and said != name:
+                break
             plural = names.plural(name).lower()
             counts = [x for x in model.measures.values() if not x.hidden and x.table == e.table
                       and getattr(x.expr, "agg", None) in ("count", "count_distinct")]
@@ -2929,7 +2935,7 @@ def _dated_alike(model: SemanticModel, plan: Plan, previous: Plan) -> bool:
     if set(plan.measures) <= set(previous.measures) and plan.measures:
         return True
     found = find_slug(model, previous.time.date or "")
-    tables = {model.measures[m].table for m in plan.measures if m in model.measures}
+    tables = {m.table for m in model.measures.values() if m.slug in plan.measures}
     return found is not None and found[0] == "date" and bool(tables) and tables == {found[1].table}
 
 
@@ -3000,7 +3006,18 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         and not plan.group_by and _COMPARE_IT.search(question or "") is not None
     if (plan.intent == "compare" or ranks_members) and time.grain is not None and not asks_series(question) \
             and not the_series \
-            and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", question, re.IGNORECASE):
+            and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", _without_spans(question),
+                              re.IGNORECASE):
+        time = time.model_copy(update={"grain": None})
+    if plan.intent == "breakdown" and time.grain is not None and question and not the_series \
+            and any(not g.startswith("time:") for g in plan.group_by) \
+            and not asks_series(question) and not _SERIES_WORDS.search(question) and not _EACH_OF.search(question) \
+            and not re.search(rf"\b(?:{_GRAIN_WORDS.get(time.grain.replace('fiscal_', ''), time.grain)})",
+                              _without_spans(question), re.IGNORECASE) \
+            and (previous is None or plan.follow_up != "refine" or not keeps_period(question)):
+        # "Complaints at Midtown by category in 2025" after a monthly answer came back month by month: a breakdown
+        # of members asking no series keeps no grain, kept from the answer above or added by the AI. One that names
+        # no period of its own ("and by category?") splits the series on screen as it was read.
         time = time.model_copy(update={"grain": None})
     if plan.lifecycle is not None and time.grain is not None and time.window.kind not in ("all", "until") \
             and question and not asks_series(question) and not the_series:
@@ -3025,7 +3042,48 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
         most, least = bool(_MOST.search(question)), bool(_LEAST.search(question))
         if most != least and plan.sort[0].desc != most:
             update["sort"] = [Sort(by=plan.sort[0].by, desc=most), *plan.sort[1:]]
+    if question and not plan.derived and not plan.rates:
+        # "How many ingredient lots did we receive?" was counted as ingredients: the figure whose name is inside the
+        # one the question names in full. The one it names is counted.
+        swapped = {m: n for m in plan.measures for n in [named_longer(model, question, m)] if n and n not in plan.measures}
+        if swapped:
+            update["measures"] = [swapped.get(m, m) for m in plan.measures]
+            update["sort"] = [s.model_copy(update={"by": swapped.get(s.by, s.by)}) for s in update.get("sort", plan.sort)]
+    unbarred = _figure_by_members(plan.model_copy(update=update) if update else plan, model, question)
+    if unbarred is not None:
+        update.update(unbarred)
     return plan.model_copy(update=update) if update else plan
+
+
+# A bar on each member's figure the question sets in words: "at least one", "3 or more", "more than 5".
+_A_BAR = re.compile(r"\b(?:at\s+(?:least|most)|more\s+than|less\s+than|fewer\s+than|no\s+more\s+than|exactly|"
+                    r"or\s+(?:more|fewer|less)|(?:over|under|above|below)\s+\d|au\s+(?:moins|plus)|plus\s+de|"
+                    r"moins\s+de|ou\s+plus)\b|[<>≥≤]", re.IGNORECASE)
+
+
+def _figure_by_members(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
+    """ "How many ingredient lots did we receive in Q1 2026, by supplier?" was planned as the suppliers with at least
+    one lot: one number, the suppliers counted over a bar the question never sets, where it asks each supplier's
+    lots. A figure the question names in full, split by the members it names ("by supplier", "per store"), with no
+    bar in its words and no "how many suppliers", is that figure by those members. The AI's route to the members
+    is kept only where the figure's rows have no link of their own to them."""
+    per = plan.per
+    if not question or plan.kind != "query" or per is None or per.op is None or per.summary not in ("count", "share") \
+            or per.of not in model.entities or _A_BAR.search(question) \
+            or not set(plan.measures) & measures_named(model, question):
+        return None
+    entity = model.entities[per.of]
+    name = (entity.business_name or entity.slug).lower()
+    forms = {name, names.plural(name).lower(), entity.slug.replace("_", " ")}
+    words = "|".join(re.escape(w) for w in forms)
+    if not re.search(rf"\b(?:by|per|for\s+each|each|par)\s+(?:{words})\b", question, re.IGNORECASE) \
+            or any(m.group(1).lower().startswith(tuple(forms)) for m in _HOW_MANY.finditer(question)):
+        return None
+    tables = {m.table for m in model.measures.values() if m.slug in plan.measures}
+    direct = any({j.from_table, j.to_table} == {t, entity.table} for j in model.joins.values() for t in tables)
+    via = {k: v for k, v in plan.via.items() if not (direct and k == per.of)}
+    return {"intent": "breakdown", "per": None, "via": via,
+            "group_by": plan.group_by if per.of in plan.group_by else [*plan.group_by, per.of]}
 
 
 # "And by referral source?", "what about by region", "now by store": the same answer split another way.
@@ -3041,6 +3099,30 @@ _EITHER = re.compile(r"\b(?:mostly|mainly|largely|more|rather)\b[^?]*\bor\b", re
 # "What is the average days supply per fill for each?": for each member of the answer on screen.
 _FOR_EACH = re.compile(r"\b(?:for|of|in)\s+each(?:\s+(?:one|of\s+them|of\s+those))?\s*\??\s*$|\beach\s+of\s+(?:them|those)\b",
                        re.IGNORECASE)
+# A grain's own words, in English and French: a question saying one ("this month", "ce mois") keeps it.
+_GRAIN_WORDS = {"day": "day|daily|jour|quotidien", "week": "week|weekly|semaine|hebdo",
+                "month": "month|monthly|mois|mensuel", "quarter": "quarter|quarterly|trimestre|trimestriel",
+                "year": "year|yearly|annual|annuel|ann[ée]e"}
+# How long a period is, said in its grain's words ("over the last 2 quarters", "les 6 derniers mois", "this year"):
+# a span, never a split by quarter or month. "By the month" and "each of the last 6 months" do ask for the split.
+_SPAN_WORDS = re.compile(
+    r"(?<!\bby\s)(?<!\bper\s)\b(?:last|past|previous|prior|next|coming|this|these|current|the)\s+"
+    r"(?:(?:\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|several)\s+)?"
+    r"(?:full\s+|complete\s+|calendar\s+|fiscal\s+)?(?:day|week|month|quarter|year)s?\b"
+    r"|\b(?:les|des|ces)\s+(?:\d+|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|douze)\s+"
+    r"(?:(?:derni[eè]re?s|prochaine?s)\s+)?(?:jours|semaines|mois|trimestres|ann[ée]es|ans)\b"
+    r"(?:\s+(?:derni[eè]re?s|pass[ée]e?s))?"
+    r"|\b(?:ce|cette|le|la|l')\s*(?:jour|semaine|mois|trimestre|ann[ée]e|an)\b"
+    r"(?:-ci|\s+(?:derni[eè]re?|pass[ée]e?|en\s+cours|courante?))?"
+    r"|\b(?:year|quarter|month|week)[- ]to[- ]date\b", re.IGNORECASE)
+_EACH_OF = re.compile(r"\b(?:each|every)\s+of\s+the\b", re.IGNORECASE)
+
+
+def _without_spans(question: str) -> str:
+    """The question with the periods it names by length taken out, so a grain word left in it asks for a split."""
+    return _SPAN_WORDS.sub(" ", question or "")
+
+
 _SERIES_WORDS = re.compile(r"\b(?:each|every|per|by)\s+(?:day|week|month|quarter|year)\b|\b(?:daily|weekly|monthly|"
                            r"quarterly|yearly|annually|over time|trend)\b", re.IGNORECASE)
 

@@ -59,6 +59,7 @@ class Tile:
     error: str = ""
     changed: Optional[dict] = None            # "What changed": {"summary", "figures"} (core/what_changed.py)
     reading: str = ""                         # the analyst's line under the tile (core2/answer/facts.py)
+    why: str = ""                             # what decided its chart's form (core2/answer/shape_of_data.py)
 
 
 @dataclass
@@ -141,6 +142,7 @@ def _tiles(charts: list[dict]) -> list[Tile]:
         tile = Tile(id=int(chart.get("id") or 0), title=str(chart.get("title") or ""), kind="empty")
         tile.note = " · ".join(n for n in (str(chart.get("top_note") or ""), str(chart.get("subtitle") or "")) if n)
         tile.reading = str(chart.get("note_line") or "")
+        tile.why = str(chart.get("why_line") or "")
         if chart.get("error"):
             tile.kind, tile.error = "error", str(chart["error"])
         elif chart.get("what_changed"):

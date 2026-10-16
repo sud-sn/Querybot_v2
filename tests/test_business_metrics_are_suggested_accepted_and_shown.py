@@ -382,7 +382,8 @@ def test_accepted_they_are_the_admins_metrics_and_the_dashboard_shows_them_in_th
     services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=_no_ai, index=MemberIndex(),
                         today=TODAY)
     payload = answer_question("Create an executive dashboard", services, Session())
-    assert payload["type"] == "dashboard_built" and payload["not_built"] == []
+    # Every tile built; one left out shows nothing another does not (core2/dashboards.py scored), and says so.
+    assert payload["type"] == "dashboard_built" and [t for t in payload["not_built"] if not t["left_out"]] == []
     assert payload["waiting"] == []
     risk = next(t for t in payload["dashboard_tiles"] if t["title"] == "Delinquent loans" and t["tab"] == "Risk")
     assert risk["chart_type"] == "kpi"

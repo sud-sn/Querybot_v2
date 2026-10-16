@@ -238,7 +238,7 @@ def _elsewhere(plan: Plan, logical: Logical, words: "_Words", checks: "_Checks",
             f"without it, {words.low} {scope} is {said}.".replace("  ", " "),
             f"{lead_fr} {'de la question précédente' if how == 'carried' else 's’applique à chaque réponse ici'} ; "
             f"sans elle, {words.label} {scope_fr} : {said_fr}.".replace("  ", " "),
-            figures=[value], about=f.field))
+            figures=[value], about=f.field, members=[str(v) for v in f.values]))
         out.checked.append((f"Looked without {said_cond} {scope}: {said}.".replace("  ", " "),
                             f"Cherché sans « {said_cond_fr} » {scope_fr} : {said_fr}.".replace("  ", " ")))
         if how == "carried":     # a standing condition is put on every answer again: removing it is said, not run

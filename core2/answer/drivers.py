@@ -32,8 +32,8 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any
 
-from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, scoped_label, spoken,
-                                  span_words, versus)
+from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, named_members,
+                                  scoped_label, spoken, span_words, versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Compare, Filter, Plan, TimeSpec, Window
@@ -539,7 +539,8 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
                     suggestions=suggestions[:3], headers=headers, labels=labels, records=records, formats=formats,
                     sql="\n\n".join(f"-- {what}\n{sql}" for what, sql in sqls), row_count=rows_read,
                     duration_ms=(time.perf_counter() - started) * 1000, data_source=data_source,
-                    question_id=question_id, notes=notes, model_version=model_version)
+                    question_id=question_id, notes=notes, model_version=model_version,
+                    named=named_members(total_logical))
     payload["drivers"] = {"change": change, "groupings": [
         {"slug": g.slug, "label": g.label, "word": g.word, "explained": round(g.explained, 4),
          "leaders": [{"member": x.member, "change": x.change} for x in g.leaders]} for g in ranked]}

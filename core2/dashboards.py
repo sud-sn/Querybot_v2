@@ -18,7 +18,9 @@ tiles than one page holds, is on named tabs: "Overview" first, then a tab per ar
 
 What the data cannot give is said, never drawn as an empty tile: a recipe's tile whose figure, grouping or list
 the data has not is left out and named ("not in this data: targets"); a tile that finds nothing in its period is
-drawn over all the data instead, and said; one that finds nothing at all is left out, and named with why.
+drawn over all the data instead, and said; one that finds nothing at all is left out, and named with why. A tile
+that shows nothing worth its place -- a trend that never moves, a breakdown of one member, the same rows as another
+tile -- is left out the same way, its reason said (core2/answer/shape_of_data.py).
 
 Once built, each headline number is checked against the trend of the same figure over the same period, where
 there is one: a total that adds up is the sum of its months, a level (a headcount, a balance) its last month's.
@@ -184,6 +186,8 @@ class Tile:
     tab: str = ""                   # the tab the design put it on ("Overview", "Revenue")
     planned: dict | None = None     # a recipe's tile: the plan written for it, run as it is (no AI)
     widened: bool = False           # nothing in its period: drawn over all the data instead (and said so)
+    score: float = 0.0              # how much it shows (core2/answer/shape_of_data.py tile_score)
+    left_out: bool = False          # built, but it shows nothing another tile does not: left out, and said why
 
 
 @dataclass
@@ -445,6 +449,7 @@ def build(model, request: str, complete: Callable[[str, str], str], answer: Call
     tell()
     with ThreadPoolExecutor(AT_ONCE, thread_name_prefix="qb-dashboard") as pool:
         list(pool.map(one, tiles))
+    scored(tiles, lang)
     for tile in tiles:
         if tile.error:
             tile.layout = {}
@@ -553,6 +558,31 @@ def answered(tile: Tile, answer: Callable[..., dict], *, lang: str = "en") -> Ti
         payload, tile.widened = again, True
     tile.plan, tile.payload = payload["plan"], payload
     return tile
+
+
+def scored(tiles: list[Tile], lang: str = "en") -> None:
+    """Each built tile scored on its data, and a weak one left out with why, as a tile that could not be built is: a
+    trend that never moves, a breakdown of one member, the same rows as a tile kept before it on its tab (a tab is
+    read on its own: an area's tab repeats the overview's headline on purpose). Never every tile: a dashboard keeps
+    at least its strongest one."""
+    from core2.answer.shape_of_data import tile_score, weak_tile
+
+    kept: dict[str, list[tuple[str, dict]]] = {}
+    weak: list[tuple[Tile, str]] = []
+    for tile in tiles:
+        if tile.error or tile.payload is None:
+            continue
+        tile.score = tile_score(tile.kind, tile.payload)
+        on_tab = kept.setdefault(tile.tab, [])
+        why = weak_tile(tile.kind, tile.payload, on_tab, lang=lang)
+        if why:
+            weak.append((tile, why))
+        else:
+            on_tab.append((tile.title, tile.payload))
+    if weak and not any(kept.values()):
+        weak.remove(max(weak, key=lambda w: w[0].score))
+    for tile, why in weak:
+        tile.error, tile.left_out = why, True
 
 
 def lay_out(tiles: list[Tile]) -> list[str]:
@@ -683,9 +713,10 @@ def widened(draft: Draft) -> list[str]:
 
 
 def not_built(draft: Draft) -> list[dict[str, Any]]:
-    """The tiles that could not be built, and why: the chat names them, and offers to define what nothing measures."""
-    return [{"title": t.title, "question": t.question, "error": t.error, "definable": t.definable}
-            for t in draft.tiles if t.error]
+    """The tiles that could not be built, and why: the chat names them, and offers to define what nothing measures.
+    A tile left out for showing nothing new is listed with its reason too, marked as left out."""
+    return [{"title": t.title, "question": t.question, "error": t.error, "definable": t.definable,
+             "left_out": t.left_out} for t in draft.tiles if t.error]
 
 
 def kept(tile: Tile) -> dict[str, Any]:

@@ -160,9 +160,12 @@ def _chart_html(tile, link: str, lang: str) -> str:
     width = min(int(tile.width or WIDTH), WIDTH)
     height = int(round((tile.height or 0) * width / max(int(tile.width or width), 1))) if tile.height else 0
     size = f' width="{width}"' + (f' height="{height}"' if height else "")
+    why = (f'<p style="margin:6px 0 0;font-size:12px;line-height:1.4;color:{MUTED}">{esc(tile.why)}</p>'
+           if getattr(tile, "why", "") else "")
     return (_heading(tile) +
             f'<img src="cid:{esc(tile_cid(tile))}" alt="{esc(tile.title)}"{size} style="display:block;width:100%;'
-            f'max-width:{width}px;height:auto;border:1px solid {LINE};border-radius:10px">' + _reading_html(tile))
+            f'max-width:{width}px;height:auto;border:1px solid {LINE};border-radius:10px">' + why
+            + _reading_html(tile))
 
 
 def _table_html(tile, lang: str) -> str:

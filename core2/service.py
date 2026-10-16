@@ -2223,11 +2223,13 @@ _WEEKDAY = re.compile(r"\bday\s+of\s+(?:the\s+)?week\b|\bweekdays?\b|\bweekends?
 
 def _by_day(plan: Plan, question: str) -> Plan:
     """ "Paid amount by day in June 2026" is each day of June, never Monday to Sunday: the AI added the day of
-    the week to the days, and the answer ranked weekdays. Taken off unless the question names the week's days."""
-    if plan.time.grain != "day" or "time:day_of_week" not in plan.group_by or not _BY_DAY.search(question) \
-            or _WEEKDAY.search(question):
+    the week to the days, and the answer ranked weekdays. Taken off unless the question names the week's days.
+    "Daily spend in March" grouped by the day of the week with no grain at all is the days of March too."""
+    if plan.time.grain not in ("day", None) or "time:day_of_week" not in plan.group_by \
+            or not _BY_DAY.search(question) or _WEEKDAY.search(question):
         return plan
     return plan.model_copy(update={"group_by": [g for g in plan.group_by if g != "time:day_of_week"],
+                                   "time": plan.time.model_copy(update={"grain": "day"}),
                                    "intent": "trend" if plan.intent == "breakdown" else plan.intent})
 
 
@@ -2764,12 +2766,14 @@ def portal_reply(account_id: str, question: str, payload: dict[str, Any], *, que
     """The answer's reply in the chat, in the workspace's AI's words (core2/agent/talk.py), or None: the facts' own
     sentences stand.
 
-    The AI is given what the checks found, never the rows, and only where it may see them: never where the answer
-    names people, and where member values are kept from it (a tenant under compliance, or value indexing off) only
-    when the reply names no member; never for a workspace whose answers may not reach the AI."""
+    The AI is given what the checks found and the answer's sentence, never the rows, and only where it may see them:
+    never where the answer names people, and where member values are kept from it (a tenant under compliance, or
+    value indexing off) only when neither the reply nor the answer names a member; never for a workspace whose
+    answers may not reach the AI."""
     import store
     from core.value_index import value_index_enabled
     from core2.agent.talk import names_members, write
+    from core2.answer.summary import names_members as answer_names_members
     from core2.bootstrap.ai import summary_writer
 
     reply = payload.get("reply")
@@ -2779,7 +2783,8 @@ def portal_reply(account_id: str, question: str, payload: dict[str, Any], *, que
     client = store.get_client(account_id) or {}
     scrub = question_scrubber(account_id)
     values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
-    if names_members(reply) and not values_allowed:
+    # The answer's sentence goes with the reply: it names the members its conditions name, as its rows name theirs.
+    if not values_allowed and (names_members(reply) or answer_names_members(payload)):
         return None
     asked = scrub(question) if scrub else question
     if not _answers_may_reach_ai(account_id, asked, "core2_summary"):

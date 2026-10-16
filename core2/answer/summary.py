@@ -10,7 +10,8 @@ for it.
 
 Where the workspace keeps member values from the AI (a regulated tenant, or value indexing
 switched off), an answer that names members (stores, customers, products) gets no summary:
-its rows would have to reach the AI to write one. An answer of numbers alone (a total, a
+its rows would have to reach the AI to write one, or its sentence, which names the members its
+conditions name ("for customer Lakeside Wholesale"). An answer of numbers alone (a total, a
 monthly series) still gets one.
 """
 
@@ -43,7 +44,10 @@ Reply with the sentences only."""
 
 
 def names_members(payload: dict[str, Any]) -> bool:
-    """Does the answer show members (a store, a customer, a product), not only numbers and periods?"""
+    """Does the answer show members (a store, a customer, a product), not only numbers and periods? In its rows, or
+    in its own words: a figure for one customer names that customer in its sentence ("named")."""
+    if payload.get("named"):
+        return True
     data = payload.get("data") or {}
     formats = data.get("column_formats") or {}
     display = data.get("display_formats") or {}
@@ -53,6 +57,17 @@ def names_members(payload: dict[str, Any]) -> bool:
         if formats.get(header) in (None, "text"):
             return True
     return False
+
+
+def names_stated(payload: dict[str, Any]) -> list[str]:
+    """The data's names an answer states: those its own words name, then those in its rows shown."""
+    data = payload.get("data") or {}
+    formats = data.get("column_formats") or {}
+    display = data.get("display_formats") or {}
+    text = [h for h in data.get("headers") or []
+            if (display.get(h) or {}).get("type") != "date" and formats.get(h) in (None, "text")]
+    in_rows = [str(r.get(h)) for r in list(data.get("rows") or [])[:MAX_ROWS] for h in text if r.get(h) is not None]
+    return list(dict.fromkeys([*(str(n) for n in payload.get("named") or []), *in_rows]))
 
 
 def eligible(payload: dict[str, Any], *, values_allowed: bool) -> bool:

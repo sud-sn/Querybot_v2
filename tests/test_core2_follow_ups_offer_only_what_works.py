@@ -103,7 +103,8 @@ def test_a_breakdown_can_be_shown_as_a_pie_or_a_table(retail):
             "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-03-31"}}}
     assert _ask(con, model, {**plan, "chart": "pie"})["chart"]["chart_type"] == "pie"
     assert _ask(con, model, {**plan, "chart": "table"})["chart"] is None
-    assert _ask(con, model, plan)["chart"]["chart_type"] == "bar"
+    # Unasked, the few regions of a sum are drawn as the parts of the whole they are (core2/answer/shape_of_data.py).
+    assert _ask(con, model, plan)["chart"]["chart_type"] == "donut"
 
 
 def test_a_pie_of_a_time_series_is_refused_with_a_note(retail):

@@ -5755,6 +5755,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.dashmade.mismatch": {"en": "“{number}” is {total}, but “{trend}” comes to {of_trend}.",
                                   "fr": "« {number} » vaut {total}, mais « {trend} » donne {of_trend}."},
     "ui.chat.dashmade.not_built": {"en": "{count} could not be built:", "fr": "{count} n’ont pas pu être construites :"},
+    "ui.chat.dashmade.left_out": {"en": "{count} left out, as they would show nothing new:",
+                                  "fr": "{count} laissées de côté, car elles n’apporteraient rien de plus :"},
     # What a dashboard's recipe wanted and the data has not ("targets"), and the tiles drawn over all the data
     # because their period had nothing (core2/dashboards.py).
     "ui.chat.dashmade.missing": {"en": "Not in this data, so not on it: {items}.",

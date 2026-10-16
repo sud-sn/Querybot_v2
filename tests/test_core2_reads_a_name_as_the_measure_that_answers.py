@@ -160,7 +160,8 @@ def test_a_refusal_after_the_plan_says_what_was_looked_at(ledger):
     assert payload["trust"]["considered"] == [
         {"key": "measure", "value": "Cost amount (Order line)"},
         {"key": "by", "value": "Category name (Category)"},
-        {"key": "dates", "value": "2026-01-01 to 2026-03-31, month by month, compared with the same period last year"},
+        # The months the AI added are left off: the question asks for none (a breakdown with no series words).
+        {"key": "dates", "value": "2026-01-01 to 2026-03-31, compared with the same period last year"},
     ]
     assert payload["trust"]["stopped"] == "Category is not available to you"
 

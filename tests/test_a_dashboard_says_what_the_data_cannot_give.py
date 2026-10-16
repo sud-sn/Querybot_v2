@@ -97,7 +97,8 @@ def test_a_tile_with_nothing_in_any_period_is_left_out_and_said():
     assert tile.error == dashboards.NOTHING["fr"] and tile.payload is None and not tile.widened
     draft = dashboards.Draft("Ventes", "un tableau de bord des ventes", [tile])
     assert dashboards.not_built(draft) == [{"title": "Refunds", "question": "Refunds this year",
-                                            "error": dashboards.NOTHING["fr"], "definable": False}]
+                                            "error": dashboards.NOTHING["fr"], "definable": False,
+                                            "left_out": False}]
     assert dashboards.widened(draft) == []
 
 

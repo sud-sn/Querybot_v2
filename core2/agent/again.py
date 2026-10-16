@@ -117,11 +117,14 @@ def better(second: dict[str, Any], first: Plan, payload: dict[str, Any], reasons
 def say(second: dict[str, Any], first_payload: dict[str, Any], first: Plan, reasons: list[Reason], session: Any,
         plain: Callable[[str], str]) -> None:
     """The second answer says it looked again and why, with the first reading one click away (no AI)."""
+    from core2.answer.summary import names_stated
+
     said = str((first_payload.get("answer") or {}).get("headline") or "").rstrip(".")
+    # The first answer's sentence is quoted: the names it states are the reply's (kept from the AI where need be).
     seen = {"kind": "looked_again",
             "en": f"My first reading did not look right ({said}), so I read your question again.",
             "fr": f"Ma première lecture ne semblait pas juste ({said}) : j'ai relu votre question.",
-            "figures": [], "days": [], "members": [], "about": ""}
+            "figures": [], "days": [], "members": names_stated(first_payload), "about": ""}
     checked = [{"en": f"Checked the first reading: {r.en}", "fr": f"Vérifié la première lecture : {r.fr}"}
                for r in reasons]
     offer = {"label": FIRST_EN, "question": FIRST_EN, "label_fr": FIRST_FR, "question_fr": FIRST_FR, "kind": "look"}

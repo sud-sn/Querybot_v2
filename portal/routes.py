@@ -2066,6 +2066,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
             drawn["chart_type"] = kind
         drawn["color_palette"] = chart.get("color_palette") or "default"
         drawn["chart_id"] = chart["id"]
+        # What decided the tile's form ("A line: 24 months, rising."), for a scheduled email's picture of it too.
+        why = drawn.get("why") if isinstance(drawn.get("why"), dict) else {}
+        if why.get("fr" if french else "en") or why.get("en"):
+            result["why_line"] = str(why.get("fr" if french else "en") or why.get("en"))
         # On a tile: a single line has a light wash and its low point named (static/js/qb-charts.js), and the
         # dashboard's period is shaded on a chart over time.
         drawn["tile"] = True
