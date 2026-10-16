@@ -37,6 +37,10 @@ class InvTable:
     source_key: str = ""                    # the table's key in discovery's _schema.json
     masked: set[str] = field(default_factory=set)   # columns discovery masks
     mask_all: bool = False
+    # How the masked columns were chosen: "auto" (discovery's patterns: a "name" or "city" column) or an admin's own
+    # choice ("selective"); and the pattern each matched (column -> "name", "city", "email", ...).
+    mask_mode: str = ""
+    mask_kinds: dict[str, str] = field(default_factory=dict)
 
     @property
     def key(self) -> str:
@@ -202,7 +206,9 @@ def from_schema_json(schema: dict[str, Any], db_type: str) -> Inventory:
                          row_count=int(rows) if isinstance(rows, (int, float)) and rows > 0 else None,
                          comment=str(entry.get("comment") or ""), source_key=file_key,
                          masked={str(c) for c in (entry.get("masked_fields") or [])},
-                         mask_all=str(entry.get("mask_mode") or "").lower() == "all")
+                         mask_all=str(entry.get("mask_mode") or "").lower() == "all",
+                         mask_mode=str(entry.get("mask_mode") or "").lower(),
+                         mask_kinds={str(k): str(v) for k, v in (entry.get("mask_replacement_map") or {}).items()})
         tables[table.key] = table
         by_schema_and_name[(ids.norm(owner), ids.norm(name))] = table.key
         by_schema_and_name.setdefault(("", ids.norm(name)), table.key)

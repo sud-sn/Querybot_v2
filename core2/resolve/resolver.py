@@ -1542,10 +1542,12 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for rate in plan.rates:
         _rate(model, plan, rate, chosen, notes, ctx)
     # A derived measure may be made of an earlier one ("gross margin %" of a "gross profit" worked out first):
-    # that one is worked out inside it, and shown on its own only when the plan sorts or filters by it.
+    # that one is worked out inside it, and shown on its own only when the plan sorts or filters by it, or the
+    # request asked for it ("revenue, cost, gross margin and margin %": the gross margin is a column too).
     made: dict[str, tuple[MeasureExpr, list[Measure], str, str]] = {}    # name -> (tree, measures, format, label)
     inside = {_plain(s) for d in plan.derived for s in d.measures} - {
-        _plain(x) for x in [*(s.by for s in plan.sort), *(f.field for f in plan.filters), *plan.measures]}
+        _plain(x) for x in [*(s.by for s in plan.sort), *(f.field for f in plan.filters), *plan.measures,
+                            *(a.plan for a in plan.asked if a.plan and a.kind == "figure")]}
     for d in plan.derived:
         parts: list[tuple[MeasureExpr, list[Measure], str, str]] = []
         for slug in d.measures:

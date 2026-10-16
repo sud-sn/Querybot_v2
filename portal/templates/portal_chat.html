@@ -667,6 +667,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 /* A follow-up answer: the answer it changed, and the same question asked on its own. */
 .answer-following { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
 .answer-following-text { min-width: 0; overflow-wrap: anywhere; }
+.answer-left-out { color: var(--text); padding: 6px 10px; border-radius: var(--radius-sm, 8px); background: var(--surface-2, var(--surface)); border: 1px solid var(--border); }
 .answer-following .follow-up-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: var(--radius-pill);
   border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: var(--font-xs); font-weight: var(--weight-medium); cursor: pointer; }
 .answer-following .follow-up-chip:hover { border-color: var(--primary); color: var(--primary-ink); }
@@ -4127,6 +4128,23 @@ function _followingHtml(msg) {
     + `</p>`;
 }
 
+// The parts of the request this answer does not give (core2/agent/parts.py), said on it, each with a button that
+// asks for it: never left out without a word.
+function _leftOutHtml(msg) {
+  const parts = Array.isArray(msg.parts_left_out) ? msg.parts_left_out.filter(p => p && p.words) : [];
+  if (!parts.length) return '';
+  const fr = typeof window !== 'undefined' && window.QB_LANG === 'fr';
+  const named = parts.map(p => String((fr ? p.fr : p.en) || p.words)).join(fr ? ' ; ' : '; ');
+  const asks = parts.filter(p => p.ask).map(p => {
+    const ask = String((fr ? p.ask_fr : p.ask) || p.ask);
+    const label = p.kind === 'condition' ? t('ui.chat.left_out.only', {words: p.words})
+      : p.kind === 'form' ? ask : t('ui.chat.left_out.add', {words: p.words});
+    return `<button type="button" class="follow-up-chip" data-question="${escHtml(ask)}">${escHtml(label)}</button>`;
+  }).join('');
+  return `<p class="answer-following answer-left-out" role="note"><span class="answer-following-text">`
+    + `${escHtml(t('ui.chat.left_out', {parts: named}))}</span>${asks}</p>`;
+}
+
 function answerCardHtml(msg, ids, env) {
   env = env || {};
   const answer = msg.answer || {};
@@ -4257,6 +4275,7 @@ function answerCardHtml(msg, ids, env) {
 
   return `<article class="answer-card" aria-label="${escHtml(t('ui.chat.card.answer'))}">`
     + _followingHtml(msg)
+    + _leftOutHtml(msg)
     + _standingHtml(msg)
     + _ownMetricHtml(msg)
     + _figuresHtml(msg)

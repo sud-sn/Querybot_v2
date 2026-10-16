@@ -101,10 +101,21 @@ def test_leaving_out_a_member_there_is_none_of_says_it_changed_nothing(shop):
 
 
 def test_two_names_left_unquoted_are_quoted_together_by_one_click(shop):
-    question = "How many sales on Starter in Canada in 2025?"
+    # Lone words in lower case: words of the question, until the reader quotes them.
+    question = "How many sales on starter in canada in 2025?"
     payload = _ask(shop, question, {"intent": "value", "measures": ["number_of_sales"], "time": Y25, "filters": [
         {"field": "sale.plan_name", "op": "eq", "values": ["Starter"]},
         {"field": "sale.country", "op": "eq", "values": ["Canada"]}]})
     first = payload["follow_up_suggestions"][0]
-    assert first["question"] == 'How many sales on "Starter" in "Canada" in 2025?'
+    assert first["question"] == 'How many sales on "starter" in "canada" in 2025?'
     assert first["label"] == 'Only "Starter" and "Canada"'
+
+
+def test_two_names_written_as_names_narrow_at_once(shop):
+    question = "How many sales on Starter in Canada in 2025?"
+    payload = _ask(shop, question, {"intent": "value", "measures": ["number_of_sales"], "time": Y25, "filters": [
+        {"field": "sale.plan_name", "op": "eq", "values": ["Starter"]},
+        {"field": "sale.country", "op": "eq", "values": ["Canada"]}]})
+    assert {f["field"] for f in payload["plan"]["filters"]} == {"sale.plan_name", "sale.country"}
+    labels = [c["label"] for c in payload["follow_up_suggestions"]]
+    assert 'Not only "Starter"' in labels and 'Not only "Canada"' in labels

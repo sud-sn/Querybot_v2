@@ -40,6 +40,15 @@ RULES = """You turn a business question into a query plan for Solviz. You never 
 Answer with exactly one JSON object that matches the PLAN SCHEMA. No prose, no markdown.
 
 How to plan:
+0. asked, written first in every query plan (a one-part question too): every part of the request in the reader's
+   own words, one entry each, before the plan:
+   each figure, worked-out figure included ("gross margin", "margin %", "% change", "share of sales"); each field
+   to show or group by ("their segment", "by store"); each condition ("Dish Soap", "orders over $200", "only the
+   ones that fell"); the period; any comparison ("vs Q2"); any ranking ("top 10"); and the form when one is asked
+   ("as a chart", "a list"). Its plan says what in your plan gives that part: a measure slug, a derived, rate,
+   figure or duration name, a group_by or filter field, or "time", "compare", "limit", "chart" — the thing itself,
+   never a section's name ("derived", "filters", "measures"). A field to show is in group_by. Write plan null
+   when your plan cannot give that part, and never leave a part out of asked because the plan cannot give it.
 1. kind: "query" for questions about the data. "clarify" only when the question is genuinely ambiguous
    (two measures fit equally, a date that could mean two dates, a name that fits several members): put the
    question and 2-5 options from the catalog in clarify. "describe_data" for questions about the data
@@ -133,9 +142,10 @@ How to plan:
    {"kind": "window", "window": February}; the intent is then "compare".
 8. filters: a member goes in a filter on its attribute with op "eq" (or "in" for several), using the exact
    stored value from VALUE MATCHES or a previous plan; "excluding X" -> "ne"/"not_in". VALUE MATCHES holds
-   only the names the reader put in quotes ("OEM") and the members of the answer on screen they point at:
-   a word of the question that is not quoted is never a member, even when one is called that ("available
-   stock" is not a stock status AVAILABLE, "for northline" is no customer): answer without that filter.
+   the names the reader put in quotes ("OEM"), the names they wrote that name one member beyond doubt ("customers
+   who bought Dish Soap", "sales at Riverside"), and the members of the answer on screen they point at: filter on
+   each of them as the question says. Any other word of the question is never a member, even when one is called
+   that ("available stock" is not a stock status AVAILABLE, "for northline" is no customer): answer without it.
    A code the catalog lists, chosen for what the question means ("units received" -> movement type RCV),
    may filter. A condition on a total ("customers with more than 10,000 in sales") is a filter on the
    measure slug. A name in VALUE MATCHES can also be what a measure measures ("cost of goods sold" is a
@@ -243,35 +253,68 @@ def _examples(model: SemanticModel) -> str:
     entities = sorted((e for e in model.entities.values()
                        if e.table != m.table and P.all_paths(model, m.table, e.table)), key=lambda e: e.slug)
     lines = ["EXAMPLES (in this workspace's words)"]
-    plan: dict[str, Any] = {"kind": "query", "intent": "trend", "measures": [m.slug],
+    what = m.business_name.lower()
+
+    def part(words: str, kind: str, gives: str | None) -> dict[str, Any]:
+        return {"words": words, "kind": kind, "plan": gives}
+
+    # Every example lists the request's parts first (rule 0), as every plan must.
+    plan: dict[str, Any] = {"kind": "query",
+                            "asked": [part(what, "figure", m.slug), part("by month", "period", "time"),
+                                      part("the last 6 months", "period", "time")],
+                            "intent": "trend", "measures": [m.slug],
                             "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 6}}}
     lines.append(f"Q: {m.business_name.lower()} by month for the last 6 months\nA: {json.dumps(plan)}")
     if entities:
         e = entities[0]
-        plan = {"kind": "query", "intent": "rank", "measures": [m.slug], "group_by": [e.slug],
+        things = names.plural(e.business_name.lower())
+        plan = {"kind": "query",
+                "asked": [part("top 5", "ranking", "limit"), part(things, "field", e.slug), part(what, "figure", m.slug),
+                          part("this year", "period", "time")],
+                "intent": "rank", "measures": [m.slug], "group_by": [e.slug],
                 "sort": [{"by": m.slug, "desc": True}], "limit": 5,
                 "time": {"window": {"kind": "this", "unit": "year"}}}
         lines.append(f"Q: top 5 {names.plural(e.business_name.lower())} by {m.business_name.lower()} this year\n"
                      f"A: {json.dumps(plan)}")
-        plan = {"kind": "query", "intent": "compare", "measures": [m.slug], "group_by": [e.slug],
+        plan = {"kind": "query",
+                "asked": [part(things, "field", e.slug), part("grew the most", "comparison", "compare"),
+                          part("last month", "period", "time")],
+                "intent": "compare", "measures": [m.slug], "group_by": [e.slug],
                 "time": {"window": {"kind": "previous", "unit": "month"},
                          "compare": {"kind": "previous_period"}},
                 "sort": [{"by": "change", "desc": True}]}
-        lines.append(f"Q: which {names.plural(e.business_name.lower())} grew the most last month\n"
+        lines.append(f"Q: which {things} grew the most last month\nA: {json.dumps(plan)}")
+        # A part the catalog cannot give stays in asked with plan null: the answer says it left it out.
+        plan = {"kind": "query",
+                "asked": [part(what, "figure", m.slug), part(things, "field", e.slug),
+                          part("the number of store visits", "figure", None), part("this year", "period", "time")],
+                "intent": "breakdown", "measures": [m.slug], "group_by": [e.slug],
+                "time": {"window": {"kind": "this", "unit": "year"}}}
+        lines.append(f"Q: {what} and the number of store visits by {e.business_name.lower()} this year\n"
                      f"A: {json.dumps(plan)}")
+
     days = _two_dates(model, m.table)
     if days is not None:
         start, end = days
         name = f"Days from {start.name.lower()} to {end.name.lower()}"
-        plan = {"kind": "query", "intent": "value", "measures": [],
+        plan = {"kind": "query",
+                "asked": [part(f"average days from {start.name.lower()} to {end.name.lower()}", "figure", name),
+                          part("last year", "period", "time")],
+                "intent": "value", "measures": [],
                 "durations": [{"name": name, "start": start.slug, "end": end.slug, "agg": "avg"}],
                 "time": {"window": {"kind": "previous", "unit": "year"}}}
         lines.append(f"Q: average days from {start.name.lower()} to {end.name.lower()} last year\n"
                      f"A: {json.dumps(plan)}")
-    plan = {"kind": "query", "intent": "drivers", "measures": [m.slug],
+    plan = {"kind": "query",
+            "asked": [part(what, "figure", m.slug), part("why did it drop", "other", "drivers"),
+                      part("last month", "period", "time")],
+            "intent": "drivers", "measures": [m.slug],
             "time": {"window": {"kind": "previous", "unit": "month"}}}
     lines.append(f"Q: why did {m.business_name.lower()} drop last month?\nA: {json.dumps(plan)}")
-    plan = {"kind": "query", "intent": "forecast", "measures": [m.slug], "time": {"grain": "month"},
+    plan = {"kind": "query",
+            "asked": [part(what, "figure", m.slug), part("forecast", "other", "forecast"),
+                      part("the next 6 months", "period", "time")],
+            "intent": "forecast", "measures": [m.slug], "time": {"grain": "month"},
             "forecast": {"periods": 6}}
     lines.append(f"Q: forecast {m.business_name.lower()} for the next 6 months\nA: {json.dumps(plan)}")
     plan = {"kind": "describe_data", "about": [m.slug]}
@@ -642,6 +685,10 @@ def _forgive(data: dict[str, Any]) -> None:
         # "window": null, "grain": null: not set (a real model wrote them so, and the plan was refused).
         for key in [k for k, v in time.items() if v is None]:
             time.pop(key)
+        if str(time.get("grain") or "").casefold() in ("half", "half_year", "halfyear", "semester", "h1", "h2"):
+            # "The first half of 2026 against the first half of 2025": the halves are the windows, no grain (none
+            # is a half year; the plan was refused twice and the reader got a dead end).
+            time.pop("grain")
     for key in [k for k in ("per", "rolling", "within", "bands", "absent", "gap", "lifecycle", "cohort", "active",
                             "on_time", "pareto", "funnel", "together", "target", "drivers", "chart")
                 if data.get(k) is None and k in data]:
@@ -2446,6 +2493,27 @@ def _about_figures(plan: Plan, model: SemanticModel) -> Plan:
     return plan.model_copy(update={"clarify": asked.model_copy(update={"about": "measure"})})
 
 
+def _share_not_rate(plan: Plan) -> Plan:
+    """A rate whose only condition is that a field is filled in ("what percentage of our sales came from each
+    country": the net sales of rows with a country, over all of them) is each member's share of the total: the
+    answer's own share column, never a rate (refused: a rate is of a count or a total under a condition)."""
+    every = [r for r in plan.rates if r.where and all(f.op == "not_null" for f in r.where)]
+    if not every:
+        return plan
+    def plain(text: object) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(text or "").casefold())
+
+    rates = [r for r in plan.rates if r not in every]
+    names = {plain(r.name) for r in every} | {"rates"}
+    update: dict[str, Any] = {
+        "rates": rates, "measures": list(dict.fromkeys([*plan.measures, *(r.measure for r in every)])),
+        "asked": [a.model_copy(update={"plan": "share"}) if a.plan and plain(a.plan) in names else a
+                  for a in plan.asked]}
+    if plan.group_by and not rates and plan.intent in (None, "share", "breakdown", "rank", "value"):
+        update["intent"] = "share"
+    return plan.model_copy(update=update)
+
+
 def _measures_named(model: SemanticModel, question: str) -> set[str]:
     from core2.plan.followup import measures_named
 
@@ -2592,9 +2660,10 @@ def _member_filters(data: dict[str, Any], model: SemanticModel | None) -> list[d
 
 def _plan_shown(plan: Plan, model: SemanticModel | None, masked: Masked | None) -> str:
     """A plan as the AI may see it: member values as placeholders when values are withheld."""
+    # The parts of the request it listed are the plan's own reading of its question, never carried to the next one.
     if masked is None:
-        return plan.model_dump_json(exclude_defaults=True)
-    data = plan.model_dump(mode="json", exclude_defaults=True)
+        return plan.model_dump_json(exclude_defaults=True, exclude={"asked"})
+    data = plan.model_dump(mode="json", exclude_defaults=True, exclude={"asked"})
     for f in _member_filters(data, model):
         f["values"] = [placeholder(v, masked.values) for v in f.get("values", [])]
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -2615,6 +2684,9 @@ def _unmask_plan(plan: Plan, masked: Masked | None) -> Plan:
     absent = data.get("absent") or {}
     for f in [*data.get("filters", []), *absent.get("without", []), *absent.get("had", [])]:
         f["values"] = [unmask(v, masked) for v in f.get("values", [])]
+    for part in data.get("asked") or []:
+        part["words"] = unmask(part["words"], masked)
+        part["plan"] = unmask(part["plan"], masked) if part.get("plan") else part.get("plan")
     return Plan.model_validate(data)
 
 
@@ -2720,6 +2792,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [_short(exc)], ""
             continue
         plan = _about_figures(plan, model)
+        plan = _share_not_rate(plan)
         if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
                 and matches and len({m.text.casefold() for m in matches}) == len(matches):
             # "How many items do we hold from the first supplier on that list?" was asked back ("which supplier

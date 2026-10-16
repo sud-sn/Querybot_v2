@@ -1,9 +1,11 @@
-"""A member narrows an answer only when the reader writes its name in quotes.
+"""A member narrows an answer when the reader quotes its name or names it in full; never by a stray word.
 
 Words of a question were matched against every member name the warehouse holds, offered to the AI as
 names to filter on, and an ordinary word that happened to be a member's name ("available stock", "open
-orders") became a WHERE condition. Now only a name in quotes ("North", “North”, « Nord ») is
-offered, and a filter on a member the reader did not quote is taken out of the plan, said on the answer,
+orders") became a WHERE condition. Now a name in quotes ("North", “North”, « Nord ») is offered, and so
+is one written as people write names that names one member beyond doubt ("Northline Distribution 58", "sales at
+Riverside"), said on the answer with one click to take it off. A filter on any other member the reader wrote (a
+lone word in lower case, a description: "the top value stores") is taken out of the plan, said on the answer,
 with the same question one click away with the name in quotes. A member the reader points at on screen
 ("the first one"), one an earlier answer of the conversation filtered on, a number and a flag still
 filter. In a workspace whose member values may not reach the AI, every name the question writes is still
@@ -81,18 +83,51 @@ def test_quoted_text_is_found_in_every_kind_of_quotes():
         assert [question[a:b] for a, b in quoted_spans(question)] == want, question
 
 
-def test_a_name_not_in_quotes_never_filters(retail):
-    _, _, _, slug = retail
+def test_a_lone_word_in_lower_case_never_filters(retail):
+    model = retail[0]
+    whole = _ask(retail, Recorded({"intent": "value", "measures": ["net_amount"], "time": Y2025}),
+                 "net sales in 2025")[0]
+    ai = Recorded({**_for_customer("region.name", "North")})
+    payload = _ask(retail, ai, "net sales in the north in 2025")[0]
+    assert "VALUE MATCHES" not in ai.sent[0], "a lone word in lower case is not offered as a name to filter on"
+    assert _total(payload) == _total(whole), "the filter the AI wrote anyway is taken out"
+    assert any('Not narrowed to region' in n and '"North"' in n for n in payload["trust"]["date_context"])
+    chip = payload["follow_up_suggestions"][0]
+    assert chip["label"] == 'Only "North"'
+    assert chip["question"] == 'net sales in the "north" in 2025'
+    assert "region.name" in model.attributes
+
+
+def test_a_full_name_written_without_quotes_filters_and_one_click_takes_it_off(retail):
+    """ "Net sales for northline distribution 58": the reader names a customer as people do. It narrows the
+    answer, the answer says so, and 'Not only "..."' gives the same figure for every customer."""
+    model, warehouse, index, slug = retail
     whole = _ask(retail, Recorded({"intent": "value", "measures": ["net_amount"], "time": Y2025}),
                  "net sales in 2025")[0]
     ai = Recorded(_for_customer(slug))
-    payload = _ask(retail, ai, f"net sales for {CUSTOMER.lower()} in 2025")[0]
-    assert "VALUE MATCHES" not in ai.sent[0], "an unquoted name is not offered as one to filter on"
-    assert _total(payload) == _total(whole), "the filter the AI wrote anyway is taken out"
-    assert any(f'Not narrowed to customer' in n and CUSTOMER in n for n in payload["trust"]["date_context"])
-    chip = payload["follow_up_suggestions"][0]
-    assert chip["label"] == f'Only "{CUSTOMER}"'
-    assert chip["question"] == f'net sales for "{CUSTOMER.lower()}" in 2025'
+    services = Services(model=model, warehouse=warehouse, complete=ai, index=index, today=TODAY)
+    session = Session()
+    payload = answer_question(f"net sales for {CUSTOMER.lower()} in 2025", services, session)
+    assert f'{slug} = "{CUSTOMER}"' in ai.sent[0]
+    assert _total(payload) == 95698.79
+    assert not any("Not narrowed" in n for n in payload["trust"]["date_context"])
+    assert any(f'Narrowed to' in n and f'"{CUSTOMER}"' in n for n in payload["trust"]["date_context"])
+    chip = next(c for c in payload["follow_up_suggestions"] if c["label"] == f'Not only "{CUSTOMER}"')
+    assert chip["label_fr"] == f"Pas seulement « {CUSTOMER} »"
+    off = answer_question(chip["question"], services, session)
+    assert not off["plan"].get("filters")
+    assert _total(off) == _total(whole)
+
+
+def test_a_description_in_lower_case_is_no_members_name(retail):
+    """ "The top value stores" describes stores; it is not the customer called "Top Value Stores"."""
+    model, warehouse, index, _ = retail
+    from core2.service import _own_names
+
+    assert index.written_names("show the top value stores by net sales", not_names=_own_names(model)) == []
+    found = index.written_names("net sales for Top Value Stores in 2025", not_names=_own_names(model))
+    assert [m.value for m in found] == ["Top Value Stores"]
+    assert index.written_names("net sales in the north", not_names=_own_names(model)) == []
 
 
 @pytest.mark.parametrize("written", [f'"{CUSTOMER}"', f"“{CUSTOMER}”", f"« {CUSTOMER} »",
@@ -145,8 +180,8 @@ def test_where_values_may_not_reach_the_ai_an_unquoted_name_is_still_withheld(re
     ai = Recorded(_for_customer(slug, "⟨v1⟩"))
     payload = _ask(retail, ai, f"net sales for {CUSTOMER} in 2025", values_allowed=False)[0]
     assert "Northline" not in ai.sent[0] and "⟨v1⟩" in ai.sent[0]
-    assert "VALUE MATCHES" not in ai.sent[0]
-    assert not payload["plan"].get("filters"), "and it does not filter: it was not quoted"
+    assert payload["plan"]["filters"][0]["values"] == [CUSTOMER], "named in full, it filters, never sent"
+    assert _total(payload) == 95698.79
 
 
 def test_the_questions_the_product_writes_put_their_members_in_quotes(retail):

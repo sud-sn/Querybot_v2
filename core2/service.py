@@ -703,6 +703,8 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     seen = next((t for t in reversed(session.turns) if not t.unanswered), None)
     following = False
     matches: list[ValueMatch] = []
+    named: list[ValueMatch] = []        # the members the question names (quoted, or beyond doubt): each must be held
+    unquoted_named: list[ValueMatch] = []   # those of them written without quotes: said, and one click removes them
     picked = choose(question, pending.options) if pending is not None else None
     offer, session.offers = (session.offers.get(_plain(question)) if forced is None else None), {}
     date_pick, session.dates = (session.dates.get(_plain(question)) if forced is None else None), {}
@@ -726,9 +728,15 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
             kept_date = outcome.plan.time.date       # the date picked counts the rest of the conversation too
             asked_date = True
     else:
-        # Only a name the reader put in quotes is a member: ordinary words never narrow the answer. Every
+        # A name the reader put in quotes is a member, and so is one written as people write names ("Dish Soap",
+        # "at Riverside") that names one member beyond doubt; ordinary words never narrow the answer. Every
         # name written, quoted or not, is still withheld from the AI where member values may not reach it.
         found = _visible(services.index.quoted(question), model, services.allowed_tables)
+        unquoted_named = [m for m in _visible(services.index.written_names(question, not_names=_own_names(model)),
+                                              model, services.allowed_tables)
+                          if not any(f.start < m.end and m.start < f.end for f in found)]
+        found = sorted([*found, *unquoted_named], key=lambda m: (m.start, m.attribute))
+        named = found
         hidden = [] if services.values_allowed else _visible(services.index.match(question), model,
                                                              services.allowed_tables)
         # "Break the first one down", "monthly sales for that division in 2026": the member of the answer on
@@ -952,7 +960,8 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     standing_filters = [f for s in applied for f in s.filters]
     looked = _look(plan, payload, services, ctx, empty=empty, carried=carried, standing=standing_filters)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
-    chips = [*offered(plan, model), *_instead(plan, model, outcome), *asks.other_readings(plan, model, question)]
+    chips = [*offered(plan, model), *_instead(plan, model, outcome), *asks.other_readings(plan, model, question),
+             *_named_unquoted(payload, plan, model, unquoted_named)]
     read_as = asks.badges(plan, model, outcome.picked)
     if read_as and isinstance(payload.get("answer"), dict):
         # "Read as Net amount": the figure a business ask was read as, when the AI asked which (the others are
@@ -1003,11 +1012,24 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     # removed is gone from the follow-ups too.
     _keep(session, Turn(question, S.without(plan, applied, bare), outcome.masked, shown, periods,
                         _shown_title(payload)))
+    from core2.agent import parts as P
+
+    gaps = []
+    if from_ai:
+        # Every part of the request, checked against the plan and the answer: one left out is asked for once more
+        # (below), and what the answer still lacks is said on it, never dropped without a word.
+        gaps = P.missing(question, plan, payload, model, named=named,
+                         before=seen.plan if following and plan.follow_up == "refine" and seen is not None else None)
+        if gaps:
+            payload["parts_left_out"] = P.said(gaps, question, private=not services.values_allowed)
     if from_ai and not feedback:
         from core2.agent import again as A
 
         reasons = A.suspect(question, plan, payload, looked, kept=[*carried, *standing_filters],
                             empty=empty, model=model, values=services.values_allowed)
+        if gaps:
+            en, fr = P.reason(gaps, hide=None if services.values_allowed else _hiding(outcome.masked))
+            reasons.append(A.Reason("left_out", en, fr))
         if reasons:
             payload[A.KEY] = (question, forced, plan, reasons)
     return payload
@@ -2217,6 +2239,19 @@ def _member_home(model: SemanticModel, plan: Plan, index: MemberIndex, values: l
     return reached[0], homes[reached[0]]
 
 
+def _own_names(model: SemanticModel) -> frozenset[str]:
+    """The names of the model's own figures, groupings and fields ("Net Amount", "Store"), and their words for
+    them: written in a question they name what is counted or grouped, never a member to narrow to."""
+    names: set[str] = set()
+    for m in model.measures.values():
+        names |= {m.business_name, m.slug.replace("_", " "), *(w for ws in m.synonyms.values() for w in ws)}
+    for a in model.attributes.values():
+        names |= {a.business_name, *(w for ws in a.synonyms.values() for w in ws)}
+    for e in model.entities.values():
+        names |= {e.business_name, e.slug.replace("_", " "), *(w for ws in e.synonyms.values() for w in ws)}
+    return frozenset(normalise(n) for n in names if n)
+
+
 def _grounded(matches: list[ValueMatch], session: Session) -> set[str]:
     """Member values a filter may name: those the reader quoted or pointed at on screen ("the first one"), those
     the answers before already filtered on (a follow-up keeps them), and those a question back offered."""
@@ -2447,6 +2482,67 @@ def _quoted_filters(plan: Plan, question: str, model: SemanticModel, grounded: s
     return plan.model_copy(update={"filters": filters, "absent": absent}), dropped, no_such
 
 
+def _hiding(masked: Masked | None) -> Callable[[str], str]:
+    """The reader's words with every member name the AI was not shown back in its placeholder ("⟨v1⟩")."""
+    pairs = sorted(((str(v), ph) for ph, v in (masked.values if masked is not None else {}).items()),
+                   key=lambda p: -len(p[0]))
+
+    def hide(words: str) -> str:
+        for value, ph in pairs:
+            if value:
+                words = re.sub(re.escape(value), ph, words, flags=re.IGNORECASE)
+        return words
+    return hide
+
+
+def _named_unquoted(payload: dict[str, Any], plan: Plan, model: SemanticModel,
+                    unquoted: list[ValueMatch]) -> list[tuple[str, Plan]]:
+    """A member the reader named without quotes, beyond doubt ("customers who bought Dish Soap"), narrows the
+    answer: said on it, with one click to take it off ('Not only "Dish Soap"': the same plan without it)."""
+    out: list[tuple[str, Plan]] = []
+    notes = payload.setdefault("trust", {}).setdefault("date_context", [])
+    for m in unquoted:
+        key = normalise(str(m.value))
+        if not any(normalise(str(v)) == key for f in _held_conditions(plan) for v in f.values):
+            continue                # not applied: said with what the answer left out (core2/agent/parts.py)
+        attribute = model.attributes.get(m.attribute)
+        thing = (attribute.business_name if attribute is not None else m.attribute).lower()
+        notes.append(f'Narrowed to {thing} "{m.value}", named in your question.')
+        out.append((f'Not only "{m.value}"', _without_member(plan, key)))
+    return out
+
+
+def _held_conditions(plan: Plan) -> list[Filter]:
+    """The conditions of a plan that hold members: its filters, who had or had none, a rate's condition."""
+    out = list(plan.filters)
+    if plan.absent is not None:
+        out += [*plan.absent.without, *plan.absent.had]
+    return out + [w for r in plan.rates for w in r.where]
+
+
+def _without_member(plan: Plan, key: str) -> Plan:
+    """The plan with no condition on the member (its value taken off a list of several)."""
+    def cut(filters: list[Filter]) -> list[Filter]:
+        out = []
+        for f in filters:
+            values = [v for v in f.values if normalise(str(v)) != key]
+            if len(values) == len(f.values):
+                out.append(f)
+            elif values:
+                out.append(f.model_copy(update={"values": values, "op": "eq" if len(values) == 1 and f.op == "in"
+                                                else f.op}))
+        return out
+
+    # A rate whose only condition was the member is no rate any more: it goes with it.
+    update: dict[str, Any] = {"filters": cut(plan.filters), "follow_up": "refine",
+                              "rates": [r.model_copy(update={"where": cut(r.where)}) for r in plan.rates
+                                        if cut(r.where)]}
+    if plan.absent is not None:
+        update["absent"] = plan.absent.model_copy(update={"without": cut(plan.absent.without),
+                                                          "had": cut(plan.absent.had)})
+    return plan.model_copy(update=update)
+
+
 def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[str, str]],
                   written: list[ValueMatch] | None = None, *, no_such: list[tuple[str, str]] = ()) -> None:
     """Said on the answer: which names did not narrow it, and the question again with them in quotes.
@@ -2455,6 +2551,8 @@ def _say_unquoted(payload: dict[str, Any], question: str, dropped: list[tuple[st
     Eastgate Industrial", read by the AI as a region and a division) is offered as the whole names written, all of
     that field's at once: quoting "Northfield" alone asked for the region again."""
     notes = payload.setdefault("trust", {}).setdefault("date_context", [])
+    # The names it was not narrowed to: a summary naming one would claim what the answer does not show.
+    payload["not_narrowed"] = [*(payload.get("not_narrowed") or []), *(str(v) for _, v in [*dropped, *no_such])]
     for thing, value in no_such:
         notes.append(f'No {thing} is called "{value}": the answer is not narrowed by it.')
     chips = []

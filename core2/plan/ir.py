@@ -293,8 +293,21 @@ class Target(_Strict):
     target: str                      # a measure slug: what was planned (target amount, budget, quota)
 
 
+class Asked(_Strict):
+    """One part of the request in the reader's words ("gross margin", "their segment", "Dish Soap", "top 10",
+    "vs Q2", "as a chart") and what in the plan gives it: a measure slug, a derived, rate, figure or duration name,
+    a group_by or filter field, "time", "compare", "limit" or "chart"; None when the plan cannot give it. Code
+    checks each part against the plan and the answer's columns (core2/agent/parts.py): a part the answer lacks is
+    asked for once more, then said on the answer, never dropped without a word."""
+
+    words: str = Field(min_length=1, max_length=160)
+    kind: Literal["figure", "field", "condition", "period", "comparison", "ranking", "form", "other"] = "other"
+    plan: str | None = None
+
+
 class Plan(_Strict):
     kind: Literal["query", "clarify", "describe_data", "unsupported", "smalltalk"] = "query"
+    asked: list[Asked] = Field(default_factory=list)     # every part of the request, listed first
     intent: Intent | None = None
     measures: list[str] = Field(default_factory=list)
     derived: list[Derived] = Field(default_factory=list)

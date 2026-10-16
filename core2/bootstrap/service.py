@@ -75,6 +75,21 @@ def _a_things_name(table: str, column: str, strategy: str) -> bool:
     return not about & (_PEOPLE | personal.PERSON_WORDS)
 
 
+def held_by_masking(table: Any, column: str) -> bool:
+    """Does discovery's masking keep this column's values out? Every column of a table masked whole, and every
+    column an admin chose; one discovery's own patterns masked as a name or a city ("store_name", a store's
+    "city") only when it is no thing's name (_a_things_name): a person's name, or a city in a table about people."""
+    if table.mask_all:
+        return True
+    hit = next((c for c in table.masked if ids.norm(c) == ids.norm(column)), None)
+    if hit is None:
+        return False
+    if table.mask_mode == "auto":
+        kind = table.mask_kinds.get(hit) or table.mask_kinds.get(column) or ""
+        return not _a_things_name(table.name, column, kind)
+    return True
+
+
 def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any],
                 sample: Callable[[str, str], list[str]] | None = None) -> Callable[[str, str], bool]:
     """May common values of this column be read and shown? The value index's own rules, and masking.
@@ -116,7 +131,7 @@ def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any],
 
     def allowed(table_key: str, column: str) -> bool:
         table = inventory.tables.get(table_key)
-        if table is None or table.mask_all or column in table.masked:
+        if table is None or held_by_masking(table, column):
             return False
         if column.casefold() in sensitive.get(table_key, set()) and not businesses(table_key, column):
             return False
@@ -217,9 +232,8 @@ def mask_as_discovered(model: SemanticModel, inventory: Inventory | None) -> Non
     for key, table in inventory.tables.items():
         if not (table.masked or table.mask_all):
             continue
-        masked = {ids.norm(c) for c in table.masked}
         for column in model.columns.values():
-            if column.table == key and (table.mask_all or ids.norm(column.name) in masked):
+            if column.table == key and held_by_masking(table, column.name):
                 column.values_allowed = False
 
 

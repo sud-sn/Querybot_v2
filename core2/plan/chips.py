@@ -228,6 +228,7 @@ _FORMS_FR = [
     (re.compile(r"^Every (.+) listed$"), lambda m: f"Chaque {m[1]} de la liste"),
     (re.compile(r"^Only those with (.+) before$"), lambda m: f"Seulement ceux qui avaient {m[1]} avant"),
     (re.compile(r"^Including (.+)$"), _including),
+    (re.compile(r'^Not only "(.+)"$'), lambda m: f"Pas seulement « {m[1]} »"),
     (re.compile(r"^(.+) instead$"), lambda m: f"{m[1]} à la place"),      # "Gross amount instead"
 ]
 

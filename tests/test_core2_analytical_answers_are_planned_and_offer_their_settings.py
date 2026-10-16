@@ -150,7 +150,7 @@ def test_ranges_and_per_order_are_taught_only_where_the_data_has_them(retail):
 # ── conditions on who had none ─────────────────────────────────────────────
 
 
-def test_a_name_narrows_who_had_none_only_when_quoted(retail):
+def test_a_name_narrows_who_had_none_when_quoted_or_named_in_full(retail):
     built, model = retail
     warehouse = DuckDBWarehouse(built.con)
 
@@ -165,11 +165,16 @@ def test_a_name_narrows_who_had_none_only_when_quoted(retail):
                          "without": [{"field": "store.name", "op": "eq", "values": ["Airport Store"]}]}}
     ask, _ = _chat(retail, absent, absent, index=index)
     unquoted = ask("customers with no orders at the airport store in the last 90 days")
-    assert unquoted["plan"]["absent"].get("without", []) == []
-    assert any('Not narrowed to store name "Airport Store"' in n for n in unquoted["trust"]["date_context"])
+    assert unquoted["plan"]["absent"]["without"][0]["values"] == ["Airport Store"]
+    assert any('Narrowed to' in n and '"Airport Store"' in n for n in unquoted["trust"]["date_context"])
     quoted = ask('customers with no orders at the "Airport Store" in the last 90 days')
     assert quoted["plan"]["absent"]["without"][0]["values"] == ["Airport Store"]
-    assert len(quoted["export_rows"]) > len(unquoted["export_rows"])
+    assert len(quoted["export_rows"]) == len(unquoted["export_rows"])
+    everyone = {"intent": "list", "time": {"window": {"kind": "last", "unit": "day", "n": 90}},
+                "absent": {"of": "customer", "measure": "number_of_orders"}}
+    ask_all, _ = _chat(retail, everyone, everyone, index=index)
+    anywhere = ask_all("customers with no orders anywhere in the last 90 days")
+    assert len(quoted["export_rows"]) > len(anywhere["export_rows"])
 
 
 def test_no_name_in_who_had_none_reaches_the_ai_where_names_are_withheld(retail):

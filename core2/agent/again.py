@@ -5,17 +5,20 @@ the data saying so:
 
 * nothing found, and the condition that empties it is one the question never states (not in its words, not kept
   from the answer above, not a standing condition), while the same period has rows without it;
-* a share of exactly 0% or 100%: none, or every one, of the rows counted meets its condition.
+* a share of exactly 0% or 100%: none, or every one, of the rows counted meets its condition;
+* a rate at exactly 100% in every row of a breakdown: each group's rows all meet its condition, so it tells the
+  groups nothing apart ("what % of all returns each reason is", read as each reason's own rate).
 
 The AI is then asked once more, with its first plan and what the check found (member names only where they may
 reach it). The second plan goes through every rule the first did. It is kept only when it puts the sign right --
-rows found, a share that is neither 0% nor 100% -- and the answer says it looked again, with the first reading one
+rows found, a share that is neither 0% nor 100%, a rate that tells the groups apart -- and the answer says it looked again, with the first reading one
 click away. Otherwise the first answer stands as it was, and says that it was checked. Never more than once.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -28,7 +31,7 @@ FIRST_EN, FIRST_FR = "Show my first reading", "Voir ma première lecture"
 
 @dataclass
 class Reason:
-    kind: str           # unstated | all_or_none
+    kind: str           # unstated | all_or_none | every_row | left_out
     en: str             # for the AI (and the reader, said plainly)
     fr: str
     field: str = ""
@@ -74,6 +77,35 @@ def suspect(question: str, plan: Plan, payload: dict[str, Any], looked: Any, *, 
                 f"Le chiffre vaut exactement {value:g} % : aucune des lignes comptées ne remplit sa condition."
                 if none else
                 f"Le chiffre vaut exactement {value:g} % : toutes les lignes comptées remplissent sa condition."))
+    for name in _of_every_row([r.name for r in plan.rates] if plan.group_by else [], payload):
+        out.append(Reason(
+            "every_row",
+            f"{name} came out at exactly 100% in every one of the {len(rows)} rows: every row counted in each group "
+            "meets its condition, so it tells the groups nothing apart. If the question asks what share of the "
+            "whole each one makes, that is each one's share of the total (intent \"share\"), never a rate.",
+            f"{name} vaut exactement 100 % dans chacune des {len(rows)} lignes : toutes les lignes comptées dans "
+            "chaque groupe remplissent sa condition."))
+    return out
+
+
+def _of_every_row(rates: list[str], payload: dict[str, Any]) -> list[str]:
+    """The rates (by name) at exactly 100% in every row of an answer with more than one row."""
+    data = payload.get("data") or {}
+    rows = data.get("rows") or []
+    if len(rows) < 2:
+        return []
+
+    def plain(text: object) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(text or "").casefold())
+
+    def whole(value: object) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and abs(float(value) - 100) < 1e-6
+
+    out = []
+    for name in rates:
+        column = next((h for h in data.get("headers") or [] if plain(h) == plain(name)), None)
+        if column is not None and all(whole(r.get(column)) for r in rows):
+            out.append(name)
     return out
 
 
@@ -93,8 +125,8 @@ def feedback(first: Plan, reasons: list[Reason], *, values: bool) -> str:
 
 
 def better(second: dict[str, Any], first: Plan, payload: dict[str, Any], reasons: list[Reason]) -> bool:
-    """Does the second reading put the sign right: another plan, an answer with rows, and no share of 0% or
-    100% where that was the sign?"""
+    """Does the second reading put the sign right: another plan, an answer with rows, no share of 0% or 100%
+    and no rate of every row where that was the sign?"""
     plan = second.get("plan")
     if second.get("data") is None or not plan or second.get("unsupported") or second.get("clarify"):
         return False
@@ -107,6 +139,14 @@ def better(second: dict[str, Any], first: Plan, payload: dict[str, Any], reasons
     if any(r.kind == "all_or_none" for r in reasons):
         kpi = second.get("kpi") if isinstance(second.get("kpi"), dict) else {}
         if kpi.get("value") in (0, 100, None):
+            return False
+    if any(r.kind == "every_row" for r in reasons):
+        rates = [str(r.get("name") or "") for r in plan.get("rates") or []] if plan.get("group_by") else []
+        if _of_every_row(rates, second):
+            return False
+    if any(r.kind == "left_out" for r in reasons):
+        # Parts of the request left out (core2/agent/parts.py): the second reading must leave out fewer.
+        if len(second.get("parts_left_out") or []) >= len(payload.get("parts_left_out") or []):
             return False
     return True
 
@@ -125,6 +165,16 @@ def say(second: dict[str, Any], first_payload: dict[str, Any], first: Plan, reas
             "en": f"My first reading did not look right ({said}), so I read your question again.",
             "fr": f"Ma première lecture ne semblait pas juste ({said}) : j'ai relu votre question.",
             "figures": [], "days": [], "members": names_stated(first_payload), "about": ""}
+    if all(r.kind == "left_out" for r in reasons):
+        # Only parts of the request were missing: said by the reader's own words for them, never the first answer.
+        left = first_payload.get("parts_left_out") or []
+        lost = [str(p.get("words")) for p in left]
+        en, fr = ", ".join(lost), ", ".join(f"« {w} »" for w in lost)
+        # The reader's words may hold a member's name (a condition's, or one inside a figure's words): each counts
+        # as one stated, kept from the AI where need be.
+        seen.update({"en": f"My first reading left out {en}, so I read your question again.",
+                     "fr": f"Ma première lecture laissait de côté {fr} : j'ai relu votre question.",
+                     "members": lost})
     checked = [{"en": f"Checked the first reading: {r.en}", "fr": f"Vérifié la première lecture : {r.fr}"}
                for r in reasons]
     offer = {"label": FIRST_EN, "question": FIRST_EN, "label_fr": FIRST_FR, "question_fr": FIRST_FR, "kind": "look"}

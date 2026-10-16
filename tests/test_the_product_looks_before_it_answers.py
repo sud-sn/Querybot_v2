@@ -489,6 +489,53 @@ def test_a_share_of_exactly_none_is_read_again_and_the_second_reading_kept(retai
     assert len(chat.told) == 2 and float(first["kpi"]["value"]) == 0
 
 
+# "What % of all returns each reason is", read as a rate within each reason: every reason's own returns meet the
+# condition, so the rate is 100% in every row and says nothing. Each one's share of the total is what was asked.
+EVERY_REASON = [{"field": "return.reason_code", "op": "in", "values": ["DMG", "WRG", "LATE", "OTHER"]}]
+WITHIN = {"intent": "rank", "measures": ["number_of_returns"], "group_by": ["return.reason_code"],
+          "rates": [{"name": "share of returns", "measure": "number_of_returns", "where": EVERY_REASON}]}
+OF_ALL = {"intent": "share", "measures": ["number_of_returns"], "group_by": ["return.reason_code"]}
+EACH_OF_ALL = "Returns by reason, and what % of all returns each reason is"
+
+
+def test_a_rate_of_every_row_in_every_group_is_read_again_as_each_ones_share(retail):
+    chat = Told(retail)
+    chat.plans += [WITHIN, OF_ALL]
+    got = chat.ask(EACH_OF_ALL)
+    assert len(chat.told) == 2 and "exactly 100% in every one of the 4 rows" in chat.told[1]
+    hand = dict(_rows(retail, "SELECT reason_code, 100.0 * COUNT(*) / SUM(COUNT(*)) OVER () FROM returns GROUP BY 1"))
+    share = next(h for h in got["data"]["headers"] if h.endswith("_share"))
+    assert {r["return_reason_code"]: r[share] for r in got["data"]["rows"]} == pytest.approx(hand, abs=0.01)
+    assert got["reply"]["seen"][0]["kind"] == "looked_again"
+
+
+def test_a_second_reading_still_of_every_row_leaves_the_first_answer(retail):
+    chat = Told(retail)
+    again = {**WITHIN, "rates": [{**WITHIN["rates"][0], "name": "returns share"}]}
+    chat.plans += [WITHIN, again]
+    got = chat.ask(EACH_OF_ALL)
+    assert len(chat.told) == 2 and got["trust"]["looked_again"]["kept"] == "first"
+
+
+def test_a_rate_that_tells_the_groups_apart_is_never_read_again(retail):
+    chat = Told(retail)
+    rate = {"name": "cancelled rate", "measure": "number_of_order_lines",
+            "where": [{"field": "order_line.status_code", "op": "eq", "values": ["C"]}]}
+    got = chat.ask("Cancellation rate by store in May 2026",
+                   {"measures": ["number_of_order_lines"], "group_by": ["store.name"], "rates": [rate], "time": MAY})
+    assert len(chat.told) == 1 and "looked_again" not in got.get("trust", {})
+    # One group alone at 100% is a rate like any other: only a rate of every row in every group is no answer.
+    one = chat.ask("Returns by reason, and the share that were damaged",
+                   {"measures": ["number_of_returns"], "group_by": ["return.reason_code"],
+                    "rates": [{"name": "damaged share", "measure": "number_of_returns",
+                               "where": [{"field": "return.reason_code", "op": "eq", "values": ["DMG"]}]}]})
+    assert len(chat.told) == 2 and "looked_again" not in one.get("trust", {})
+
+
+def _rows(retail, sql: str):
+    return retail[0].con.execute(sql).fetchall()
+
+
 def test_nothing_found_by_a_condition_the_question_never_states_is_read_again(retail):
     chat = Told(retail)
     chat.plans += [{**_net(customer="Lakeside Wholesale"), "time": MAY}, {"measures": ["net_amount"], "time": MAY}]

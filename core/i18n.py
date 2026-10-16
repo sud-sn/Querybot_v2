@@ -5706,6 +5706,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     # A follow-up answer says which answer it changed, and offers the same question asked on its own.
     "ui.chat.following": {"en": "Following: {question}", "fr": "Suite de : {question}"},
     "ui.chat.following.ask_new": {"en": "Ask as a new question", "fr": "Poser comme nouvelle question"},
+    # The parts of a request the answer does not give (core2/agent/parts.py), each with a button that asks for it.
+    "ui.chat.left_out": {"en": "Not in this answer: {parts}.", "fr": "Absent de cette réponse : {parts}."},
+    "ui.chat.left_out.add": {"en": "Add {words}", "fr": "Ajouter {words}"},
+    "ui.chat.left_out.only": {"en": "Only \u201c{words}\u201d", "fr": "Seulement « {words} »"},
     # What a follow-up kept from the answer above without the question saying it ("Region is North; in 2025").
     "ui.chat.following.kept": {"en": "Kept from above: {kept}", "fr": "Repris de plus haut : {kept}"},
     # Standing conditions ("from now on use the last 2 months"): the chip row above the box, and the line on each

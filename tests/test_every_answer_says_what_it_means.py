@@ -188,7 +188,7 @@ def test_the_ai_is_given_the_answer_as_shown_and_no_more_than_25_rows():
     given = summary.material(many, "net sales by store")
     assert "Question: net sales by store" in given and BY_STORE["answer"]["headline"] in given
     assert "The top 3 of the 12 stores make 33% of the total." in given
-    assert "Store 24" in given and "Store 25" not in given and "15 more not shown" in given
+    assert "Store 24" in given and "Store 25" not in given and "the first 25 of 40; the reader sees every one" in given
 
 
 def test_an_ai_that_fails_leaves_the_answer_without_a_summary():

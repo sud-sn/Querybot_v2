@@ -40,6 +40,8 @@ Rules:
 - Do not repeat the answer's sentence; build on it.
 - No headings, lists, markdown or quotation marks. Do not mention SQL, queries, tables or columns.
 - If the notes say the data is partial or a period is missing, say what that means for the reading.
+- The reader sees every row of the answer; you are given only the first ones. Never say rows are
+  missing, hidden or not shown.
 Reply with the sentences only."""
 
 
@@ -96,15 +98,27 @@ def material(payload: dict[str, Any], question: str) -> str:
     notes = [str(n) for n in payload.get("coverage_caveats") or [] if n]
     if notes:
         parts.append("Notes:\n" + "\n".join(f"- {n}" for n in notes))
+    # Parts of the request the answer does not give (a figure, a field): the summary never speaks of them. A name
+    # not narrowed to is left unsaid here, as the answer leaves it (it may be one kept from the AI).
+    lacking = [str(p.get("words")) for p in payload.get("parts_left_out") or []
+               if p.get("kind") != "condition" and not p.get("private")]
+    if lacking:
+        parts.append("Not in this answer (never mention it): " + "; ".join(lacking))
     rows = list(data.get("rows") or [])[:MAX_ROWS]
     if rows and headers:
         shown = [{labels.get(h, h): r.get(h) for h in headers} for r in rows]
-        more = int(data.get("total_rows") or len(rows)) - len(rows)
-        parts.append(f"Rows ({len(rows)} shown" + (f", {more} more not shown" if more > 0 else "") + "):\n"
+        total = max(int(data.get("total_rows") or len(rows)), len(rows))
+        # The reader sees them all: "N more not shown" once read to the AI as rows the answer lacks.
+        parts.append((f"Rows (the first {len(rows)} of {total}; the reader sees every one)" if total > len(rows)
+                      else f"Rows ({len(rows)})") + ":\n"
                      + "\n".join(json.dumps(r, default=str, ensure_ascii=False) for r in shown))
     return "\n\n".join(parts)
 
 
+# A summary saying the answer's rows are not all there ("six rows are not shown", "only a portion of the rows are
+# visible"): the reader sees every one, so it claims what the answer does not bear out.
+_ROWS_UNSEEN = re.compile(r"\b(?:rows?|entries|records)\b[^.;]{0,40}?\b(?:not (?:shown|visible|displayed|included)"
+                          r"|hidden|cut off)\b|\b(?:a portion|part|some) of the (?:rows|entries|records|list)\b", re.I)
 _FIGURE = re.compile(r"(?<![\w.])[-+−]?\$?\d[\d,]*(?:\.\d+)?\s?(?:[kKmMbB](?:n|illion)?\b|thousand\b|million\b|billion\b)?%?")
 _SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 
@@ -163,10 +177,35 @@ def _sentences(reply: str) -> str:
     return text
 
 
+def not_given(payload: dict[str, Any]) -> list[str]:
+    """What the answer does not give, in the reader's words: the parts of the request it left out (core2/agent/
+    parts.py) and the names it was not narrowed to. A sentence naming one claims what the answer lacks."""
+    out = [str(p.get("words") or "") for p in payload.get("parts_left_out") or []]
+    out += [str(v) for v in payload.get("not_narrowed") or []]
+    return [w.strip() for w in out if w and w.strip()]
+
+
+def claims_missing(text: str, payload: dict[str, Any]) -> str | None:
+    """The first thing the answer does not give that the text names, if any."""
+    said = text.casefold()
+    for words in not_given(payload):
+        if re.search(rf"(?<!\w){re.escape(words.casefold())}(?!\w)", said):
+            return words
+    return None
+
+
 def checked(text: str, payload: dict[str, Any], given: str) -> str | None:
-    """The summary when every figure in it is one the answer holds; None otherwise."""
+    """The summary when every figure in it is one the answer holds and it names nothing the answer does not give
+    (a figure, field or member the request named and the answer left out); None otherwise."""
     text = " ".join(_sentences(text).split()).strip().strip('"')
     if not text or len(text.split()) > MAX_WORDS or text.startswith(("#", "-", "*", "{", "[")):
+        return None
+    if _ROWS_UNSEEN.search(text):
+        log.info("A summary was not shown: it says rows are missing, and the reader sees every one")
+        return None
+    missing = claims_missing(text, payload)
+    if missing:
+        log.info("A summary was not shown: it names %r, which the answer does not give", missing)
         return None
     known = _known(payload, given)
     stray = [v for v, step in figures(text) if not _held(v, step, known)]

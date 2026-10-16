@@ -81,3 +81,55 @@ def test_a_drugs_name_reaches_the_index_beside_its_catalogue(monkeypatch):
     allowed = values_gate("acct-test", inventory, {})
     assert allowed("ingredients", "ingredient_name")
     assert not allowed("patients", "patient_name") and not allowed("patients", "medication_name")
+
+
+# Discovery masks too: its own patterns ("auto") wrote store_name and city into masked_fields of the sample
+# workbook's stores sheet, and Learn held every masked column back, so "Lakeside" and "Dish Soap" were never found.
+
+def _masked(name: str, mode: str, kinds: dict[str, str], *columns: str) -> InvTable:
+    table = _table(name, *columns)
+    table.masked, table.mask_mode, table.mask_kinds = set(kinds), mode, dict(kinds)
+    return table
+
+
+def test_a_things_name_discovery_masked_by_its_own_patterns_reaches_the_index(monkeypatch):
+    import core.value_index as value_index
+
+    monkeypatch.setattr(value_index, "_clearance_gate", lambda account_id: (None, ""))
+    inventory = Inventory(tables={
+        "stores": _masked("stores", "auto", {"store_name": "name", "city": "city"}, "store_name", "city", "region"),
+        "products": _masked("products", "auto", {"product_name": "name"}, "product_name", "category"),
+        "customers": _masked("customers", "auto", {"customer_name": "name", "city": "city"},
+                             "customer_name", "city", "segment"),
+    })
+    allowed = values_gate("acct-test", inventory, {})
+    assert allowed("stores", "store_name") and allowed("stores", "city") and allowed("products", "product_name")
+    assert not allowed("customers", "customer_name") and not allowed("customers", "city")
+
+
+def test_a_column_an_admin_masked_stays_held_whatever_it_names(monkeypatch):
+    import core.value_index as value_index
+
+    monkeypatch.setattr(value_index, "_clearance_gate", lambda account_id: (None, ""))
+    inventory = Inventory(tables={
+        "stores": _masked("stores", "selective", {"store_name": "name"}, "store_name", "region"),
+        "products": _table("products", "product_name"),
+    })
+    inventory.tables["products"].mask_all, inventory.tables["products"].mask_mode = True, "all"
+    allowed = values_gate("acct-test", inventory, {})
+    assert not allowed("stores", "store_name") and allowed("stores", "region")
+    assert not allowed("products", "product_name")
+
+
+def test_a_model_read_again_keeps_the_same_rule():
+    from core2.bootstrap.service import held_by_masking, mask_as_discovered
+    from core2.model.schema import Column, SemanticModel, Table
+
+    stores = _masked("stores", "auto", {"store_name": "name", "email": "email"}, "store_name", "email")
+    assert not held_by_masking(stores, "store_name") and held_by_masking(stores, "email")
+    model = SemanticModel(client_id="t", db_type="duckdb", tables={"stores": Table(key="stores", name="stores")},
+                          columns={f"stores.{c}": Column(key=f"stores.{c}", table="stores", name=c, data_type="text",
+                                                                   values_allowed=True)
+                                   for c in ("store_name", "email")})
+    mask_as_discovered(model, Inventory(tables={"stores": stores}))
+    assert model.columns["stores.store_name"].values_allowed and not model.columns["stores.email"].values_allowed

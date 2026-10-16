@@ -74,6 +74,27 @@ class ValueMatch:
     exact: bool = True     # the whole name was written (not a containment)
 
 
+
+# Month and day names, in English and French: written in a question they name a period ("sales in September"),
+# read by the plan's time, never a member of a calendar's month column.
+CALENDAR_WORDS = frozenset({
+    "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+    "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "janvier", "fevrier", "février", "mars", "avril", "mai", "juin", "juillet", "aout", "août", "septembre",
+    "octobre", "novembre", "decembre", "décembre", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+    "dimanche", "weekend", "weekday", "weekdays", "weekends",
+})
+
+# Words a question describes with ("the top value stores", "best sellers", "all other products"), never the words
+# of a member it names in lower case (core2.plan.values.MemberIndex.written_names).
+DESCRIBING = frozenset({
+    "top", "bottom", "best", "worst", "highest", "lowest", "biggest", "largest", "smallest", "most", "least",
+    "value", "values", "total", "totals", "average", "all", "each", "every", "per", "other", "others", "more",
+    "less", "big", "small", "high", "low", "first", "last", "next", "previous", "main", "major", "key", "active",
+    "sellers", "seller", "selling", "performing", "performers", "growing", "declining", "overall", "general",
+})
+
 @dataclass
 class MemberIndex:
     """Normalised member names -> (attribute slug, stored value), for the attributes QueryBot may list."""
@@ -252,6 +273,52 @@ class MemberIndex:
                 if entries:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
+
+    def written_names(self, question: str, *, not_names: set[str] | frozenset[str] = frozenset()) -> list[ValueMatch]:
+        """Member names written without quotes that name one member beyond doubt, read as if quoted.
+
+        "Customers who bought Dish Soap in the last 90 days" means that product: a reader names a product, a
+        store or a customer as people do, without quotes. A name counts when it is two words or more ("Dish
+        Soap", "Old Town"), or one word written with its capital inside the question ("sales at Riverside"), and
+        its words name exactly one member of one grouping. An everyday word ("open", "available"), a word in lower
+        case on its own, the question's first word, a name two groupings share and a name in ``not_names`` (a
+        figure's or a grouping's own name: "Net Amount") stay words of the question: they narrow the answer only
+        in quotes, as before.
+        """
+        quoted = quoted_spans(question)
+        cased = any(c.islower() for c in question)
+        # The words of the data's own names ("store", "amount") and of how questions describe ("top", "value"):
+        # a name written all in lower case made of more than one of them is a description ("the top value
+        # stores"), not the member that happens to share it ("Top Value Stores").
+        own = {w for n in not_names for w in n.split()}
+        own |= {w[:-1] for w in own if w.endswith("s")} | {w + "s" for w in own}
+        spans: dict[tuple[int, int], list[ValueMatch]] = {}
+        for m in self.match(question):
+            spans.setdefault((m.start, m.end), []).append(m)
+        out: list[ValueMatch] = []
+        for (start, end), found in spans.items():
+            if any(a <= start and end <= b for a, b in quoted):
+                continue                       # quoted: read by quoted()
+            if len({(m.attribute, normalise(str(m.value))) for m in found}) != 1:
+                continue                       # two groupings (or two members) share the name: which is unclear
+            text = question[start:end]
+            key = normalise(text)
+            words = [w for w in re.findall(r"[\w&'#.+-]+", text) if w]
+            if key in COMMON_WORDS or key in not_names or not words:
+                continue
+            if all(normalise(w) in CALENDAR_WORDS or w.isdigit() for w in words):
+                continue                       # "September", "May 2026": a period, read by the plan's time
+            if len(words) == 1:
+                first = not question[:start].strip()
+                if not cased or first or not text[:1].isupper() or len(key) < 3 or key.isdigit():
+                    continue
+            elif all(normalise(w) in COMMON_WORDS for w in words):
+                continue                       # "not started", "on hold": everyday words, quoted to narrow
+            elif text == text.lower() and sum(normalise(w) in COMMON_WORDS or normalise(w) in DESCRIBING
+                                              or normalise(w) in own for w in words) > 1:
+                continue
+            out.append(found[0])
+        return sorted(out, key=lambda m: (m.start, m.attribute))
 
     def quoted(self, question: str) -> list[ValueMatch]:
         """The member names the reader put in quotes ("North", “North”, « Nord », 'North'): the only words of
