@@ -631,6 +631,14 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-card .answer-headline { margin: 0; font-size: var(--font-lg); line-height: 1.5; color: var(--text-strong); font-weight: var(--weight-semibold); text-wrap: pretty; }
 .answer-card .answer-headline.is-lead { font-size: var(--font-xl); }
 .answer-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+/* A comparison's figures under its lead: small, quiet tiles in one row (they wrap on a phone). */
+.compared-figures { margin: 10px 0 4px; }
+.compared-figures .answer-tiles { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.compared-figures .kpi-tile { padding: 10px 12px; }
+.compared-figures .kpi-value { font-size: 20px; }
+.data-table tfoot .reference-row td { color: var(--text-muted); }
+.data-table tfoot .total-row th, .data-table tfoot .total-row td { font-weight: var(--weight-semibold, 600); color: var(--text-strong); border-top: 1px solid var(--line); text-align: left; }
+.data-table tfoot .total-row td.num { text-align: right; }
 .answer-tiles[data-count="1"] { grid-template-columns: minmax(200px, 320px); }
 .kpi-tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; box-shadow: var(--shadow-sm); min-width: 0; }
 .kpi-label { font-size: var(--font-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
@@ -2375,6 +2383,8 @@ function _drillChoices(payload, params) {
   const xKey = payload.x_key;
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
   if (xKey && rows.length && !rows.some(r => String(r[xKey] ?? '') === raw)) return [];
+  // Last year's later months, drawn for reference beside this year's: last year's, never a month to open now.
+  if (((payload.compare || {}).reference || {})[raw]) return [];
   // "Other (230)" adds up the members past the largest: no one member to open.
   const other = String((payload.other || {}).label || '');
   if (other && (raw === other || String((params && params.seriesName) || '') === other)) return [];
@@ -2724,8 +2734,9 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
   // The header a reader reads, in business terms; the key stays raw because
   // every cell lookup, the column-format map and the CSV export use it. The
   // card printed "Warehouse Name" in its prose and "WHS_NM" in the header
-  // directly below it.
-  const headerLabels = data.header_labels || {};
+  // directly below it. A French reader reads the French headers the answer carries.
+  const headerLabels = Object.assign({}, data.header_labels || {},
+                                     (window.QB_LANG === 'fr' && data.header_labels_fr) || {});
   // Numeric columns: their cells take tabular figures and align right -- their
   // header with them, so a heading sits over its numbers -- and the footer shows
   // their aggregates. A column the answer says is text or a date is not one,
@@ -2750,6 +2761,21 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
     }).join('') + '</tr>'
   ).join('');
 
+  // Under the rows, where sorting and the filter leave them: last year's periods after this year's last one (a
+  // comparison of the year so far), quiet, and the totals rows ("1 Jan – 14 Jun, both years", "2025 in full").
+  const fr = typeof window !== 'undefined' && window.QB_LANG === 'fr';
+  const footCell = (h, v) => {
+    const fmt = colFormats.get(_normaliseColumnKey(h));
+    const shownValue = (v === null || v === undefined) ? '–' : _formatDisplayValue(v, fmt, _displayFormatSpec(data, h), h);
+    return `<td${numCols.includes(h) ? ' class="num"' : ''}>${escHtml(shownValue)}</td>`;
+  };
+  const refRows = (Array.isArray(data.reference_rows) ? data.reference_rows : []).map(r =>
+    '<tr class="reference-row">' + headers.map(h => footCell(h, r[h])).join('') + '</tr>').join('');
+  const totalRows = (Array.isArray(data.totals) ? data.totals : []).map(tr =>
+    '<tr class="total-row"><th scope="row">' + escHtml((fr && tr.label_fr) || tr.label || '') + '</th>'
+    + headers.slice(1).map(h => footCell(h, (tr.values || {})[h])).join('') + '</tr>').join('');
+  const footRows = (refRows || totalRows) ? `<tfoot>${refRows}${totalRows}</tfoot>` : '';
+
   const total = data.total_rows ?? data.rows.length;
   const shown = data.rows.length;
   const truncNote = (data.truncated || shown < total)
@@ -2768,7 +2794,7 @@ function renderDataTable(data, { question = '', trace_id = '' } = {}) {
     <div class="data-table-scroll">
       <table class="data-table" id="${dtId}">
         <thead><tr>${headHtml}</tr></thead>
-        <tbody>${bodyHtml}</tbody>
+        <tbody>${bodyHtml}</tbody>${footRows}
       </table>
     </div>
     <div class="data-table-foot" id="${dtId}-foot">${truncNote}</div>
@@ -3531,7 +3557,7 @@ function _answerTiles(msg) {
   // and then the row is a table, not tiles).
   if (!headers.every(h => _NUMERIC_FORMATS.includes(formatOf(h))
                           || (!formatOf(h) && _isANumericColumn(rows, h)))) return [];
-  const labels = data.header_labels || {};
+  const labels = Object.assign({}, data.header_labels || {}, (window.QB_LANG === 'fr' && data.header_labels_fr) || {});
   // A number the data does not have reads as a dash, never as an empty tile.
   return headers.map(h => ({label: labels[h] || h,
                             ..._tileValue(rows[0][h], formatOf(h) || 'number', _displayFormatSpec(data, h), h),
@@ -3724,8 +3750,10 @@ function _answerNotes(msg) {
   // A caveat stays next to the number; the rest is what stands out.
   const NOTE_RANK = { caveat: 0, watch: 1, note: 2 };
   const notes = [];
+  // A caveat in the reader's language: its French twin, by its English words, where the server sent one.
+  const twins = (window.QB_LANG === 'fr' && msg.coverage_caveats_fr) || {};
   for (const c of (Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [])) {
-    if (c) notes.push({ tier: 'caveat', icon: '!', text: String(c) });
+    if (c) notes.push({ tier: 'caveat', icon: '!', text: String(twins[c] || c) });
   }
   const ds = msg.decision_signal || {};
   if (ds.line) {
@@ -4124,6 +4152,13 @@ function answerCardHtml(msg, ids, env) {
     // the leader and how far ahead); the exact figures are in the chart, the table and the note.
     const lead = (msg.reading && msg.reading.lead) ? (msg.reading.lead[window.QB_LANG === 'fr' ? 'fr' : 'en'] || '') : '';
     leadHtml = `<p class="answer-headline is-lead">${escHtml(lead || answer.headline || t('ui.chat.card.answer_ready'))}</p>`;
+    // A comparison of this year so far: the year so far, the same days last year, the difference, the change and
+    // last year in full, as the note writes them, under the lead.
+    const compared = ((msg.compared || {}).tiles || []).filter(c => c && c.text);
+    if (compared.length) {
+      leadHtml += `<div class="compared-figures">${_answerTilesHtml(compared.map(c => ({
+        label: _inLang(c, 'label'), value: _inLang(c, 'text'), exact: '', note: ''})))}</div>`;
+    }
   }
   // What an analytical answer worked out ("Each customer's net amount in Q1 2026, then the middle value of ...").
   const definitionHtml = answer.definition ? `<p class="answer-definition">${escHtml(answer.definition)}</p>` : '';
@@ -4140,7 +4175,7 @@ function answerCardHtml(msg, ids, env) {
   const caveats = Array.isArray(msg.coverage_caveats) ? msg.coverage_caveats : [];
   const scopeNote = answer.scope_note || (msg.result_scope || {}).note || '';
   // The new core puts its first caveat in scope_note as well: said once.
-  const scopeNoteHtml = (scopeNote && !caveats.includes(scopeNote)) ? `<div class="scope-note">${escHtml(scopeNote)}</div>` : '';
+  const scopeNoteHtml = (scopeNote && !caveats.includes(scopeNote)) ? `<div class="scope-note">${escHtml(((window.QB_LANG === 'fr' && msg.coverage_caveats_fr) || {})[scopeNote] || scopeNote)}</div>` : '';
   const {caveatsHtml, insightsHtml} = _answerNotes(msg);
   // A LOW verdict states its reason on the card, beside the finding: the
   // reasoning normally waits in "How it was counted" so it does not compete

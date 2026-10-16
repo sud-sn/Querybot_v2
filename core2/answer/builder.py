@@ -362,6 +362,17 @@ def _jour(day: dt.date) -> str:
     return f"{'1er' if day.day == 1 else day.day} {_MOIS_COURTS[day.month - 1]} {day.year}"
 
 
+def period_fr(start: dt.date, grain: str, *, fiscal_start: int | None = None) -> str:
+    """A period as a French reader names it: "juil. 2026", "T3 2026", "semaine du 6 juil. 2026", "EF2026 T1"."""
+    if grain in ("month", "fiscal_month"):
+        return f"{_MOIS_COURTS[start.month - 1]} {start.year}"
+    if grain == "week":
+        return f"semaine du {_jour(start)}"
+    if grain == "day":
+        return _jour(start)
+    return re.sub(r"\bQ(\d)", r"T\1", period_label(start, grain, fiscal_start=fiscal_start)).replace("FY", "EF")
+
+
 def _span_fr(start: dt.date | None, end: dt.date | None) -> str:
     if start and end:
         last = end - dt.timedelta(days=1)
@@ -601,7 +612,9 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     records = [{c.name: _cell(c, row[cols.index[c.name]], logical) for c in shown} for row in rows]
     raw = [{c.name: row[cols.index[c.name]] for c in shown} for row in rows]
     formats = {c.name: _table_format(c) for c in shown}
-    labels = {c.name: _header(c) for c in shown}
+    year_before = a_year_before(logical)
+    labels = {c.name: _header(c, year_before=year_before) for c in shown}
+    labels_fr = {c.name: _header(c, year_before=year_before, lang="fr") for c in shown}
     display: dict[str, dict] = {c.name: _digits(c) for c in shown
                                 if c.role in ("measure", "prior", "change") and _digits(c)}
     for c in cols.of("period"):
@@ -610,12 +623,21 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
 
     partial = {d.isoformat() for d in logical.partial}
     caveats: list[str] = list(getattr(logical, "cautions", []) or [])      # the resolver's, said first
+    caveats_fr: dict[str, str] = {}      # a caveat's French twin, by its English words (the rest stay English)
     if partial and cols.of("period"):
         grain = cols.of("period")[0].grain or "month"
         days = sorted(dt.date.fromisoformat(p) for p in partial)
         # A period that starts after the data ends has no data yet: said so, not called partly covered.
         ahead = [d for d in days if logical.data_last is not None and d > logical.data_last]
         part = [d for d in days if d not in ahead]
+        # In a comparison with the same days a year before, a period the window cuts is compared over the same days
+        # in both years: said so ("June 2026 is compared over 1–14 June in both years").
+        alike = [d for d in part if _like_for_like(logical, d, grain) is not None]
+        for d in alike:
+            en, fr = _like_for_like(logical, d, grain)       # type: ignore[misc]
+            caveats.append(en)
+            caveats_fr[en] = fr
+        part = [d for d in part if d not in alike]
         if part:
             named = ", ".join(period_label(d, grain, fiscal_start=logical.fiscal_start) for d in part)
             caveats.append(f"{named} {'is' if len(part) == 1 else 'are'} only partly covered by the data: "
@@ -626,8 +648,24 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
             span = first if len(ahead) == 1 else f"{first} to {last}"
             caveats.append(f"The data ends on {logical.data_last.day} {logical.data_last:%b %Y}: {span} "
                            f"{'has' if len(ahead) == 1 else 'have'} no data yet.")
+            premier = period_fr(ahead[0], grain, fiscal_start=logical.fiscal_start)
+            dernier = period_fr(ahead[-1], grain, fiscal_start=logical.fiscal_start)
+            caveats_fr[caveats[-1]] = (f"Les données s'arrêtent le {_jour(logical.data_last)} : "
+                                       + (f"{premier} n'a pas encore de données." if len(ahead) == 1 else
+                                          f"il n'y a pas encore de données de {premier} à {dernier}."))
+    prior_col = next((c for c in cols.columns if c.role == "prior"), None)
+    if logical.compare is not None and prior_col is not None and cols.of("period") and raw \
+            and all(_number(r.get(prior_col.name)) is None for r in raw):
+        # Compared by period with nothing in the period before (the data starts inside it): said, never drawn as a
+        # comparison nor left to read as a plain series.
+        first = cols.of("measure")[0].label
+        caveats.append(f"There is no {_lower(first)} {span_words(logical.compare)} to compare it with: the data "
+                       "holds none.")
+        caveats_fr[caveats[-1]] = (f"Il n'y a aucune donnée de {first} {span_words(logical.compare, 'fr')} pour la "
+                                   "comparer.")
     if truncated:
         caveats.append(f"Showing the first {logical.max_rows:,} rows.")
+        caveats_fr[caveats[-1]] = f"Seules les {logical.max_rows:,} premières lignes sont affichées.".replace(",", " ")
     if protected is not None and protected.hidden and rows:
         caveats.append(f"{protected.hidden} group{'s are' if protected.hidden > 1 else ' is'} not shown: each holds "
                        "fewer than 11 people, or would let a smaller one be worked out from the total.")
@@ -686,9 +724,13 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     except Exception as exc:  # noqa: BLE001 - the analyst's reading is extra; the answer stands without it
         log.warning("core2 could not read the facts of %r: %s", question, exc)
         reading = None
+    if reading is not None and reading.shape == "compared" and reading.facts:
+        # The findings sent to Teams, Slack and the "In short" input: the comparison's, as the note reads it.
+        insights = [f.en for f in sorted(reading.facts, key=lambda f: -f.size)[:4]]
     kpi = _kpi(logical, cols, raw, formats, units)
     framed = frame(question, headline=headline, short_value=short_value, comparison=comparison, caveats=caveats,
                  insights=insights, badges=answer_badges(logical), title=_answer_title(logical, cols, labels, chart, kpi),
+                 caveats_fr=caveats_fr, labels_fr=labels_fr,
                  chart=chart, kpi=kpi,
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
@@ -698,6 +740,11 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
         # the one-offs set apart in the reading.
         framed["reading"] = reading.as_dict()
+    if reading is not None and reading.shape == "compared":
+        try:
+            _so_far(framed, logical, cols, raw, units)
+        except Exception as exc:  # noqa: BLE001 - the totals are extra; the answer stands without them
+            log.warning("core2 could not total the comparison of %r: %s", question, exc)
     if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups) \
             or any(s.split for p in logical.parts for s in p.segments):
         from core2.answer.shaped import explain
@@ -745,7 +792,8 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
           chart: dict | None, kpi: dict | None, suggestions: list[str], headers: list[str], labels: dict[str, str],
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
-          model_version: int, window: dict | None = None, named: list[str] | None = None) -> dict[str, Any]:
+          model_version: int, window: dict | None = None, named: list[str] | None = None,
+          caveats_fr: dict[str, str] | None = None, labels_fr: dict[str, str] | None = None) -> dict[str, Any]:
     """The frame the web portal renders (the same shape today's pipeline sends). ``window``: the days counted
     (``counted_days``); ``named``: the data's names its words state (``named_members``)."""
     return {
@@ -765,10 +813,12 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
         "anomaly_callouts": [],
         "key_insights": list(insights or []),     # what the rows show beyond the first sentence
         "coverage_caveats": caveats,
+        "coverage_caveats_fr": dict(caveats_fr or {}),     # a caveat's French words, by its English ones
         "follow_up_suggestions": [s if isinstance(s, dict) else {"label": s, "question": s} for s in suggestions],
         "data": {
             "headers": headers,
             "header_labels": labels,
+            "header_labels_fr": dict(labels_fr or {}),      # the same headers for a French reader
             "rows": records[:PREVIEW_ROWS],
             "total_rows": len(records),
             "truncated": len(records) > PREVIEW_ROWS,
@@ -812,16 +862,22 @@ def bar_chart(title: str, x: str, x_label: str, ys: list[tuple[str, str, str]], 
             "intent": intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 
 
-def _header(c: OutColumn) -> str:
+def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en") -> str:
+    """A column's header in the reader's language; the figure before is "a year before" when it is."""
+    fr = lang == "fr"
     if c.role == "prior":
-        return f"{c.label} (before)"
+        if year_before:
+            return f"{c.label}, un an plus tôt" if fr else f"{c.label}, a year before"
+        return f"{c.label} (avant)" if fr else f"{c.label} (before)"
     if c.role == "change":
-        return f"{c.label}: change"
+        return f"{c.label} : écart" if fr else f"{c.label}: change"
     if c.role == "pct_change":
-        return f"{c.label}: change %"
+        return f"{c.label} : variation %" if fr else f"{c.label}: change %"
     if c.role == "share":
-        return f"Share of {c.label.lower()}"
+        return f"Part de {c.label.lower()}" if fr else f"Share of {c.label.lower()}"
     if c.role == "period":
+        if fr:
+            return {"week": "Semaine du", "day": "Jour"}.get(c.grain or "", "Période")
         return {"week": "Week of", "day": "Day"}.get(c.grain or "", "Period")
     return c.label
 
@@ -919,6 +975,168 @@ def _after(first: str, label: str) -> str:
     return label if _titled(first) else _lower(label)
 
 
+def said(tile: dict[str, Any]) -> dict[str, str]:
+    """A comparison's figure as the note writes it, in English and French: "$922.9K", "+$79.4K", "+8.6%"."""
+    from core2.answer.facts import amount, percent
+
+    value = tile.get("value")
+    if value is None:
+        return {"text": "—", "text_fr": "—"}
+    if tile.get("format") == "percent":
+        return {"text": percent(value, signed=bool(tile.get("signed"))),
+                "text_fr": percent(value, signed=bool(tile.get("signed")), lang="fr")}
+    sign = "+" if tile.get("signed") and value > 0 else ""
+    return {"text": sign + amount(value, tile.get("format") or "number"),
+            "text_fr": sign + amount(value, tile.get("format") or "number", lang="fr")}
+
+
+def short_span(rng: Range, lang: str = "en") -> str:
+    """A window as a figure's label: "1 Jan – 14 Jun 2026", "Jan – Sep 2026", "Jun 2025 – May 2026"."""
+    start, end = rng.start, rng.end
+    if start is None or end is None:
+        return _period_badge(rng, lang)
+    last = end - dt.timedelta(days=1)
+    months = _MOIS_COURTS if lang == "fr" else [m[:3] for m in _MONTHS]
+    day = (lambda d: "1er" if d.day == 1 else str(d.day)) if lang == "fr" else (lambda d: str(d.day))
+    whole = start.day == 1 and end.day == 1
+    if whole:
+        head = months[start.month - 1] + ("" if start.year == last.year else f" {start.year}")
+        return f"{head} – {months[last.month - 1]} {last.year}"
+    head = f"{day(start)} {months[start.month - 1]}" + ("" if start.year == last.year else f" {start.year}")
+    return f"{head} – {day(last)} {months[last.month - 1]} {last.year}"
+
+
+def totals_over_time(out: Any, m: OutColumn) -> bool:
+    """Does a figure add up over periods, so its periods' total is the whole? A sum or a count does; an average, a
+    ratio, a percentage or a balance (stock on hand, headcount, month-end MRR) does not."""
+    return out is not None and adds_up(out) and not getattr(out, "semi", False) \
+        and m.format not in ("percent", "percentage", "days")
+
+
+def change_ratio(now: float, before: float) -> float | None:
+    """The change in %, as a fraction; none from nothing or from below zero, where its sign would mislead."""
+    return now / before - 1 if before > 0 else None
+
+
+def _so_far(framed: dict[str, Any], logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> None:
+    """A comparison by period, totalled: the window against the one compared, as a totals row of the table and as
+    four figures under the lead (this year so far, the same days last year, the difference, the change). Only for
+    a figure that adds up over periods, in one unit, with periods that hold both figures."""
+    m = cols.of("measure")[0]
+    out = next((o for o in logical.measures if o.name == m.name), None)
+    named = {c.role: c for c in cols.columns if c.measure == m.measure and c.role in ("prior", "change", "pct_change")}
+    prior, change, pct = named.get("prior"), named.get("change"), named.get("pct_change")
+    period = cols.of("period")[0] if cols.of("period") else None
+    if prior is None or period is None or not totals_over_time(out, m) or units.mixed:
+        return
+    if not any(_number(r[m.name]) is not None and _number(r[prior.name]) is not None for r in raw):
+        return                     # nothing to set side by side (no data the year before): no totals of zero
+    assert logical.compare is not None
+    now = sum(_number(r[m.name]) or 0.0 for r in raw)
+    before = sum(_number(r[prior.name]) or 0.0 for r in raw)
+    ratio = change_ratio(now, before)
+    w, c = logical.window, logical.compare
+    year = a_year_before(logical)
+    same = bool(w.start and w.end and w.start.year == (w.end - dt.timedelta(days=1)).year)
+    whole = bool(w.start and w.end and w.start.day == 1 and w.end.day == 1)
+    if year and same and w.start and w.end:
+        span = short_span(Range(w.start, w.end)).rsplit(" ", 1)[0]
+        label, label_fr = f"{span}, both years", f"{short_span(Range(w.start, w.end), 'fr').rsplit(' ', 1)[0]}, " \
+                                                 "les deux années"
+    else:
+        label = f"Total, {short_span(w)} against {short_span(c)}"
+        label_fr = f"Total, {short_span(w, 'fr')} contre {short_span(c, 'fr')}"
+    values: dict[str, Any] = {m.name: now, prior.name: before}
+    if change is not None:
+        values[change.name] = now - before
+    if pct is not None:
+        values[pct.name] = ratio * 100 if ratio is not None else None
+    framed.setdefault("data", {})["totals"] = [{"label": label, "label_fr": label_fr, "values": values}]
+    if year and c.start is not None:
+        kind_en, kind_fr = ("months", "mois") if whole else ("days", "jours")
+        before_en, before_fr = f"Same {kind_en} of {c.start.year}", f"Mêmes {kind_fr} de {c.start.year}"
+        if c.end is not None and c.start.year != (c.end - dt.timedelta(days=1)).year:
+            before_en, before_fr = short_span(c), short_span(c, "fr")
+    else:
+        before_en, before_fr = short_span(c), short_span(c, "fr")
+    tiles = [{"key": "now", "label": short_span(w), "label_fr": short_span(w, "fr"), "value": now, "format": m.format},
+             {"key": "before", "label": before_en, "label_fr": before_fr, "value": before, "format": m.format},
+             {"key": "change", "label": "Difference", "label_fr": "Écart", "value": now - before, "format": m.format,
+              "signed": True},
+             {"key": "pct", "label": "Change", "label_fr": "Variation", "value": ratio, "format": "percent",
+              "signed": True}]
+    for tile in tiles:
+        tile.update(said(tile))
+    framed["compared"] = {"tiles": tiles, "column": m.name, "prior": prior.name,
+                          "change": change.name if change else None, "pct": pct.name if pct else None,
+                          "period": period.name, "grain": period.grain or "month", "format": m.format,
+                          "now": now, "before": before}
+
+
+def a_year_before(logical: Logical) -> bool:
+    """Is the answer compared with the same days a year before (this year so far against the same days last year,
+    the last 12 months against the 12 before)?"""
+    from core2.resolve.time import year_back, year_back_end
+
+    w, c = logical.window, logical.compare
+    return bool(c is not None and w.start and w.end and c.start and c.end
+                and c.start == year_back(w.start) and c.end in (year_back_end(w.end), year_back(w.end)))
+
+
+def cut_days(logical: Logical, start: dt.date, grain: str) -> tuple[dt.date, dt.date] | None:
+    """The first and last day of a period the window cuts, in a comparison with the same days a year before
+    (1 and 14 June, when the data runs to 14 June); None when the period is whole or the comparison is not."""
+    w = logical.window
+    if not a_year_before(logical) or w.start is None or w.end is None or grain.startswith("fiscal"):
+        return None
+    months = {"month": 1, "quarter": 3}.get(grain)
+    if months is None:
+        return None
+    year, month = divmod(start.month - 1 + months, 12)
+    end = dt.date(start.year + year, month + 1, 1)
+    first, last = max(start, w.start), min(end, w.end) - dt.timedelta(days=1)
+    if (first, last + dt.timedelta(days=1)) == (start, end) or first > last:
+        return None
+    return first, last
+
+
+def _like_for_like(logical: Logical, start: dt.date, grain: str) -> tuple[str, str] | None:
+    """A period the window cuts, compared with the same days a year before: how it is compared, in English and
+    French ("June 2026 is compared over 1–14 June in both years"); None when it is not."""
+    cut = cut_days(logical, start, grain)
+    if cut is None:
+        return None
+    first, last = cut
+    jour = "1er" if first.day == 1 else str(first.day)
+    if grain == "month":
+        month, mois = _MONTHS[start.month - 1], _MOIS[start.month - 1]
+        if first == last:
+            return (f"{month} {start.year} is compared over {first.day} {month} in both years.",
+                    f"{mois.capitalize()} {start.year} est comparé sur le {jour} {mois}, les deux années.")
+        en = f"{month} {start.year} is compared over {first.day}–{last.day} {month} in both years."
+        fr = f"{mois.capitalize()} {start.year} est comparé du {jour} au {last.day} {mois}, les deux années."
+        return en, fr
+    named = period_label(start, grain)
+    if first == last:
+        return (f"{named} is compared over {first.day} {first:%b} in both years.",
+                f"{period_fr(start, grain)} est comparé sur le {_jour(first)[:-5]}, les deux années.")
+    en = f"{named} is compared over {first.day} {first:%b}–{last.day} {last:%b} in both years."
+    fr = f"{period_fr(start, grain)} est comparé du {_jour(first)[:-5]} au {_jour(last)[:-5]}, les deux années."
+    return en, fr
+
+
+def cut_words(first: dt.date, last: dt.date, grain: str, lang: str = "en") -> str:
+    """The days a period in progress is compared over, as its bars are named: "1–14" in a month, "1 Apr–14 Jun"
+    ("1er avr.–14 juin") in a quarter, "14" for one day."""
+    if grain == "month":
+        return str(first.day) if first == last else f"{first.day}–{last.day}"
+    if lang == "fr":
+        a, b = _jour(first)[:-5], _jour(last)[:-5]
+    else:
+        a, b = f"{first.day} {first:%b}", f"{last.day} {last:%b}"
+    return a if first == last else f"{a}–{b}"
+
+
 def _moved(by: float, ratio: float | None, format_: str, unit: str | None) -> str:
     """ "up $1,200 (+4.0%)", "down 3 (-2.1%)", or "unchanged" when nothing moved at the precision shown."""
     shown = fmt(abs(by), format_, unit=unit)
@@ -988,6 +1206,34 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                 return (f"{lead}: {value(r)}. There is no {_lower(m.label)} "
                         f"{span_words(logical.compare) or 'in the period before'} to compare it with.")
             return f"{lead}: {value(r)}, {moved(r)} {against}."
+        if periods and not members and change is not None and prior is not None:
+            # "Net amount from 1 Jan 2026 to 14 Jun 2026: $1.00M, up $79.4K (+8.6%) against 1 Jan 2025 to 14 Jun
+            # 2025 ($922.9K); 6 of 6 months ahead, March 2026 gained most (+$27.1K)."
+            # One unit's rows when a quantity is kept apart by unit; the periods that hold both figures. With none
+            # (no data the year before), the plain sentences below say what there is.
+            main = units.main_rows(raw)
+            both = [r for r in main if _number(r[m.name]) is not None and _number(r[prior.name]) is not None]
+            if both:
+                grain = periods[0].grain or "month"
+                moves = [(r, _number(r[change.name]) or 0.0) for r in both]
+                said = f"{sum(1 for _, by in moves if by > 0)} of {len(both)} {grain.replace('fiscal_', '')}s ahead"
+                best = max(moves, key=lambda x: x[1], default=None)
+                if best is not None and best[1] > 0:
+                    day = _day(best[0][periods[0].name])
+                    said += (f", {period_label(day, grain, fiscal_start=logical.fiscal_start) if day else ''} gained "
+                             f"most ({_signed(best[1], m.format, units.of(best[0]), rounded=True)})")
+                out = next((o for o in logical.measures if o.name == m.name), None)
+                if totals_over_time(out, m):
+                    now = sum(_number(r[m.name]) or 0.0 for r in main)
+                    before = sum(_number(r[prior.name]) or 0.0 for r in main)
+                    unit = units.main if units.main and units.main != "Unknown" else None
+                    diff, ratio = now - before, change_ratio(now, before)
+                    moved = "unchanged" if spoken(abs(diff), m.format, unit=unit) == spoken(0, m.format, unit=unit) \
+                        else f"{'up' if diff >= 0 else 'down'} {spoken(abs(diff), m.format, unit=unit)}" + (
+                            f" ({ratio * 100:+.1f}%)" if ratio is not None else "")
+                    return (f"{lead}: {spoken(now, m.format, unit=unit)}, {moved} {against} "
+                            f"({spoken(before, m.format, unit=unit)}); {said}.")
+                return f"{m.label} by {grain.replace('fiscal_', '')} {span} against {prior_span}: {said}."
         if members and change is not None:
             changes = [_number(r[change.name]) or 0.0 for r in raw]
             order = sorted(range(len(raw)), key=lambda i: -changes[i])
@@ -1541,7 +1787,9 @@ def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             # The same members at two times: a dot per period on one line per member, the change beside it.
             kind = "dumbbell"
             compare = {"prior": prior.name, "current": m.name, "prior_label": _period_badge(logical.compare),
-                       "current_label": _period_badge(logical.window)}
+                       "current_label": _period_badge(logical.window),
+                       "prior_label_fr": _period_badge(logical.compare, "fr"),
+                       "current_label_fr": _period_badge(logical.window, "fr")}
     elif periods and ranked:
         # A ranking of periods is drawn as ranked bars, named as periods ("Aug 2025"), never as a time line.
         x, ys, kind = periods[0], [m.name], "bar"
@@ -1550,10 +1798,24 @@ def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None) \
             if logical.compare is not None and not members else None
         if prior is not None:
-            # "Net sales by month against the year before": the year before as a quiet line under this one's.
+            # "Net sales by month against the year before": the year before beside this one's (bars side by side,
+            # the change in % under them, shape_of_data.py), or as a quiet line under it.
             ys = [m.name, prior.name]
             compare = {"prior": prior.name, "current": m.name, "prior_label": _period_badge(logical.compare),
-                       "current_label": _period_badge(logical.window)}
+                       "current_label": _period_badge(logical.window),
+                       "prior_label_fr": _period_badge(logical.compare, "fr"),
+                       "current_label_fr": _period_badge(logical.window, "fr")}
+            grain = x.grain or "month"
+            cuts = {str(r[x.name]): days for r in records for d in [_day(r.get(x.name))]
+                    if d is not None and d in logical.partial for days in [cut_days(logical, d, grain)] if days}
+            if cuts:
+                # The period in progress, compared over these days in both years.
+                compare["partial"] = {k: cut_words(*days, grain) for k, days in cuts.items()}
+                compare["partial_fr"] = {k: cut_words(*days, grain, "fr") for k, days in cuts.items()}
+            out = next((o for o in logical.measures if o.name == m.name), None)
+            better = getattr(getattr(out, "measure", None), "better", "higher")
+            if better != "higher":
+                compare["better"] = better
         if members and isinstance(logical.shape, CohortShape):   # a cohort by the periods after its first
             return _cohort_grid(logical, periods[0], members[0], m, records, formats, labels, unit=unit)
         if members:   # one line per member

@@ -162,12 +162,21 @@ def year_back(day: dt.date) -> dt.date:
         return day.replace(year=day.year - 1, day=28)
 
 
+def year_back_end(end: dt.date) -> dt.date:
+    """A range's end (exclusive) a year earlier: a month's end stays a month's end (all of February 2028 against
+    all of February 2027); within a month, the same last day (data to 28 Feb 2028 against data to 28 Feb 2027,
+    not to the 27th)."""
+    if end.day == 1:
+        return year_back(end)
+    return year_back(end - dt.timedelta(days=1)) + dt.timedelta(days=1)
+
+
 def shift(rng: Range, kind: str, *, unit: str | None = None) -> Range:
     """The comparison range: the period before (same length), or the same period a year earlier."""
     if rng.start is None or rng.end is None:
         raise ValueError("a comparison needs a bounded period")
     if kind == "same_period_last_year":
-        return Range(year_back(rng.start), year_back(rng.end))
+        return Range(year_back(rng.start), year_back_end(rng.end))
     # The previous period of the same shape: whole months stay whole months.
     if rng.start.day == 1 and rng.end.day == 1:
         months = (rng.end.year - rng.start.year) * 12 + rng.end.month - rng.start.month

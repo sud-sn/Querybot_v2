@@ -792,7 +792,8 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
                                     _session_key(account_id, portal_user, adapter.thread_id), "core2", question_id,
                                     waiting=in_line, progress=progress, limit=limit)
     if payload is None:
-        await _send(adapter, websocket, _could_not(question, status, question_id, beside=False, seconds=limit))
+        await _send(adapter, websocket, _could_not(question, status, question_id, beside=False, seconds=limit,
+                                                   lang=str((portal_user or {}).get("lang") or "en")))
         return True
     if payload.get("type") == "dashboard_built":
         made = await asyncio.to_thread(_created, account_id, portal_user, payload, question_id,
@@ -935,13 +936,26 @@ _COULD_NOT = {
     "ai_busy": "The AI this workspace uses is at its limit of requests a minute right now.",
     "failed": "The new core stopped with an error on this question; the service log has the details.",
 }
+_COULD_NOT_FR = {
+    "timeout": "Le nouveau moteur n'a pas répondu à cette question en {seconds:.0f} secondes.",
+    "busy": "Trop de questions sont en cours de réponse pour que celle-ci commence.",
+    "ai_busy": "L'IA de cet espace de travail a atteint sa limite de requêtes par minute.",
+    "failed": "Le nouveau moteur s'est arrêté sur une erreur pour cette question ; le journal du service en donne "
+              "le détail.",
+}
 
 
 def _could_not(question: str, status: str, question_id: str, *, beside: bool = True,
-               seconds: float | None = None) -> dict[str, Any]:
-    """A card saying the new core gave no answer, and why: beside today's answer, or alone in ``core2`` mode."""
-    text = _COULD_NOT.get(status, _COULD_NOT["failed"]).format(seconds=TIMEOUT_SECONDS if seconds is None else seconds)
-    after = "Today's answer above stands." if beside else "Ask again in a moment, or ask it another way."
+               seconds: float | None = None, lang: str = "en") -> dict[str, Any]:
+    """A card saying the new core gave no answer, and why: beside today's answer, or alone in ``core2`` mode; in
+    the reader's language."""
+    said = _COULD_NOT_FR if lang == "fr" else _COULD_NOT
+    text = said.get(status, said["failed"]).format(seconds=TIMEOUT_SECONDS if seconds is None else seconds)
+    if lang == "fr":
+        after = ("La réponse d'aujourd'hui ci-dessus reste valable." if beside else
+                 "Reposez la question dans un instant, ou formulez-la autrement.")
+    else:
+        after = "Today's answer above stands." if beside else "Ask again in a moment, or ask it another way."
     return {"type": "assistant_response", "engine": "core2", "question": question, "kind": "could_not",
             "answer": {"headline": f"{text} {after}", "short_value": "", "comparison": "",
                        "scope_badge": "", "scope_note": ""},
@@ -963,7 +977,7 @@ async def answer_beside(adapter: Any, websocket: Any, account_id: str, question:
     status, payload = await _answer(account_id, question, portal_user,
                                     _session_key(account_id, portal_user, adapter.thread_id), "compare", question_id)
     if payload is None:
-        payload = _could_not(question, status, question_id)
+        payload = _could_not(question, status, question_id, lang=str((portal_user or {}).get("lang") or "en"))
     elif payload.get("kind") == "smalltalk":
         return     # nothing to compare: today's reply to "thanks" needs no second one
     payload.pop("export_rows", None)
@@ -1072,7 +1086,7 @@ async def answer_in_channel(adapter: Any, event: Any, account_id: str, question:
     start = time.perf_counter()
     status, payload = await _answer(account_id, question, portal_user, key, "core2", question_id)
     if payload is None:
-        return await say(str(_could_not(question, status, question_id, beside=False)["answer"]["headline"]))
+        return await say(str(_could_not(question, status, question_id, beside=False, lang=lang)["answer"]["headline"]))
     if payload.get("type") == "dashboard_built":     # never asked for here; said, never saved
         return await say(f"Dashboards are made in the Solviz portal: {link}")
     rows = payload.pop("export_rows", None)

@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 FEW_PERIODS = 4          # fewer periods than this read as bars, not a line
+COMPARED_BARS = 13       # a comparison by period up to this many periods: bars side by side; past it, two lines
 MOST_PARTS = 6           # parts of a whole drawn as a donut
 DONUT_LARGEST = 0.70     # ... while the largest is under this share
 ONE_MEMBER = 0.90        # one member this much of the whole is named, never drawn as a slice
@@ -192,6 +193,20 @@ def _average(rows: list[dict], y: str, n: int = 3) -> list[float | None]:
     return out
 
 
+def _span(label: str, lang: str = "en", *, bare: bool = False) -> str:
+    """A compared period's label in a sentence: "of Jan–Sep 2026", "from 1 Jan 2026 to 14 Jun 2026"; in French
+    "de janv.–sept. 2026", "du 1er janv. 2026 au 14 juin 2026" (with ``bare``, a span with no "of": "la période
+    du ... au ...")."""
+    if " – " in label:
+        start, end = label.split(" – ", 1)
+        if lang == "fr":
+            return f"{'la période ' if bare else ''}du {start} au {end}"
+        return f"{start} to {end}" if bare else f"from {start} to {end}"
+    if bare:
+        return label
+    return f"de {label}" if lang == "fr" else f"of {label}"
+
+
 def settle(chart: dict[str, Any] | None, *, grain: str | None = None, adds: bool = True,
            things: str = "members") -> dict[str, Any] | None:
     """The chart in the form its data asks for, with the note saying why; None when no chart says more than the
@@ -237,6 +252,26 @@ def settle(chart: dict[str, Any] | None, *, grain: str | None = None, adds: bool
     if temporal:
         if shape.points <= 1:
             return None                   # the number and its change say it all
+        compared = chart.get("compare") or {}
+        # Side by side only where a period holds both figures: with no data the year before there is nothing to
+        # set beside this year's, and the bars would claim a comparison.
+        paired = any(_num(r.get(compared.get("prior"))) is not None and _num(r.get(compared.get("current")))
+                     is not None for r in chart.get("rows") or [])
+        if compared.get("prior") and paired and len(ys) == 2 and not both_signs and shape.points <= COMPARED_BARS \
+                and kind in ("line", "area", "bar"):
+            # This year's periods against the same ones before: bars side by side, the change in % under them.
+            _set(chart, "bar")
+            chart["renderable_types"] = ["bar", "line", *[k for k in chart.get("renderable_types") or []
+                                                          if k not in ("bar", "line")]]
+            compared["strip"] = True
+            before, now = compared.get("prior_label") or "", compared.get("current_label") or ""
+            avant = compared.get("prior_label_fr") or before
+            maintenant = compared.get("current_label_fr") or now
+            _say(chart, f"Bars side by side: each {one} {_span(now)} against {_span(before, bare=True)}, the change "
+                        "in % under them.",
+                 f"Des barres côte à côte : chaque {un_fr} {_span(maintenant, 'fr')} face à "
+                 f"{_span(avant, 'fr', bare=True)}, la variation en % dessous.")
+            return chart
         if both_signs:
             _set(chart, "bar")
             _offer_without(chart, "area", "pie", "donut")

@@ -59,7 +59,9 @@ def summarize(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, 
     found: list[str] = []
     if logical.compare is not None and members and not periods:
         found = _compared(logical, cols, rows, m, out.get(m.name), members[0], unit)
-    elif periods and not members:
+    elif periods and not members and (logical.compare is None or not _paired(cols, rows, m)):
+        # A comparison by period is read by the analyst's note (facts.py); one with no period holding both
+        # figures (no data the year before) is the series it is.
         found = _series(logical, rows, m, periods[0], unit)
     elif periods and members and logical.compare is None:
         found = _members_over_time(logical, rows, m, periods[0], members[0], unit)
@@ -274,6 +276,13 @@ def _breakdown(logical: Logical, cols: _Columns, rows: list[dict], measures: lis
 
 
 # ── a series ───────────────────────────────────────────────────────────────
+
+
+def _paired(cols: _Columns, rows: list[dict], m: OutColumn) -> bool:
+    """Does a period hold both the figure and the same figure before?"""
+    prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
+    return prior is not None and any(_number(r.get(m.name)) is not None and _number(r.get(prior.name)) is not None
+                                     for r in rows)
 
 
 def _series(logical: Logical, rows: list[dict], m: OutColumn, p: OutColumn, unit: str | None) -> list[str]:

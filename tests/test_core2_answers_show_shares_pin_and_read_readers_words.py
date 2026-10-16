@@ -322,3 +322,22 @@ def test_with_values_withheld_a_member_name_never_shows_through_a_reading(named)
     match = ValueMatch("Sales Depot", question.index("Sales"), len(question), "store", "Sales Depot")
     plan_question(model, question, complete, today=TODAY, matches=[match], values_allowed=False)
     assert "Sales Depot" not in prompts[0] and '"Sales' not in prompts[0]
+
+
+def test_a_comparison_table_ends_with_last_years_later_months_and_its_totals():
+    # "What is my revenue comparison?": last year's months after this year's last one, quiet, then the year so far
+    # against the same days and last year in full, under the rows where sorting and the filter leave them.
+    html = _table({"headers": ["period", "net_amount", "net_amount_prior"],
+                   "column_formats": {"net_amount": "currency", "net_amount_prior": "currency"},
+                   "rows": [{"period": "2026-05", "net_amount": 180, "net_amount_prior": 168},
+                            {"period": "2026-06", "net_amount": 93, "net_amount_prior": 79}],
+                   "reference_rows": [{"period": "2026-07", "net_amount": None, "net_amount_prior": 181}],
+                   "totals": [{"label": "1 Jan – 14 Jun, both years", "values": {"net_amount": 1000,
+                                                                                 "net_amount_prior": 923}},
+                              {"label": "2025 in full", "values": {"net_amount_prior": 3090}}]})
+    body, foot = html.split("<tfoot>")
+    assert "181" not in body and "2025 in full" not in body
+    assert re.search(r'<tr class="reference-row"><td>2026-07</td><td class="num">–</td><td class="num">181</td>', foot)
+    assert re.search(r'<tr class="total-row"><th scope="row">1 Jan – 14 Jun, both years</th><td class="num">1000</td>'
+                     r'<td class="num">923</td>', foot)
+    assert re.search(r'<th scope="row">2025 in full</th><td class="num">–</td><td class="num">3090</td>', foot)

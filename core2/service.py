@@ -1311,6 +1311,12 @@ def _more_for_the_note(plan: Plan, logical: Any, payload: dict[str, Any], servic
         compiled = compile_query(lg, model, warehouse.dialect)
         return lg, compiled, warehouse.query(compiled.sql, max_rows=min(compiled.row_cap or 500, 500))
 
+    from core2.answer.compared import last_year_in_full
+
+    try:
+        last_year_in_full(plan, logical, payload, run)       # a year so far: last year in full beside it
+    except Exception as exc:  # noqa: BLE001 - the answer stands without last year in full
+        log.warning("core2 comparison: last year in full not added: %s", exc)
     try:
         more = extra_facts(plan, logical, payload, model, run, allowed=services.allowed_tables)
     except Exception as exc:  # noqa: BLE001 - the answer stands with the facts of its own rows

@@ -224,6 +224,30 @@ def test_a_caveat_is_said_once_next_to_the_finding():
     assert shown.order("answer-notes")[0] < shown.order("answer-visual")[0]
 
 
+def test_a_caveat_is_said_in_the_readers_language():
+    # The month in progress of a comparison, said in French on a French answer (it was English on one).
+    en = "June 2026 is compared over 1–14 June in both years."
+    fr = "Juin 2026 est comparé du 1er au 14 juin, les deux années."
+    msg = {**BY_STORE, "coverage_caveats": [en], "coverage_caveats_fr": {en: fr}}
+    assert fr in card(msg, lang="fr") and en not in card(msg, lang="fr")
+    assert en in card(msg) and fr not in card(msg)
+
+
+def test_a_comparison_shows_its_figures_under_its_lead():
+    tiles = [{"key": "now", "label": "1 Jan – 14 Jun 2026", "label_fr": "1er janv. – 14 juin 2026", "text": "$1.0M",
+              "text_fr": "1,0 M $"},
+             {"key": "pct", "label": "Change", "label_fr": "Variation", "text": "+8.6%", "text_fr": "+8,6 %"}]
+    lead = {"en": "Net amount is up 8.6% on the same days a year before.",
+            "fr": "Net amount est en hausse de 8,6 % sur les mêmes jours un an plus tôt."}
+    msg = {**BY_STORE, "reading": {"shape": "compared", "lead": lead, "facts": []}, "compared": {"tiles": tiles}}
+    shown = Elements(card(msg))
+    figures = shown.first("compared-figures")
+    assert "1 Jan – 14 Jun 2026" in figures["text"] and "+8.6%" in figures["text"] and "Change" in figures["text"]
+    assert shown.order("answer-headline")[0] < shown.order("compared-figures")[0] < shown.order("answer-visual")[0]
+    french = Elements(card(msg, lang="fr")).first("compared-figures")["text"]
+    assert "Variation" in french and "+8,6 %" in french
+
+
 def test_what_stands_out_is_the_findings_under_their_own_label():
     shown = Elements(card(BY_STORE))
     insights = shown.first("answer-insights")

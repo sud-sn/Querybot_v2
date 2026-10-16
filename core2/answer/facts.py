@@ -27,11 +27,13 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+import re
 import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from core2.answer.builder import _Columns, _day, _noun, _number, _Units
+from core2.answer.builder import (_Columns, _day, _noun, _number, _Units, a_year_before, change_ratio, span_words,
+                                  totals_over_time)
 from core2.compile.compiler import OutColumn
 from core2.resolve.resolver import Logical, OutMeasure, adds_up
 from core2.resolve.time import label as period_label
@@ -145,7 +147,9 @@ def period(day: dt.date, grain: str, *, lang: str = "en", fiscal_start: int | No
         return f"{_EN_LONG[day.month - 1]} {day.year}"
     text = period_label(day, grain, fiscal_start=fiscal_start)
     if lang == "fr":
-        text = text.replace("Week of", "Semaine du").replace("FY", "EF ")
+        text = re.sub(r"\bQ(\d)", r"T\1", text.replace("Week of", "Semaine du").replace("FY", "EF "))
+        if grain == "week":
+            text = f"Semaine du {'1er' if day.day == 1 else day.day} {_FR_MONTHS[day.month - 1]} {day.year}"
         if grain == "day":
             text = f"{day.day} {_FR_MONTHS[day.month - 1]} {day.year}"
     return text
@@ -218,6 +222,8 @@ def read(logical: Logical, cols: _Columns, raw: list[dict], units: _Units, *, tr
     o = out.get(m.name)
     if logical.compare is not None and members and not periods:
         return _comparison(logical, cols, rows, m, o, members[0], unit)
+    if logical.compare is not None and periods and not members:
+        return _compared_series(logical, cols, rows, m, o, periods[0], unit)
     if periods and not members:
         return _series(logical, rows, m, o, periods[0], unit)
     if members and not periods and logical.compare is None and len(members) + len(cols.of("time")) == 1:
@@ -482,6 +488,169 @@ def _series_lead(reading: Reading, label: str, label_fr: str, middle: float, ste
         en += f" {len(odd)} {w_en}s were one-offs."
         fr += f" {len(odd)} périodes font exception."
     return {"en": en, "fr": fr}
+
+
+# ── a series against the same periods before ──────────────────────────────────
+
+
+def _listed(names: list[str], word: str) -> str:
+    """ "A", "A and B", "A, B and 1 more" ("et" in French)."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {word} {names[-1]}"
+
+
+def _prior_words(logical: Logical) -> tuple[str, str, str, str]:
+    """What a comparison by period is set against, in English and French: the long words ("the same days a year
+    before") and the short ones ("a year before")."""
+    w = logical.window
+    if a_year_before(logical):
+        whole = bool(w.start and w.end and w.start.day == 1 and w.end.day == 1)
+        return (f"the same {'months' if whole else 'days'} a year before", "a year before",
+                f"les mêmes {'mois' if whole else 'jours'} un an plus tôt", "un an plus tôt")
+    assert logical.compare is not None
+    en = span_words(logical.compare).removeprefix("in ").removeprefix("from ")
+    return en, "before", f"la période {span_words(logical.compare, 'fr')}", "avant"
+
+
+def _compared_series(logical: Logical, cols: _Columns, rows: list[dict], m: OutColumn, o: OutMeasure | None,
+                     p: OutColumn, unit: str | None) -> Reading:
+    """This year's periods beside the same ones a year before: the change total against total, how many periods
+    are ahead, which gained and which fell the most, and how a period the window cuts is compared."""
+    reading = Reading(shape="compared")
+    prior = next((c for c in cols.columns if c.role == "prior" and c.measure == m.measure), None)
+    if prior is None:
+        return reading
+    points = sorted(((day, _number(r[m.name]), _number(r[prior.name])) for r in rows
+                     for day in [_day(r[p.name])] if day is not None), key=lambda x: x[0])
+    both = [(d, now, before) for d, now, before in points if now is not None and before is not None]
+    if not both:
+        # No period holds both figures (no data the year before): read as the series it is.
+        return _series(logical, rows, m, o, p, unit)
+    grain = p.grain or "month"
+    fs = logical.fiscal_start
+    name = lambda d, lang="en", long=True: period(d, grain, lang=lang, fiscal_start=fs, long=long)  # noqa: E731
+    say = lambda v, lang="en": amount(v, m.format, unit=unit, lang=lang)   # noqa: E731
+    signed = lambda v, lang="en": ("+" if v > 0 else "") + say(v, lang)   # noqa: E731
+    label = m.label
+    long_en, short_en, long_fr, short_fr = _prior_words(logical)
+    years = "years" if a_year_before(logical) else "periods"
+    w_en, w_fr = _word(grain, "en"), _word(grain, "fr")
+    facts = reading.facts
+    lead_en: list[str] = []
+    lead_fr: list[str] = []
+
+    # Total against total, where the figure adds up over the periods (never a balance summed over months).
+    if totals_over_time(o, m):
+        now = sum(v for _, v, _ in points if v is not None)
+        before = sum(b for _, _, b in points if b is not None)
+        ratio = change_ratio(now, before)
+        if ratio is not None:
+            diff = now - before
+            span_en, span_fr = span_words(logical.window), span_words(logical.window, "fr")
+            up = diff >= 0
+            facts.append(Fact("total", STANDS,
+                              f"{label} {span_en} is {say(now)}, {'up' if up else 'down'} {say(abs(diff))} "
+                              f"({percent(ratio, signed=True)}) on {long_en} ({say(before)}).",
+                              f"{label} {span_fr} : {say(now, 'fr')}, {'en hausse' if up else 'en baisse'} de "
+                              f"{say(abs(diff), 'fr')} ({percent(ratio, signed=True, lang='fr')}) sur {long_fr} "
+                              f"({say(before, 'fr')}).",
+                              [now, abs(diff), rounded(ratio), before], size=3.5,
+                              how="The periods' totals added up, this year's against the same periods before.",
+                              how_fr="Les totaux des périodes additionnés, cette année contre les mêmes périodes avant."))
+            lead_en.append(f"{label} is {'up' if up else 'down'} {percent(abs(ratio))} on {long_en}: {say(now)} "
+                           f"{span_en}, against {say(before)}.")
+            lead_fr.append(f"{label} est {'en hausse' if up else 'en baisse'} de {percent(abs(ratio), lang='fr')} "
+                           f"sur {long_fr} : {say(now, 'fr')} {span_fr}, contre {say(before, 'fr')}.")
+
+    # How many periods are ahead, and which are behind.
+    n = len(both)
+    ahead = [x for x in both if x[1] > x[2]]
+    behind = [x for x in both if x[1] < x[2]]
+    words = _word(grain, "en", True)
+    words_fr = _word(grain, "fr", True)
+    same_en = f"the same {w_en} {short_en}"                  # "the same month a year before"
+    same_fr = f"{'la même' if w_fr in ('semaine', 'année') else 'le même'} {w_fr} {short_fr}"
+    if len(ahead) == n:
+        short, short_f = f"Every {w_en} is ahead", f"Chaque {w_fr} est en avance"
+        en, fr = f"{short} of {same_en}.", f"{short_f} sur {same_fr}."
+    elif len(behind) == n:
+        short, short_f = f"Every {w_en} is behind", f"Chaque {w_fr} est en retrait"
+        en, fr = f"{short} {same_en}.", f"{short_f} sur {same_fr}."
+    else:
+        short = f"{len(ahead)} of the {n} {words} are ahead"
+        short_f = f"{len(ahead)} des {n} {words_fr} sont en avance"
+        late = sorted(behind, key=lambda x: x[1] - x[2])[:2]
+        rest = len(behind) - len(late)
+        listed_en = _listed([name(d) for d, _, _ in late] + ([f"{rest} more"] if rest else []), "and")
+        listed_fr = _listed([name(d, "fr") for d, _, _ in late] + ([f"{rest} {'autre' if rest == 1 else 'autres'}"]
+                                                                     if rest else []), "et")
+        en = (f"{short} of the same {words} {short_en}; {listed_en} {'is' if len(behind) == 1 else 'are'} behind."
+              if behind else f"{short} of the same {words} {short_en}.")
+        fr = (f"{short_f} sur les mêmes {words_fr} {short_fr} ; {listed_fr} {'est' if len(behind) == 1 else 'sont'} "
+              "en retrait." if behind else f"{short_f} sur les mêmes {words_fr} {short_fr}.")
+    facts.append(Fact("ahead", STANDS, en, fr, [len(ahead), n], size=2.6,
+                      members=[name(d) for d, _, _ in behind[:2]],
+                      how=f"Each {w_en} against the same {w_en} before, counted by which is higher.",
+                      how_fr=f"Chaque {w_fr} contre le même {w_fr} avant, compté selon le plus élevé."))
+
+    # The biggest gain and the biggest fall, in amount and in percent.
+    def pct(now: float, before: float, lang: str = "en") -> str:
+        return f", {percent(now / before - 1, signed=True, lang=lang)}" if before > 0 else ""
+
+    gains = sorted([x for x in both if x[1] > x[2]], key=lambda x: -(x[1] - x[2]))
+    gain_en = gain_fr = ""
+    if gains:
+        d, now_, before_ = gains[0]
+        others = gains[1:3]
+        then_en = (", then " + " and ".join(f"{name(d2)} ({signed(a - b)})" for d2, a, b in others)) if others else ""
+        then_fr = (", puis " + " et ".join(f"{name(d2, 'fr')} ({signed(a - b, 'fr')})" for d2, a, b in others)) \
+            if others else ""
+        gain_en = f"{name(d)} gained the most ({signed(now_ - before_)}{pct(now_, before_)})"
+        gain_fr = f"{name(d, 'fr')} a le plus progressé ({signed(now_ - before_, 'fr')}{pct(now_, before_, 'fr')})"
+        facts.append(Fact("gain", WHY, gain_en + then_en + ".", gain_fr + then_fr + ".",
+                          [now_ - before_, *([rounded(now_ / before_ - 1)] if before_ > 0 else []),
+                           *[a - b for _, a, b in others]], size=2.2,
+                          members=[name(d), *[name(d2) for d2, _, _ in others]],
+                          how=f"Each {w_en}'s change on the same {w_en} before, largest first.",
+                          how_fr=f"La variation de chaque {w_fr} sur le même {w_fr} avant, la plus forte d'abord."))
+    falls = sorted([x for x in both if x[1] < x[2]], key=lambda x: x[1] - x[2])
+    if falls:
+        d, now_, before_ = falls[0]
+        facts.append(Fact("fall", WHY,
+                          f"{name(d)} fell the most ({signed(now_ - before_)}{pct(now_, before_)}).",
+                          f"{name(d, 'fr')} a le plus reculé ({signed(now_ - before_, 'fr')}"
+                          f"{pct(now_, before_, 'fr')}).",
+                          [now_ - before_, *([rounded(now_ / before_ - 1)] if before_ > 0 else [])], size=2.0,
+                          members=[name(d)],
+                          how=f"Each {w_en}'s change on the same {w_en} before, the largest fall.",
+                          how_fr=f"La variation de chaque {w_fr} sur le même {w_fr} avant, la plus forte baisse."))
+    lead_en.append(f"{short}{'; ' + gain_en if gain_en and len(ahead) else ''}.")
+    # "mars 2026 a le plus progressé", "semaine du ...", but "T1 2026" keeps its capital.
+    gain_low = gain_fr[:1].lower() + gain_fr[1:] if gain_fr[1:2].islower() else gain_fr
+    lead_fr.append(f"{short_f}{' ; ' + gain_low if gain_fr and len(ahead) else ''}.")
+
+    # A period the window cuts: compared over the same days in both years, and what it holds.
+    w = logical.window
+    for d, now_, before_ in both:
+        if d not in logical.partial or w.start is None or w.end is None or grain not in ("month", "quarter"):
+            continue
+        end = _period_end(d, grain)
+        first, last = max(d, w.start), min(end, w.end) - dt.timedelta(days=1)
+        if first > last or (first, last + dt.timedelta(days=1)) == (d, end):
+            continue
+        days = (last - first).days + 1
+        where_en, where_fr = ("first", "premiers") if first == d else ("last", "derniers")
+        facts.append(Fact("like_for_like", WATCH,
+                          f"{name(d)} is compared over its {where_en} {days} days in both {years}: {say(now_)} "
+                          f"against {say(before_)}{pct(now_, before_)}.",
+                          f"{name(d, 'fr')} est comparé sur ses {days} {where_fr} jours, les deux "
+                          f"{'années' if years == 'years' else 'périodes'} : {say(now_, 'fr')} contre "
+                          f"{say(before_, 'fr')}{pct(now_, before_, 'fr')}.",
+                          [days, now_, before_, *([rounded(now_ / before_ - 1)] if before_ > 0 else [])], size=1.9,
+                          how=f"{name(d)} has data to {last.day} {last:%b}; the same days are taken a year before.",
+                          how_fr=f"{name(d, 'fr')} a des données jusqu'au {'1er' if last.day == 1 else last.day} "
+                                 f"{_FR_MONTHS[last.month - 1]} ; les mêmes jours sont pris un an plus tôt."))
+    reading.lead = {"en": " ".join(lead_en), "fr": " ".join(lead_fr)}
+    return reading
 
 
 # ── a breakdown ───────────────────────────────────────────────────────────────

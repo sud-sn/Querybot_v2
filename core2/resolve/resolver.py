@@ -39,7 +39,7 @@ from core2.model.schema import (
 from core2.plan.catalog import left_out_note, left_out_words
 from core2.plan.ir import ALL_TIMES, CALENDAR_TIMES, HOUR, TIME_ATTRIBUTES, YES_NO_TIMES, Duration, Filter, Plan, Rate
 from core2.resolve import paths as P
-from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back,
+from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back_end,
                                 year_basis)
 from core2.warehouse import dialect as D
 
@@ -2503,7 +2503,7 @@ def _like_for_like(window: Range, compare: Range, last: dt.date | None, kind: st
     if today is not None and window.end <= today and quiet <= max(3, 0.03 * (window.end - window.start).days):
         return window, compare, ""
     if kind == "same_period_last_year":
-        prior_end = year_back(covered_to)
+        prior_end = year_back_end(covered_to)
     else:
         prior_end = compare.start + (covered_to - window.start)
     prior_end = min(prior_end, compare.end)

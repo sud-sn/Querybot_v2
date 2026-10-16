@@ -190,6 +190,11 @@
   // its first month; a year is its year.
   const quarterOf = p => Math.floor((p.month - 1) / 3) + 1;
   const dayOf = (p, style) => (style === 'month_year_long' ? 0 : p.day);
+  // A compared period's name ("Jan–Sep 2025") in the reader's language, as the answer wrote it for each.
+  function cmpLabel(cmp, side) {
+    const fr = String(global.QB_LANG || 'en') === 'fr';
+    return (fr && cmp[side + '_label_fr']) || cmp[side + '_label'] || '';
+  }
   function periodLabel(raw, long, style) {
     // A week's or a fiscal period's key (202501) is no month: the table names
     // it by its key, and so does the axis.
@@ -1403,8 +1408,8 @@
       const cmp = (payload && payload.compare) || {};
       const priorKey = cmp.prior || yKeys[0];
       const currentKey = cmp.current || yKeys[yKeys.length - 1];
-      const priorName = cmp.prior_label || columnLabel(payload, priorKey);
-      const currentName = cmp.current_label || columnLabel(payload, currentKey);
+      const priorName = cmpLabel(cmp, 'prior') || columnLabel(payload, priorKey);
+      const currentName = cmpLabel(cmp, 'current') || columnLabel(payload, currentKey);
       const prior = rows.map(r => num(r && r[priorKey]));
       const current = rows.map(r => num(r && r[currentKey]));
       const signed = d => (d > 0 ? '+' : d < 0 ? '−' : '') + valueFmt(Math.abs(d), currentKey, true);
@@ -1652,8 +1657,8 @@
       const onTile = Boolean(payload && payload.tile) && single && type === 'line';
       const band = tileBand(payload, rows, xKey, labels, c);
       if (cmp && option.legend) {
-        option.legend.formatter = name => name === cmp.prior ? (cmp.prior_label || columnLabel(payload, name))
-          : name === cmp.current ? (cmp.current_label || columnLabel(payload, name)) : columnLabel(payload, name);
+        option.legend.formatter = name => name === cmp.prior ? (cmpLabel(cmp, 'prior') || columnLabel(payload, name))
+          : name === cmp.current ? (cmpLabel(cmp, 'current') || columnLabel(payload, name)) : columnLabel(payload, name);
       }
       // Two to four lines are named at their ends as well as in the legend, where their ends lie far enough
       // apart to tell which name is whose; where they meet, names nudged apart would leave their lines, and the
@@ -1785,6 +1790,22 @@
 
     // ── Bar (default) ──────────────────────────────────────────────────────
     const multi = yKeys.length > 1;
+    // A comparison by period (core2: compare.strip, set by shape_of_data.py): last year's bars first and quiet,
+    // named by their period, this year's beside them in the main colour; each period's change in % under its
+    // name, in the colours of good and bad news; a period in progress, compared over the same days in both
+    // years, drawn lighter with a dashed edge and named for its days ("1–14").
+    const cmpBar = (temporal && !horizontal && !stacked && payload && payload.compare && payload.compare.strip
+                    && yKeys.length === 2 && yKeys.includes(payload.compare.prior)
+                    && yKeys.includes(payload.compare.current)) ? payload.compare : null;
+    const barKeys = cmpBar ? [cmpBar.prior, cmpBar.current] : yKeys;
+    const cutOf = at => {
+      if (!cmpBar || !cmpBar.partial) return '';
+      const fr = String(global.QB_LANG || 'en') === 'fr' && cmpBar.partial_fr;
+      return (fr ? cmpBar.partial_fr : cmpBar.partial)[String(rows[at] && rows[at][xKey])] || '';
+    };
+    // Last year's later periods, drawn for reference: named as the periods they hold ("October 2025").
+    const refOf = at => (cmpBar && cmpBar.reference ? cmpBar.reference[String(rows[at] && rows[at][xKey])] : null);
+    const cmpName = k => (cmpBar ? (k === cmpBar.prior ? cmpLabel(cmpBar, 'prior') : cmpLabel(cmpBar, 'current')) || k : k);
     // Each bar's share of the whole, when the answer worked it out (core2: share_key): said beside its
     // value, quieter, so the reader sees the size and the portion at once and the axis keeps one unit.
     const shareKey = !multi && payload && payload.share_key ? String(payload.share_key) : '';
@@ -1858,8 +1879,8 @@
     const totalOf = i => yKeys.reduce((s, k) => s + (num(rows[i] && rows[i][k]) || 0), 0);
     const totals = stacked && rows.length <= (horizontal ? 20 : 12);
     if (totals) (horizontal ? option.xAxis : option.yAxis).boundaryGap = [0, '8%'];
-    option.series = yKeys.map((k, i) => {
-      const color = colors[i % colors.length];
+    option.series = barKeys.map((k, i) => {
+      const color = cmpBar ? (k === cmpBar.prior ? c.muted : colors[0]) : colors[i % colors.length];
       const values = rows.map(r => num(r && r[k]));
       const last = i === yKeys.length - 1;
       if (stacked) {
@@ -1883,7 +1904,7 @@
         : (v != null && v < 0 ? [0, 0, 4, 4] : [4, 4, 0, 0]));
       const place = v => (horizontal ? (v != null && v < 0 ? 'left' : 'right') : (v != null && v < 0 ? 'bottom' : 'top'));
       return {
-        name: k, type: 'bar',
+        name: cmpName(k), type: 'bar',
         barMaxWidth: 24,
         barGap: '12%',
         itemStyle: {color, borderRadius: end(1)},
@@ -1891,6 +1912,10 @@
         // direction colour, or a rounded end and a label on the far side of
         // the baseline for a value below zero.
         data: values.map((v, at) => {
+          if (cutOf(at)) {
+            return {value: v, itemStyle: {color, opacity: 0.5, borderColor: color, borderWidth: 1, borderType: 'dashed',
+                                          borderRadius: end(v)}};
+          }
           const item = (delta || (v != null && v < 0) || at === otherAt) ? {
             value: v,
             itemStyle: {color: delta ? (v != null && v < 0 ? c.bad : c.good) : (at === otherAt ? c.muted : color),
@@ -1921,6 +1946,77 @@
         markPoint: (i === 0 && !horizontal) ? {silent: true, data: annotationMarkPoints(payload, labels, values)} : undefined,
       };
     });
+    if (cmpBar) {
+      // Each period's change in % under its name: aligned with its bars wherever the chart is drawn (a card, a
+      // tile, an email, a PDF), in the colours of good and bad news (a rise is bad where lower is better).
+      const before = rows.map(r => num(r && r[cmpBar.prior]));
+      const now = rows.map(r => num(r && r[cmpBar.current]));
+      const french = String(global.QB_LANG || 'en') === 'fr';
+      // The room each period has under its bars: on a narrow card (a phone, a small tile) the change is said in
+      // whole percents and the days of a period in progress are left to its lighter bars and the tooltip.
+      const room = (((layout && layout.width) || 600) - 72) / Math.max(1, rows.length);
+      const changeOf = (at, full) => {
+        // No change in % from nothing, nor from below zero, where its sign would say the opposite.
+        const b = before[at], a = now[at];
+        if (a == null || b == null || !(b > 0)) return null;
+        const p = a / b - 1;
+        const body = Math.abs(p * 100).toFixed(full || room >= 52 ? 1 : 0);
+        const text = (p < 0 ? '\u2212' : '+') + (french ? body.replace('.', ',') + '\u00a0%' : body + '%')
+          + (cutOf(at) && (full || room >= 84) ? ` (${cutOf(at)})` : '');
+        const tone = cmpBar.better === 'neither' || Number(body) === 0 ? 'flat'
+          : ((p > 0) === (cmpBar.better !== 'lower') ? 'good' : 'bad');
+        return {text, tone};
+      };
+      const strip = at => { const ch = changeOf(at); return ch ? `{${ch.tone}|${ch.text}}` : ''; };
+      const keyOf = name => barKeys.find(k => cmpName(k) === name) || name;
+      option.tooltip = Object.assign({}, option.tooltip, {formatter: params => {
+        const arr = Array.isArray(params) ? params : [params];
+        const first = arr[0] || {};
+        const ch = changeOf(first.dataIndex || 0, true);
+        const ref = refOf(first.dataIndex || 0);
+        if (ref) {
+          // A month of last year's later ones: named as itself, with last year's figure alone.
+          const name = String(global.QB_LANG || 'en') === 'fr' ? (ref.fr || ref.en) : ref.en;
+          return tipHeader(name, c) + arr.filter(p => p.value != null && keyOf(p.seriesName) === cmpBar.prior)
+            .map(p => tipRow(p.color, name, valueFmt(p.value, cmpBar.prior), c, 'swatch')).join('');
+        }
+        return tipHeader(shownLabel(first.axisValue != null ? first.axisValue : first.name), c)
+          + arr.map(p => tipRow(p.color, p.seriesName, valueFmt(p.value, keyOf(p.seriesName)), c, 'swatch')).join('')
+          + (ch ? tipRow('transparent', t('ui.chart.change'), ch.text, c, 'swatch') : '');
+      }});
+      const axis = option.xAxis;
+      const head = axis.axisLabel && axis.axisLabel.formatter;
+      // Every period is named, since each has its change under it: a month by its short name (on a narrow card,
+      // its initial, J F M ...), the year under the first month of each year. On a narrow card the changes
+      // alternate between two rows so neighbours never run into each other; every change sits on the same line
+      // whatever the name above it holds.
+      const tight = room < 34;
+      const parts = rows.map(r => periodParts(r && r[xKey]));
+      const monthly = xStyle === 'month_year_long' && parts.every(Boolean) && !!global.qbMonth;
+      const nameOf = (v, at) => {
+        if (!monthly) return head ? head(v, at) : String(v);
+        const p = parts[at], prev = at > 0 ? parts[at - 1] : null;
+        const short = global.qbMonth(p.month, true);
+        const name = tight ? short.charAt(0).toUpperCase() : short;
+        return (!prev || prev.year !== p.year) ? `${name}\n${p.year}` : name;
+      };
+      const names = rows.map((r, at) => String(nameOf(labels[at], at)));
+      const lines = Math.max(1, ...names.map(n => n.split('\n').length));
+      const style = color => ({color, fontSize: room >= 40 ? 12 : 11, fontWeight: 600, fontFamily: c.font, lineHeight: 18});
+      axis.axisLabel = Object.assign({}, axis.axisLabel, {
+        interval: 0,
+        hideOverlap: !tight,
+        formatter: (v, at) => {
+          const name = names[at] != null ? names[at] : String(v);
+          const tail = strip(at);
+          if (!tail) return name;
+          const pad = '\n'.repeat(lines - name.split('\n').length);
+          return `${name}${pad}\n${tight && at % 2 ? '\n' : ''}${tail}`;
+        },
+        rich: {good: style(c.good), bad: style(c.bad), flat: style(c.muted)},
+      });
+      if (option.legend) option.legend = Object.assign({}, option.legend, {data: barKeys.map(cmpName), formatter: n => n});
+    }
     return option;
   }
 

@@ -734,3 +734,15 @@ def test_a_metric_the_reader_defines_reaches_the_new_core_not_the_result_on_scre
     assert asked == [question]
     assert [a["engine"] for a in _answers(turn)] == ["core2"]
     assert not [f for f in turn["frames"] if f.get("type") == "assistant_error"]
+
+
+def test_a_french_reader_is_told_in_french_that_no_answer_came():
+    # "The AI this workspace uses is at its limit of requests a minute" reached a French reader in English.
+    import gateway.core2_bridge as bridge
+
+    card = bridge._could_not("Quelle est ma comparaison ?", "ai_busy", "q-fr", beside=False, lang="fr")
+    assert card["answer"]["headline"] == ("L'IA de cet espace de travail a atteint sa limite de requêtes par minute. "
+                                          "Reposez la question dans un instant, ou formulez-la autrement.")
+    late = bridge._could_not("q", "timeout", "q-fr", seconds=60, lang="fr")
+    assert late["answer"]["headline"].startswith("Le nouveau moteur n'a pas répondu à cette question en 60 secondes.")
+    assert bridge._could_not("q", "ai_busy", "q-en", beside=False)["answer"]["headline"].startswith("The AI")

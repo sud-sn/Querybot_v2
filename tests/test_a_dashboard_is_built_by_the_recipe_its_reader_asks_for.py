@@ -230,7 +230,8 @@ def test_the_catalogue_says_for_each_recipe_what_the_data_gives(learned):
 
 def test_a_trend_against_the_year_before_draws_the_year_before_too(learned):
     """A recipe's "net amount by month against the year before" drew this year's line alone: the year before is
-    now a second, quiet line, each named by its period."""
+    now drawn too, each named by its period -- as bars side by side with the change under them (BA2), a line a
+    click away."""
     built, model = learned("retail")
     from core2.plan.ir import Plan
     from core2.service import _answer_question
@@ -241,7 +242,8 @@ def test_a_trend_against_the_year_before_draws_the_year_before_too(learned):
             "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12},
                      "compare": {"kind": "same_period_last_year"}}}
     chart = _answer_question("q", services, Session(), planned=Plan.model_validate(plan))["chart"]
-    assert chart["chart_type"] == "line" and chart["y_keys"] == ["net_amount", "net_amount_prior"]
+    assert chart["chart_type"] == "bar" and chart["y_keys"] == ["net_amount", "net_amount_prior"]
+    assert chart["compare"]["strip"] is True and "line" in chart["renderable_types"]
     assert chart["compare"]["prior"] == "net_amount_prior"
     assert chart["compare"]["prior_label"] == "Jun 2024 – May 2025"
 
