@@ -183,6 +183,9 @@ insurance realty properties construction builders engineering electric electroni
 restaurant restaurants kitchen hotel hotels travel airlines academy university college institute foundation
 association club center centre centers centres office department dept team teams desk unit division operations
 projects procurement purchasing buying sourcing spend maintenance facilities
+home homes living housewares kitchenware kitchens cookware hardware mercantile outfitters boutique emporium depot
+bistro brasserie inn suites resort lodge catering gifts promotions incentives rewards branding marketplace mall
+deals quincaillerie comptoir cuisine culinaire maison auberge articles
 """.split())
 # What only a person's name has: a title before it, a degree or a generation after a comma ("Dr. Ana Ruiz",
 # "Ana Ruiz, MD"), or a surname written first ("Ruiz, Ana").

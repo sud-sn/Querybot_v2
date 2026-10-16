@@ -40,6 +40,10 @@ COMPUTED = {"share": ("share",), "percentshare": ("share",), "pctshare": ("share
 OF_CHANGE = re.compile(r"(?:%|percent|share|pct|proportion).{0,30}\b(?:change|increase|growth|rise|decline|drop|"
                        r"decrease|fall|gain|loss)", re.I)
 
+# Words that ask for an amount ("the amount owed", "their value", "how much is outstanding"), never a count.
+AMOUNT_WORDS = re.compile(r"\b(?:amounts?|value|owed|owing|outstanding|balances?|revenue|sales|dollars?|spend|cost|"
+                          r"how much|montants?|valeur|d[uû]s?|solde)\b|\$", re.I)
+
 # A follow-up that refines the answer on screen ("put each month's target next to it", "only the top 5, as a bar
 # chart"): the figures it showed stay, unless the reader takes one away or asks for another in its place.
 ADDS = re.compile(r"\b(?:add|adding|next to|alongside|along with|also|as well|plus|include|including|ajout\w*|"
@@ -135,8 +139,15 @@ def missing(question: str, plan: Plan, payload: dict[str, Any], model: Any, *,
     gaps: list[Gap] = []
     known = {_plain(m.slug) for m in model.measures.values()} if model is not None else set()
     conditions = bool(_conditions(plan) or plan.segment or plan.within or plan.target or plan.include_left_out)
+    figured = bool(plan.measures or worked) or not plan.shaped()
     for part in plan.asked:
         ref = _plain(part.plan)
+        if part.plan and part.kind in ("figure", "other") and not figured and AMOUNT_WORDS.search(part.words) \
+                and ref not in figures and ref not in known:
+            # An amount given to an analysis that only counts ("the amount owed in each bucket" given to the ageing,
+            # which counts the open orders): no figure of the plan totals it.
+            gaps.append(Gap(part.words, "figure", "not_in_plan"))
+            continue
         if not part.plan:
             if part.kind == "form" and not CHART_WORDS.search(part.words):
                 continue                    # "a list", "a table": every answer has its table

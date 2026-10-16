@@ -526,8 +526,15 @@
 .chart-card.is-kpi .chart-card-body { padding-top: 2px; padding-bottom: 10px; }
 /* Four numbers in a row leave each name a few words: its period goes on a line of its own under it, so "Net
    amount" and "Number of orders" are read whole rather than cut to "Net Amo…". */
-.chart-card.is-kpi .chart-card-header { flex-wrap: wrap; row-gap: 0; }
+.chart-card.is-kpi .chart-card-header { flex-wrap: wrap; row-gap: 0; position: relative; }
 .chart-card.is-kpi .chart-card-note { order: 3; flex-basis: 100%; text-align: left; }
+/* Its controls (the alert bell, edit's buttons) sit in the corner, out of the row: beside a narrow card's name they
+   took a line of their own, and the change under the number was cut off at the card's foot. */
+.chart-card.is-kpi .chart-card-actions { position: absolute; top: 10px; right: 12px; margin: 0; border-radius: var(--radius-sm);
+  background: var(--surface-raised); }
+/* Room is kept for them only while they show for good (editing, an alert set); read, they appear over the name's end. */
+.dashboard-page[data-mode="edit"] .chart-card.is-kpi .chart-card-name,
+.chart-card.is-kpi:has(.dash-alert-button.is-on) .chart-card-name { padding-right: 28px; }
 /* Its name (when the tile's does not say it), the value with its trend beside it, and the change under both: a
    number tile is three rows high, too short for the line under the value as well. */
 .dash-kpi { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr);

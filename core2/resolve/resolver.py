@@ -1067,12 +1067,17 @@ _HAPPENED = {"event": 0, "due": 1, "validity": 1, "snapshot": 2, "planned": 3}
 
 
 def _happened(model: SemanticModel, table: Table) -> int:
-    """How much a table's rows are what happened: events first, then balances, then plans and budgets."""
+    """How much a table's rows are what happened: events first, then balances, then plans and budgets. Rows with
+    no date of their own are what their dated document is: an order's lines are what was ordered, as much as a
+    return is what was returned."""
     from core2.bootstrap import names
 
     if {names.singular(w) for w in names.tokens(table.business_name or table.name)} & _PLANNED_WORDS:
         return 3
     own = model.date_roles.get(table.default_date or "")
+    if own is None:
+        own = next((r for r in (model.date_roles.get(model.tables[d].default_date or "")
+                                for d in _documents(model, table.key)) if r is not None), None)
     return _HAPPENED.get(own.kind, 2) if own else 2
 
 

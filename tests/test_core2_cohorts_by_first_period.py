@@ -204,3 +204,18 @@ def test_a_shares_month_0_gives_way_when_the_months_do_not_fit():
     counted = _grid(14, 13, value="count")
     assert counted["y_keys"] == [f"Month {k}" for k in range(12)]
     assert counted["chart_warnings"] == ["Showing months 0 to 11 after the first: every one is in the table."]
+
+
+def test_how_many_came_back_is_counted_not_a_share(retail):
+    # "Of the customers whose first order was in 2024, how many ordered again in 2025?" was planned as a cohort of
+    # shares: "how many" of a cohort is its members counted.
+    built, model = retail
+    cells = _cells(retail)
+    plan = {"kind": "query", "cohort": {"of": "customer", "measure": "number_of_orders", "periods": 6},
+            "time": {"window": Q1_2023, "grain": "month"}}
+    services = Services(model=model, warehouse=DuckDBWarehouse(built.con), complete=lambda s, t: json.dumps(plan),
+                        index=MemberIndex(), today=TODAY)
+    got = answer_question("Of the customers whose first order was in Q1 2023, how many ordered again in the 6 months "
+                          "after?", services, Session())
+    shown = {(str(r["period"])[:10], int(r["periods_after"])): int(r["members"]) for r in got["export_rows"]}
+    assert shown and all(v == cells.get(k, 0) for k, v in shown.items()), shown

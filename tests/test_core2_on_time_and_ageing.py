@@ -143,3 +143,27 @@ def test_the_sql_reads_on_every_warehouse(purchasing, dialect, ageing):
                                 "group_by": ["supplier.name"], "time": {"window": Y2025} if not ageing else {}})
     compiled = compile_query(resolve(plan, model, Context(today=TODAY)), model, dialect)
     sqlglot.parse_one(compiled.sql, read=dialect)
+
+
+def test_how_many_were_late_is_the_number_late_with_the_share_beside_it(purchasing):
+    """ "How many orders were delivered late in 2025?" was answered "Late in 2025: 7.7%": the share, where the reader
+    asked for a number. Asked with a count (the planner puts the rows' count beside the analysis), the answer leads
+    with how many were late, by supplier too, and keeps the share beside it."""
+    (counted, late, share), = _sql(purchasing, f"SELECT COUNT(*), COUNT(*) FILTER (WHERE late > 0), "
+                                                f"AVG(CASE WHEN late > 0 THEN 100.0 ELSE 0 END) FROM ({LATE})")
+    plan = {"measures": ["number_of_receipts"], "on_time": {"done": "received_date", "due": "promised_date",
+                                                            "late": True}, "time": {"window": Y2025}}
+    got = _ask(purchasing, plan, "How many receipts came in late in 2025?")
+    row = got["export_rows"][0]
+    figures = [k for k in row if k not in ("supplier_name",)]
+    assert row[figures[0]] == late, row
+    assert any(float(row[k]) == pytest.approx(float(share)) for k in figures[1:]), row
+    assert got["answer"]["headline"].replace(",", "").find(str(late)) >= 0, got["answer"]["headline"]
+    by_supplier = dict(_sql(purchasing, f"SELECT supplier_name, COUNT(*) FILTER (WHERE late > 0) FROM ({LATE}) GROUP BY 1"))
+    got = _ask(purchasing, {**plan, "group_by": ["supplier.name"]}, "How many receipts came in late by supplier in 2025?")
+    first = next(k for k in got["export_rows"][0] if k != "supplier_name")
+    assert {r["supplier_name"]: r[first] for r in got["export_rows"]} == by_supplier
+    # The share alone, as before, when no count is asked for.
+    share_only = _ask(purchasing, {"on_time": plan["on_time"], "time": {"window": Y2025}},
+                      "What share of 2025 receipts came in late?")
+    assert list(share_only["export_rows"][0]) == ["late"]

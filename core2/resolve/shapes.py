@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
@@ -191,6 +192,9 @@ class OnTimeShape:
     # Ageing with the done rows on another table (receipts of an order line): (their table, their column pointing
     # at the due rows, the due rows' column it equals). A due row with no such row is open.
     done_elsewhere: tuple[str, str, str] | None = None
+    # Ageing a figure of the rows that point at the due rows (an invoice's lines): (their table, their column pointing
+    # at the due rows, the due rows' column it equals). It is added up per due row first.
+    figure_elsewhere: tuple[str, str, str] | None = None
     things: str = ""               # "receipts", "purchase order lines"
     due_name: str = ""
     done_name: str = ""
@@ -1368,19 +1372,37 @@ def _on_time(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         out_groups.insert(0, Group(name, plan.time.grain.capitalize(), "period", grain=plan.time.grain))
         names.insert(0, name)
     on_time = _output_name("late" if ot.late else "on_time", taken)
-    shape = OnTimeShape(part=part, due=due, done=done, grace=ot.grace_days, ageing=False, as_of=ctx.today,
-                        groups=names, columns={"on_time": on_time},
-                        things=plural(model.tables[table].business_name.lower()), due_name=due_role.name.lower(),
-                        done_name=done_role.name.lower(), late=ot.late)
+    taken.add(on_time)
+    things = plural(model.tables[table].business_name.lower())
+    columns = {"on_time": on_time}
     out = [OutMeasure(name=on_time, label="Late" if ot.late else "On time", expr=AggExpr(agg="avg"),
                       format="percent", measure=None)]
+    if any(m.format == "count" for slug in plan.measures for m in [_measure_of(model, slug)] if m is not None):
+        # "How many orders were delivered late?": the number late (or on time) first, the share beside it.
+        count = _output_name(f"{'late' if ot.late else 'on_time'}_{_names_slug(things)}", taken)
+        taken.add(count)
+        columns["count"] = count
+        out.insert(0, OutMeasure(name=count, label=f"Late {things}" if ot.late else f"{things.capitalize()} on time",
+                                 expr=AggExpr(agg="count"), format="count", measure=None))
+    shape = OnTimeShape(part=part, due=due, done=done, grace=ot.grace_days, ageing=False, as_of=ctx.today,
+                        groups=names, columns=columns, things=things, due_name=due_role.name.lower(),
+                        done_name=done_role.name.lower(), late=ot.late)
     period = next((g.name for g in out_groups if g.kind == "period"), None)
     # The worst first: the least on time, or the most late.
-    sort = [(period, False)] if period else [(on_time, ot.late)] if out_groups else []
+    sort = [(period, False)] if period else [(out[0].name, ot.late or "count" in columns)] if out_groups else []
     return Logical(intent="trend" if period else "breakdown" if out_groups else "value", parts=[part],
                    groups=out_groups, measures=out, window=window, sort=sort, limit=plan.limit,
                    max_rows=ctx.max_rows, notes=[], fiscal_start=model.settings.fiscal_year_start_month,
                    conditions=[], shape=shape)
+
+
+def _measure_of(model: SemanticModel, slug: str) -> Measure | None:
+    found = find_slug(model, slug)
+    return found[1] if found is not None and found[0] == "measure" and isinstance(found[1], Measure) else None
+
+
+def _names_slug(words: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", words.lower()).strip("_") or "rows"
 
 
 def _ageing(plan: Plan, model: SemanticModel, ctx: Context, due_role: DateRole, done_role: DateRole,
@@ -1414,25 +1436,44 @@ def _ageing(plan: Plan, model: SemanticModel, ctx: Context, due_role: DateRole, 
     taken.add(count)
     out = [OutMeasure(name=count, label=f"Open {things}", expr=AggExpr(agg="count"), format="number", measure=None)]
     columns = {"open": count}
+    owed_on = None
     for slug in plan.measures[:1]:
         found = find_slug(model, slug)
         if not found or found[0] != "measure":
             raise ResolveError("unknown", f"no measure called {slug}", [])
         m = found[1]
         assert isinstance(m, Measure)
-        if m.table != table or not isinstance(m.expr, AggExpr) or m.expr.agg not in ("sum", "count"):
+        lines = _rows_pointing_at(model, m, table)
+        if not isinstance(m.expr, AggExpr) or m.expr.agg not in ("sum", "count") \
+                or m.table != table and lines is None:
             raise ResolveError("unsupported", f"{m.business_name} is not a total of the "
                                f"{things}' own rows: ask for the open {things} alone")
+        owed_on = lines if m.table != table else None
         name = _output_name(m.slug, taken)
         taken.add(name)
         out.append(OutMeasure(name=name, label=f"{m.business_name} open", expr=m.expr, format=m.format, measure=m))
         columns["measure"] = name
     shape = OnTimeShape(part=part, due=due, done=done, grace=0, ageing=True, as_of=as_of, groups=names[1:],
                         columns=columns, band=band, done_elsewhere=elsewhere, things=things,
-                        due_name=due_role.name.lower(), done_name=done_role.name.lower())
+                        due_name=due_role.name.lower(), done_name=done_role.name.lower(),
+                        figure_elsewhere=owed_on if plan.measures[:1] else None)
     return Logical(intent="breakdown", parts=[part], groups=out_groups, measures=out, window=Range(None, None),
                    sort=[], limit=plan.limit, max_rows=ctx.max_rows, notes=[],
                    fiscal_start=model.settings.fiscal_year_start_month, conditions=[], shape=shape)
+
+
+def _rows_pointing_at(model: SemanticModel, m: Measure, table: str) -> tuple[str, str, str] | None:
+    """The amount owed on an invoice is on its lines: a total of the rows that point at each one, read on those rows
+    alone (its columns and conditions all on them). (Their table, their column pointing at the due rows, the due
+    rows' column it equals.)"""
+    if m.table == table or not isinstance(m.expr, AggExpr):
+        return None
+    own = [m.expr.column] if m.expr.column else []
+    if any(model.columns[c].table != m.table for c in [*own, *(f.column for f in m.expr.filters)]):
+        return None
+    link = next((j for j in model.joins.values() if j.from_table == m.table and j.to_table == table
+                 and len(j.from_columns) == 1 and P.usable(j)), None)
+    return (m.table, link.from_columns[0], link.to_columns[0]) if link is not None else None
 
 
 def on_time_definition(shape: OnTimeShape, span: str, counted: float | None, late: float | None) -> str:
@@ -1644,6 +1685,40 @@ class TogetherShape:
     columns: dict[str, str]        # item, with, together, support, confidence, lift
 
 
+def _basket_count(model: SemanticModel, basket: str, items: Entity) -> str | None:
+    """The count of baskets when the basket is not named by a count. Named by what it is ("order", "invoice",
+    "visit"): the measure counting the rows of the list or table of that name. Named by something else (the item
+    itself): the documents the item's rows belong to (an order line's order), when they are one kind. None when the
+    name is a figure (a count is the basket; any other figure is refused as one), or nothing fits."""
+    from core2.bootstrap import names
+    from core2.resolve.resolver import _documents
+
+    found = find_slug(model, basket)
+    if found and found[0] == "measure":
+        return None
+    if found and found[0] == "entity":
+        tables = {found[1].table}
+    else:
+        def said(text: str) -> str:
+            return " ".join(names.singular(w) for w in names.tokens(text.replace("_", " ").replace(".", " ")))
+        word = said(basket)
+        tables = {k for k, t in model.tables.items() if word and word in (said(t.business_name or ""), said(t.name))}
+
+    def counting(keys: set[str]) -> list[Measure]:
+        counts = [m for m in model.measures.values() if m.table in keys and not m.hidden and not m.filters
+                  and isinstance(m.expr, AggExpr) and m.expr.agg in ("count", "count_distinct") and not m.expr.filters]
+        # The rows themselves first (each order once), before a count of some other value on them (invoice numbers).
+        return sorted(counts, key=lambda m: (m.expr.agg != "count" or m.expr.column is not None, m.slug))
+
+    counts = counting(tables)
+    if not counts:
+        naming = {j.from_table for j in model.joins.values() if j.to_table == items.table and j.trust != "rejected"
+                  and j.from_table != items.table and model.tables[j.from_table].kind in ("fact", "snapshot")}
+        documents = {d for t in naming for d in _documents(model, t)}
+        counts = counting(documents) if len(documents) == 1 else []
+    return counts[0].slug if counts else None
+
+
 def _together(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     to = plan.together
     assert to is not None
@@ -1653,11 +1728,12 @@ def _together(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                            sorted(model.entities)[:12])
     entity = found[1]
     assert isinstance(entity, Entity)
-    counted = find_slug(model, to.basket)
+    basket_slug = _basket_count(model, to.basket, entity) or to.basket
+    counted = find_slug(model, basket_slug)
     if not counted or counted[0] != "measure" or getattr(counted[1].expr, "agg", "") not in ("count", "count_distinct"):
         raise ResolveError("unsupported", f"{to.basket} does not count baskets: name a count of orders (or "
                            "invoices, visits) that the items are on")
-    _, column, basket_word = _member_of(model, to.basket)
+    _, column, basket_word = _member_of(model, basket_slug)
     if column is None:
         raise ResolveError("unsupported", f"{to.basket} does not count baskets: name a count of orders (or "
                            "invoices, visits) that the items are on")
@@ -1672,7 +1748,7 @@ def _together(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             rest.append(f)
     inner_plan = plan.model_copy(update={
-        "together": None, "measures": [to.basket], "derived": [], "durations": [], "group_by": [to.of],
+        "together": None, "measures": [basket_slug], "derived": [], "durations": [], "group_by": [to.of],
         "filters": rest, "sort": [], "limit": None, "intent": "breakdown", "chart": None,
         "time": plan.time.model_copy(update={"grain": None, "compare": None})})
     inner = resolve_plain(inner_plan, model, ctx)

@@ -667,14 +667,23 @@ def _on_time(c: _Compiler, shape: OnTimeShape) -> tuple[exp.Select, list[OutColu
                             exp.If(this=exp.LTE(this=late.copy(), expression=_num(shape.grace)),
                                    true=exp.Literal.number("0.0" if shape.late else "100.0"))],
                        default=exp.Literal.number("100.0" if shape.late else "0.0"))
-    m = c.q.measures[0]
-    body = rows.select(*[e.copy().as_(c.name(g.name)) for e, g in zip(group_exprs, part.groups)],
-                       exp.Avg(this=on_time).as_(c.name(m.name)), exp.Count(this=late.copy()).as_(c.name(MEMBERS)),
+    figures = []
+    for m in c.q.measures:
+        if m.name == shape.columns.get("count"):
+            # How many were late (or on time): rows with both dates only.
+            met = exp.GT(this=late.copy(), expression=_num(shape.grace)) if shape.late else \
+                exp.LTE(this=late.copy(), expression=_num(shape.grace))
+            figures.append(exp.Sum(this=_flag(met)).as_(c.name(m.name)))
+        else:
+            figures.append(exp.Avg(this=on_time.copy()).as_(c.name(m.name)))
+    body = rows.select(*[e.copy().as_(c.name(g.name)) for e, g in zip(group_exprs, part.groups)], *figures,
+                       exp.Count(this=late.copy()).as_(c.name(MEMBERS)),
                        exp.Sum(this=_flag(exp.GT(this=late.copy(), expression=_num(shape.grace)))).as_(c.name(LATE)),
                        append=False)
     if group_exprs:
         body = body.group_by(*[e.copy() for e in group_exprs])
-    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)]
+    columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(m.name, m.label, "measure", m.format, None)
+                                                         for m in c.q.measures]
     outer = exp.select(*[c.out("q", col.name) for col in columns], c.out("q", MEMBERS), c.out("q", LATE))
     return outer.from_(body.subquery(c.name("q"))), columns, "q"
 
@@ -700,7 +709,24 @@ def _ageing(c: _Compiler, shape: OnTimeShape) -> tuple[exp.Select, list[OutColum
     figures = [exp.Count(this=exp.Star()).as_(c.name(shape.columns["open"]))]
     if "measure" in shape.columns:
         m = next(o for o in c.q.measures if o.name == shape.columns["measure"])
-        figures.append(c.aggregate(m.expr, part).as_(c.name(m.name)))
+        if shape.figure_elsewhere is None:
+            figures.append(c.aggregate(m.expr, part).as_(c.name(m.name)))
+        else:
+            # The amount on each open invoice's lines, added up per invoice (its lines' own default filters hold),
+            # then per range: an invoice with no line counts nothing.
+            table, pointer, key = shape.figure_elsewhere
+            lines = Part(table=table, alias="owed_rows")
+            conds_lines = [c.predicate(c.col("owed_rows", df.column), df.op, list(df.values), df.column)
+                           for df in c.model.tables[table].default_filters]
+            owed = exp.select(c.col("owed_rows", pointer).as_(c.name("k")),
+                              c.aggregate(m.expr, lines).as_(c.name("v"))).from_(c.table(table, "owed_rows"))
+            if conds_lines:
+                owed = owed.where(exp.and_(*conds_lines))
+            owed = owed.group_by(c.col("owed_rows", pointer))
+            rows = rows.join(owed.subquery(c.name("owed")), join_type="left", on=equal_keys(
+                c.model, c.out("owed", "k"), pointer, c.col(part.alias, key), key, c.d))
+            figures.append(exp.Coalesce(this=exp.Sum(this=c.out("owed", "v")), expressions=[_num(0)])
+                           .as_(c.name(m.name)))
     body = rows.select(*[e.copy().as_(c.name(n)) for e, n in zip(group_exprs, names)], *figures, append=False)
     body = body.where(exp.and_(*conds)).group_by(*[e.copy() for e in group_exprs])
     columns = [c.group_column(g) for g in c.q.groups] + [OutColumn(o.name, o.label, "measure", o.format,

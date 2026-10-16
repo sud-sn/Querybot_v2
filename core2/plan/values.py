@@ -274,7 +274,8 @@ class MemberIndex:
                     taken.update(range(i, i + size))
         return sorted(found, key=lambda m: (m.start, m.attribute))
 
-    def written_names(self, question: str, *, not_names: set[str] | frozenset[str] = frozenset()) -> list[ValueMatch]:
+    def written_names(self, question: str, *, not_names: set[str] | frozenset[str] = frozenset(),
+                      prefer: Callable[[list[ValueMatch]], ValueMatch | None] | None = None) -> list[ValueMatch]:
         """Member names written without quotes that name one member beyond doubt, read as if quoted.
 
         "Customers who bought Dish Soap in the last 90 days" means that product: a reader names a product, a
@@ -283,7 +284,8 @@ class MemberIndex:
         its words name exactly one member of one grouping. An everyday word ("open", "available"), a word in lower
         case on its own, the question's first word, a name two groupings share and a name in ``not_names`` (a
         figure's or a grouping's own name: "Net Amount") stay words of the question: they narrow the answer only
-        in quotes, as before.
+        in quotes, as before. ``prefer`` settles a name two groupings share, when it can: "Ontario" is a region,
+        and also a sales team called after it.
         """
         quoted = quoted_spans(question)
         cased = any(c.islower() for c in question)
@@ -300,7 +302,10 @@ class MemberIndex:
             if any(a <= start and end <= b for a, b in quoted):
                 continue                       # quoted: read by quoted()
             if len({(m.attribute, normalise(str(m.value))) for m in found}) != 1:
-                continue                       # two groupings (or two members) share the name: which is unclear
+                chosen = prefer(found) if prefer is not None else None
+                if chosen is None:
+                    continue                   # two groupings (or two members) share the name: which is unclear
+                found = [chosen]
             text = question[start:end]
             key = normalise(text)
             words = [w for w in re.findall(r"[\w&'#.+-]+", text) if w]

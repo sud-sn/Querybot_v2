@@ -327,12 +327,15 @@ class Kit:
     def measure(self, words: set[str], *, want: str | None = None, table: str | None = None,
                 avoid: set[str] = frozenset(), counts: bool = False, near: str | None = None) -> Measure | None:
         """The figure named with ``words`` (most of them, named most plainly), measured as ``want`` says
-        (currency or count); on ``table`` when given, else on ``near``'s table first."""
+        (currency or count); on ``table`` when given, else on ``near``'s table first. Never a ratio: a recipe's
+        figures are totals and counts it works its own ratios out of ("Units per order" is no units sold)."""
         fits = []
         for m in self.figures:
             w = _words(m.business_name)
             agg = getattr(m.expr, "agg", "")
             if not w & words or w & avoid or table is not None and m.table != table:
+                continue
+            if getattr(m.expr, "op", None) == "ratio":
                 continue
             if counts != (agg in ("count", "count_distinct")) and m.kind != "metric":
                 continue
@@ -348,6 +351,13 @@ class Kit:
 
     def fig(self, m: Measure | None, *, lower_better: bool = False) -> Fig | None:
         return None if m is None else Fig(m.business_name, m, (m.slug,), lower_better=lower_better)
+
+    def approved(self, kpi: str, *, lower_better: bool = False) -> Fig | None:
+        """The business's own metric for a figure a recipe would work out ("sales.return_rate"): its definition,
+        never the recipe's, is the one shown."""
+        m = next((m for m in self.model.measures.values() if m.kpi == kpi and m.kind == "metric" and not m.hidden
+                  and m.status in ("approved", "verified") and self.may(m.table)), None)
+        return self.fig(m, lower_better=lower_better)
 
     def worked(self, key: str, a: Fig | None, b: Fig | None, op: str, scale: float = 1.0, *,
                inner: Fig | None = None, lower_better: bool = False, **kw: str) -> Fig | None:
@@ -891,14 +901,17 @@ def _sales_parts(k: Kit) -> dict[str, Fig | None]:
     cost = k.fig(k.measure(COSTS, want="currency", table=home, avoid={"unit", "travel", "shipping", "freight"}))
     margin_m = k.measure(MARGINS, want="currency", table=home)
     margin = k.fig(margin_m) if margin_m is not None else k.worked("margin", sales, cost, "difference")
-    margin_pct = k.worked("margin_pct", margin, sales, "ratio", 100, inner=margin if margin is not None and margin.derived
-                          else None)
-    avg = k.worked("average_order", sales, orders, "ratio") \
-        if orders is not None and orders.base.table in (home, *docs) else None
+    margin_pct = k.approved("sales.gross_margin_pct") or k.worked(
+        "margin_pct", margin, sales, "ratio", 100, inner=margin if margin is not None and margin.derived else None)
+    avg = k.approved("sales.average_order_value") or (k.worked("average_order", sales, orders, "ratio")
+                                                      if orders is not None and orders.base.table in (home, *docs)
+                                                      else None)
     refunds = k.fig(k.measure(REFUNDS | RETURNS, want="currency", avoid={"tax"}), lower_better=True)
     returns = k.fig(k.measure(RETURNS, counts=True), lower_better=True)
     return_units = k.fig(k.measure(RETURNS, want="number", avoid={"amount", "value"}), lower_better=True)
-    if return_units is not None and units is not None:
+    if k.approved("sales.return_rate") is not None:
+        return_rate = k.approved("sales.return_rate", lower_better=True)
+    elif return_units is not None and units is not None:
         return_rate = k.worked("return_rate", return_units, units, "ratio", 100, lower_better=True)
     elif returns is not None and orders is not None:
         return_rate = k.worked("return_rate", returns, orders, "ratio", 100, lower_better=True)

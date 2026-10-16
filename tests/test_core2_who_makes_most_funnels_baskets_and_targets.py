@@ -126,6 +126,18 @@ def test_the_customers_making_the_first_80_percent(retail):
 
 
 
+def test_how_many_customers_make_up_80_percent_is_the_pareto_count(retail):
+    # "How many customers make up 80% of our 2025 revenue?": the AI planned the customers making the first 80%,
+    # and the check that "how many customers" is a count of customers refused it; asked twice, then a menu.
+    members = _per_member(retail, "customer_id", "customers", "customer_name")
+    first = [n for (n, _), c in zip(members, _classes([v for _, v in members], [80])) if c == "A"]
+    got = _ask(retail, {"intent": "rank", "pareto": {"of": "customer", "measure": "net_amount", "mode": "pareto",
+                                                     "cuts": [80]}, "time": {"window": Y2025}},
+               "How many customers make up 80% of our 2025 revenue?")
+    assert got["answer"]["headline"].startswith(f"{len(first)} of {len(members)} customers made the first 80% of "
+                                                f"net amount in 2025")
+
+
 def test_the_first_80_percent_is_counted_in_full_when_the_list_is_cut(retail, monkeypatch):
     """Only the first rows of a long list are read back: the count of members making the first 80% is the
     warehouse's, never the number of rows that came back."""

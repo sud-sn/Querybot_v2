@@ -414,7 +414,8 @@ _CHANGE = re.compile(
     r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)*"
     # Verbs that also read ("change in sales", "close rate", "add up"): only before what they would change.
     r"|(?:remove|drop|update|change|modify|edit|insert|add|create|close\s+out|close|cancel|void|archive|approve|"
-    r"reject|mark|set|assign|merge|rename|reset|retire[rz]?|modifie[rz]?|mets?\s+à\s+jour|mettez\s+à\s+jour|"
+    r"reject|mark|set|assign|merge|rename|reset|increase|raise|decrease|reduce|lower|cut|"
+    r"augmente[rz]?|baisse[rz]?|réduis(?:ez)?|diminue[rz]?|retire[rz]?|modifie[rz]?|mets?\s+à\s+jour|mettez\s+à\s+jour|"
     r"ajoute[rz]?|crée[rz]?|annule[rz]?|clôture[rz]?|ferme[rz]?|archive[rz]?|valide[rz]?|renomme[rz]?)\b\s+"
     r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)+)",
     re.IGNORECASE)
@@ -431,8 +432,12 @@ def changes_data(question: str) -> str | None:
     if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:update|change|modify|edit|mark|set|assign|rename|"
                 r"modifie|mets|mettez|renomme)", question, re.IGNORECASE):
         rest = re.sub(r"\s+(?:to|as|en|à|comme)\s+[\w'-]+$", "", rest)      # "... to closed": the new value goes
+    if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:increase|raise|decrease|reduce|lower|cut|augment|baiss|"
+                r"rédui|diminu)", question, re.IGNORECASE):
+        # "... by 10%", "... to $50,000": the change goes, the figure it would change stays
+        rest = re.sub(r"\s+(?:by|to|of|de|à)\s+[$€]?\s*[\d][\d.,\s]*\s*(?:%|percent|points?|pts|\$|€)?$", "", rest)
     french = bool(re.match(r"\s*(?:supprim|effac|retir|modifi|mets|mettez|ajout|cré|annul|clôtur|ferm|archiv|"
-                           r"valid|renomm)", question, re.IGNORECASE))
+                           r"valid|renomm|augment|baiss|rédui|diminu)", question, re.IGNORECASE))
     lead = (_SHOW["fr"] + "les ") if french else (_SHOW["en"] + "the ")
     return f"{lead}{rest}" if rest else ""
 
@@ -732,7 +737,8 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         # "at Riverside") that names one member beyond doubt; ordinary words never narrow the answer. Every
         # name written, quoted or not, is still withheld from the AI where member values may not reach it.
         found = _visible(services.index.quoted(question), model, services.allowed_tables)
-        unquoted_named = [m for m in _visible(services.index.written_names(question, not_names=_own_names(model)),
+        unquoted_named = [m for m in _visible(services.index.written_names(question, not_names=_own_names(model),
+                                                                           prefer=lambda f: _a_things_own_name(model, f)),
                                               model, services.allowed_tables)
                           if not any(f.start < m.end and m.start < f.end for f in found)]
         found = sorted([*found, *unquoted_named], key=lambda m: (m.start, m.attribute))
@@ -2237,6 +2243,17 @@ def _member_home(model: SemanticModel, plan: Plan, index: MemberIndex, values: l
     if len(reached) != 1:
         return None
     return reached[0], homes[reached[0]]
+
+
+def _a_things_own_name(model: SemanticModel, found: list[ValueMatch]) -> ValueMatch | None:
+    """Of a name two groupings share, the reading where it is a thing's own name: "Ontario" names the region,
+    while the sales team is only called after it. None unless exactly one of the groupings is the name of a thing
+    (a region, a store, a product) and the name is one member of it."""
+    labels = {e.label_column for e in model.entities.values() if e.label_column}
+    own = [m for m in found if m.attribute in model.attributes and model.attributes[m.attribute].column in labels]
+    if len({m.attribute for m in own}) != 1 or len({normalise(str(m.value)) for m in own}) != 1:
+        return None
+    return own[0]
 
 
 def _own_names(model: SemanticModel) -> frozenset[str]:

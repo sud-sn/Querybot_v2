@@ -136,6 +136,8 @@ How to plan:
 6. time.date: a date slug only when the question names which date ("by ship date", "invoiced in May",
    "expiring in 2028"); otherwise null and the measure's default date is used. A second date in the
    question ("ordered in March and delivered in April") is a filter on that date slug with ISO dates.
+   "How much did we invoice / ship / collect" is the sales amount counted by that event's date (the invoice,
+   ship or payment date), never a count of the documents and never a refund.
 7. time.compare: "vs last year", "year over year" -> {"kind": "same_period_last_year"};
    "vs last month", "month over month", "vs the previous period" -> {"kind": "previous_period"};
    "from February to March", "March vs February" -> window March and
@@ -451,7 +453,9 @@ def _analyses(model: SemanticModel) -> str:
         lines.append(
             "- cohort: members grouped by the period of their first activity (time.grain; a month by default), and "
             "the share (value share) or number (value count) of each still active n periods later; no measures, no "
-            "group_by. time.window holds the first periods; periods: how many after the first (12 by default).")
+            "group_by. time.window holds the first periods; periods: how many after the first (12 by default). "
+            "\"Of those whose first order was in 2024, how many ordered again in 2025?\" is one cohort: grain year, "
+            "window 2024, periods 1, value count -- never the new members of two years compared.")
         plan = {"kind": "query", "intent": "breakdown", "cohort": {"of": e.slug, "measure": count.slug, "periods": 6},
                 "time": {"grain": "month", "window": {"kind": "last", "unit": "month", "n": 12}}}
         lines.append(f"Q: retention by month of first {names.singular(things)} for the last year\n"
@@ -477,7 +481,9 @@ def _analyses(model: SemanticModel) -> str:
             "was expected; grace_days: days late still counted on time; late true for the share late (\"later than "
             "requested\", \"delayed\"). ageing true for the rows not done yet, by "
             "days past due today (\"AR aging\", \"overdue\", \"open past due\"), with a measure to total (amount "
-            "open) when asked; time.window then only says the day to age on (its end).")
+            "open) when asked, of the rows due or of the rows that point at them (the amount on an invoice's lines); "
+            "time.window then only says the day to age on (its end). done is the date that closes what is due (a "
+            "payment due date is closed by the payment date), never the date the document was raised.")
         plan = {"kind": "query", "intent": "value", "on_time": {"done": done.slug, "due": due.slug},
                 "time": {"window": {"kind": "this", "unit": "year"}}}
         lines.append(f"Q: what share of {rows} were on time this year\nA: {json.dumps(plan)}")
@@ -863,7 +869,8 @@ def where_we_have(plan: Plan, model: SemanticModel, question: str) -> Plan:
 def counted_each(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many items in the top group cost more than $1,000 each?" was planned as the number of items, kept
     only if the group's own average cost was above $1,000: 0. A count of a list's members with a condition on
-    another figure is the members whose own figure meets it, counted."""
+    another figure is the members whose own figure meets it, counted; so is a count of documents ("how many orders
+    over $20,000": the orders whose own total is over it)."""
     if plan.kind != "query" or plan.group_by or plan.per is not None or plan.shaped():
         return plan
     by_slug = {m.slug: m for m in model.measures.values()}
@@ -874,11 +881,16 @@ def counted_each(plan: Plan, model: SemanticModel, question: str) -> Plan:
     if len(counts) != 1 or len(conditions) != 1:
         return plan
     entity = next((e for e in model.entities.values() if e.table == counts[0].table), None)
-    if entity is None:
-        return plan
+    # "How many orders over $20,000": each order its count counts (a document with no list of its own, numbered on
+    # its rows), whose own total is over the amount. Rows counted with a condition on their own figure ("order
+    # lines with a discount") keep the condition on each row.
     f = conditions[0]
+    if entity is None and counts[0].expr.agg == "count" and not counts[0].expr.column \
+            and by_slug[f.field].table == counts[0].table:
+        return plan
+    of = entity.slug if entity is not None else counts[0].slug
     try:
-        per = PerMember(of=entity.slug, summary="count", op=f.op, values=[float(v) for v in f.values])
+        per = PerMember(of=of, summary="count", op=f.op, values=[float(v) for v in f.values])
     except (TypeError, ValueError, ValidationError):
         return plan
     return plan.model_copy(update={"measures": [f.field], "filters": [x for x in plan.filters if x is not f],
@@ -1511,20 +1523,83 @@ _TOGETHER = re.compile(r"\b(?:combined|together|total|totals|altogether|in\s+all
 def each_named(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "Revenue in Northfield Industrial and Eastgate Industrial in 2025" was one figure for the two added up: two to
     six members of one field named for a single figure are shown each, side by side (the answer still says their
-    total), unless the question adds them up ("combined", "in total")."""
-    if plan.kind != "query" or plan.intent != "value" or plan.group_by or plan.time.grain or plan.time.compare \
-            or len(plan.filters) != 1 or _TOGETHER.search(question or ""):
+    total), unless the question adds them up ("combined", "in total"). So are two compared ("Compare Small Appliances
+    and Cookware revenue by quarter", "Snacks vs Beverages"): a line each, never one line for the two added up. Two
+    conditions on one field that no row meets together (the AI's way of writing "A vs B") are the two members."""
+    if plan.kind != "query" or plan.intent not in ("value", "compare", "trend") or plan.group_by \
+            or _TOGETHER.search(question or ""):
         return plan
-    f = plan.filters[0]
-    if f.op not in ("eq", "in") or not 2 <= len(f.values) <= 6 \
-            or not (f.field in model.attributes or f.field in model.entities):
+    filters = _one_field_named_twice(plan.filters)
+    if plan.intent == "value" and (plan.time.grain or plan.time.compare):
         return plan
-    # Each name written in the question, joined by "and" ("Organic or Vegan" is one figure for either).
+    if plan.intent != "compare" and len(filters) != 1:
+        return plan
     said = (question or "").casefold()
-    at = [said.find(str(v).casefold()) for v in f.values]
-    if min(at) < 0 or re.search(r"\bor\b", said[min(at):max(at)]) or not re.search(r"\band\b|,", said[min(at):max(at)]):
+    for f in filters:
+        if f.op not in ("eq", "in") or not 2 <= len(f.values) <= 6 \
+                or not (f.field in model.attributes or f.field in model.entities):
+            continue
+        # Each name written in the question, joined by "and" or "vs" ("Organic or Vegan" is one figure for either).
+        at = [said.find(str(v).casefold()) for v in f.values]
+        if min(at) < 0:
+            continue
+        between = said[min(at):max(at)]
+        if re.search(r"\bor\b", between) or not re.search(r"\band\b|,|\bvs\b\.?|\bversus\b|\bagainst\b", between):
+            continue
+        return plan.model_copy(update={"intent": "breakdown" if plan.intent == "value" else plan.intent,
+                                       "filters": filters, "group_by": [f.field]})
+    return plan
+
+
+# A part of a whole asked for: "what %", "what share", "the proportion", "quelle part".
+_SHARE_OF = re.compile(r"%|\bper\s?cent|\bpercentage\b|\bshare\b|\bproportion\b|\bfraction\b|\bpourcentage\b|"
+                       r"\bquelle\s+part\b|\bla\s+part\b", re.IGNORECASE)
+
+
+def repeat_share(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "What % of customers who bought in 2025 ordered more than once that year?" was planned as the repeat
+    customers counted (593) where it asks what part of those who bought they are (95.3%). Repeat or one-time members
+    asked as a share, for one period, are each member's count of activity and the share of them with more than one
+    (or exactly one)."""
+    from core2.resolve.resolver import find_slug
+
+    life = plan.lifecycle
+    if plan.kind != "query" or life is None or life.status not in ("repeat", "one_time") or plan.time.grain \
+            or plan.group_by or not _SHARE_OF.search(question or ""):
         return plan
-    return plan.model_copy(update={"intent": "breakdown", "group_by": [f.field]})
+    found = find_slug(model, life.measure)
+    if found is None or found[0] != "measure" or getattr(found[1], "format", "") != "count":
+        return plan
+    per = PerMember(of=life.of, summary="share", op="gt" if life.status == "repeat" else "eq", values=[1.0])
+    return plan.model_copy(update={"lifecycle": None, "intent": "share", "measures": [life.measure], "per": per})
+
+
+_HOW_MANY_OF = re.compile(r"\bhow\s+many\b|\bcombien\b", re.IGNORECASE)
+
+
+def cohort_counted(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Of the customers whose first order was in 2024, how many ordered again in 2025?" was planned as a cohort of
+    shares (98%): "how many" of a cohort, with no share asked, is its members counted."""
+    cohort = plan.cohort
+    if plan.kind != "query" or cohort is None or cohort.value != "share" or not _HOW_MANY_OF.search(question or "") \
+            or _SHARE_OF.search(question or ""):
+        return plan
+    return plan.model_copy(update={"cohort": cohort.model_copy(update={"value": "count"})})
+
+
+def _one_field_named_twice(filters: list[Filter]) -> list[Filter]:
+    """Two "is" conditions on one field ("category is Snacks", "category is Beverages"), which no row meets
+    together, as the one condition they mean: either member."""
+    out: list[Filter] = []
+    for f in filters:
+        twin = next((i for i, o in enumerate(out) if o.field == f.field and o.op in ("eq", "in")
+                     and f.op in ("eq", "in")), None)
+        if twin is None:
+            out.append(f)
+            continue
+        values = list(dict.fromkeys([*out[twin].values, *f.values]))
+        out[twin] = out[twin].model_copy(update={"op": "in" if len(values) > 1 else "eq", "values": values})
+    return out
 
 
 def named_not_coded(plan: Plan, model: SemanticModel, question: str) -> Plan:
@@ -1572,6 +1647,38 @@ def one_time_axis(plan: Plan, model: SemanticModel, question: str) -> Plan:
     return plan.model_copy(update={"group_by": [g for g in plan.group_by if g != axis]})
 
 
+# A series of periods asked for: "by month", "monthly", "per quarter", "month by month", "par mois".
+_A_SERIES_OF = re.compile(r"\b(?:by|per|each|every|par|chaque)\s+(month|quarter|mois|trimestre)\b|"
+                          r"\b(month|quarter)(?:ly|\s+by\s+(?:month|quarter))\b|\b(mensuel|trimestriel)", re.IGNORECASE)
+# The period's place in the year asked for: "month of the year", "seasonality", "which month", "busiest month".
+_PLACE_IN_YEAR = re.compile(r"\b(?:month|quarter|mois|trimestre)s?\s+(?:of|in|de)\s+(?:the\s+|l['’]\s*)?(?:year|"
+                            r"ann[ée]e)\b|\bseason|\bsaison|\bwhich\s+(?:month|quarter)|\b(?:busiest|quietest|"
+                            r"best|worst|strongest|weakest)\s+(?:month|quarter)|\bcalendar\s+month|\bsame\s+month",
+                            re.IGNORECASE)
+_SERIES_GRAIN = {"time:month_of_year": "month", "time:quarter_of_year": "quarter"}
+
+
+def a_series_of_months(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Net amount by month for the Ontario region" (a dashboard's tile) was planned by month of the year: January
+    of every year added together, twelve bars that looked like one year and were four. A plain "by month" is a series
+    of months; the month of the year stays when the question asks for it ("by month of the year", "seasonality",
+    "which month is busiest")."""
+    if plan.kind != "query" or plan.time.grain is not None or _PLACE_IN_YEAR.search(question or ""):
+        return plan
+    asked = _A_SERIES_OF.search(question or "")
+    if asked is None:
+        return plan
+    word = next(g for g in asked.groups() if g).lower()
+    grain = "quarter" if word.startswith(("quarter", "trimest")) else "month"
+    axis = next((g for g in plan.group_by if _SERIES_GRAIN.get(g) == grain), None)
+    if axis is None:
+        return plan
+    return plan.model_copy(update={"group_by": [g for g in plan.group_by if g != axis],
+                                   "time": plan.time.model_copy(update={"grain": grain}),
+                                   "sort": [x for x in plan.sort if x.by != axis],
+                                   "intent": "trend" if plan.intent in ("breakdown", "rank", "value") else plan.intent})
+
+
 def dates_as_window(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many customers placed an order in 2024?" was written with the year as a filter on the order date
     (between 1 January and 31 December) and refused: the customers are counted by what they did in a period only
@@ -1611,8 +1718,10 @@ def calendar_meant(plan: Plan, model: SemanticModel, question: str) -> Plan:
     beside a saved segment's name, and as the calendar's without it). One quarter, or one year, named with no
     "fiscal" or "FY" is the calendar's: its dates are put right, and the answer says them. So is a year or a quarter
     to date, this one or the last ("ytd", "last quarter")."""
-    if plan.kind != "query" or plan.time.compare is not None or _FISCAL_SAID.search(question or ""):
+    if plan.kind != "query" or _FISCAL_SAID.search(question or ""):
         return plan
+    if plan.time.compare is not None:
+        return _two_quarters_named(plan, question)
     window = plan.time.window
     if window.fiscal and window.kind != "between":
         # "Plan renewal fees ytd", "this year", "last quarter": the calendar's, as a named year is.
@@ -1641,6 +1750,36 @@ def calendar_meant(plan: Plan, model: SemanticModel, question: str) -> Plan:
         return plan
     return plan.model_copy(update={"time": plan.time.model_copy(update={
         "window": Window(kind="between", start=start, end=end)})})
+
+
+# "q3 26", "Q3'25": a quarter with its year in two digits.
+_SHORT_QUARTER = re.compile(r"(?<![\w-])(?:q|t)([1-4])\s*['’]?\s*(\d{2})\b(?!\s*(?:%|days?|weeks?|months?))", re.IGNORECASE)
+
+
+def _quarter_dates(found: tuple[str, ...]) -> tuple[dt.date, dt.date]:
+    q, year = (int(found[0]), int(found[1])) if found[0] else (int(found[3]), int(found[2]))
+    end = (dt.date(year + 1, 1, 1) if q == 4 else dt.date(year, 3 * q + 1, 1)) - dt.timedelta(days=1)
+    return dt.date(year, 3 * q - 2, 1), end
+
+
+def _two_quarters_named(plan: Plan, question: str) -> Plan:
+    """ "Q3 2026 compared with Q3 2025" was planned once as August to October of each year: two quarters named
+    with their years, and no "fiscal", are the calendar's, each side of the comparison the one nearest it."""
+    compare = plan.time.compare
+    window = plan.time.window
+    named = list(dict.fromkeys([*(_quarter_dates(q) for q in _CAL_QUARTER.findall(question or "")),
+                                *(_quarter_dates((q, f"20{yy}", "", "")) for q, yy in _SHORT_QUARTER.findall(question or ""))]))
+    other = compare.window if compare is not None and compare.kind == "window" else None
+    if len(named) != 2 or other is None or window.kind != "between" or other.kind != "between" \
+            or None in (window.start, other.start):
+        return plan
+    first = min(named, key=lambda d: abs((d[0] - window.start).days))
+    second = named[1] if first == named[0] else named[0]
+    if (window.start, window.end, other.start, other.end) == (*first, *second) and not window.fiscal:
+        return plan
+    return plan.model_copy(update={"time": plan.time.model_copy(update={
+        "window": Window(kind="between", start=first[0], end=first[1]),
+        "compare": compare.model_copy(update={"window": Window(kind="between", start=second[0], end=second[1])})})})
 
 
 def _since_and_until(plan: Plan, roles: set[str]) -> list[Filter]:
@@ -2111,6 +2250,75 @@ def period_meant(plan: Plan, model: SemanticModel | None, question: str) -> Plan
     return plan.model_copy(update={"time": plan.time.model_copy(update=update)}) if update else plan
 
 
+# A day the words name: a date, a month, a weekday, "today", "yesterday", "jour".
+_A_DAY_SAID = re.compile(
+    r"\d{1,2}\s*[/.-]\s*\d{1,2}|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|janvier|f[eé]vrier|mars|avril|mai|juin|juillet|"
+    r"ao[uû]t|septembre|octobre|novembre|d[eé]cembre)\b|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|"
+    r"\b(?:today|yesterday|tomorrow|day|days|daily|date|aujourd|hier|jour|jours)\b", re.IGNORECASE)
+
+
+def days_never_named(plan: Plan, model: SemanticModel | None, question: str) -> Plan:
+    """ "Revenue on orders with a promotion vs without one in 2025" was planned as 31 Dec 2025 against 1 Jan 2025
+    ("up +1565.7%"): the "vs" set two kinds of order apart, not two days. A comparison of two single days that the
+    question names no day of is answered for the one year it names, with no comparison."""
+    time = plan.time
+    other = time.compare.window if time.compare is not None and time.compare.kind == "window" else None
+    if plan.kind != "query" or other is None or not _one_day(time.window) or not _one_day(other) \
+            or _A_DAY_SAID.search(question or ""):
+        return plan
+    years = set(re.findall(r"\b((?:19|20)\d\d)\b", question or ""))
+    if len(years) != 1:
+        return plan
+    year = int(years.pop())
+    window = Window(kind="between", start=dt.date(year, 1, 1), end=dt.date(year, 12, 31))
+    update: dict[str, Any] = {"time": time.model_copy(update={"window": window, "compare": None})}
+    if plan.intent == "compare":
+        update["intent"] = "value"
+    return plan.model_copy(update=update)
+
+
+def _one_day(window: Window) -> bool:
+    return window.kind == "between" and window.start is not None and window.start == window.end
+
+
+# Rates worked out over things a business records apart from its sales: the words that ask for one, the names a
+# table, field or figure holding those things goes by, and what to call them when the data has none.
+_RATES_OVER = (
+    (re.compile(r"\bconversion\s+rates?\b|\btaux\s+de\s+conversion\b", re.IGNORECASE),
+     ("visit", "session", "lead", "traffic", "click", "impression", "opportunit", "funnel", "cart", "trial",
+      "signup", "sign_up", "quote", "enquir", "inquir"), "visits, sessions or leads", "visites, sessions ou prospects"),
+    (re.compile(r"\bbounce\s+rates?\b|\btaux\s+de\s+rebond\b", re.IGNORECASE),
+     ("session", "visit", "pageview", "page_view", "bounce"), "website sessions", "sessions sur le site"),
+    (re.compile(r"\bclick[- ]?through(?:\s+rates?)?\b|\bctr\b|\btaux\s+de\s+clics?\b", re.IGNORECASE),
+     ("click", "impression"), "clicks or impressions", "clics ou impressions"),
+    (re.compile(r"\b(?:e-?mail\s+)?open\s+rates?\b|\btaux\s+d['’]ouverture\b", re.IGNORECASE),
+     ("email", "e_mail", "campaign", "sent"), "emails sent and opened", "e-mails envoyés et ouverts"),
+)
+
+
+def rate_over_nothing(plan: Plan, model: SemanticModel | None, question: str) -> Plan:
+    """ "What is the conversion rate on our website?" was answered "Conversion rate: 40.8%": the share of orders
+    placed on the web store, named a conversion rate. A conversion rate is over visits, sessions or leads, a bounce
+    rate over sessions, a click-through rate over impressions: when no table, field or figure of the data holds
+    any of them, the answer says the data has none, as it does for a figure no metric measures."""
+    if plan.kind != "query" or model is None or not question:
+        return plan
+    names = " ".join([*(t.name for t in model.tables.values()), *(c.name for c in model.columns.values()),
+                      *(m.slug or "" for m in model.measures.values()),
+                      *(m.business_name or "" for m in model.measures.values()), *model.attributes]).casefold()
+    for asked, stems, what, quoi in _RATES_OVER:
+        hit = asked.search(question)
+        if hit is None or any(stem in names for stem in stems):
+            continue
+        french = bool(re.search(r"\btaux\b", hit.group(0), re.IGNORECASE))
+        said = hit.group(0).lower()
+        note = (f"les données n'ont pas de {quoi}, sur lesquels un {said} se calcule" if french
+                else f"the data has no {what}, which a {said} is worked out over")
+        return Plan(kind="unsupported", notes=[note])
+    return plan
+
+
 def _same_dates(window: Window) -> dict:
     """A window as the dates it stands for: "previous month" and "the last 1 month" are the one month."""
     if window.kind == "previous":
@@ -2282,9 +2490,10 @@ _HOW_MANY = re.compile(r"\bhow\s+many\s+(?:different\s+|distinct\s+|unique\s+|se
 def _counts_what_it_asks(plan: Plan, model: SemanticModel, question: str) -> list[str]:
     """ "How many items does the top one have on hand?" was answered with the stock on hand: "how many" of a thing
     the data lists asks for a count of that thing, or a list of them. Members counted by what they did (new,
-    returning, lapsed: the lifecycle) are a count of them too."""
+    returning, lapsed: the lifecycle) are a count of them too, and so are those making up a share of a figure ("how
+    many customers make up 80% of revenue": the Pareto) and those of a first period active in later ones (a cohort)."""
     if plan.kind != "query" or plan.per is not None or plan.absent is not None or plan.bands is not None \
-            or plan.lifecycle is not None:
+            or plan.lifecycle is not None or plan.pareto is not None or plan.cohort is not None:
         return []
     problems = []
     # "How many ingredient lots": the figure the question names in full ("Number of ingredient lots") is what it asks,
@@ -2360,8 +2569,10 @@ def _total_against_average(plan: Plan, model: SemanticModel) -> list[str]:
 def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
     """ "What are the most common sales reasons on internet orders?" was planned as the number of sales reasons
     by sales reason: 1 each. A count of a list's own members grouped by those members says nothing; how often
-    each occurs is a count of the rows of a table that records them."""
-    if plan.kind != "query" or plan.per is not None or not plan.group_by:
+    each occurs is a count of the rows of a table that records them. So is each member's own figure taken first
+    ("the share of customers with more than one order" planned as each customer's number of customers: 0%)."""
+    each = plan.per.of if plan.per is not None and plan.per.of in model.entities else None
+    if plan.kind != "query" or plan.per is not None and each is None or not plan.group_by and each is None:
         return []
     problems = []
     for m in model.measures.values():
@@ -2372,17 +2583,29 @@ def _counted_by_itself(plan: Plan, model: SemanticModel) -> list[str]:
                 *entity.key_columns, entity.code_column, entity.label_column):
             continue
         own = {entity.label_column, entity.code_column, *entity.key_columns} - {None}
-        # Grouped through a link of the list to itself ("by manager": each manager's employees), it is no
-        # longer each member counting itself.
-        if not any((g == entity.slug or g in model.attributes and model.attributes[g].column in own)
-                   and not plan.via.get(g) for g in plan.group_by):
+        # Grouped through a link of the list to itself ("by manager": each manager's employees), or each member's
+        # figure counted where the list links to itself ("direct reports per manager", "how many managers"), it is
+        # no longer each member counting itself.
+        if each == entity.slug and (plan.via.get(entity.slug) or any(
+                j.from_table == j.to_table == entity.table and j.trust != "rejected" for j in model.joins.values())):
+            continue
+        if each != entity.slug and not any((g == entity.slug or g in model.attributes
+                                             and model.attributes[g].column in own) and not plan.via.get(g)
+                                            for g in plan.group_by):
             continue
         plural = names.plural((entity.business_name or entity.slug).lower())
         others = [x.slug for x in model.measures.values() if not x.hidden and x.table != m.table and x.slug
-                  and getattr(x.expr, "agg", None) == "count" and P.all_paths(model, x.table, m.table)][:4]
-        problems.append(f"{m.slug} counts the {plural} themselves: grouped by {entity.slug}, each one is 1. How "
-                        f"often each occurs is a count of the rows that record them, grouped by {entity.slug}"
-                        + (f" ({', '.join(others)})" if others else "") + ".")
+                  and getattr(x.expr, "agg", None) in ("count", "count_distinct")
+                  and P.all_paths(model, x.table, m.table)][:4]
+        rows = f" ({', '.join(others)})" if others else ""
+        if each == entity.slug:
+            one = names.singular(plural)
+            problems.append(f"{m.slug} counts the {plural} themselves: as each {one}'s own figure (per), each one is "
+                            f"1. Each {one}'s figure is a count of the rows that record what they did{rows}.")
+        else:
+            problems.append(f"{m.slug} counts the {plural} themselves: grouped by {entity.slug}, each one is 1. How "
+                            f"often each occurs is a count of the rows that record them, grouped by {entity.slug}"
+                            f"{rows}.")
     return problems
 
 
@@ -2911,10 +3134,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (route_named, all_time_asked, period_meant, calendar_meant, asks.settled, asks.period_before,
+        for rule in (rate_over_nothing, route_named, all_time_asked, period_meant, days_never_named, calendar_meant, asks.settled, asks.period_before,
                      dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, definition_restated, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
-                     list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
+                     list_date_unasked, each_named, repeat_share, cohort_counted, named_not_coded, a_series_of_months, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out, asks.fields_combined, figure_a_quoted_name_holds,
                      shape_said):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
@@ -3400,7 +3623,8 @@ def _segment_split_alone(plan: Plan, model: SemanticModel, question: str) -> dic
 def _filter_not_split(plan: Plan, model: SemanticModel, question: str) -> dict[str, Any] | None:
     """ "Show me vet revenue by month" was split by species as well as filtered on the two species "vet" means: a
     field the plan filters on, by members the reader did not quote, is no split unless the question names the
-    field ("by species"). Members compared by name ("compare "Wholesale" and "Retail"") keep theirs."""
+    field ("by species"). Members compared by name keep theirs: quoted ("compare "Wholesale" and "Retail""), or two
+    or more written out in full ("Compare Small Appliances and Cookware revenue by quarter")."""
     from core2.plan.thread import _field_words
     from core2.plan.values import normalise, quoted_spans
 
@@ -3408,9 +3632,16 @@ def _filter_not_split(plan: Plan, model: SemanticModel, question: str) -> dict[s
         return None
     said = {normalise(question[a:b]) for a, b in quoted_spans(question)}
     words = {names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", question.lower())}
+    written = question.casefold()
+
+    def named(f: Filter) -> bool:
+        if any(isinstance(v, str) and normalise(v) in said for v in f.values):
+            return True
+        return len(f.values) >= 2 and all(
+            isinstance(v, str) and re.search(rf"(?<!\w){re.escape(v.casefold())}(?!\w)", written) for v in f.values)
+
     dropped = [g for g in plan.group_by if not g.startswith("time:") and any(
-        f.field == g and f.op in ("eq", "in") and f.values
-        and not any(isinstance(v, str) and normalise(v) in said for v in f.values) for f in plan.filters)
+        f.field == g and f.op in ("eq", "in") and f.values and not named(f) for f in plan.filters)
         and not _field_words(model, g) & words]
     if not dropped:
         return None

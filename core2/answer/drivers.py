@@ -56,6 +56,7 @@ class Mover:
     member: str
     prior: float
     current: float
+    blank: bool = False          # the rows with no member (no promotion, no reason): shown, never a driver
 
     @property
     def change(self) -> float:
@@ -237,6 +238,18 @@ def candidates(model: SemanticModel, table: str, *, allowed: set[str] | None, sk
     return [slug for _, slug in sorted(scored)][:limit]
 
 
+def _one_thing(model: SemanticModel, field: str) -> str | None:
+    """The thing a filter on ``field`` narrows to one member: an entity, or an attribute that is its name, code or
+    key; None for a property many members share (a province, a segment)."""
+    if field in model.entities:
+        return field
+    a = model.attributes.get(field)
+    e = model.entities.get(a.entity) if a is not None and a.entity else None
+    if e is None:
+        return None
+    return e.slug if a.column in (e.label_column, e.code_column, *e.key_columns) else None
+
+
 # ── the numbers ────────────────────────────────────────────────────────────
 
 
@@ -266,7 +279,8 @@ def _movers(compiled: Compiled, result: QueryResult, logical: Logical) -> list[M
         name = str(display_value(group, row[at[group.name]], logical))
         if code is not None and row[at[code.name]] is not None:
             name = f"{name} ({display_value(code, row[at[code.name]], logical)})"
-        out.append(Mover(name, _number(row[at[prior.name]]), _number(row[at[measure.name]])))
+        out.append(Mover(name, _number(row[at[prior.name]]), _number(row[at[measure.name]]),
+                         blank=row[at[group.name]] is None))
     return out
 
 
@@ -277,7 +291,8 @@ def _kl(p: float, m: float) -> float:
 def score(g: Grouping, change: float, additive: bool) -> None:
     """Which members carry the change (in its direction), how much of it, and how surprising their move is."""
     direction = 1.0 if change >= 0 else -1.0
-    same = [m for m in g.movers if m.change * direction > 0]
+    # The rows with no member ("Unknown": orders with no promotion) moved with everything else: never the reason.
+    same = [m for m in g.movers if m.change * direction > 0 and not m.blank]
     shares_hold = additive and change != 0 and all(m.prior >= 0 and m.current >= 0 for m in g.movers)
     before = sum(m.prior for m in g.movers)
     after = sum(m.current for m in g.movers)
@@ -436,9 +451,11 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     asked = [d for d in dict.fromkeys(plan.drivers.dimensions) if d in model.entities or d in model.attributes] \
         if plan.drivers and plan.drivers.dimensions else []
     skip = {f.field for f in plan.filters} | ({unit_slug} if unit_slug else set())
-    # Filtered to one member ("for formula X"): none of that thing's groupings has two members to set apart.
-    one = {model.attributes[f.field].entity if f.field in model.attributes else f.field
-           for f in plan.filters if f.op in ("eq", "in") and len(f.values) == 1}
+    # Filtered to one member ("for formula X"): none of that thing's groupings has two members to set apart. Only
+    # a filter on the thing itself (its name, code or key) leaves one; one on a property of it ("customers in
+    # Ontario", "the Wholesale segment") leaves many, each of which may be what drove the change.
+    one = {_one_thing(model, f.field) for f in plan.filters if f.op in ("eq", "in") and len(f.values) == 1}
+    one.discard(None)
     skip |= {t for t in one if t in model.entities} | {a.slug for a in model.attributes.values() if a.entity in one}
     kept: list[str] = []
     if asked:

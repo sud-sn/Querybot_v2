@@ -169,6 +169,32 @@ def test_a_product_named_in_full_without_quotes_narrows_the_answer(retail):
     assert any(c["label"] == 'Not only "Cola Large"' for c in payload["follow_up_suggestions"])
 
 
+def test_a_name_two_fields_share_narrows_by_the_thing_it_names(retail):
+    # "Why did Ontario revenue drop?": Ontario is a region, and also the name of a sales team. The region is the
+    # thing the name names; the team is only called after it. Here a customer segment carries a store's name.
+    model, warehouse, _ = retail
+    store = warehouse.query("SELECT store_name FROM stores ORDER BY store_id LIMIT 1").rows[0][0]
+
+    def fetch(slug):
+        column = model.columns[model.attributes[slug].column]
+        return [r[0] for r in warehouse.query(f'SELECT DISTINCT "{column.name}" FROM '
+                                              f'"{model.tables[column.table].name}"').rows]
+
+    shared = build_index(model, fetch)
+    shared.add("customer.segment", [store])
+    assert len(shared.match(f"at {store}")) == 2
+    plan = {"intent": "value", "measures": ["net_amount"], "time": Y2025,
+            "filters": [{"field": "store.name", "op": "eq", "values": [store]}]}
+    ai = Recorded(plan)
+    services = Services(model=model, warehouse=warehouse, complete=ai, index=shared, today=TODAY)
+    payload = answer_question(f"net sales at {store} in 2025", services, Session())
+    assert f'store.name = "{store}"' in ai.sent[0] and f'customer.segment = "{store}"' not in ai.sent[0]
+    hand = _hand(retail, f"""SELECT SUM(o.net_amount) FROM order_lines o JOIN stores s ON s.store_id = o.store_id
+                             WHERE s.store_name = '{store}' AND o.order_date_key BETWEEN 20250101 AND 20251231""")
+    assert round(float(payload["kpi"]["value"]), 2) == round(float(hand[0][0]), 2)
+    assert not any("Not narrowed" in str(c) for c in payload["trust"].get("date_context") or [])
+
+
 def test_a_name_the_plan_leaves_unheld_is_asked_for_then_said_with_the_question_quoting_it(retail):
     whole = {"intent": "value", "measures": ["net_amount"], "time": Y2025}
     ai = Recorded(whole, whole)
@@ -361,3 +387,18 @@ def test_a_half_year_written_as_a_grain_is_the_period_alone():
                              "time": {"grain": "half", "window": {"kind": "between", "start": "2026-01-01",
                                                                   "end": "2026-06-30"}}}))
     assert plan.time.grain is None and plan.time.window.start.isoformat() == "2026-01-01"
+
+
+def test_an_amount_asked_of_an_analysis_that_only_counts_is_left_out_with_a_word(retail):
+    # "Receivables ageing with the amount owed in each bucket": the AI gave the amount to the ageing itself, which
+    # counts the open orders and totals nothing unless a figure is asked of it. The amount was dropped silently.
+    ageing = {"on_time": {"done": "delivered_date", "due": "order_date", "ageing": True}, "intent": "breakdown"}
+    for part in ({"words": "the amount owed in each bucket", "plan": "ageing"},
+                 {"words": "the amount owed in each bucket", "kind": "figure", "plan": "on_time"}):
+        plan = {**ageing, "asked": [{"words": "receivables ageing", "kind": "figure", "plan": "ageing"}, part]}
+        assert _missing(retail, plan, ["days_past_due", "open"]) == [("the amount owed in each bucket",
+                                                                      "not_in_plan")]
+        assert _missing(retail, {**plan, "measures": ["net_amount"]}, ["days_past_due", "open", "net_amount"]) == []
+    # A count asked of it is what it gives.
+    counted = {**ageing, "asked": [{"words": "how many orders are overdue", "kind": "figure", "plan": "ageing"}]}
+    assert _missing(retail, counted, ["days_past_due", "open"]) == []

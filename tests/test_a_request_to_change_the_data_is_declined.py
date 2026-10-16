@@ -26,6 +26,13 @@ from core2.service import Services, Session, answer_question, changes_data
     ("close out all the open bookings from 2024 for me", "Show the open bookings from 2024"),
     ("Set the status of the open bookings to closed", "Show the status of the open bookings"),
     ("Mark all the 2023 invoices as paid", "Show the 2023 invoices"),
+    # A price or a figure put up or down is a change too: "Increase the price of all air fryers by 10%" was answered
+    # with last month's air fryer sales.
+    ("Increase the price of all air fryers by 10%", "Show the price of all air fryers"),
+    ("Raise the credit limit of all the Hospitality customers to $50,000", "Show the credit limit of all the "
+                                                                           "Hospitality customers"),
+    ("Reduce the discount on the clearance promotions by 5 points", "Show the discount on the clearance promotions"),
+    ("Augmente le prix des friteuses de 10 %", "Montre les prix des friteuses"),
 ])
 def test_a_request_to_change_the_data_names_the_rows_to_show(request_, shown):
     assert changes_data(request_) == shown
@@ -34,7 +41,9 @@ def test_a_request_to_change_the_data_names_the_rows_to_show(request_, shown):
 @pytest.mark.parametrize("question", ["Show the open bookings", "How many orders were cancelled?",
                                       "Cancelled orders by month", "Change in sales by region", "Close rate by rep",
                                       "Add up the sales by region", "Update me on sales this month",
-                                      "Removed items by category"])
+                                      "Removed items by category", "Increase in sales by month",
+                                      "Reduced price items by category", "Raised invoices this week",
+                                      "Lower margin products in 2025"])
 def test_a_question_with_the_same_words_is_a_question(question):
     assert changes_data(question) is None
 

@@ -107,6 +107,39 @@ def test_a_things_name_discovery_masked_by_its_own_patterns_reaches_the_index(mo
     assert not allowed("customers", "customer_name") and not allowed("customers", "city")
 
 
+# A distributor's customers are businesses: "Hearthstone Home Centres", "Stonebridge Mercantile", "Quincaillerie
+# Saint-Roch". Discovery's own patterns mask any "customer name", and that mask was final: the values were never
+# read, so no customer was ever found by name ("revenue for Hearthstone Home Centres" narrowed to nothing).
+BUSINESSES = ["Hearthstone Home Centres", "Lakeshore Home & Hardware", "Mosaic Living", "Stonebridge Mercantile",
+              "Bayside Housewares", "Quincaillerie Saint-Roch", "Comptoir Cuisine du Plateau", "Harbourfront Hotel",
+              "Grand Pacific Lodge", "Apex Corporate Gifts", "Keystone Promotions Inc.", "Prairie Outfitters",
+              "Aurora Online Mall", "NorthBay Deals", "Polar Value Stores", "Tamarack Kitchenware",
+              "Boutique Culinaire Saint-Denis", "Auberge du Lac", "Maison Laval Plus", "Golden Horseshoe Home"]
+PEOPLE = ["Olivia Smith", "Liam Tremblay", "Chloé Gagnon", "Raj Patel", "Mei Chen", "Kofi Okonkwo", "Leah Fraser",
+          "Diego Santos", "Nora Lavoie", "Ethan Murphy"]
+
+
+def test_a_customer_name_discovery_masked_reaches_the_index_when_its_values_are_businesses(monkeypatch):
+    import core.value_index as value_index
+
+    monkeypatch.setattr(value_index, "_clearance_gate", lambda account_id: (None, ""))
+    kinds = {"customer_name": "name", "contact_name": "name", "city": "city"}
+    inventory = Inventory(tables={
+        "customers": _masked("customers", "auto", kinds, "customer_name", "contact_name", "city", "segment"),
+        "buyers": _masked("buyers", "auto", {"customer_name": "name"}, "customer_name", "segment"),
+    })
+    values = {("customers", "customer_name"): BUSINESSES, ("customers", "contact_name"): PEOPLE,
+              ("buyers", "customer_name"): PEOPLE}
+    allowed = values_gate("acct-test", inventory, {}, sample=lambda table, column: values.get((table, column), []))
+    assert allowed("customers", "customer_name")
+    assert not allowed("customers", "contact_name") and not allowed("buyers", "customer_name")
+    assert not allowed("customers", "city")
+    # A mask the admin chose is final, whatever the values are.
+    inventory.tables["customers"].mask_mode = "selective"
+    allowed = values_gate("acct-test", inventory, {}, sample=lambda table, column: values.get((table, column), []))
+    assert not allowed("customers", "customer_name")
+
+
 def test_a_column_an_admin_masked_stays_held_whatever_it_names(monkeypatch):
     import core.value_index as value_index
 
@@ -133,3 +166,34 @@ def test_a_model_read_again_keeps_the_same_rule():
                                    for c in ("store_name", "email")})
     mask_as_discovered(model, Inventory(tables={"stores": stores}))
     assert model.columns["stores.store_name"].values_allowed and not model.columns["stores.email"].values_allowed
+
+
+def test_a_customer_name_learn_found_to_be_businesses_stays_named_when_the_model_is_read_again():
+    # Learn read "Hearthstone Home Centres" and the rest and found businesses; the model each question is answered
+    # with applies discovery's masks again, and held the same column back: "What did Hearthstone Home Centres buy?"
+    # was answered for every customer.
+    from core2.bootstrap.service import mask_as_discovered
+    from core2.model.schema import Column, SemanticModel, Table
+
+    names = ("customer_name", "contact_name", "email")
+    customers = _masked("customers", "auto", {"customer_name": "name", "contact_name": "name", "email": "email"},
+                        *names)
+    learned = {"customer_name": True, "contact_name": False, "email": False}
+
+    def model() -> SemanticModel:
+        return SemanticModel(client_id="t", db_type="duckdb", tables={"customers": Table(key="customers",
+                                                                                         name="customers")},
+                             columns={f"customers.{c}": Column(key=f"customers.{c}", table="customers", name=c,
+                                                               data_type="text", values_allowed=learned[c])
+                                      for c in names})
+
+    read_again = model()
+    mask_as_discovered(read_again, Inventory(tables={"customers": customers}))
+    assert read_again.columns["customers.customer_name"].values_allowed
+    assert not read_again.columns["customers.contact_name"].values_allowed
+    assert not read_again.columns["customers.email"].values_allowed
+    # A mask the admin chose after Learn holds it back at once.
+    customers.mask_mode = "selective"
+    read_again = model()
+    mask_as_discovered(read_again, Inventory(tables={"customers": customers}))
+    assert not read_again.columns["customers.customer_name"].values_allowed

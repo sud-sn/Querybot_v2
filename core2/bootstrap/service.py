@@ -90,6 +90,15 @@ def held_by_masking(table: Any, column: str) -> bool:
     return True
 
 
+def _a_name_masked_by_pattern(table: Any, column: str) -> bool:
+    """Did discovery's own patterns, not an admin, mask this column as a name? Its values may then still show it
+    names businesses ("Hearthstone Home Centres"), which a customer's or a buyer's name often does."""
+    if table.mask_all or table.mask_mode != "auto":
+        return False
+    hit = next((c for c in table.masked if ids.norm(c) == ids.norm(column)), None)
+    return hit is not None and (table.mask_kinds.get(hit) or table.mask_kinds.get(column) or "") == "name"
+
+
 def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any],
                 sample: Callable[[str, str], list[str]] | None = None) -> Callable[[str, str], bool]:
     """May common values of this column be read and shown? The value index's own rules, and masking.
@@ -131,7 +140,10 @@ def values_gate(account_id: str, inventory: Inventory, state: dict[str, Any],
 
     def allowed(table_key: str, column: str) -> bool:
         table = inventory.tables.get(table_key)
-        if table is None or held_by_masking(table, column):
+        if table is None:
+            return False
+        if held_by_masking(table, column) and not (_a_name_masked_by_pattern(table, column)
+                                                   and businesses(table_key, column)):
             return False
         if column.casefold() in sensitive.get(table_key, set()) and not businesses(table_key, column):
             return False
@@ -225,7 +237,9 @@ def mask_as_discovered(model: SemanticModel, inventory: Inventory | None) -> Non
 
     Masking is set before discovery, and discovery writes it; a column masked after
     Learn would otherwise have its common values put before the AI, and its members
-    matched, until QueryBot learned again.
+    matched, until QueryBot learned again. A name discovery's own patterns masked that
+    Learn let through was weighed by its values there (values_gate: businesses, never
+    people), by the same patterns: it stays named.
     """
     if inventory is None:
         return
@@ -233,7 +247,8 @@ def mask_as_discovered(model: SemanticModel, inventory: Inventory | None) -> Non
         if not (table.masked or table.mask_all):
             continue
         for column in model.columns.values():
-            if column.table == key and held_by_masking(table, column.name):
+            if column.table == key and held_by_masking(table, column.name) \
+                    and not (column.values_allowed and _a_name_masked_by_pattern(table, column.name)):
                 column.values_allowed = False
 
 

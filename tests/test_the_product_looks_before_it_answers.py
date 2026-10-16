@@ -707,3 +707,40 @@ def test_why_a_figure_changed_is_followed_one_step_down(retail):
         float(_one(retail, f"SELECT {CHANGE} FROM ({LINES}) l WHERE store_name = '{store}'")), abs=0.01)
     assert any(f["values"] == [store] for f in step["plan"]["filters"])
 
+
+
+# "How much did we invoice in Q3 2026?" was answered "Number of invoices in Q3 2026: 4,075": how much asks for an
+# amount, and a count of rows is none.
+COUNTED = {"measures": ["number_of_order_lines"], "time": MAY}
+AMOUNT = {"measures": ["net_amount"], "time": MAY}
+
+
+def test_how_much_answered_with_only_a_count_is_read_again_as_an_amount(retail):
+    chat = Told(retail)
+    chat.plans += [COUNTED, AMOUNT]
+    got = chat.ask("How much did we sell in May 2026?")
+    assert len(chat.told) == 2 and "asks how much" in chat.told[1]
+    assert float(got["kpi"]["value"]) == pytest.approx(float(_one(retail, f"SELECT SUM(net_amount) FROM ({LINES}) l "
+                                                                          f"WHERE {IN_MAY}")), abs=0.01)
+    assert got["reply"]["seen"][0]["kind"] == "looked_again"
+
+
+def test_how_many_answered_with_a_count_and_how_much_with_an_amount_are_never_read_again(retail):
+    chat = Told(retail)
+    chat.ask("How many order lines did we have in May 2026?", COUNTED)
+    chat.ask("How much did we sell in May 2026?", AMOUNT)
+    assert len(chat.told) == 2           # one call each: nothing read again
+
+
+# "Revenue on orders with a promotion vs without one" was planned as two conditions on the promotion, filled and
+# empty, that no row meets together: "no value".
+NEITHER = {"intent": "compare", "measures": ["net_amount"], "time": MAY,
+           "filters": [{"field": "customer", "op": "not_null"}, {"field": "customer", "op": "is_null"}]}
+
+
+def test_two_conditions_no_row_meets_together_are_read_again(retail):
+    chat = Told(retail)
+    chat.plans += [NEITHER, {"measures": ["net_amount"], "group_by": ["store.name"], "time": MAY}]
+    got = chat.ask("Net sales of orders with a customer vs without one in May 2026")
+    assert len(chat.told) == 2 and "no row can meet both" in chat.told[1]
+    assert got["data"]["rows"]
