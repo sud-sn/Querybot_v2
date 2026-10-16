@@ -24,6 +24,7 @@ from collections.abc import Callable
 from core2.bootstrap import names
 from core2.model.schema import SemanticModel
 from core2.plan.followup import asks_series, names_own_period
+from core2.plan import asks
 from core2.plan.ir import Filter, Plan, Window
 
 # "Overall", "in total", "for everyone": every filter of the answer above lets go.
@@ -138,7 +139,7 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
             update["intent"] = "trend" if plan.time.grain else "value"
     time = plan.time
     if time.compare is not None and time.compare == previous.time.compare and plan.intent != "drivers" \
-            and names_own_period(question) and not _COMPARES.search(question):
+            and names_own_period(question) and not _COMPARES.search(question) and not asks.compares(question):
         # "Break 1997 down by region" after 1997 against 1996: 1997 by region, no longer a comparison.
         time = time.model_copy(update={"compare": None})
         update["sort"] = [s for s in plan.sort if s.by not in ("change", "pct_change")]

@@ -38,6 +38,7 @@ from core2.answer.suggestions import breakdowns, drills, follow_ups
 from core2.compile.compiler import CompileError, compile_query, repeats_sql
 from core2.compile.shapes import fill_edges
 from core2.date_choice import choices as date_choices
+from core2.plan import asks
 from core2.plan.chips import french as chip_french, offered
 from core2.model.schema import Attribute, DateRole, Entity, Join, Measure, SemanticModel
 from core2.plan.followup import NEW_PREFIX, Reading, read_turn
@@ -130,6 +131,18 @@ _ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, 
              "fifth": 4, "5th": 4, "sixth": 5, "6th": 5, "last": -1}
 _FILLER = {"the", "one", "option", "number", "no", "please", "use", "i", "mean", "meant", "it", "is", "via",
            "by", "a", "an"}
+
+
+def _instead(plan: Plan, model, outcome: Outcome) -> list[tuple[str, Plan]]:
+    """The other figures a business ask may mean, when the figure was picked for it ("Gross amount instead"): the
+    same answer for each, one click away with no AI."""
+    out: list[tuple[str, Plan]] = []
+    for slug in outcome.instead:
+        measure = next((m for m in model.measures.values() if m.slug == slug), None)
+        if measure is not None:
+            out.append((f"{measure.business_name} instead",
+                        asks.with_figure(plan, model, slug).model_copy(update={"follow_up": "refine"})))
+    return out
 
 
 def _plain(text: str) -> str:
@@ -499,6 +512,12 @@ def answer_question(question: str, services: Services, session: Session, *, ques
         session.own = {**kept, made.key: made}
     if session.own:
         services = replace(services, model=own_metric.with_own(services.model, session.own))
+    last = session.turns[-1] if session.turns else None
+    if last is not None and last.unanswered and _plain(last.question) == _plain(question):
+        # The question asked again after no answer came back (the AI's per-minute limit, a timeout, a refusal): read
+        # as it was the first time, after the answer on screen, never as going on with itself. A margin asked again
+        # after a rate limit had kept the figure and the condition of the answer above.
+        session.turns = session.turns[:-1]
     kept_before = session.turns[-1] if session.turns else None
     try:
         payload = _answer_question(defined.ask if defined is not None else question, services, session,
@@ -933,7 +952,12 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     standing_filters = [f for s in applied for f in s.filters]
     looked = _look(plan, payload, services, ctx, empty=empty, carried=carried, standing=standing_filters)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
-    chips = offered(plan, model)
+    chips = [*offered(plan, model), *_instead(plan, model, outcome), *asks.other_readings(plan, model, question)]
+    read_as = asks.badges(plan, model, outcome.picked)
+    if read_as and isinstance(payload.get("answer"), dict):
+        # "Read as Net amount": the figure a business ask was read as, when the AI asked which (the others are
+        # chips); and how a run rate is worked out.
+        payload["answer"]["badges"] = [*(payload["answer"].get("badges") or []), *read_as]
     if chips:
         # Either wording runs the chip's plan: a French reader's click sends the French words.
         session.offers = {_plain(w): changed for words, changed in chips for w in (words, chip_french(words))}

@@ -12,6 +12,7 @@ import re
 
 from core2.bootstrap.names import plural
 from core2.model.schema import SemanticModel
+from core2.plan.asks import READINGS_FR
 from core2.plan.ir import Plan
 from core2.resolve.resolver import find_slug
 
@@ -191,6 +192,7 @@ def _absent(plan: Plan, model: SemanticModel) -> list[tuple[str, Plan]]:
 _UNITS_FR = {"day": ("jours", "derniers"), "week": ("semaines", "dernières"), "month": ("mois", "derniers"),
              "quarter": ("trimestres", "derniers"), "year": ("ans", "derniers")}
 _FIXED_FR = {
+    **READINGS_FR,
     "Median instead": "Médiane à la place", "Average instead": "Moyenne à la place",
     "Highest instead": "Le plus haut à la place", "Lowest instead": "Le plus bas à la place",
     "Year to date instead": "Depuis le début de l'année à la place",
@@ -226,6 +228,7 @@ _FORMS_FR = [
     (re.compile(r"^Every (.+) listed$"), lambda m: f"Chaque {m[1]} de la liste"),
     (re.compile(r"^Only those with (.+) before$"), lambda m: f"Seulement ceux qui avaient {m[1]} avant"),
     (re.compile(r"^Including (.+)$"), _including),
+    (re.compile(r"^(.+) instead$"), lambda m: f"{m[1]} à la place"),      # "Gross amount instead"
 ]
 
 

@@ -88,10 +88,27 @@ def test_a_question_too_vague_to_plan_is_asked_back_with_the_main_figures(retail
 
     from core2.plan.planner import plan_question
 
-    outcome = plan_question(retail, "how are we doing?", lambda system, user: json.dumps(
+    outcome = plan_question(retail, "show me the numbers", lambda system, user: json.dumps(
         {"kind": "unsupported", "notes": [why]}), today=dt.date(2026, 6, 15))
     assert outcome.plan.kind == "clarify" and outcome.plan.clarify.about == "other", outcome.plan
     assert len(outcome.plan.clarify.options) >= 2
+
+
+@pytest.mark.parametrize("why", ["The question is too vague to determine a specific measure or intent.",
+                                 "The request is ambiguous: it does not specify what to measure."])
+def test_how_we_are_doing_refused_as_vague_is_answered_with_the_main_figure(retail, why):
+    # A business ask (core2/plan/asks.py): this year so far against the same days last year, month by month, for the
+    # data's main money; the other main figures a click away.
+    import datetime as dt
+    import json
+
+    from core2.plan.planner import plan_question
+
+    outcome = plan_question(retail, "how are we doing?", lambda system, user: json.dumps(
+        {"kind": "unsupported", "notes": [why]}), today=dt.date(2026, 6, 15))
+    assert outcome.plan.kind == "query" and outcome.plan.measures == ["net_amount"], outcome.plan
+    assert outcome.plan.time.compare is not None and outcome.plan.time.grain == "month"
+    assert outcome.picked == "net_amount" and outcome.instead
 
 
 def test_a_question_nothing_in_the_data_answers_is_still_refused(retail):

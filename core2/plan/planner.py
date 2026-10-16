@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
+from core2.plan import asks
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import (asks_series, keeps_period, measures_named, named_longer, names_own_period,
                                  points_at_period, the_period)
@@ -47,8 +48,9 @@ How to plan:
    does it go", "what do you know about customers", "what can I ask about purchasing". Put what it asks
    about in about: measure, group or date slugs, or a subject's name as written after ## in the catalog;
    leave about empty for the data as a whole. "smalltalk" for greetings and thanks. "unsupported" when
-   nothing in the catalog answers it; say why in notes. A question that names no figure at all ("how are we
-   doing?", "show me the numbers") is no refusal: clarify, about "other", with 2-4 of the main measures.
+   nothing in the catalog answers it; say why in notes. A question that names no figure at all ("show me the
+   numbers") is no refusal: clarify, about "other", with 2-4 of the main measures; "how are we doing?" is a business
+   ask (rule 16).
 2. measures: the measure slugs the question names. Never swap in a different measure because it is close
    (sales is not margin, quantity is not value, count of rows is not count of orders). When the question
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
@@ -191,6 +193,12 @@ How to plan:
 15. A measure the catalog says "is X less Y" (net = debit less credit, revenue = gross less discount) is the
    total of an account, a category or any member asked about ("operating expense by profit centre", "sales of
    valves"): use it, never X or Y alone, unless the question names X or Y ("debits", "gross amount").
+16. Business asks are answered, never asked back: a comparison ("what is my revenue comparison?", "compare spend
+   with last year"), "how are we doing", "how is spend tracking", "are we on track", "are we growing", "which X grew
+   the most", "this year and last year", a run rate. Plan the one figure the question names -- for revenue or sales
+   the money taken in, net before gross; never a target, budget, cost, discount or tax it does not name -- and any
+   split it asks for; Solviz sets the periods (this year so far against the same days last year), says which figure
+   it read and offers the others. For a run rate plan the figure itself: Solviz works out the run rate.
 """
 
 
@@ -216,6 +224,8 @@ class Outcome:
     raw: list[str] = field(default_factory=list)        # the model's answers, for the record
     masked: Masked | None = None                        # the placeholders used, when values are withheld
     tried: Plan | None = None                           # the last plan that failed its check, if any
+    picked: str | None = None                           # the figure a business ask was read as, when the AI asked
+    instead: list[str] = field(default_factory=list)    # the other figures it may mean, offered on the answer
 
 
 def _examples(model: SemanticModel) -> str:
@@ -2298,6 +2308,13 @@ def fill_in(plan: Plan, model: SemanticModel, previous: Plan | None, said_follow
     if plan.kind != "query":
         return plan
     update: dict[str, Any] = {}
+    # A field written by its own name where the catalog has it under its table ("service_type" for
+    # booking_line.service_type): the one grouping it can be, put right rather than refused twice.
+    known = set(model.attributes) | set(model.entities) | {r.slug for r in model.date_roles.values()}
+    grouped = [g if g in known or g.startswith("time:") or len(
+        ends := [a for a in model.attributes if a.endswith("." + g)]) != 1 else ends[0] for g in plan.group_by]
+    if grouped != plan.group_by:
+        update["group_by"] = grouped
     named = {*plan.measures, *(d.name for d in plan.derived), *(d.name for d in plan.durations)}
     slugs = {m.slug for m in model.measures.values()}
     extra = [s.by for s in plan.sort if s.by in slugs and s.by not in named and s.by not in plan.group_by]
@@ -2398,7 +2415,7 @@ def check(plan: Plan, model: SemanticModel, today: dt.date, question: str = "") 
             plan, model, _ = worked_out(plan, model, Context(today=today))
         except ResolveError as exc:
             return [f"{exc.message}."], ""
-    shape = _shape(plan, model, question)
+    shape = _shape(plan, model, question) or asks.figure_problems(plan, model, question)
     if shape:
         return shape, ""
     compared = _figure_against_figure(plan, model) or _total_against_average(plan, model)
@@ -2616,6 +2633,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     shown = (scrub or (lambda text: text))(masked.question if masked else question)
     tried: Plan | None = None
     text = ""
+    ask = asks.ask_of(question)
+    picked: str | None = None
+    instead: list[str] = []
+    offered: list[str] = []          # the figures the AI asked back between, for a business ask
     for attempt in range(2):
         prompt = tail if attempt == 0 else (
             f"{tail}\n\nYOUR PREVIOUS ANSWER:\n{text}\n\nPROBLEMS:\n" + "\n".join(f"- {p}" for p in problems)
@@ -2678,6 +2699,26 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             # Asked back again when told ("how many orders did we take?"): the figure named is planned in code, its
             # period and the rest read from the question's words by the rules below.
             plan = Plan(kind="query", intent="value", measures=[named.slug], time={"window": _window_said(question)})
+        if ask is not None and plan.kind in ("clarify", "unsupported", "describe_data") and not plan.about and not (
+                plan.clarify is not None and plan.clarify.about in ("member", "date", "path", "follow_up")):
+            # "What is my revenue comparison?" was asked back (net, gross, discount or cost amount?), and so was "what
+            # is our sales run rate?": a business ask is answered at once (core2/plan/asks.py). Told so, the AI plans
+            # the figure; asked back again, the figure is picked here, and the answer offers the others.
+            if attempt == 0:
+                offered = asks.offered(plan, model, question)
+                problems, hint = [asks.figure_problem(ask)], ""
+                continue
+            found = asks.figure_of(plan, model, question, main_measures(model))
+            if found is not None:
+                plan, instead = found
+                picked = plan.measures[0]
+        main = asks.main_figure(plan, model, question, main_measures(model)) if ask is not None and picked is None \
+            else None
+        if main is not None:
+            # "Which locations grew the most vs last year?" counted in batches: an ask naming no figure is about the
+            # data's main money; what the AI chose is a click away.
+            plan, instead = main
+            picked = plan.measures[0]
         refused = plan.kind in ("unsupported", "clarify") and (plan.clarify is None or plan.clarify.about != "member")
         reuse = _derived_named(question, defined or []) if attempt == 0 and refused else []
         if reuse:
@@ -2725,10 +2766,11 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         snapped = snapshot_date(plan, model, question)         # "in each snapshot"
         if snapped is not plan and not check(snapped, model, today, shown)[0]:
             plan = snapped
-        for rule in (route_named, all_time_asked, period_meant, calendar_meant, dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
+        for rule in (route_named, all_time_asked, period_meant, calendar_meant, asks.settled, asks.period_before,
+                     dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
                      counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
-                     series_in_a_name, figure_parts_left_out, shape_said):
+                     series_in_a_name, figure_parts_left_out, asks.fields_combined, shape_said):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice
@@ -2768,7 +2810,14 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             alone = one_member_series(plan, model)
             if alone is not plan and not check(alone, model, today, shown)[0]:
                 plan = alone
-            return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried)
+            if picked is None and offered and plan.kind == "query":
+                # Told an ask is answered at once, the AI chose one of the figures it had asked between ("revenue":
+                # net, gross, discount or cost amount?): the answer says which, and offers the others.
+                chosen = asks.figure_counted(plan)
+                if chosen in offered:
+                    picked, instead = chosen, [s for s in offered if s != chosen][:3]
+            return Outcome(plan, repaired=attempt > 0, raw=raw, masked=masked, tried=tried, picked=picked,
+                           instead=instead if picked else [])
         tried = plan
     ways = ways_on(tried, model) or main_figures(model, question)
     return Outcome(Plan(kind="clarify", clarify=Clarify(
@@ -2799,13 +2848,10 @@ def period_words(window: Window) -> str:
     return ""
 
 
-def main_figures(model: SemanticModel, question: str) -> list[str]:
-    """The main figures of the data ("show me the 2025 numbers"): the money, then the count, of its largest
-    tables of events, for the year the question names."""
-    year = re.search(r"\b(?:19|20)\d{2}\b", question or "")
-    period = f" in {year.group()}" if year else ""
+def main_measures(model: SemanticModel) -> list[Measure]:
+    """The data's main figures: the money, then the count, of its largest tables of events."""
     facts = sorted((t for t in model.tables.values() if t.kind == "fact"), key=lambda t: -(t.row_count or 0))
-    out: list[str] = []
+    out: list[Measure] = []
     for table in facts[:2]:
         own = [m for m in model.measures.values() if m.table == table.key and m.status != "rejected"]
         # What a business reads first: the net or the revenue before the gross, a discount or a tax; the documents
@@ -2820,9 +2866,15 @@ def main_figures(model: SemanticModel, question: str) -> list[str]:
         counts = sorted((m for m in own if m.format == "count" and m.kind != "model"),
                         key=lambda m: (not (isinstance(m.expr, AggExpr) and m.expr.agg == "count_distinct"),
                                        m.business_name))
-        for m in (money[:1] + counts[:1]):
-            out.append(f"{m.business_name}{period}")
-    return list(dict.fromkeys(out))[:4]
+        out += [m for m in money[:1] + counts[:1] if m not in out]
+    return out
+
+
+def main_figures(model: SemanticModel, question: str) -> list[str]:
+    """The main figures of the data ("show me the 2025 numbers"), for the year the question names."""
+    year = re.search(r"\b(?:19|20)\d{2}\b", question or "")
+    period = f" in {year.group()}" if year else ""
+    return list(dict.fromkeys(f"{m.business_name}{period}" for m in main_measures(model)))[:4]
 
 
 def ways_on(tried: Plan | None, model: SemanticModel) -> list[str]:
@@ -3039,7 +3091,7 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
     the_series = previous is not None and previous.kind == "query" and previous.time.grain == time.grain \
         and not plan.group_by and _COMPARE_IT.search(question or "") is not None
     if (plan.intent == "compare" or ranks_members) and time.grain is not None and not asks_series(question) \
-            and not the_series \
+            and not the_series and not asks.month_by_month(question) \
             and not re.search(rf"\b(?:{time.grain.replace('fiscal_', '')}|daily|annual)", _without_spans(question),
                               re.IGNORECASE):
         time = time.model_copy(update={"grain": None})
