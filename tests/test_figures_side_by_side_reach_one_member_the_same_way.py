@@ -253,3 +253,59 @@ def test_a_link_the_data_will_not_check_is_not_followed_and_says_why(shop, monke
     payload = answer_question("Sales by store", services, Session())
     assert payload.get("data") is None
     assert "could not be checked against the data" in payload["answer"]["headline"], payload["answer"]
+
+
+# ── each figure's own link to the member: one shared member ─────────────────
+#
+# Sales lines and monthly targets each hold their store: "net sales against target by store" (or by the store's
+# region) is by the same store for both, as a data model's shared dimension. It was said to be "not reached the
+# same way by every figure (sales line by their own; monthly target by their own)", as two different stores.
+
+
+@pytest.fixture(scope="module")
+def targets():
+    con = duckdb.connect()
+    con.execute("CREATE TABLE regions (region_id INTEGER PRIMARY KEY, region_name VARCHAR)")
+    con.execute("INSERT INTO regions VALUES (1, 'North'), (2, 'South')")
+    con.execute("CREATE TABLE stores (store_id INTEGER PRIMARY KEY, store_name VARCHAR, region_id INTEGER)")
+    con.execute("INSERT INTO stores SELECT i, 'Store ' || i, 1 + i % 2 FROM range(1, 7) t(i)")
+    con.execute("CREATE TABLE sales_lines (line_id INTEGER PRIMARY KEY, sale_date DATE, store_id INTEGER, "
+                "net_amount DECIMAL(12, 2))")
+    con.execute("INSERT INTO sales_lines SELECT i, DATE '2026-01-01' + CAST(i % 180 AS INTEGER), 1 + (i * 5) % 6, "
+                "round(20 + (i * 29) % 200, 2) FROM range(1, 601) t(i)")
+    con.execute("CREATE TABLE monthly_targets (target_id INTEGER PRIMARY KEY, target_month DATE, store_id INTEGER, "
+                "target_amount DECIMAL(12, 2))")
+    con.execute("INSERT INTO monthly_targets SELECT row_number() OVER (), m, s, 2500 + s * 100 FROM "
+                "(SELECT DATE '2026-01-01' + INTERVAL (k) MONTH AS m FROM range(0, 6) t(k)), "
+                "(SELECT i AS s FROM range(1, 7) t(i))")
+    fks = [_fk("stores", "region_id", "regions", "region_id"),
+           _fk("sales_lines", "store_id", "stores", "store_id"),
+           _fk("monthly_targets", "store_id", "stores", "store_id")]
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse, declared_fks=fks), client_id="targets",
+                        options=BuildOptions(workers=1))
+    return con, model
+
+
+def _attribute(model, table: str, column: str) -> str:
+    return next(a.slug for a in model.attributes.values() if a.column in model.columns
+                and model.tables[model.columns[a.column].table].name == table
+                and model.columns[a.column].name == column)
+
+
+@pytest.mark.parametrize("table, column", [("stores", "store_name"), ("regions", "region_name")])
+def test_figures_each_linked_to_their_store_are_by_the_same_store(targets, table, column):
+    con, model = targets
+    net, target = _measure(model, "net_amount"), _measure(model, "target_amount")
+    by = _attribute(model, table, column)
+    payload = _ask(con, model, Session(), f"Net amount and target amount by {column.split('_')[0]}",
+                   {"intent": "breakdown", "measures": [net, target], "group_by": [by], "time": H1})
+    assert payload.get("data"), payload["answer"]
+    said = " ".join(payload.get("coverage_caveats") or [])
+    assert "not reached the same way" not in said, said
+    group = "s.store_name" if table == "stores" else "g.region_name"
+    joins = "JOIN stores s USING (store_id) JOIN regions g ON g.region_id = s.region_id"
+    assert _by(payload, net) == pytest.approx(_truth(con, f"""SELECT {group}, SUM(x.net_amount) FROM sales_lines x
+        {joins} WHERE x.sale_date BETWEEN '2026-01-01' AND '2026-06-30' GROUP BY 1"""))
+    assert _by(payload, target) == pytest.approx(_truth(con, f"""SELECT {group}, SUM(x.target_amount)
+        FROM monthly_targets x {joins} WHERE x.target_month BETWEEN '2026-01-01' AND '2026-06-30' GROUP BY 1"""))

@@ -1965,10 +1965,46 @@ async def database_workbook_upload(request: Request):
     except Exception as exc:  # noqa: BLE001 - said, never a page error
         log.warning("Workbook upload failed: %s", exc)
         return JSONResponse({"status": "error", "message": "The workbook could not be read."}, status_code=400)
+    return _workbook_read(loaded, name)
+
+
+def _workbook_read(loaded, name: str) -> JSONResponse:
+    """What a stored workbook holds, for the page to say back: its sheets as tables, and what was left out."""
     return JSONResponse({"status": "ok", "workbook": loaded.sha256, "file_name": loaded.file_name or name,
                          "tables": [{"sheet": t.sheet, "name": t.name, "rows": t.rows, "columns": len(t.columns),
                                      "left_out": t.left_out} for t in loaded.tables],
                          "skipped": loaded.skipped})
+
+
+@router.post("/databases/workbook/sample")
+async def database_workbook_sample(request: Request):
+    """The sample workbook (a retail chain's orders, products, stores, customers, returns and targets) as the
+    connection's workbook: a workspace to try with no database, and no file to find."""
+    if not _is_auth(request):
+        return JSONResponse({"status": "error", "message": "Not authenticated"}, status_code=401)
+    from core import workbook_source
+
+    try:
+        loaded = await asyncio.get_running_loop().run_in_executor(None, workbook_source.save_sample)
+    except workbook_source.WorkbookError as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=400)
+    return _workbook_read(loaded, workbook_source.SAMPLE_NAME)
+
+
+@router.get("/databases/workbook/sample.xlsx")
+async def database_workbook_sample_file(request: Request):
+    """The sample workbook to download: to open in Excel, or to put in SharePoint or OneDrive and try a link."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    from fastapi.responses import FileResponse
+
+    from core import workbook_source
+
+    if not workbook_source.SAMPLE.is_file():
+        return JSONResponse({"status": "error", "message": "The sample workbook is not on this server."},
+                            status_code=404)
+    return FileResponse(str(workbook_source.SAMPLE), filename=workbook_source.SAMPLE_NAME,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.post("/databases/test")

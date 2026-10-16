@@ -103,8 +103,11 @@ def test_figures_read_from_it_are_the_sheets_own(store):
 
 
 def test_a_new_version_is_a_new_copy_and_the_same_file_is_loaded_once(store):
-    first = W.save(workbook(), "sales.xlsx")
-    again = W.save(workbook(), "sales.xlsx")
+    # The same file uploaded twice: the same bytes. Two builds can differ by the second they were written in
+    # (an .xlsx keeps the time it was saved), and under a slow run they did.
+    data = workbook()
+    first = W.save(data, "sales.xlsx")
+    again = W.save(data, "sales.xlsx")
     assert again.sha256 == first.sha256 and again.loaded_at == first.loaded_at
     newer = W.save(workbook(ORDERS[:3], extra_sheet=True), "sales.xlsx")
     assert newer.sha256 != first.sha256 and newer.shape() != first.shape()

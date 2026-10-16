@@ -1189,6 +1189,64 @@ _DID = (("one_time", r"\bon\s+(?:only\s+)?(?:one|1|a\s+single)\s+(?:\w+\s+)?day(
 _A_RATE = re.compile(r"\b(?:rate|taux|percent(?:age)?|pourcentage|ratio|share|proportion)\b|%", re.IGNORECASE)
 
 
+# What a lifecycle status means by none: won back (none in the period before), lapsed (none in this one), new (none
+# ever before), the churn rate (the lapsed).
+_DEFINED_BY_NONE = ("new", "won_back", "lapsed", "churn_rate")
+
+
+def definition_restated(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "How many of those did we win back, ones with no fills at all the quarter before?" was planned as won back and
+    "number of fills = 0", which no plan can answer: the reader was saying what won back means. A condition of none on
+    the lifecycle's own activity restates the status, and is let go."""
+    lc = plan.lifecycle
+    if plan.kind != "query" or lc is None or lc.status not in _DEFINED_BY_NONE or not plan.filters:
+        return plan
+
+    def none(f: Filter) -> bool:
+        try:
+            values = [float(v) for v in f.values]
+        except (TypeError, ValueError):
+            return False
+        return f.field == lc.measure and (f.op in ("eq", "lte") and values == [0.0] or f.op == "lt" and values == [1.0])
+
+    kept = [f for f in plan.filters if not none(f)]
+    return plan if len(kept) == len(plan.filters) else plan.model_copy(update={"filters": kept})
+
+
+_QUOTED_NAME = re.compile(r'"([^"]+)"|\u201c([^\u201d]+)\u201d')
+_COUNT_WORDS = {"number", "count", "of", "total", "nombre", "de"}
+
+
+def figure_a_quoted_name_holds(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ 'top 5 accts under "Operating Expenses" in "CAD"' right after "how many journals did we post in 2025" was
+    ranked by the number of journals kept from above. A ranking that names no figure of its own, under a member whose
+    quoted name holds a money figure's name ("Operating Expenses" -> Expenses), counts that money; a count the
+    question names ("by number of journals") stays."""
+    if plan.kind != "query" or not plan.group_by or not (plan.limit or plan.sort) or len(plan.measures) != 1 \
+            or plan.derived or plan.figures or plan.rates or plan.lifecycle is not None or plan.segment is not None:
+        return plan
+    counted = next((m for m in model.measures.values() if m.slug == plan.measures[0]), None)
+    quoted = [m.group(1) or m.group(2) for m in _QUOTED_NAME.finditer(question or "")]
+    if counted is None or counted.format != "count" or not quoted:
+        return plan
+
+    def words(text: str) -> set[str]:
+        return {names.singular(w) for w in re.findall(r"[a-zà-ÿ]+", (text or "").casefold())}
+
+    if (words(counted.business_name) - _COUNT_WORDS) & words(_QUOTED_NAME.sub(" ", question)):
+        return plan                          # "top 5 accounts by number of journals under ...": the count asked
+    held = [m for m in model.measures.values() if not m.hidden and m.format == "currency" and words(m.business_name)
+            and any(words(m.business_name) <= words(q) for q in quoted)]
+    longest = max((len(words(m.business_name)) for m in held), default=0)
+    held = [m for m in held if len(words(m.business_name)) == longest]
+    if len(held) != 1:
+        return plan
+    money = held[0]
+    return plan.model_copy(update={"measures": [money.slug],
+                                   "sort": [s.model_copy(update={"by": money.slug}) if s.by == counted.slug else s
+                                            for s in plan.sort]})
+
+
 def members_by_what_they_did(plan: Plan, model: SemanticModel, question: str) -> Plan:
     """ "How many suppliers did we order from on 2 or more days this month" was planned as a count of suppliers per
     supplier (none), "how many customers transacted every single month" found nothing to answer, and "combien de
@@ -2375,6 +2433,19 @@ def _named_in_full(model: SemanticModel, question: str):
     return said[0] if len({m.business_name.casefold() for m in said}) == 1 and len(said) == 1 else None
 
 
+def _about_figures(plan: Plan, model: SemanticModel) -> Plan:
+    """A question back between figures, written with no "about" ("how many orders did we take: Number of orders,
+    Number of order lines, Quantity or Net amount?"): about the measure, so the rules for a figure the question
+    names read it. Every option is one of the data's figures, by its name or its slug."""
+    asked = plan.clarify
+    if plan.kind != "clarify" or asked is None or asked.about != "other" or len(asked.options) < 2:
+        return plan
+    names = {n.casefold() for m in model.measures.values() if not m.hidden for n in (m.slug, m.business_name) if n}
+    if not all(str(o).strip().casefold() in names for o in asked.options):
+        return plan
+    return plan.model_copy(update={"clarify": asked.model_copy(update={"about": "measure"})})
+
+
 def _measures_named(model: SemanticModel, question: str) -> set[str]:
     from core2.plan.followup import measures_named
 
@@ -2648,6 +2719,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         except (ValueError, ValidationError) as exc:
             problems, hint = [_short(exc)], ""
             continue
+        plan = _about_figures(plan, model)
         if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
                 and matches and len({m.text.casefold() for m in matches}) == len(matches):
             # "How many items do we hold from the first supplier on that list?" was asked back ("which supplier
@@ -2768,9 +2840,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             plan = snapped
         for rule in (route_named, all_time_asked, period_meant, calendar_meant, asks.settled, asks.period_before,
                      dates_as_window, where_we_have, counted_each, counted_per_itself, members_asked,
-                     counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
+                     counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, definition_restated, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, named_not_coded, one_time_axis, restated_rates, margin_over_sales,
-                     series_in_a_name, figure_parts_left_out, asks.fields_combined, shape_said):
+                     series_in_a_name, figure_parts_left_out, asks.fields_combined, figure_a_quoted_name_holds,
+                     shape_said):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice

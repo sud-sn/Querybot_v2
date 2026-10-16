@@ -684,3 +684,79 @@ def test_new_vs_returning_customers_keeps_both(retail):
                                                           "end": "2025-12-31"}}})
     first = got["export_rows"][0]
     assert "new" in first and "returning" in first, first
+
+
+# ── after Phase 7: the last two misses ──────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def ledger():
+    built, model = learn(domains.build("finance"), "descriptive")
+    warehouse = DuckDBWarehouse(built.con)
+
+    def fetch(slug: str) -> list[object]:
+        column = model.columns[model.attributes[slug].column]
+        table = model.tables[column.table]
+        return [r[0] for r in warehouse.query(f'SELECT DISTINCT "{column.name}" FROM "{table.name}"').rows]
+
+    return built, model, warehouse, build_index(model, fetch)
+
+
+Y25 = {"window": {"kind": "between", "start": "2025-01-01", "end": "2025-12-31"}, "date": "posting_date"}
+
+
+def test_the_accounts_under_a_quoted_expense_parent_are_ranked_by_their_expenses(ledger):
+    # Finance FN5-04.4 with gpt-4o: 'top 5 accts under "Operating Expenses" in "CAD"' right after "how many journals
+    # did we post in 2025" was ranked by the number of journals kept from above. The question names no figure of its
+    # own; the parent it names, "Operating Expenses", holds one: the accounts' expenses.
+    chat = Chat(ledger)
+    chat.ask("how many journals did we post in 2025", {"intent": "value", "measures": ["number_of_journals"], "time": Y25})
+    got = chat.ask('top 5 accts under "Operating Expenses" in "CAD"', {
+        "intent": "rank", "measures": ["number_of_journals"], "group_by": ["account"],
+        "filters": [{"field": "account.name", "op": "eq", "values": ["Operating Expenses"]},
+                    {"field": "journal_line.currency_code", "op": "eq", "values": ["CAD"]}],
+        "sort": [{"by": "number_of_journals", "desc": True}], "limit": 5, "time": Y25, "follow_up": "refine"})
+    readings = []
+    for kept in ("TRUE", "j.status <> 'REV'"):
+        readings.append([(n, round(float(v), 2)) for n, v in ledger[0].con.execute(f"""
+            SELECT a.account_name, SUM(j.debit_amount - j.credit_amount) v FROM journal_lines j
+            JOIN accounts a ON a.account_id = j.account_id JOIN accounts p ON p.account_id = a.parent_account_id
+            WHERE p.account_name = 'Operating Expenses' AND a.account_type = 'Expense' AND j.currency_code = 'CAD'
+              AND j.posting_date_key BETWEEN 20250101 AND 20251231 AND {kept}
+            GROUP BY 1 ORDER BY v DESC LIMIT 5""").fetchall()])
+    rows = got["export_rows"]
+    shown = [(r["account_name"], round(float(r["expenses"]), 2)) for r in rows]
+    assert shown in readings, (shown, readings)
+
+
+def test_a_count_the_question_names_is_kept_under_a_quoted_parent(ledger):
+    chat = Chat(ledger)
+    got = chat.ask('top 5 accts by number of journals under "Operating Expenses" in "CAD" in 2025', {
+        "intent": "rank", "measures": ["number_of_journals"], "group_by": ["account"],
+        "filters": [{"field": "account.name", "op": "eq", "values": ["Operating Expenses"]},
+                    {"field": "journal_line.currency_code", "op": "eq", "values": ["CAD"]}],
+        "sort": [{"by": "number_of_journals", "desc": True}], "limit": 5, "time": Y25})
+    assert "number_of_journals" in got["export_rows"][0]
+
+
+def test_the_definition_of_won_back_said_again_is_no_filter_of_its_own(retail):
+    # Pharmacy RXP-06.3 with gpt-4o: "how many of those did we win back, ones with no fills at all the quarter
+    # before?" was planned as won back AND "number of fills = 0", which no plan can answer: the reader was saying what
+    # won back means. Asked again here of the retail customers in Q4 2025.
+    chat = Chat(retail)
+    got = chat.ask("how many customers did we win back in Q4 2025, ones with no orders at all the quarter before?", {
+        "intent": "value", "measures": ["number_of_customers"],
+        "time": {"window": {"kind": "between", "start": "2025-10-01", "end": "2025-12-31"}},
+        "lifecycle": {"of": "customer", "measure": "number_of_orders", "status": "won_back"},
+        "filters": [{"field": "number_of_orders", "op": "eq", "values": [0], "total": False}]})
+    want = retail[0].con.execute(f"""
+        WITH days AS (SELECT DISTINCT customer_id AS k, day FROM ({LINES}) l
+                      WHERE customer_id IN (SELECT customer_id FROM customers) AND day < DATE '2026-01-01')
+        SELECT COUNT(DISTINCT k) FROM days
+        WHERE day >= DATE '2025-10-01' AND day < DATE '2026-01-01'
+          AND k IN (SELECT k FROM days WHERE day < DATE '2025-07-01')
+          AND k NOT IN (SELECT k FROM days WHERE day >= DATE '2025-07-01' AND day < DATE '2025-10-01')""").fetchone()[0]
+    assert want > 0
+    assert got.get("kpi") is not None or got.get("export_rows"), got.get("answer") or got.get("text")
+    value = got["export_rows"][0].get("won_back", next(iter(got["export_rows"][0].values())))
+    assert int(value) == want

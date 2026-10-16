@@ -76,3 +76,25 @@ def test_asked_back_twice_the_figure_named_in_full_is_planned_in_code(model):
                             today=dt.date(2025, 3, 1))
     assert outcome.plan.kind == "query" and outcome.plan.measures == [slug], outcome.plan
     assert outcome.plan.time.window.kind == "between" and str(outcome.plan.time.window.start) == "2024-01-01"
+
+
+@pytest.mark.parametrize("asked_twice", [False, True])
+def test_a_question_back_between_figures_with_no_about_is_about_the_figure(model, asked_twice):
+    # gpt-4o wrote its question back beside "kind", with no "about": "how many orders did we take: Number of orders,
+    # Number of order lines, Quantity or Net amount?" (the retail condition book, three runs of three). Every option
+    # is a figure of the data, so it is a question about the figure, and the one the question names is planned.
+    slug = next(m.slug for m in model.measures.values() if m.business_name.casefold() == "scrapped quantity")
+    names = [m.business_name for m in model.measures.values() if not m.hidden][:4]
+    assert "Scrapped quantity" in names or any(n.casefold() == "scrapped quantity" for n in names), names
+    back = json.dumps({"kind": "clarify", "question": "Scrapped quantity in 2024", "options": names})
+    answers = [back, back] if asked_twice else [back, json.dumps({"kind": "query", "measures": [slug]})]
+    outcome = plan_question(model, "Scrapped quantity in 2024", lambda s, u: answers.pop(0), today=dt.date(2025, 3, 1))
+    assert outcome.plan.kind == "query" and outcome.plan.measures == [slug], outcome.plan
+
+
+def test_a_question_back_about_something_else_is_still_asked(model):
+    back = json.dumps({"kind": "clarify", "question": "Which plant do you mean?", "options": ["North", "South"]})
+    answers = [back, back, back]
+    outcome = plan_question(model, "Scrapped quantity at the plant in 2024", lambda s, u: answers.pop(0),
+                            today=dt.date(2025, 3, 1))
+    assert outcome.plan.kind == "clarify"

@@ -283,6 +283,10 @@ GRANT pg_read_all_stats TO querybot_reader;</pre>
           <div class="form-group"><label for="xl_file">Workbook (.xlsx) *</label>
             <input type="file" id="xl_file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
             <p class="form-note">Up to 100 MB. Each sheet's header is the first row that names its columns; a title above it and a totals row under it are left out. Hidden and empty sheets are skipped.</p>
+            <p class="form-note" id="xl-sample">No workbook to hand?
+              <button type="button" class="btn btn-secondary btn-sm" id="xl-use-sample">Use the sample workbook</button>
+              a small retail chain's orders, products, stores, customers, returns and monthly targets.
+              <a href="/admin/databases/workbook/sample.xlsx">Download it</a> to open in Excel, or to put in SharePoint or OneDrive and try a link.</p>
             <div id="xl-upload-result" role="status" aria-live="polite" style="display:none"></div>
           </div>
         </div>
@@ -919,14 +923,10 @@ function xlSaid(kind, text) {
 }
 // The file goes up on its own as soon as it is chosen (never with the form): the page says what it holds, and
 // the form keeps only the stored copy's hash.
-document.getElementById('xl_file').addEventListener('change', async (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
-  xlSaid('info', 'Reading ' + file.name + '…');
-  const body = new FormData();
-  body.append('file', file);
+async function xlRead(label, url, body) {
+  xlSaid('info', 'Reading ' + label + '…');
   try {
-    const resp = await fetch('/admin/databases/workbook/upload', {method: 'POST', credentials: 'same-origin', body});
+    const resp = await fetch(url, {method: 'POST', credentials: 'same-origin', body});
     const data = await resp.json();
     if (data.status !== 'ok') { xlSaid('error', data.message || 'The workbook could not be read.'); return; }
     document.getElementById('xl_workbook').value = data.workbook;
@@ -940,6 +940,18 @@ document.getElementById('xl_file').addEventListener('change', async (e) => {
   } catch (err) {
     xlSaid('error', 'Network error: ' + err.message);
   }
+}
+document.getElementById('xl_file').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const body = new FormData();
+  body.append('file', file);
+  xlRead(file.name, '/admin/databases/workbook/upload', body);
+});
+// The sample workbook, stored like an upload: the form keeps its hash, the file box stays empty.
+document.getElementById('xl-use-sample').addEventListener('click', () => {
+  document.getElementById('xl_file').value = '';
+  xlRead('the sample workbook', '/admin/databases/workbook/sample');
 });
 
 function setField(name, val) {

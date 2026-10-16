@@ -49,6 +49,11 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 GRAPH_LOGIN = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 
 
+# A small retail chain's data as a workbook (tools/sample_workbook.py), for trying Solviz with no database.
+SAMPLE = Path(__file__).resolve().parent / "samples" / "solviz_sample_retail.xlsx"
+SAMPLE_NAME = "Solviz sample - retail chain.xlsx"
+
+
 class WorkbookError(ValueError):
     """A workbook that cannot be read, said so an admin can act on it."""
 
@@ -284,6 +289,13 @@ def save(data: bytes, file_name: str) -> Loaded:
 
 
 _LOADING = threading.Lock()
+
+
+def save_sample() -> Loaded:
+    """The sample workbook, stored and read like an upload."""
+    if not SAMPLE.is_file():
+        raise WorkbookError("The sample workbook is not on this server (core/samples/solviz_sample_retail.xlsx).")
+    return save(SAMPLE.read_bytes(), SAMPLE_NAME)
 
 
 def load(sha: str, file_name: str = "") -> Loaded:

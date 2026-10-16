@@ -2358,12 +2358,19 @@ def _same_way(paths: list[P.Path]) -> bool:
     through their order line, reach the line's store by the line's own link; an order line's region through its
     store and a return's through its customer are two regions."""
     keys = [tuple(j.key for j in p.joins) for p in paths]
-    for a in keys:
-        for b in keys:
-            short, long_ = (a, b) if len(a) <= len(b) else (b, a)
-            if short and long_[len(long_) - len(short):] != short:
-                return False
-    return True
+    return all(_one_way(a, b) for a in keys for b in keys)
+
+
+def _one_way(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
+    """Two routes meet at one member: one ends with the other's steps, or both take the same last step from
+    routes that meet there. Two tables' own links to the member's table are a shared dimension: sales lines and
+    monthly targets each reach their store by their own link, and the store's region by the store's."""
+    short, long_ = (a, b) if len(a) <= len(b) else (b, a)
+    if not short or long_[len(long_) - len(short):] == short:
+        return True
+    if len(a) == len(b) == 1:
+        return True
+    return a[-1] == b[-1] and _one_way(a[:-1], b[:-1])
 
 
 def _shared_route(model: SemanticModel, tables: list[str], goal: str, label: str) -> tuple[dict[str, str], str]:
