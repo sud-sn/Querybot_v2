@@ -13,12 +13,13 @@
        resolving  the frame turns round the dot (finding the measures and fields);
        querying   the dot travels inside the still frame (running the query);
        answering  the frame closes on the dot (drawing the answer);
-       loading    the frame turns while the dot beats (signing in, a long wait).
+       loading    the frame turns while the dot beats (a long wait; a sign-in says it on its button).
    - Arriving, once: the sidebar's mark and the sign-in page's draw themselves
-     in (the brackets slide into place, the dot drops in), on the first page
-     of a visit only (qb-brand-motion--intro, set by the page).
+     in (the brackets settle into place, then the dot fades up into the
+     centre), on the first page of a visit only (qb-brand-motion--intro, set
+     by the page). Nothing overshoots: the mark settles, it never bounces.
    - Answering the pointer: over the brand, the frame opens a little and the
-     dot hops once (a mark inside [data-brand-hover]).
+     dot lifts once (a mark inside [data-brand-hover]).
    Never on an error -- a failure is said in words beside an alert icon, never
    by the brand: no red, no shake. The favicon never moves. Under reduced
    motion nothing moves at all (WCAG 2.3.3).
@@ -70,6 +71,20 @@
   color: var(--text-muted);
 }
 
+/* The lockup: the mark beside the wordmark, sized together from one font size (the sign-in pages; the sidebar has
+   its own). The mark stands as tall as the letters with their ascenders, so the two carry one weight. */
+.qb-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: .3em;
+  font-size: var(--qb-lockup-size, 2.125rem);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+  letter-spacing: -.03em;
+  color: var(--text-strong);
+}
+.qb-lockup > .qb-brand-motion { --qb-mark-size: 1.3em; gap: 0; }
+
 /* The wordmark, "solvız": one colour (the text's), and the dot of its i is
    the mark's dot. A dotless i carries a drawn dot so its colour is ours. */
 .qb-wordmark { white-space: nowrap; }
@@ -104,14 +119,14 @@
 .qb-brand-motion[data-state="loading"] .qb-brand-motion__dot { animation: qb-beat 1s ease-in-out infinite; }
 
 /* ── Arriving, once ─────────────────────────────────────────────────────── */
-.qb-brand-motion--intro .qb-brand-motion__tl { animation: qb-intro-tl .7s cubic-bezier(.22, 1, .36, 1) backwards; }
-.qb-brand-motion--intro .qb-brand-motion__br { animation: qb-intro-br .7s cubic-bezier(.22, 1, .36, 1) backwards; }
-.qb-brand-motion--intro .qb-brand-motion__dot { animation: qb-intro-dot .7s cubic-bezier(.34, 1.56, .64, 1) .25s backwards; }
+.qb-brand-motion--intro .qb-brand-motion__tl { animation: qb-intro-tl .6s cubic-bezier(.22, 1, .36, 1) .08s backwards; }
+.qb-brand-motion--intro .qb-brand-motion__br { animation: qb-intro-br .6s cubic-bezier(.22, 1, .36, 1) .08s backwards; }
+.qb-brand-motion--intro .qb-brand-motion__dot { animation: qb-intro-dot .45s cubic-bezier(.22, 1, .36, 1) .32s backwards; }
 
 /* ── Answering the pointer ──────────────────────────────────────────────── */
 [data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__tl { transform: translate(-1.2px, -1.2px); }
 [data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__br { transform: translate(1.2px, 1.2px); }
-[data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__dot { animation: qb-dot-hop .6s cubic-bezier(.34, 1.56, .64, 1); }
+[data-brand-hover]:hover .qb-brand-motion[data-state="idle"] .qb-brand-motion__dot { animation: qb-dot-hop .5s cubic-bezier(.22, 1, .36, 1); }
 .qb-brand-motion__tl,
 .qb-brand-motion__br { transition: transform .25s cubic-bezier(.22, 1, .36, 1); }
 
@@ -152,20 +167,20 @@
   50%      { transform: scale(1.15); }
 }
 @keyframes qb-intro-tl {
-  from { transform: translate(-6px, -6px); opacity: 0; }
+  from { transform: translate(-3px, -3px); opacity: 0; }
   to   { transform: translate(0, 0); opacity: 1; }
 }
 @keyframes qb-intro-br {
-  from { transform: translate(6px, 6px); opacity: 0; }
+  from { transform: translate(3px, 3px); opacity: 0; }
   to   { transform: translate(0, 0); opacity: 1; }
 }
 @keyframes qb-intro-dot {
-  from { transform: scale(0); }
-  to   { transform: scale(1); }
+  from { transform: scale(.4); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
 }
 @keyframes qb-dot-hop {
-  0%, 100% { transform: translateY(0) scale(1); }
-  40%      { transform: translateY(-3px) scale(1.12); }
+  0%, 100% { transform: translateY(0); }
+  45%      { transform: translateY(-2px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

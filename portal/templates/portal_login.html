@@ -4,10 +4,12 @@
 {% from "icons.html" import ic %}
 {% block title %}{{ t('ui.title.sign_in') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block content %}
-<div class="login-shell">
+<div class="login-shell qb-enter">
   <div class="login-brand-identity">
-    {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
-    <div class="login-brand">{{ wordmark() }}</div>
+    <div class="qb-lockup">
+      {{ brand_motion('portal-auth', 'idle', 'lg', root_id='portalAuthMark', extra_class='qb-brand-motion--intro') }}
+      {{ wordmark() }}
+    </div>
     <p class="login-tagline">{{ t('ui.auth.tagline') }}</p>
   </div>
 
@@ -55,11 +57,11 @@
 </div>
 
 <style>
-/* The sign-in page in the approved design: the mark and the name over one card on the card radius, its title in the
-   display face, fields on the item radius and a pill to sign in, as the portal's pages have them. */
+/* The sign-in page in the approved design: the lockup (the mark beside the name) and a line under it over one card
+   on the card radius, its title in the display face, fields on the item radius and a pill to sign in, as the
+   portal's pages have them. The blocks rise into place once (base.css, .qb-enter). */
 .login-shell { width: min(100%, 420px); max-width: 100%; min-width: 0; margin: clamp(24px, 9vh, 96px) auto 32px; }
-.login-brand-identity { display: flex; flex-direction: column; align-items: center; gap: .5rem; margin-bottom: 1.4rem; text-align: center; }
-.login-brand { font-size: var(--font-3xl); font-weight: var(--weight-bold); color: var(--text); line-height: 1.1; }
+.login-brand-identity { display: flex; flex-direction: column; align-items: center; gap: .7rem; margin-bottom: 1.75rem; text-align: center; }
 .login-tagline { margin: 0; color: var(--text-secondary); font-size: var(--font-sm); line-height: 1.45; }
 .login-card { border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: var(--shadow); }
 .login-card:hover { border-color: var(--line-subtle); box-shadow: var(--shadow); }
@@ -80,12 +82,4 @@
 @media (max-width: 480px) { .login-card-body { padding: 22px 18px 22px; } }
 </style>
 
-<script>
-// While signing in, the mark turns (brand-motion.css, "loading"); the server's answer replaces the page.
-(function () {
-  var mark = document.getElementById('portalAuthMark');
-  var form = document.querySelector('form[method="post"]');
-  if (mark && form) form.addEventListener('submit', function () { mark.dataset.state = 'loading'; });
-})();
-</script>
 {% endblock %}

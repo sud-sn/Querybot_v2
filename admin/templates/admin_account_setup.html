@@ -4,10 +4,13 @@
 {% from "_auth_styles.html" import auth_styles %}
 {% block title %}Your Super admin account — Solviz Admin{% endblock %}
 {% block auth_content %}
-<div class="auth-card-wrap auth-wide">
+<div class="auth-card-wrap qb-enter auth-wide">
   <div class="auth-brand-identity">
-    {{ brand_motion('admin-auth', 'idle', 'lg', root_id='adminAuthMark', extra_class='qb-brand-motion--intro') }}
-    <div class="auth-brand-name">{{ wordmark() }} <span class="auth-brand-tag">Admin</span></div>
+    <div class="qb-lockup">
+      {{ brand_motion('admin-auth', 'idle', 'lg', root_id='adminAuthMark', extra_class='qb-brand-motion--intro') }}
+      {{ wordmark() }}
+      <span class="auth-brand-tag">Admin</span>
+    </div>
   </div>
   <div class="card auth-card">
     <div class="card-header"><h1>{{ ic("key", 14) }} Make your Super admin account</h1></div>
@@ -49,12 +52,4 @@
   </div>
 </div>
 {{ auth_styles() }}
-<script>
-// While signing in, the mark turns (brand-motion.css, "loading"); the server's answer replaces the page.
-(function () {
-  var mark = document.querySelector('.auth-brand-identity .qb-brand-motion');
-  var form = document.querySelector('form[method="post"]');
-  if (mark && form) form.addEventListener('submit', function () { mark.dataset.state = 'loading'; });
-})();
-</script>
 {% endblock %}

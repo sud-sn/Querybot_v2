@@ -7,29 +7,25 @@
   margin: 0 auto;
   padding-top: 4rem;
 }
+/* The lockup (the mark beside the name) with the console's tag after it, as the sidebar has it; the blocks rise
+   into place once (base.css, .qb-enter). */
 .auth-brand-identity {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: .5rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.75rem;
   text-align: center;
 }
-.auth-brand-name {
-  font-size: var(--font-2xl);
-  font-weight: var(--weight-bold);
-  color: var(--text);
-  letter-spacing: -.03em;
-}
 .auth-brand-tag {
-  margin-left: 4px;
-  padding: 2px 8px;
+  align-self: center;
+  margin-left: .2em;
+  padding: 3px 9px;
   border-radius: var(--radius-pill);
-  vertical-align: middle;
   background: var(--primary-soft);
   color: var(--primary-ink);
   font-size: var(--font-xs);
   font-weight: var(--weight-semibold);
+  line-height: 1.3;
   letter-spacing: .06em;
   text-transform: uppercase;
 }

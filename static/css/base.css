@@ -373,6 +373,10 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   cursor: pointer;
 }
 .input-reveal-btn:hover { color: var(--text); background: var(--hover-on-surface); }
+/* Microsoft Edge draws its own reveal eye inside a password field: beside ours it made two. Ours is the one. One
+   rule each: a browser that does not know one of these pseudo-elements drops the whole rule it is in. */
+.input-reveal-wrap > input::-ms-reveal { display: none; }
+.input-reveal-wrap > input::-ms-clear { display: none; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 @media (max-width: 640px) { .form-grid { grid-template-columns: minmax(0, 1fr); } }
 .form-note  { font-size: var(--font-xs); color: var(--text-muted); margin-top: 3px; }
@@ -693,6 +697,16 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
    ══════════════════════════════════════════════════════════ */
 
 /* ── @keyframes ── */
+/* A page's first view arriving (the sign-in pages): its blocks rise into place once, one after another, and settle
+   with nothing left behind. Never under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .qb-enter > * { animation: qb-enter .52s cubic-bezier(.22, 1, .36, 1) backwards; }
+  .qb-enter > :nth-child(2) { animation-delay: .07s; }
+  .qb-enter > :nth-child(n+3) { animation-delay: .14s; }
+}
+@keyframes qb-enter {
+  from { opacity: 0; transform: translateY(10px); }
+}
 @keyframes qb-spin {
   to { transform: rotate(360deg); }
 }

@@ -218,10 +218,19 @@ class TestTheMotionSaysWhatIsHappening:
 
     @pytest.mark.parametrize("page", ["portal/templates/portal_login.html", "admin/templates/login.html",
                                       "admin/templates/admin_invite.html", "admin/templates/admin_account_setup.html"])
-    def test_a_sign_in_page_s_mark_arrives_and_turns_while_it_signs_in(self, page):
+    def test_a_sign_in_page_s_mark_arrives_once_and_the_button_says_it_signs_in(self, page):
+        # The mark turning beside the button's own spinner said "working" twice; the button says it alone.
         source = (ROOT / page).read_text(encoding="utf-8")
         assert "extra_class='qb-brand-motion--intro'" in source, page
-        assert "dataset.state = 'loading'" in source or "dataset.state='loading'" in source, page
+        assert "'loading'" not in source, page
+        assert "data-busy-on-submit" in source, page
+
+    def test_the_arrival_settles_without_a_bounce(self):
+        # An overshoot (a cubic-bezier past 1) read as a toy on the sign-in page; the mark settles into place.
+        for selector, body in _rules(_css()):
+            if selector.startswith(INTRO) or selector.startswith(HOVER):
+                for curve in re.findall(r"cubic-bezier\(([^)]*)\)", body):
+                    assert all(float(v) <= 1 for v in curve.split(",")), (selector, curve)
 
     def test_the_arrival_leaves_no_transform_behind(self):
         for selector, body in _rules(_css()):
