@@ -420,6 +420,23 @@ _CHANGE = re.compile(
     r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)+)",
     re.IGNORECASE)
 _SHOW = {"en": "Show ", "fr": "Montre "}
+# A change to the answer on screen, not to the data: "drop the count and the average, and show each balance as % of
+# the region's total instead", "remove the cost column", "add their region". Only the verbs that also read can be
+# one; "delete" and "purge" never are.
+_DESTROYS = re.compile(r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:delete|erase|purge|wipe|supprime|efface)",
+                       re.IGNORECASE)
+# Only the verbs that take a figure off or put one on: never one that writes a value ("set", "update", "mark",
+# "cancel", "reset", "change"), and never with a new value ("to $500", "by 5%", "as paid").
+_EDIT_VERB = re.compile(r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:drop|remove|hide|add|take\s+out|leave\s+out|"
+                        r"enlève|enleve|retire|ajoute|masque)\b", re.IGNORECASE)
+_NEW_VALUE = re.compile(r"\b(?:to|by|as|at|à|de)\s+[$€£]?\s?\d|\b(?:to|as)\s+(?:paid|closed|open|cancelled|canceled|done|"
+                        r"complete|completed|active|inactive|zero|null|blank|empty)\b", re.IGNORECASE)
+_ANSWER_EDIT = re.compile(
+    r"\b(?:instead|column|columns|colonne|colonnes|from\s+the\s+(?:table|answer|list|chart|report|view)|"
+    r"as\s+(?:a\s+)?(?:%|percent|share)|"
+    r"%\s+of|next\s+to|beside|alongside|"
+    r"(?:the|their|its)\s+(?:count|counts|average|averages|avg|total|totals|sum|share|percentage|%|figure|figures|"
+    r"cost|costs|margin|change|ratio|rate|number|numbers|chart|table|labels?|decimals?))\b", re.IGNORECASE)
 
 
 def changes_data(question: str) -> str | None:
@@ -427,6 +444,9 @@ def changes_data(question: str) -> str | None:
     found = _CHANGE.match(question or "")
     if not found:
         return None
+    if not _DESTROYS.match(question) and _EDIT_VERB.match(question) and not _NEW_VALUE.search(question) \
+            and _ANSWER_EDIT.search(question):
+        return None          # "drop the count and show ... instead": the answer changes, the data never
     rest = question[found.end():].strip().rstrip("?.!").removesuffix("for me").removesuffix("s'il te plaît")
     rest = rest.removesuffix("please").strip(" ,")
     if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:update|change|modify|edit|mark|set|assign|rename|"

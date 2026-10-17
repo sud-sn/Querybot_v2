@@ -10,6 +10,7 @@ in Q1 2026, over the 1,204 customers with orders"), so a reader never has to gue
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 
 from core2.bootstrap.names import plural
@@ -142,6 +143,30 @@ def _hidden(columns: list[str], rows: list[tuple], name: str) -> float | None:
     return _float(rows[0][names.index(name.casefold())])
 
 
+def _share_within_headline(logical: Logical, columns: list[str], rows: list[tuple], span: str) -> str:
+    """ "Net amount in Q1 2026, as a share of each region's: the largest is Produce in North, 33% of North's." Each
+    share is of its group's own total, so the sentence names the group it is of."""
+    names = [c.casefold() for c in columns]
+    m = next((o for o in logical.measures if not o.hidden), None)
+    within = logical.share_within[0]
+    other = next((g for g in logical.groups if g.kind in ("attribute", "time", "period") and g.name not in
+                  logical.share_within), None)
+    group = next((g for g in logical.groups if g.name == within), None)
+    share_name = f"{m.name}_share".casefold() if m is not None else ""
+    if m is None or other is None or group is None or share_name not in names or within.casefold() not in names \
+            or other.name.casefold() not in names:
+        return ""
+    at = names.index(share_name)
+    best = max((r for r in rows if _float(r[at]) is not None), key=lambda r: _float(r[at]) or 0.0, default=None)
+    if best is None:
+        return ""
+    of, member = best[names.index(within.casefold())], best[names.index(other.name.casefold())]
+    share = (_float(best[at]) or 0.0) * 100.0
+    whose = re.sub(r"\s+name$", "", group.label.lower())        # "Region name" is the region
+    return (f"{m.label}{(' ' + span) if span else ''}, as a share of each {whose}'s own total: the largest is "
+            f"{member} in {of}, {share:.1f}% of {of}'s.")
+
+
 def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows: list[tuple]) -> None:
     """The answer's definition, and its sentence where the plain one would not say what it is."""
     from core2.answer.builder import span_words
@@ -216,6 +241,29 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
             label = f"{things[:1].upper()}{things[1:]} with no {activity}"
             payload["kpi"] = {"label": label, "title": f"{label} {when}", "value": count, "format": "number",
                               "display_format": "0", "state": "ready", "note": span}
+    if logical.share_within and rows:
+        said = _share_within_headline(logical, columns, rows, span)
+        if said:
+            answer["headline"] = said
+    absence = getattr(logical, "absence", None)
+    if absence is not None:
+        # The figures of those with none then: "37 customers with orders in Q2 2026 had none in Q3 2026."
+        things = plural(absence.member)
+        activity = _noun(absence.activity_label)
+        when = span_words(absence.window) if (absence.window.start or absence.window.end) else "ever"
+        had = f" with {activity} {span_words(absence.had_in)}" if absence.had_in is not None else ""
+        lead = str(answer.get("headline") or "")
+        if not rows:
+            answer["headline"] = (f"Every {absence.member}{had} had {activity} {when} too." if had else
+                                  f"Every {absence.member} had {activity} {when}.")
+        elif absence.listed:
+            n = len(rows)
+            answer["headline"] = (f"{n:,} {things if n != 1 else absence.member}{had} had "
+                                  f"{'none' if had else f'no {activity}'} {when}." + (f" {lead}" if lead else ""))
+        else:
+            answer["headline"] = (f"Counting only {things}{had} with no {activity} {when}." +
+                                  (f" {lead}" if lead else ""))
+        definition = definition or next((n for n in logical.notes if n.startswith("Listed:")), "")
     if isinstance(logical.target, TargetInfo):
         said = target_headline(payload, logical, logical.target, span)
         if said:

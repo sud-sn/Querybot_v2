@@ -61,7 +61,10 @@ Scalar = Union[str, int, float, bool]
 
 
 class Filter(_Strict):
-    field: str                       # an attribute slug, a date slug (a second date), or a measure slug (on totals)
+    # An attribute slug, a date slug (a second date), a measure slug (on totals), or change | pct_change | share:
+    # each group's change between the compared periods ("only those that fell": change lt [0]), its % change or
+    # its share, in percent ("down more than 5%": pct_change lt [-5]).
+    field: str
     op: FilterOp
     values: list[Scalar] = Field(default_factory=list)
     total: bool = False              # on a duration: each group's figure (its average), not each row's days
@@ -169,7 +172,8 @@ class Absent(_Strict):
     """Members with no matching rows: "customers with no order in the last 90 days", "products never sold",
     "customers who bought A but never B". The window is the plan's time.window (none: never)."""
 
-    of: str                          # an entity slug: whose list
+    of: str                          # an entity slug: whose list; or the count of members the data keeps only a
+    #                                  number for, with no list of them ("number_of_patients"): counted, not listed
     measure: str                     # a measure slug whose rows are the activity (orders, fills)
     without: list[Filter] = Field(default_factory=list)   # only rows like these count as activity ("never B")
     had: list[Filter] = Field(default_factory=list)       # and they did have rows like these, any time ("bought A")
@@ -320,6 +324,9 @@ class Plan(_Strict):
     time: TimeSpec = Field(default_factory=TimeSpec)
     sort: list[Sort] = Field(default_factory=list)
     limit: int | None = Field(default=None, ge=1, le=10000)
+    # intent share: each row's share of this grouping's own total, one of group_by ("% of each region's sales by
+    # category": the region); none: of the grand total.
+    share_of: str | None = None
     forecast: Forecast | None = None
     drivers: Drivers | None = None
     clarify: Clarify | None = None

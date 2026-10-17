@@ -30,6 +30,7 @@ from core2.resolve import bands as B
 from core2.resolve import paths as P
 from core2.resolve.resolver import (
     Condition,
+    MemberAbsent,
     Context,
     DateUse,
     DaysBetween,
@@ -40,6 +41,7 @@ from core2.resolve.resolver import (
     PartGroup,
     Pred,
     ResolveError,
+    hold_in_semi,
     _Aliases,
     _attribute_label,
     _date_role_for,
@@ -525,7 +527,7 @@ def _listed(plan: Plan, model: SemanticModel, ctx: Context, entity_slug: str | N
         alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
             if column.table != entity.table else part.alias
         f, stored = _named_filter(column, f)
-        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+        _held(builder, part, Pred(alias, column.key, f.op, list(stored)))
     return part, rest
 
 
@@ -674,9 +676,45 @@ def _after_the_data(window: Range, last: dt.date | None) -> None:
                        f"{span_words(window).removeprefix('on ')} yet: ask about a period up to then")
 
 
+def _held(builder: _PartBuilder, part: Part, pred: Pred) -> None:
+    """A condition on the rows, where its table is: inside the EXISTS a table reached across a bridge sits in (an
+    ingredient of a fill's formula), never on the part itself -- there it named a table the query did not have."""
+    semi = builder.semi_of.get(pred.alias)
+    if semi is not None:
+        hold_in_semi(semi, pred)
+    else:
+        part.preds.append(pred)
+
+
+def _activity_period(model: SemanticModel, measure: Measure,
+                     filters: list) -> tuple[list, Range | None, DateRole | None]:
+    """"Bought in Q1 but not in Q2": a filter on one of the activity's dates is its period, not a field. The
+    filters left, the period (None: none named) and the date it is read by."""
+    kept, rng, on = [], None, None
+    for f in filters:
+        found_d = find_slug(model, f.field)
+        dated = found_d[1] if found_d and found_d[0] == "date" else None
+        if not isinstance(dated, DateRole) or f.op not in ("between", "eq", "gte", "gt", "lte", "lt") \
+                or not f.values or (dated.table != measure.table and dated.table not in _documents(model, measure.table)):
+            kept.append(f)
+            continue
+        try:
+            days = [dt.date.fromisoformat(str(v)[:10]) for v in f.values]
+        except ValueError:
+            raise ResolveError("unsupported", f"{dated.name} is a date: give it as a date (2026-01-31)") from None
+        one = dt.timedelta(days=1)
+        start = days[0] + one if f.op == "gt" else days[0] if f.op in ("between", "eq", "gte") else None
+        end = (days[-1] + one if f.op in ("between", "eq", "lte") else days[0] if f.op == "lt" else None)
+        rng, on = Range(start, end), dated
+    return kept, rng, on
+
+
 def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     a = plan.absent
     assert a is not None
+    keyed = _keyed_members(model, a)
+    if keyed is not None:
+        return _absent_keyed(plan, model, ctx, keyed)
     found = find_slug(model, a.of)
     if not found or found[0] != "entity":
         raise ResolveError("unknown", f"nothing listed called {a.of}: name the customers, products or other things "
@@ -709,37 +747,20 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         code_name = _output_name(f"{name}_code", out_names)
         listed.groups.append(PartGroup(code_name, listed.alias, code, "attribute"))
         groups.append(Group(code_name, f"{entity.business_name} code", "member_code", attribute=label_attr.slug))
+    for slug in plan.group_by:
+        # Their own fields beside their name ("with their segment and city"): columns of the member's own table.
+        attribute = model.attributes.get(slug)
+        if slug == a.of or attribute is None or model.columns[attribute.column].table != entity.table \
+                or attribute.column in (label_attr.column, code):
+            continue
+        _shown(model, attribute, slug, personal=ctx.personal_shown)
+        extra = _output_name(slug.replace(".", "_"), out_names)
+        listed.groups.append(PartGroup(extra, listed.alias, attribute.column, "attribute"))
+        groups.append(Group(extra, _attribute_label(model, attribute), "attribute", attribute=slug))
     key_name = _output_name("member_key", out_names)
     listed.groups.append(PartGroup(key_name, listed.alias, key, "attribute"))   # each member once, by its key
 
-    role = _date_role_for(model, plan, measure, measure.table)
-    first, last = _first_last(role) if role is not None else (None, None)
-    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
-                            fiscal_start=model.settings.fiscal_year_start_month)
-    if plan.time.window.kind == "all":
-        window = Range(None, None)
-    _after_the_data(window, last)
-
-    def period(filters: list) -> tuple[list, Range | None, DateRole | None]:
-        """"Bought in Q1 but not in Q2": a filter on one of the activity's dates is its period, not a field. The
-        filters left, the period (None: none named) and the date it is read by."""
-        kept, rng, on = [], None, None
-        for f in filters:
-            found_d = find_slug(model, f.field)
-            dated = found_d[1] if found_d and found_d[0] == "date" else None
-            if not isinstance(dated, DateRole) or f.op not in ("between", "eq", "gte", "gt", "lte", "lt") \
-                    or not f.values or (dated.table != measure.table and dated.table not in _documents(model, measure.table)):
-                kept.append(f)
-                continue
-            try:
-                days = [dt.date.fromisoformat(str(v)[:10]) for v in f.values]
-            except ValueError:
-                raise ResolveError("unsupported", f"{dated.name} is a date: give it as a date (2026-01-31)") from None
-            one = dt.timedelta(days=1)
-            start = days[0] + one if f.op == "gt" else days[0] if f.op in ("between", "eq", "gte") else None
-            end = (days[-1] + one if f.op in ("between", "eq", "lte") else days[0] if f.op == "lt" else None)
-            rng, on = Range(start, end), dated
-        return kept, rng, on
+    without, window, role, had, had_in, had_on = _absent_window(plan, model, ctx, measure)
 
     def activity(filters: list, rng: Range | None, on: DateRole | None = None) -> tuple[Part, str]:
         """The keys of the members with rows like these (in ``rng``, by the date ``on``): each once."""
@@ -766,22 +787,33 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             f, stored = _named_filter(column, f)
             alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
                 if column.table != measure.table else part.alias
-            part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+            _held(builder, part, Pred(alias, column.key, f.op, list(stored)))
         if rng is not None and (on or role) is not None:
             # A date only this part reads: never the answer's own window (part.date), which is the absence's.
             part.date_ranges.append((builder.date(on or role), rng))
         return part, out
 
-    without, absent_in, absent_on = period(a.without)
-    if absent_in is not None and plan.time.window.kind == "all":
-        window, role = absent_in, absent_on        # "not in Q2", the period written as a date filter
-        _after_the_data(window, _first_last(role)[1] if role is not None else last)
-    act, act_key = activity([*rest, *without], window)
+    # "How many customers ... but none in Q2, by region": the members counted in each group, not listed.
+    by_group = plan.intent == "count" and any(g != a.of for g in plan.group_by)
+    # "The lapsed customers with their region" (their home store's): a field of another table than theirs, so
+    # each one's activity is worked out with it, never the field dropped from the list.
+    foreign = [g for g in plan.group_by if g != a.of and not _own_field(model, g, entity)]
+    if plan.measures or plan.derived or plan.figures or plan.rates or plan.durations or by_group or foreign:
+        if a.active_before and had_in is None and window.start is not None:
+            had_in = Range(None, window.start)   # "stopped": they had some before the window, counted over it
+        if foreign and not (plan.measures or plan.derived or plan.figures or plan.rates or plan.durations) \
+                and not by_group:
+            plan = plan.model_copy(update={"measures": [measure.slug]})
+        return _absent_figures(plan, model, ctx, entity, key, measure, rest, without, window, role, had, had_in,
+                               had_on)
+    act, act_key = activity([*rest, *without], window, role)
     shape = AbsentShape(entity=listed, key=key, activity=act, activity_key=act_key, member=entity.business_name.lower(),
                         activity_label=measure.business_name, member_key=key_name, counted=plan.intent == "count")
     if a.had:
-        had, had_in, had_on = period(a.had)
         shape.had, shape.had_key = activity([*rest, *had], had_in, had_on)
+        shape.had_in = had_in
+    elif had_in is not None:
+        shape.had, shape.had_key = activity(list(rest), had_in, had_on)
         shape.had_in = had_in
     if a.active_before:
         if window.start is None:
@@ -792,6 +824,327 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                    sort=[(name, False)], limit=plan.limit, max_rows=ctx.max_rows, notes=notes,
                    fiscal_start=model.settings.fiscal_year_start_month,
                    conditions=[Condition("absent", measure.business_name.lower(), dates=window)], shape=shape)
+
+
+def _absent_window(plan: Plan, model: SemanticModel, ctx: Context, measure: Measure) -> tuple:
+    """When the members had none (the window), by which date, and the conditions on the rows: (without's fields,
+    window, role, had's fields, the period they had some or None, its date)."""
+    a = plan.absent
+    assert a is not None
+    role = _date_role_for(model, plan, measure, measure.table)
+    first, last = _first_last(role) if role is not None else (None, None)
+    window = resolve_window(plan.time.window, today=ctx.today, first_data=first, last_data=last,
+                            fiscal_start=model.settings.fiscal_year_start_month)
+    if plan.time.window.kind == "all":
+        window = Range(None, None)
+    _after_the_data(window, last)
+    without, absent_in, absent_on = _activity_period(model, measure, a.without)
+    had, had_in, had_on = _activity_period(model, measure, a.had) if a.had else ([], None, None)
+    asked = window if plan.time.window.kind != "all" else None
+    if absent_in is not None:
+        # "Bought in Q2 but not in Q3": the period written on the rows they had none of is when they had none,
+        # whatever the question's own period; that one, when it is another, is when they had some.
+        if asked is not None and had_in is None and not _same_span(asked, absent_in):
+            had_in, had_on = asked, role
+        window, role = absent_in, absent_on
+        _after_the_data(window, _first_last(role)[1] if role is not None else last)
+    if had_in is not None and _same_span(had_in, window):
+        from core2.answer.builder import span_words
+
+        raise ResolveError("unsupported", f"they cannot have had {plural(measure.business_name.lower())} and none "
+                           f"{span_words(window)}: name the period they had none in (\"bought in Q2 but not in Q3\")")
+    return without, window, role, had, had_in, had_on
+
+
+def _keyed_members(model: SemanticModel, a) -> Measure | None:
+    """The count of members the data keeps only a number for (a pharmacy's patients, on its prescriptions, with
+    no table listing them), when the absence is of them (``of`` names that count: core2/plan/analyst_math.py
+    ``absent_of_the_counted`` writes it so). None: members with a list of their own."""
+    found = find_slug(model, a.of)
+    if found is None or found[0] != "measure":
+        return None
+    counter = found[1]
+    assert isinstance(counter, Measure)
+    expr = counter.expr
+    if not isinstance(expr, AggExpr) or expr.agg != "count_distinct" or not expr.column or expr.filters \
+            or counter.filters or expr.column not in model.columns:
+        return None
+    if any(_counts_entity(model, counter, e) for e in model.entities.values()):
+        return None                  # members with a list of their own: the entity is named, not its count
+    return counter
+
+
+def _absent_keyed(plan: Plan, model: SemanticModel, ctx: Context, counter: Measure) -> Logical:
+    """Members told apart only by the number on their rows -- patients, on a pharmacy's prescriptions -- with no
+    activity like ``without`` in the window: counted (in each group asked for), each once, never listed (their
+    numbers are not shown). "How many patients filled a statin in Q1 but not in Q2, by store"."""
+    a = plan.absent
+    assert a is not None
+    assert isinstance(counter.expr, AggExpr) and counter.expr.column
+    key = counter.expr.column
+    holder = model.columns[key].table
+    word = counter.business_name.lower()
+    for lead in ("number of ", "count of ", "no. of "):
+        word = word.removeprefix(lead)
+    member = _singular(word)
+    found_m = find_slug(model, a.measure)
+    measure = found_m[1] if found_m is not None and found_m[0] == "measure" else counter
+    assert isinstance(measure, Measure)
+    if not measure.table:
+        raise ResolveError("unsupported", f"{measure.business_name} is worked out over several tables: name the "
+                           "activity of one (orders, fills)")
+    if measure.table != holder:
+        try:
+            reached = P.best_path(model, measure.table, holder) is not None
+        except P.Ambiguous:
+            reached = False
+        if not reached:
+            raise ResolveError("unsupported", f"{plural(member)} cannot be told apart on the "
+                               f"{plural(model.tables[measure.table].business_name.lower())}: ask about the rows "
+                               f"that hold their number")
+    if plan.measures or plan.derived or plan.figures or plan.rates or plan.durations:
+        raise ResolveError("unsupported", f"the data keeps only a number for each {member}, with no list of them: "
+                           f"ask how many {plural(member)} there were (in each store, each month)")
+    without, window, role, had, had_in, had_on = _absent_window(plan, model, ctx, measure)
+    if a.active_before and had_in is None and window.start is not None:
+        had_in = Range(None, window.start)       # "stopped": they had some before the window, counted over it
+    one = dt.timedelta(days=1)
+    if had_in is None:
+        span = Window(kind="all")
+    elif had_in.start is not None and had_in.end is not None:
+        span = Window(kind="between", start=had_in.start, end=had_in.end - one)
+    elif had_in.start is not None:
+        span = Window(kind="since", start=had_in.start)
+    else:
+        span = Window(kind="until", end=had_in.end - one if had_in.end else None)
+    # Each member once, counted on the activity's own rows by the number they hold (a fill's prescription's
+    # patient): a count of them the model does not keep, made for this answer.
+    counted = Measure(key=f"{measure.key}#{key}", slug=f"{measure.slug}__{_output_name(word, set())}",
+                      business_name=counter.business_name, table=measure.table,
+                      expr=AggExpr(agg="count_distinct", column=key, table=measure.table), format="count", kind="count",
+                      default_date=measure.default_date, better="neither")
+    local = model.model_copy(update={"measures": {**model.measures, counted.key: counted}})
+    groups = list(plan.group_by)
+    figures = plan.model_copy(update={
+        "absent": None, "measures": [counted.slug], "group_by": groups, "filters": [*plan.filters, *had],
+        # "A prescription written in Q1": counted by the date the period they had some was named on.
+        "time": plan.time.model_copy(update={"window": span, "compare": None,
+                                             "date": plan.time.date or (had_on.slug if had_on else None)}),
+        "intent": "breakdown" if groups else "value", "sort": [], "per": None})
+    inner = resolve_plain(figures, local, ctx)
+
+    aliases = _Aliases()
+    builder = _PartBuilder(model, measure.table, aliases, ctx)
+    builder._allowed(measure.table)
+    act = builder.part
+    act.distinct_only = True
+    at = builder.reach(holder, label=member) if holder != measure.table else act.alias
+    act_key = "member_key"
+    act.groups.append(PartGroup(act_key, at, key, "attribute"))
+    act.preds.append(Pred(at, key, "not_null", []))
+    for df in model.tables[measure.table].default_filters:
+        act.preds.append(Pred(act.alias, df.column, df.op, list(df.values)))
+    for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
+        act.preds.append(Pred(act.alias, mf.column, mf.op, list(mf.values)))
+    for f in [*plan.filters, *without]:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the activity by called {f.field}", [])
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        f, stored = _named_filter(column, f)
+        alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
+            if column.table != measure.table else act.alias
+        _held(builder, act, Pred(alias, column.key, f.op, list(stored)))
+    when = role or _date_role_for(model, plan, measure, measure.table)
+    if when is not None and (window.start is not None or window.end is not None):
+        act.date_ranges.append((builder.date(when), window))
+
+    for part in inner.parts:
+        alias = part.alias if part.table == holder else part.reached.get(holder) or next(
+            (j.alias for j in part.joins if j.table == holder), None)
+        if alias is None:
+            raise ResolveError("unsupported", f"{plural(member)} cannot be told apart in these figures")
+        part.absent.append(MemberAbsent(alias, key, act, act_key, activity_column=key))
+    inner.measures = [dataclasses.replace(o, label=plural(member).capitalize(), measure=counter)
+                      for o in inner.measures]
+    # What they had (or not): the rows themselves ("immunizations"), never the count of the members again.
+    rows = measure.business_name
+    if measure is counter:
+        rows = next((m.business_name for m in model.measures.values() if m.table == measure.table and not m.hidden
+                     and isinstance(m.expr, AggExpr) and m.expr.agg == "count" and not m.expr.column
+                     and not m.expr.filters and not m.filters), plural(model.tables[measure.table].business_name))
+    info = Absence(member=member, activity_label=rows, window=window, had_in=had_in, listed=False)
+    inner.absence = info
+    shape = AbsentShape(entity=act, key=key, activity=act, activity_key=act_key, member=member,
+                        activity_label=rows, had_in=had_in)
+    inner.notes.append(absent_note(shape, window, False))
+    inner.conditions.append(Condition("absent", rows.lower(), dates=window))
+    return inner
+
+
+def _same_span(a: Range, b: Range) -> bool:
+    return a.start == b.start and a.end == b.end
+
+
+@dataclass
+class Absence:
+    """The members' figures, minus those with activity in a period (``plan.absent`` with figures asked for: "the
+    customers who bought in Q2 but not in Q3, with what they spent in Q2"), for the answer's sentence."""
+
+    member: str                    # "customer"
+    activity_label: str            # "Number of orders"
+    window: Range                  # when they had none
+    had_in: Range | None           # when the figures are counted (and they had some); None: any time
+    listed: bool = True            # each row is one member (not their number in each group)
+
+
+def _absent_figures(plan: Plan, model: SemanticModel, ctx: Context, entity: Entity, key: str, measure: Measure,
+                    rest: list, without: list, window: Range, role: DateRole | None, had: list,
+                    had_in: Range | None, had_on: DateRole | None = None) -> Logical:
+    """The figures asked for each member (or each group of them), counted over the period they had some (``had``),
+    and only from members with no activity like ``without`` in ``window``: the plain answer, each part's rows kept
+    to members with no such row (NOT EXISTS by the member's key, core2/compile/compiler.py ``none_like``)."""
+    one = dt.timedelta(days=1)
+    if had_in is None:
+        span = Window(kind="all")
+    elif had_in.start is not None and had_in.end is not None:
+        span = Window(kind="between", start=had_in.start, end=had_in.end - one)
+    elif had_in.start is not None:
+        span = Window(kind="since", start=had_in.start)
+    else:
+        span = Window(kind="until", end=had_in.end - one if had_in.end else None)
+    group_by = list(plan.group_by)
+    counted = plan.intent == "count" or any(_counts_entity(model, m, entity) for m in
+                                            (model.measures.get(x) for x in plan.measures) if m is not None)
+    if plan.absent.of not in group_by and not counted:
+        group_by.insert(0, plan.absent.of)          # each member by name, their own fields beside it
+    listed_by_name = plan.absent.of in group_by
+    figures = plan.model_copy(update={
+        "absent": None, "group_by": group_by, "filters": [*plan.filters, *had],
+        # "Wrote scripts in Q1": the figures counted by the date the period they had some was named on.
+        "time": plan.time.model_copy(update={"window": span, "compare": None,
+                                             "date": plan.time.date or (had_on.slug if had_on else None)}),
+        "via": {**(_through_member(model, [g for g in group_by if g != plan.absent.of], entity, plan.absent.of)
+                   if listed_by_name else {}), **plan.via},
+        "intent": "count" if plan.intent == "count" else plan.intent if plan.intent in ("list", "rank", "breakdown")
+        else "list"})
+    if not (plan.measures or plan.derived or plan.figures or plan.rates or plan.durations):
+        # The members themselves counted in each group: each one's rows of the activity first (those with one or
+        # more), then counted -- a member with rows in two regions is counted in each.
+        from core2.plan.ir import PerMember
+
+        groups = [g for g in group_by if g != plan.absent.of]
+        figures = figures.model_copy(update={
+            "measures": [measure.slug], "intent": "breakdown", "group_by": groups,
+            "via": {**_through_member(model, groups, entity, plan.absent.of), **plan.via},
+            "per": PerMember(of=plan.absent.of, summary="count", op="gte", values=[1])})
+        inner = _per(figures, model, ctx)
+        inner.measures = [dataclasses.replace(inner.measures[0], label=plural(entity.business_name).capitalize())]
+    else:
+        inner = resolve_plain(figures, model, ctx)
+
+    aliases = _Aliases()
+    builder = _PartBuilder(model, measure.table, aliases, ctx)
+    builder._allowed(measure.table)
+    act = builder.part
+    act.distinct_only = True
+    reached = builder.reach(entity.table, label=entity.business_name)
+    act_key = "member_key"
+    act.groups.append(PartGroup(act_key, reached, key, "attribute"))
+    act.preds.append(Pred(reached, key, "not_null", []))
+    for df in model.tables[measure.table].default_filters:
+        act.preds.append(Pred(act.alias, df.column, df.op, list(df.values)))
+    for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
+        act.preds.append(Pred(act.alias, mf.column, mf.op, list(mf.values)))
+    for f in [*rest, *without]:
+        found_f = find_slug(model, f.field)
+        if not found_f or found_f[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to narrow the activity by called {f.field}", [])
+        attribute = _entity_label(model, f.field) if found_f[0] == "entity" else found_f[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, f.field, entity=found_f[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        f, stored = _named_filter(column, f)
+        alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
+            if column.table != measure.table else act.alias
+        _held(builder, act, Pred(alias, column.key, f.op, list(stored)))
+    when = role or _date_role_for(model, plan, measure, measure.table)
+    if when is not None and (window.start is not None or window.end is not None):
+        act.date_ranges.append((builder.date(when), window))
+
+    for part in inner.parts:
+        holds = _member_key_in(model, part, entity, key)
+        if holds is None:
+            raise ResolveError("unsupported", f"{plural(entity.business_name.lower())} cannot be told apart in "
+                               f"these figures: ask for the {plural(entity.business_name.lower())} themselves")
+        part.absent.append(MemberAbsent(holds[0], holds[1], act, act_key, activity_column=key))
+    info = Absence(member=entity.business_name.lower(), activity_label=measure.business_name, window=window,
+                   had_in=had_in, listed=plan.absent.of in group_by)
+    inner.absence = info
+    shape = AbsentShape(entity=act, key=key, activity=act, activity_key=act_key, member=info.member,
+                        activity_label=info.activity_label, had_in=had_in)
+    inner.notes.append(absent_note(shape, window, False))
+    inner.conditions.append(Condition("absent", measure.business_name.lower(), dates=window))
+    return inner
+
+
+def _own_field(model: SemanticModel, slug: str, entity: Entity) -> bool:
+    """Is ``slug`` a field of the member's own table (their segment, their city), listed beside their name?"""
+    attribute = model.attributes.get(slug) or (_entity_label(model, slug) if slug in model.entities else None)
+    return attribute is not None and attribute.column in model.columns \
+        and model.columns[attribute.column].table == entity.table
+
+
+def _through_member(model: SemanticModel, groups: list[str], entity: Entity, of: str) -> dict[str, str]:
+    """Each member counted under its own region, not under each region it had rows in: a grouping on another
+    table that the member's own table reaches is reached through it (the customer's home branch, not the branch of
+    each transaction)."""
+    via: dict[str, str] = {}
+    for slug in groups:
+        attribute = model.attributes.get(slug) or (_entity_label(model, slug) if slug in model.entities else None)
+        if attribute is None or attribute.column not in model.columns:
+            continue
+        table = model.columns[attribute.column].table
+        if table == entity.table:
+            continue
+        try:
+            path = P.best_path(model, entity.table, table)
+        except P.Ambiguous:
+            continue
+        if path is not None:
+            via[slug] = of
+    return via
+
+
+def _counts_entity(model: SemanticModel, measure: Measure, entity: Entity) -> bool:
+    """Does ``measure`` count the members themselves ("how many patients"), rather than give each a figure?"""
+    expr = measure.expr
+    if not isinstance(expr, AggExpr) or expr.agg not in ("count", "count_distinct"):
+        return False
+    if measure.table == entity.table:
+        return True
+    if expr.agg != "count_distinct" or not expr.column:
+        return False
+    return expr.column in entity.key_columns or any(
+        j.to_table == entity.table and expr.column in j.from_columns for j in model.joins.values())
+
+
+def _member_key_in(model: SemanticModel, part: Part, entity: Entity, key: str) -> tuple[str, str] | None:
+    """Where a part's rows hold the member's key: the member's own table joined in, or the part's own column
+    linked to it. (alias, column key), or None."""
+    if part.table == entity.table:
+        return part.alias, key
+    for j in part.joins:
+        if j.table == entity.table:
+            return j.alias, key
+    for j in model.joins.values():
+        if j.from_table == part.table and j.to_table == entity.table and j.to_columns == [key] \
+                and j.trust != "rejected":
+            return part.alias, j.from_columns[0]
+    return None
 
 
 def activity_of(model: SemanticModel, measure: Measure, entity: Entity) -> Measure:
@@ -921,7 +1274,7 @@ def _events(plan: Plan, model: SemanticModel, ctx: Context, of: str, measure_slu
         f, stored = _named_filter(column, f)
         alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
             if column.table != measure.table else part.alias
-        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+        _held(builder, part, Pred(alias, column.key, f.op, list(stored)))
 
     # Groupings: the member's own (a customer's segment): each member's days stay one sequence. A grouping of the
     # rows (a store) would cut one customer's orders into several sequences.
@@ -1236,7 +1589,7 @@ def _active(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         f, stored = _named_filter(column, f)
         alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
             if column.table != table else part.alias
-        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+        _held(builder, part, Pred(alias, column.key, f.op, list(stored)))
     taken: set[str] = set()
     groups: list[Group] = []
     names: list[str] = []
@@ -1322,7 +1675,7 @@ def _rows_part(plan: Plan, model: SemanticModel, ctx: Context, table: str, taken
         f, stored = _named_filter(column, f)
         alias = builder.reach(column.table, label=attribute.business_name, filtering=True) \
             if column.table != table else part.alias
-        part.preds.append(Pred(alias, column.key, f.op, list(stored)))
+        _held(builder, part, Pred(alias, column.key, f.op, list(stored)))
     groups: list[Group] = []
     names: list[str] = []
     for slug in plan.group_by:

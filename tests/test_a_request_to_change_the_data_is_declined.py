@@ -43,9 +43,23 @@ def test_a_request_to_change_the_data_names_the_rows_to_show(request_, shown):
                                       "Add up the sales by region", "Update me on sales this month",
                                       "Removed items by category", "Increase in sales by month",
                                       "Reduced price items by category", "Raised invoices this week",
-                                      "Lower margin products in 2025"])
+                                      "Lower margin products in 2025",
+                                      # A change to the answer on screen, never to the data (the bank warehouse's
+                                      # follow-up was declined as a request to change records).
+                                      "drop the count and the average, and show each balance as % of the "
+                                      "region's total instead", "remove the cost column", "drop the margin",
+                                      "add the count next to it"])
 def test_a_question_with_the_same_words_is_a_question(question):
     assert changes_data(question) is None
+
+
+@pytest.mark.parametrize("request_", [
+    # Requests that write a value or act on records stay declined, whatever words about the answer they hold.
+    "Update the total of invoice 42 to $500", "Set the rate for all loans to 5%", "Cancel the open orders and list them",
+    "Remove all the cancelled orders, then show the rest", "Change the cost of every item in category Bakery to 2.50",
+    "Reset the counts for all stores", "Mark the invoices as paid instead"])
+def test_a_request_that_writes_stays_declined(request_):
+    assert changes_data(request_) is not None
 
 
 def test_it_is_declined_before_any_planning():

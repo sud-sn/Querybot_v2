@@ -203,6 +203,8 @@ def condition_words(c: Condition, *, quoted: bool = False, lang: str = "en") -> 
         return f"counting every {c.label} listed"
     if c.kind == "absent":
         return ""           # who had none: the answer's own sentence says it
+    if c.kind in ("change", "pct_change", "share"):
+        return _kept_by_figure(c)
     if c.kind == "date" and c.op in ("is_null", "not_null"):
         return f"with {'no' if c.op == 'is_null' else 'a'} {c.label}"      # "with a death date", "with no ship date"
     if c.kind == "date":
@@ -240,6 +242,29 @@ def condition_words(c: Condition, *, quoted: bool = False, lang: str = "en") -> 
     return f"where {c.label} is {_compared(c.op, [str(v) for v in c.values])}"
 
 
+def _kept_by_figure(c: Condition, lang: str = "en") -> str:
+    """Groups kept by their change, % change or share: "that fell", "down more than 5%", "with a share above 10%"."""
+    v = float(c.values[0]) if c.values and _number(c.values[0]) is not None else None
+    fr = lang == "fr"
+    if v is None:
+        return ""
+    if c.kind in ("change", "pct_change") and v == 0 and c.op in ("lt", "lte", "gt", "gte"):
+        down = c.op in ("lt", "lte")
+        return ("en baisse" if down else "en hausse") if fr else ("that fell" if down else "that rose")
+    if c.kind == "pct_change" and c.op in ("lt", "lte") and v < 0:
+        return f"en baisse de plus de {abs(v):g} %" if fr else f"down more than {abs(v):g}%"
+    if c.kind == "pct_change" and c.op in ("gt", "gte") and v > 0:
+        return f"en hausse de plus de {v:g} %" if fr else f"up more than {v:g}%"
+    if c.kind == "change":
+        amounts = [fmt(float(x), c.format or "number") for x in c.values if _number(x) is not None]
+        return (f"dont la variation est {_compared(c.op, amounts, 'fr')}" if fr else
+                f"whose change is {_compared(c.op, amounts)}")
+    shown = [f"{float(x):g}%" for x in c.values if _number(x) is not None]
+    what = "la variation" if c.kind == "pct_change" else "la part"
+    return (f"dont {what} est {_compared(c.op, shown, 'fr')}" if fr else
+            f"whose {'% change' if c.kind == 'pct_change' else 'share'} is {_compared(c.op, shown)}")
+
+
 _SEGMENT_FR = {"new": "nouveaux", "returning": "revenus", "won_back": "reconquis", "repeat": "réguliers",
                "one_time": "ponctuels"}
 
@@ -264,6 +289,8 @@ def _condition_fr(c: Condition, quoted: bool) -> str:
         return f"en comptant chaque {c.label} de la liste"
     if c.kind == "absent":
         return ""
+    if c.kind in ("change", "pct_change", "share"):
+        return _kept_by_figure(c, "fr")
     if c.kind == "date" and c.op in ("is_null", "not_null"):
         return f"{'sans' if c.op == 'is_null' else 'avec'} {c.label}"
     if c.kind == "date":
@@ -746,7 +773,8 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         except Exception as exc:  # noqa: BLE001 - the totals are extra; the answer stands without them
             log.warning("core2 could not total the comparison of %r: %s", question, exc)
     if logical.shape is not None or logical.target is not None or any(g.bands for g in logical.groups) \
-            or any(s.split for p in logical.parts for s in p.segments):
+            or any(s.split for p in logical.parts for s in p.segments) or logical.absence is not None \
+            or logical.share_within:
         from core2.answer.shaped import explain
 
         explain(framed, logical, list(columns), list(rows))
@@ -1238,9 +1266,17 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             changes = [_number(r[change.name]) or 0.0 for r in raw]
             order = sorted(range(len(raw)), key=lambda i: -changes[i])
             hi, lo = order[0], order[-1]
-            who = lambda i: str(shown[i][members[0].name])   # noqa: E731
+            pair = members[:2] if len(members) > 1 and not units.column else members[:1]
+
+            def who(i: int) -> str:
+                # Each row is a pair when the answer is grouped twice: "Central, Pantry rose most", never the
+                # region alone, as if the region had risen.
+                return ", ".join(str(shown[i][g.name]) for g in pair)
+
             by = lambda i: _signed(changes[i], m.format, units.of(raw[i]), rounded=True)   # noqa: E731
-            many = f"{len(raw)} {_noun(members[0].label)}{' shown' if logical.limit else ''}"
+            what = _noun(members[0].label) if len(pair) == 1 else \
+                f"{' and '.join(_thing(g.label) for g in pair)} pairs"
+            many = f"{len(raw)} {what}{' shown' if logical.limit else ''}"
             if changes[hi] > 0 and changes[lo] < 0:
                 said = f"{who(hi)} rose most ({by(hi)}); {who(lo)} fell most ({by(lo)})"
             elif len(raw) == 1:
@@ -1380,6 +1416,8 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             rest = [_valued(spoken(row[c.name], c.format, unit=units.of(row)), c) for c in measures
                     if c is not ranked_by and c.name in row]
             joined = ", ".join(rest[:-1]) + f" and {rest[-1]}" if len(rest) > 1 else "".join(rest)
+            # Led by the figure it is ranked by ("Return rate in Q1 2026: ..."), never the first one shown beside it.
+            lead = ranked_by.label + lead[len(m.label):] if lead.startswith(m.label) else lead
             return (f"{lead}: {shown[high][g.name]} has the highest {_lower(ranked_by.label)}, at "
                     f"{value(row, ranked_by)}{(', with ' + joined) if joined else ''}{count}.")
         # The other measures asked for, for the same leader: "and $456K gross profit".

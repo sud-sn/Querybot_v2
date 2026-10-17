@@ -10,6 +10,7 @@ answer.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import difflib
 import re
@@ -237,6 +238,19 @@ class Semi:
 
     joins: list[Joined]
     preds: list[Pred] = field(default_factory=list)
+    negated: bool = False            # "without gabapentin": the rows with no match at all (NOT EXISTS)
+
+
+_NEGATED = {"ne": "eq", "not_in": "in"}
+
+
+def hold_in_semi(semi: Semi, pred: Pred) -> None:
+    """A condition kept inside its bridge's EXISTS. "Prescriptions without gabapentin" are those with no gabapentin
+    ingredient at all (NOT EXISTS ... = gabapentin), never those with some other ingredient besides it."""
+    if pred.op in _NEGATED and not semi.preds:
+        semi.negated = True
+        pred = dataclasses.replace(pred, op=_NEGATED[pred.op])
+    semi.preds.append(pred)
 
 
 @dataclass
@@ -254,6 +268,18 @@ class SegmentUse:
     prior: Range | None = None     # won back: the period before
     split: tuple[str, str] | None = None    # a grouping by it: the two names (New, Returning)
     name: str = "sg0"              # its members' summary, as the query names it
+
+
+@dataclass
+class MemberAbsent:
+    """Only the rows of members with no activity like this ("bought in Q2 but not in Q3", with what they spent in
+    Q2): NOT EXISTS a row of ``activity`` holding the member's key (core2/resolve/shapes.py ``_absent``)."""
+
+    alias: str                     # the part's alias holding the member's key
+    column: str                    # that key's column key
+    activity: "Part"               # each member's key once, from the rows that count as activity
+    activity_key: str              # the activity part's output name for the key
+    activity_column: str = ""      # the column key it is read from there (its type: '0007' against 7); "": column
 
 
 @dataclass
@@ -275,6 +301,7 @@ class Part:
     reached: dict[str, str] = field(default_factory=dict)   # table key -> alias, for columns a measure reads there
     row_level: bool = False  # each row's own value, not added up (a figure per row, summarised over the rows)
     segments: list[SegmentUse] = field(default_factory=list)   # only (or split by) new, returning... members
+    absent: list[MemberAbsent] = field(default_factory=list)   # only members with no activity like this
 
 
 @dataclass
@@ -315,6 +342,7 @@ class Logical:
     sort_asked: bool = False            # the question named its order (not the default by the first measure)
     limit: int | None = None
     share: bool = False
+    share_within: list[str] = field(default_factory=list)   # each share is of these groupings' own total
     having: list[Pred] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     cautions: list[str] = field(default_factory=list)  # said with the answer, not under "How it was counted"
@@ -328,6 +356,7 @@ class Logical:
     data_last: dt.date | None = None    # the last day the series' date has data (periods after it have none yet)
     beyond: dt.date | None = None       # the data's last day, when the period asked for starts after it ("in 2004")
     shape: object | None = None         # an analytical shape worked out over these rows (core2/resolve/shapes.py)
+    absence: object | None = None       # the members' figures, minus those with activity then (shapes.Absence)
     target: object | None = None        # a figure against its target: what the answer says of it (shapes.TargetInfo)
     people: str | None = None           # the hidden column counting each group's people, when age is used
     age_checks: list[tuple[int, int]] = field(default_factory=list)   # ages each limit's 5 years hold: checked
@@ -837,6 +866,10 @@ def _unit_home(model: SemanticModel, base: str, unit: MeasureExpr) -> str:
         if unit.column is None:
             return unit.table or base
         own = model.columns[unit.column].table
+        if unit.table and unit.table != own and unit.agg == "count_distinct" and _reaches(model, unit.table, own):
+            # Counted on the rows it names (the patients of the fills, by the fills' own date: a count the answer
+            # makes for members the data keeps only a number for, core2/resolve/shapes.py ``_absent_keyed``).
+            return unit.table
         if own == base or model.tables[own].kind in ("fact", "snapshot"):
             return own
         return base if _reaches(model, base, own) else own
@@ -1017,9 +1050,12 @@ def _out_of_reach(model: SemanticModel, plan: Plan, table: str) -> set[str]:
     """The tables of the plan's groupings and conditions a table's rows have no link to of their own, not even one
     waiting for an admin (a patient has no doctor of their own: the prescriptions name both). One reached only
     across a bridge is out of reach too: an ingredient's dosage forms are those of the formulas that use it, each
-    counted once on the rows that name both."""
+    counted once on the rows that name both. A condition alone across a bridge is in reach: it only keeps the rows
+    with some such member (prescriptions of a formula holding gabapentin), each row still counted once."""
+    grouped = _grouped_tables(model, plan.model_copy(update={"filters": []}))
     return {t for t in _grouped_tables(model, plan)
-            if t != table and not P.all_paths(model, table, t, unconfirmed=True)}
+            if t != table and not P.all_paths(model, table, t, unconfirmed=True)
+            and (t in grouped or not P.crossings(model, table, t))}
 
 
 def _ways(model: SemanticModel, start: str, goal: str) -> list[P.Path]:
@@ -1868,7 +1904,11 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 
     # Filters: attributes, other dates, totals.
     having: list[Pred] = []
+    on_shown: list[Filter] = []       # each group's change or share: kept once they are worked out
     for f in plan.filters:
+        if f.field in SHOWN_FIGURES:
+            on_shown.append(f)
+            continue
         if f.field in ALL_TIMES:
             _time_filter(f, builders, conditions, notes, model)
             continue
@@ -2036,7 +2076,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 took.append(part)
                 continue
             if alias in builder.semi_of:
-                builder.semi_of[alias].preds.append(pred)     # rows with a match, each kept once
+                hold_in_semi(builder.semi_of[alias], pred)    # rows with a match, each kept once
                 if len(pred.values) > 1 or f.op not in ("eq", "in"):
                     notes.append(f"Each {model.tables[part.table].business_name.lower()} row is counted once, "
                                  f"however many {plural(model.tables[column.table].business_name).lower()} "
@@ -2257,6 +2297,20 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         else:
             notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not "
                          "add up across its groups (an average or a ratio): no share of a total is worked out.")
+    share_within: list[str] = []
+    if share and plan.share_of:
+        within = group_names.get(plan.share_of)
+        if within is None:
+            raise ResolveError("unsupported", f"a share of each {plan.share_of}'s own total needs {plan.share_of} "
+                               "among the groupings (group_by)", list(group_names))
+        if len([g for g in groups if g.kind in ("attribute", "period", "time")]) < 2:
+            share_within = []          # one grouping: its own total is the whole
+        else:
+            share_within = [within]
+            label = next((g.label for g in groups if g.name == within), plan.share_of)
+            notes.append(f"Each share is of its {label.lower()}'s own total, not of everything.")
+    for f in on_shown:
+        having.append(_shown_figure_filter(f, measures_out, compare, share, conditions))
     if plan.segment is not None:
         from core2.resolve.segments import attach
 
@@ -2264,12 +2318,38 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for b, _ in builders:
         cautions.extend(c for c in b.cautions if c not in cautions)
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
-                   sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, having=having,
-                   notes=_unique(notes), cautions=cautions,
+                   sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, share_within=share_within,
+                   having=having, notes=_unique(notes), cautions=cautions,
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
                    expected=expected, data_last=last if plan.time.grain else None, conditions=conditions,
                    beyond=last if last is not None and window.start is not None and window.start > last else None)
+
+
+SHOWN_FIGURES = ("change", "pct_change", "share")
+
+
+def _shown_figure_filter(f: Filter, measures: list[OutMeasure], compare: Range | None, share: bool,
+                         conditions: list[Condition]) -> Pred:
+    """Each group kept by a figure the answer works out beside its measure: its change between the compared periods
+    ("only the products that sold less than in Q2": change lt [0]), its % change or its share, given in percent."""
+    shown = [o for o in measures if not o.hidden]
+    if not shown:
+        raise ResolveError("unsupported", f"a condition on the {f.field.replace('_', ' ')} needs a measure")
+    if f.field in ("change", "pct_change") and compare is None:
+        raise ResolveError("unsupported", "a condition on the change needs two periods compared (time.compare)")
+    if f.field == "share" and not share:
+        raise ResolveError("unsupported", "a condition on the share needs the shares worked out (intent share)")
+    if f.op not in ("gt", "gte", "lt", "lte", "eq", "ne", "between"):
+        raise ResolveError("unsupported", f"the {f.field.replace('_', ' ')} is compared with a number")
+    try:
+        values = [float(v) for v in f.values]
+    except (TypeError, ValueError):
+        raise ResolveError("unsupported", f"the {f.field.replace('_', ' ')} is compared with a number") from None
+    m = shown[0]
+    stored = values if f.field == "change" else [v / 100.0 for v in values]   # % change and share are fractions
+    conditions.append(Condition(f.field, m.label.lower(), f.op, values, format=m.format))
+    return Pred("", f"{m.name}_{f.field}", f.op, stored, f"{m.label} {f.field.replace('_', ' ')} {_op_words(f)}")
 
 
 @dataclass

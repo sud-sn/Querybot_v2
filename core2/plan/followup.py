@@ -213,6 +213,14 @@ def measures_named(model: SemanticModel | None, question: str) -> set[str]:
     return {slug for _, slug, _ in _found(model, question, ("measure", "count"))}
 
 
+def measures_in_order(model: SemanticModel | None, question: str) -> list[tuple[int, str]]:
+    """Where the question names each measure: (character offset, slug), first named first."""
+    spans = _spans(model, question, ("measure", "count"))
+    kept = [(start, slug) for start, end, _, slug, _ in spans
+            if not any(s <= start and end <= e and (e - s) > (end - start) for s, e, *_ in spans)]
+    return sorted(kept)
+
+
 def scoped(question: str, members: int = 0) -> bool:
     """Does the question set its own scope: a period, a grouping, a condition on a number, or a member it names?"""
     return bool(_WHEN.search(question) or _GROUPED.search(question) or _CONDITION.search(question) or members)

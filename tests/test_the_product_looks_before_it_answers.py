@@ -494,26 +494,38 @@ def test_a_share_of_exactly_none_is_read_again_and_the_second_reading_kept(retai
 EVERY_REASON = [{"field": "return.reason_code", "op": "in", "values": ["DMG", "WRG", "LATE", "OTHER"]}]
 WITHIN = {"intent": "rank", "measures": ["number_of_returns"], "group_by": ["return.reason_code"],
           "rates": [{"name": "share of returns", "measure": "number_of_returns", "where": EVERY_REASON}]}
-OF_ALL = {"intent": "share", "measures": ["number_of_returns"], "group_by": ["return.reason_code"]}
 EACH_OF_ALL = "Returns by reason, and what % of all returns each reason is"
+# The same rate on every reason, beside a grouping by category: no rule reads it before the data shows it.
+BY_CATEGORY = {**WITHIN, "group_by": ["category"]}
+OF_ALL = {"intent": "share", "measures": ["number_of_returns"], "group_by": ["category"]}
+EACH_CATEGORY = "Returns by category, and what % of all returns each category is"
+
+
+def test_a_rate_on_every_member_of_its_grouping_is_each_ones_share_at_the_first_reading(retail):
+    chat = Told(retail)
+    chat.plans += [WITHIN]
+    got = chat.ask(EACH_OF_ALL)
+    assert len(chat.told) == 1 and "looked_again" not in got.get("trust", {})
+    hand = dict(_rows(retail, "SELECT reason_code, 100.0 * COUNT(*) / SUM(COUNT(*)) OVER () FROM returns GROUP BY 1"))
+    share = next(h for h in got["data"]["headers"] if h.endswith("_share"))
+    assert {r["return_reason_code"]: r[share] for r in got["data"]["rows"]} == pytest.approx(hand, abs=0.01)
 
 
 def test_a_rate_of_every_row_in_every_group_is_read_again_as_each_ones_share(retail):
     chat = Told(retail)
-    chat.plans += [WITHIN, OF_ALL]
-    got = chat.ask(EACH_OF_ALL)
-    assert len(chat.told) == 2 and "exactly 100% in every one of the 4 rows" in chat.told[1]
-    hand = dict(_rows(retail, "SELECT reason_code, 100.0 * COUNT(*) / SUM(COUNT(*)) OVER () FROM returns GROUP BY 1"))
-    share = next(h for h in got["data"]["headers"] if h.endswith("_share"))
-    assert {r["return_reason_code"]: r[share] for r in got["data"]["rows"]} == pytest.approx(hand, abs=0.01)
+    chat.plans += [BY_CATEGORY, OF_ALL]
+    got = chat.ask(EACH_CATEGORY)
+    assert len(chat.told) == 2 and "exactly 100% in every one of the" in chat.told[1]
     assert got["reply"]["seen"][0]["kind"] == "looked_again"
+    share = next(h for h in got["data"]["headers"] if h.endswith("_share"))
+    assert sum(float(r[share]) for r in got["data"]["rows"]) == pytest.approx(100.0, abs=0.05)
 
 
 def test_a_second_reading_still_of_every_row_leaves_the_first_answer(retail):
     chat = Told(retail)
-    again = {**WITHIN, "rates": [{**WITHIN["rates"][0], "name": "returns share"}]}
-    chat.plans += [WITHIN, again]
-    got = chat.ask(EACH_OF_ALL)
+    again = {**BY_CATEGORY, "rates": [{**WITHIN["rates"][0], "name": "returns share"}]}
+    chat.plans += [BY_CATEGORY, again]
+    got = chat.ask(EACH_CATEGORY)
     assert len(chat.told) == 2 and got["trust"]["looked_again"]["kept"] == "first"
 
 

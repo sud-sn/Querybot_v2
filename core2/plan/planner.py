@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
-from core2.plan import asks
+from core2.plan import analyst_math, asks
 from core2.plan.catalog import catalog_text
 from core2.plan.followup import (asks_series, keeps_period, measures_named, named_longer, names_own_period,
                                  points_at_period, the_period)
@@ -65,7 +65,10 @@ How to plan:
    needs a ratio, difference, sum or product of two measures (a margin %, revenue per order), put it in
    derived with a short name, the op and the two slugs (scale 100 for a percentage); a part may be an
    earlier derived's name: a margin % is the ratio of a derived difference (sales less cost) to the sales,
-   scale 100, never sales over cost. A figure times a number (ARR as 12 times MRR) is a product of the slug
+   scale 100, never sales over cost. One figure as a % of another ("refunds as a % of sales", "shipping cost as
+   a % of revenue", "fee reversals as a % of fees charged", "charge-offs as a % of originations") is a derived
+   ratio of the two slugs, scale 100, even when they are on two tables: each is counted by its own date. It is
+   never a rate (a rate's condition is on the rows of its own measure) and never a share of a total. A figure times a number (ARR as 12 times MRR) is a product of the slug
    with itself and the number as scale; a change or "% increase" from one period to another is never a derived
    of a measure with itself: it is time.compare, sorted by change or pct_change. A rate of a condition ("the
    cancellation rate by region", "% of orders returned", "share of lines late", "reversal rate") goes in rates:
@@ -150,7 +153,12 @@ How to plan:
    that ("available stock" is not a stock status AVAILABLE, "for northline" is no customer): answer without it.
    A code the catalog lists, chosen for what the question means ("units received" -> movement type RCV),
    may filter. A condition on a total ("customers with more than 10,000 in sales") is a filter on the
-   measure slug. A name in VALUE MATCHES can also be what a measure measures ("cost of goods sold" is a
+   measure slug, at the level the question counts: "orders over $200", "baskets above $75", "invoices of more
+   than $5,000" are each document's own total (group_by its number, the filter on the measure); "customers who
+   spent more than $1,000" groups by customer. A condition on the change between compared periods ("the products
+   that sold less in Q3 than in Q2", "only the stores that grew", "branches whose originations fell") is a filter
+   with field "change", op lt [0] for those that fell or gt [0] for those that rose, with time.compare; on the %
+   change it is field "pct_change" in percent ("more than 5% fewer fills" -> pct_change lt [-5]). A name in VALUE MATCHES can also be what a measure measures ("cost of goods sold" is a
    ledger account and the cost on sales lines): read it as the member only when that member's table can
    be broken down and filtered as the question asks; otherwise use the measure.
    A field the catalog calls a number (a price, a weight, days in transit) is compared on its value: op eq,
@@ -164,7 +172,10 @@ How to plan:
    X", "what are the X" with no measure -> intent list with group_by [X] and no measures. "How many X" ->
    intent count with the "Number of X" measure; "how many X bought / ordered / were invoiced in a period"
    also sets time.date to the date of that event (the invoice date for "bought"), never a date of X's own.
-   "Share of", "% of total", "contribution" -> intent share.
+   "Share of", "% of total", "contribution" -> intent share. A share of each group's own total ("what % of each
+   region's sales came from each category", "each department's share of its store's sales", "generic % within
+   each therapeutic class") -> intent share, group_by both, share_of the grouping each share is of (the region):
+   each region's shares then add up to 100.
    "Why did X drop/rise/change", "what drove X", "explain the change in X" -> intent drivers with the
    measure; time.window is the period asked about ("in March" -> March 2026), time.compare only when the
    question names the other period (else the period before is used); drivers.dimensions only when the
@@ -407,7 +418,13 @@ def _analyses(model: SemanticModel) -> str:
             "- absent: the members with no matching rows, intent list. of: the entity; measure: whose rows are the "
             "activity; time.window: when (none: never). without: filters on which rows count (\"never bought "
             "X\"); had: filters on rows they did have (\"bought A but never B\" -> had A, without B); "
-            "active_before true for \"stopped\", \"lapsed\", \"no longer\".")
+            "active_before true for \"stopped\", \"lapsed\", \"no longer\". Two periods (\"bought in Q2 but not "
+            "in Q3\"): time.window the period they had none (Q3), had a filter on the activity's date for the "
+            "period they had some (Q2). Their figures (\"with what they spent in Q2\") go in measures, counted over "
+            "the had period; their own fields (\"their segment and city\") in group_by; \"how many ... by X\" is "
+            "intent count with the count of the entity and group_by X. Members the data keeps only a number for, "
+            "with no list of them (patients on prescriptions): of is the measure that counts them "
+            "(number_of_patients), intent count -- never the closest list, never the grouping.")
         plan = {"kind": "query", "intent": "list", "absent": {"of": e.slug, "measure": (count or m).slug},
                 "time": {"window": {"kind": "last", "unit": "day", "n": 90}}}
         lines.append(f"Q: which {names.plural(e.business_name.lower())} had no {things if count else what} in the "
@@ -3139,7 +3156,11 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                      counted_where_done, active_counted, saved_segment_named, segment_asked, members_by_what_they_did, definition_restated, figure_of_those, activity_meant, absent_counted, role_counted, documents_counted, in_time_order, average_asked, date_in_a_name,
                      list_date_unasked, each_named, repeat_share, cohort_counted, named_not_coded, a_series_of_months, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out, asks.fields_combined, figure_a_quoted_name_holds,
-                     shape_said):
+                     shape_said, analyst_math.two_periods_named, analyst_math.share_in_group,
+                     analyst_math.kept_by_change, analyst_math.total_at_its_level,
+                     analyst_math.members_over_a_total, analyst_math.how_many_is_a_count,
+                     analyst_math.absent_of_the_counted, analyst_math.ratio_with_its_parts,
+                     analyst_math.share_from_a_member, analyst_math.per_hundred):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice
@@ -3379,6 +3400,16 @@ _LEAST = re.compile(r"\b(?:(?<!at\s)least|lowest|bottom|fewest|smallest|minimum)
 
 
 # "Compare it with 2024", "compare that to last year": the answer on screen, set against another period.
+# A turn asking how a figure moved between two periods: a comparison of its own, never kept from above.
+_CHANGE_ASKED = re.compile(
+    r"\b(?:vs\.?|versus|against|compar\w*|than|chang\w*|delta|varian\w*|grow\w*|grew|gain\w*|lost|los(?:e|es|ing)|"
+    r"ris(?:e|en|es|ing)|rose|fell|fall(?:en|ing|s)?|the\s+drop|drop(?:s|ped|ping)|(?:went|go(?:ing|es)?)\s+(?:up|down)|"
+    r"up\s+or\s+down|improv\w*|worse\w*|better|slip\w*|slump\w*|shr[aiu]nk\w*|declin\w*|increas\w*|decreas\w*|"
+    r"mover\w*|moved|jump\w*|surg\w*|spik\w*|year[\s-]+(?:over|on)[\s-]+year|quarter[\s-]+(?:over|on)[\s-]+quarter|"
+    r"month[\s-]+(?:over|on)[\s-]+month|yoy|qoq|mom|wow|last\s+(?:year|month|quarter|week)|previous|prior|before|"
+    r"earlier|since|trend\w*|[ée]volu\w*|hausse|baiss\w*|augment\w*|diminu\w*|progress\w*|recul\w*|variation\w*|"
+    r"glissement|par\s+rapport|avant|pr[ée]c[ée]dent\w*|derni[eè]re?)\b",
+    re.IGNORECASE)
 _COMPARE_IT = re.compile(r"\b(?:compare|comparer?)\s+(?:it|that|this|these|them|those|ça|cela)\b", re.IGNORECASE)
 
 
@@ -3434,6 +3465,25 @@ def settle(plan: Plan, model: SemanticModel, question: str, previous: Plan | Non
             if plan.intent in ("compare", "drivers") and previous.time.compare is not None \
                     and time.compare != previous.time.compare:
                 kept["compare"] = previous.time.compare
+            if previous.time.compare is not None and previous.time.compare.kind == "window" \
+                    and time.window != previous.time.window \
+                    and (kept.get("compare") or time.compare) == previous.time.compare:
+                # "Only the ones that fell, and by how much" after H1 2026 against H1 2025: the year to date was set
+                # against H1 2025. A period against another fixed one goes with it; neither moves when the turn names
+                # none (a comparison that follows its period, the same time last year, moves with it).
+                kept["window"] = previous.time.window
+            if previous.time.compare is None and time.compare is not None and plan.intent != "drivers" \
+                    and not _CHANGE_ASKED.search(question):
+                # "Drop the count and the average, and show each balance as % of the region's total instead", after
+                # balances at the end of June: the year to date against last year was set beside it, asked by no
+                # one. A turn that names no period and no comparison keeps the one period on screen.
+                kept.update({"window": previous.time.window, "compare": None})
+                if plan.intent == "compare":
+                    update["intent"] = "share" if plan.share_of else previous.intent or "breakdown"
+                if any(s.by in ("change", "pct_change") for s in plan.sort):
+                    update["sort"] = [s for s in plan.sort if s.by not in ("change", "pct_change")]
+                if any(f.field in ("change", "pct_change") for f in plan.filters):
+                    update["filters"] = [f for f in plan.filters if f.field not in ("change", "pct_change")]
             if kept:
                 time = time.model_copy(update=kept)
         elif time.window != previous.time.window and _one_period(previous.time.window, the_period(question)):

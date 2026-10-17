@@ -38,8 +38,8 @@ from sqlglot.optimizer.scope import traverse_scope
 from core2.bootstrap.inventory import normalize_type
 from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
-from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, Part, PartGroup,
-                                    Semi)
+from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, MemberAbsent,
+                                    Part, PartGroup, Semi)
 from core2.resolve.time import Range
 from core2.warehouse import dialect as D
 
@@ -156,7 +156,8 @@ class _Compiler:
             inner = inner.join(self.table(j.table, j.alias), on=self.on(j), join_type="inner")
         kept = [self.on(first)] + [self.predicate(self.col(p.alias, p.column), p.op, p.values, p.column)
                                    for p in semi.preds]
-        return exp.Exists(this=inner.where(exp.and_(*kept)))
+        found = exp.Exists(this=inner.where(exp.and_(*kept)))
+        return exp.Not(this=found) if semi.negated else found
 
     def at(self, part: Part, column_key: str) -> exp.Column:
         """A column a measure reads: on the part's own table, or where the part reached its table."""
@@ -554,6 +555,7 @@ class _Compiler:
 
             conds += [segment_test(self, seg, seg.status) for seg in part.segments if seg.split is None]
         conds += [self.exists(semi) for semi in part.semis]
+        conds += [self.none_like(a, i) for i, a in enumerate(part.absent)]
         conds += [self.days_condition(p) for p in part.day_preds]
         conds += [self.predicate(self.time_attribute(t.date, t.name), t.op, list(t.values)) for t in part.time_preds]
         conds += [self.predicate(self.age(self.col(a.alias, a.column), a.on), a.op, list(a.values))
@@ -603,6 +605,14 @@ class _Compiler:
         if group_exprs:
             select = select.group_by(*[e.copy() for e in group_exprs])
         return select
+
+    def none_like(self, a: MemberAbsent, n: int = 0) -> exp.Expr:
+        """The member of this row had no row of activity like ``a.activity`` (NOT EXISTS, by the member's key)."""
+        alias = f"had_none{n or ''}"
+        rows = self.part_select(a.activity).subquery(self.name(alias))
+        same = equal_keys(self.model, self.out(alias, a.activity_key), a.activity_column or a.column,
+                          self.col(a.alias, a.column), a.column, self.d)
+        return exp.not_(exp.Exists(this=exp.select(_num(1)).from_(rows).where(same)))
 
     def snapshot_days(self, part: Part) -> exp.Expr:
         """The stored date is the last snapshot day of its period (and of its compared window).
@@ -716,7 +726,9 @@ class _Compiler:
                 columns.append(OutColumn(f"{m.name}_pct_change", m.label, "pct_change", "percent", key))
         if q.share and q.measures:
             m = q.measures[0]
-            total = exp.Window(this=exp.Sum(this=self.out("q", m.name)))
+            # Of everything shown, or of each member of a grouping ("% of each region's sales by category").
+            total = exp.Window(this=exp.Sum(this=self.out("q", m.name)),
+                               partition_by=[self.out("q", n) for n in q.share_within] or None)
             outer = outer.select(D.div(_double(self.out("q", m.name)), exp.Nullif(this=total, expression=_num(0)))
                                  .as_(self.name(f"{m.name}_share")))
             columns.append(OutColumn(f"{m.name}_share", m.label, "share", "percent", m.measure.key if m.measure else None))
