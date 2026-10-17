@@ -4,6 +4,11 @@
 #
 #   sudo bash deploy/linux/install-service.sh                       # service "querybot", port 8000, the sudo user
 #   sudo bash deploy/linux/install-service.sh --port 8001 --user qbot --name querybot
+#   sudo bash deploy/linux/install-service.sh --host 127.0.0.1 --set PORTAL_BASE_URL=https://solviz.example.com
+#
+# --host is the address it listens on: 0.0.0.0 (every address, the default) or 127.0.0.1 when a proxy on this
+# server (nginx, deploy/linux/deploy.sh --domain) is the only way in. Like the port, it is kept from the current
+# unit when not given. --set NAME=VALUE adds a setting to the env file when it has none yet (repeatable).
 #
 # Safe to run again. Its settings live outside the repository, in /etc/querybot/<name>.env (root only), and are
 # only ever added to, never changed:
@@ -19,13 +24,17 @@ set -euo pipefail
 
 NAME=querybot
 PORT=""
+HOST=""
+SETTINGS=()
 RUN_USER="${SUDO_USER:-$(id -un)}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;
+    --host) HOST="$2"; shift 2 ;;
+    --set) SETTINGS+=(--default "$2"); shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
     --user) RUN_USER="$2"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -33,9 +42,8 @@ done
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="$APP_DIR/venv/bin/python"
-[ -x "$PY" ] || { echo "No virtual environment at $APP_DIR/venv. Create it first:" >&2
-                  echo "  python3 -m venv venv && venv/bin/pip install -r requirements.lock" >&2
-                  echo "  venv/bin/python -m spacy download en_core_web_md" >&2; exit 1; }
+[ -x "$PY" ] || { echo "No virtual environment at $APP_DIR/venv. The full install makes it:" >&2
+                  echo "  sudo bash deploy/linux/deploy.sh" >&2; exit 1; }
 id "$RUN_USER" >/dev/null 2>&1 || { echo "No user $RUN_USER on this server (--user)." >&2; exit 1; }
 RUN_GROUP="$(id -gn "$RUN_USER")"
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
@@ -47,8 +55,12 @@ if [ -z "$PORT" ] && [ -f "$UNIT" ]; then
   PORT="$(grep -oE -- '--port[ =]+[0-9]+' "$UNIT" | grep -oE '[0-9]+$' | head -1 || true)"
 fi
 PORT="${PORT:-8000}"
+if [ -z "$HOST" ] && [ -f "$UNIT" ]; then
+  HOST="$(grep -oE -- '--host[ =]+[0-9.]+' "$UNIT" | grep -oE '[0-9.]+$' | head -1 || true)"
+fi
+HOST="${HOST:-0.0.0.0}"
 
-echo "== QueryBot service \"$NAME\": $APP_DIR, user $RUN_USER, port $PORT"
+echo "== QueryBot service \"$NAME\": $APP_DIR, user $RUN_USER, $HOST:$PORT"
 install -d -m 700 -o root -g root /etc/querybot
 
 # Settings an earlier unit set inline move into the env file (kept as they were).
@@ -61,7 +73,7 @@ if [ -f "$UNIT" ]; then
 fi
 "$PY" "$APP_DIR/deploy/envfile.py" "$ENV_FILE" \
   --secret SESSION_SECRET --secret PORTAL_SESSION_SECRET --secret ADMIN_SESSION_SECRET --secret PII_PSEUDONYM_SECRET \
-  --default "QUERYBOT_KEY_FILE=$RUN_HOME/.querybot_key" ${carried[@]+"${carried[@]}"}
+  --default "QUERYBOT_KEY_FILE=$RUN_HOME/.querybot_key" ${carried[@]+"${carried[@]}"} ${SETTINGS[@]+"${SETTINGS[@]}"}
 chown root:root "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
@@ -82,7 +94,7 @@ WorkingDirectory=$APP_DIR
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONUNBUFFERED=1
 # One worker: the new core keeps each conversation's recent turns in this process.
-ExecStart=$PY -m uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info
+ExecStart=$PY -m uvicorn main:app --host $HOST --port $PORT --workers 1 --log-level info
 Restart=on-failure
 RestartSec=5
 # A Learn in progress is given a minute to stop; a later Learn reuses the tables it had read.

@@ -45,6 +45,12 @@ git checkout -B "$BRANCH" "origin/$BRANCH"
 echo "== Moved to: $(git log --oneline -1)"
 
 echo "== Installing what this commit needs"
+# PyTorch as its CPU build, the version the lock names: the default build would bring about 3 GB of GPU libraries
+# Solviz never uses. Nothing is downloaded when that version is installed already.
+TORCH="$(sed -nE 's/^torch==([^ ;]+).*/\1/p' requirements.lock 2>/dev/null | head -1)"
+if [ -n "$TORCH" ] && ! "$PY" -m pip install --quiet --retries 2 "torch==$TORCH" --index-url https://download.pytorch.org/whl/cpu; then
+  echo "!! PyTorch's own download site could not be reached: its default build comes from PyPI instead (larger)." >&2
+fi
 if [ -f requirements.lock ]; then "$PY" -m pip install --quiet -r requirements.lock; else "$PY" -m pip install --quiet -r requirements.txt; fi
 # The browser that draws scheduled dashboards as pictures and PDF. Without it emails still go, with every number.
 if "$PY" -m playwright install chromium >/dev/null 2>&1; then

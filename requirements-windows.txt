@@ -1,8 +1,8 @@
 -r requirements.txt
 
-# QueryBot's Python dependencies are already cross-platform.
-# Windows also requires these native components, which are not pip packages:
-# - Microsoft ODBC Driver 18 for SQL Server
-# - PostgreSQL server/client tools when PostgreSQL is hosted on this VM
+# The version ranges Solviz accepts on Windows. Servers install the exact versions in requirements-windows.lock
+# instead (deploy\windows\deploy.ps1, install-querybot.ps1 and update-querybot.ps1 all do).
 #
-# Install them before running deploy/windows/install-querybot.ps1.
+# Windows also needs these, which are not pip packages; deploy\windows\deploy.ps1 installs them:
+# - Python 3.11 or 3.12, 64-bit
+# - Microsoft ODBC Driver 18 for SQL Server (Azure SQL and SQL Server data sources), with the Visual C++ runtime

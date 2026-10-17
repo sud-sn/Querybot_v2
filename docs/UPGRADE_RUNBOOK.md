@@ -18,8 +18,8 @@ every join against the warehouse, so it takes longer on a large mart.
 
 ## 0. Before you start
 
-- [ ] SSH to the server (the service runs as `azureuser` from
-      `/home/azureuser/querybot`; see `querybot.service`).
+- [ ] SSH to the server, as the user the service runs as (`sudo systemctl cat
+      querybot` shows it, and the folder it runs from).
 - [ ] Admin sign-in to `http://<host>:8000/admin`.
 - [ ] The workspace's account id (Admin → Clients).
 - [ ] The commit to deploy: `main` at `<sha>`. Write it down.
@@ -73,9 +73,8 @@ ls -la ~/.querybot_key      # losing this key loses every stored credential: mak
 ## 3. Deploy
 
 ```bash
-git fetch origin main
-git checkout <sha>                 # the commit you wrote down
-bash deploy.sh                     # installs requirements.lock and restarts the service
+bash deploy/linux/update.sh         # backs up, takes main, installs requirements.lock, restarts, checks health
+git log --oneline -1               # the commit you wrote down
 curl -s http://localhost:8000/health
 sudo journalctl -u querybot -n 80 --no-pager
 ```
@@ -254,7 +253,8 @@ Ask these as an English reader and as a French reader:
 
 ```bash
 git checkout <the commit from step 2>
-bash deploy.sh
+venv/bin/python -m pip install -r requirements.lock
+sudo systemctl restart querybot
 curl -s http://localhost:8000/health   # the version you rolled back to
 ```
 

@@ -11,6 +11,22 @@ knowledge-base format (`KB_FORMAT` in `core/release.py`), and its entry says so.
 Every workspace a different format built is then told to rebuild: in the
 startup log, in the dashboard's inbox and on its setup page.
 
+## Unreleased
+
+### Install and deploy
+
+- **One command installs a server.** Linux: `sudo bash deploy/linux/deploy.sh` (system packages, ODBC Driver 18,
+  the exact library versions, the name recogniser's model, Chromium, the service, a health check; optional first
+  Super admin and HTTPS through nginx with a Let's Encrypt certificate). Windows:
+  `deploy\windows\deploy.ps1` (Python, ODBC Driver 18, the libraries, the background task, a firewall rule, a
+  health check; optional first Super admin). Both are safe to run again.
+- **Windows installs exact versions too.** `requirements-windows.lock` pins every package at the version the Linux
+  lock pins; the installer and the update script use it, and a test keeps the two locks in step.
+- **PyTorch as its CPU build** on Linux installs and updates, about 3 GB less to download.
+- **`.env.windows.example` no longer starts a broken server** when copied: no PostgreSQL address that is not there,
+  and every secret placeholder is one the installers fill.
+- The README says what a server needs and how to install, update, back up and put HTTPS in front.
+
 ## 2.1.0
 
 The first release with a version. Builds before it report 2.0.0, whatever

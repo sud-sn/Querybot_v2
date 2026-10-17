@@ -63,8 +63,10 @@ try {
     Write-Host "== Moved to: $(& git log --oneline -1)"
 
     Write-Host "== Installing what this commit needs"
-    & $Python -m pip install --quiet -r requirements-windows.txt
-    if ($LASTEXITCODE -ne 0) { throw "pip could not install requirements-windows.txt (exit code $LASTEXITCODE)." }
+    # The exact versions this commit was tested with; a copy from before the lock existed has the ranges only.
+    $Requirements = if (Test-Path "requirements-windows.lock") { "requirements-windows.lock" } else { "requirements-windows.txt" }
+    & $Python -m pip install --quiet -r $Requirements
+    if ($LASTEXITCODE -ne 0) { throw "pip could not install $Requirements (exit code $LASTEXITCODE)." }
     & $Python -m playwright install chromium
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "The PDF browser could not be installed: scheduled emails will go without pictures and PDF."

@@ -1,550 +1,310 @@
-# QueryBot v2
+# Solviz
 
-> The product is called **Solviz** in everything its readers and admins see. The code, the service, the `QUERYBOT_*` settings, the `querybot.db` store and the scripts in `deploy/` keep the name `querybot`, so a server already running needs nothing renamed.
+Solviz answers business questions about a company's own data, in plain English or French, and builds dashboards,
+scheduled reports and alerts from those answers. It connects read-only to the company's database, learns what the
+tables mean, and answers through a governed path: the AI writes a plan, code checks the plan and writes the SQL, and
+every number comes from the database.
 
-QueryBot is a multi-tenant, governed natural-language analytics platform for enterprise databases. Business users ask questions in plain English or French; QueryBot resolves approved business semantics and join paths, generates database-aware read-only SQL, validates it, executes it, and returns a business-readable result with a computed summary, an analyst's explanation, diagnostics, and visualizations.
-
-The product includes an administrator workspace for onboarding, Knowledge Base generation, semantic modeling, metrics, entity relationships, date roles, access control, compliance, evaluation, observability, and governed learning.
-
-> **Readiness note:** QueryBot is a production-oriented application with substantial governance and test coverage. It is not a substitute for client-specific security review, semantic-model approval, load testing, disaster-recovery testing, or regulatory certification. Regulated-industry controls must be configured and validated for each deployment.
+> The product is called **Solviz** everywhere its users and admins see it. The code, the service, the
+> `QUERYBOT_*` settings, the `querybot.db` store and the scripts in `deploy/` keep the name `querybot`, so a server
+> already running needs nothing renamed.
 
 ## Contents
 
-- [Product capabilities](#product-capabilities)
-- [How a question is answered](#how-a-question-is-answered)
-- [Knowledge and semantic model](#knowledge-and-semantic-model)
-- [Governance and privacy](#governance-and-privacy)
-- [Architecture](#architecture)
-- [Quick start](#quick-start)
-- [Initial configuration](#initial-configuration)
-- [Testing](#testing)
-- [Operations](#operations)
+- [What you need](#what-you-need)
+- [Install on Linux](#install-on-linux)
+- [Install on Windows](#install-on-windows)
+- [After installing](#after-installing)
+- [Updating](#updating)
+- [Settings](#settings)
+- [HTTPS](#https)
+- [Backups and restore](#backups-and-restore)
+- [Troubleshooting](#troubleshooting)
+- [How it works](#how-it-works)
+- [Security and access](#security-and-access)
+- [Development](#development)
 - [Project structure](#project-structure)
-- [Current boundaries](#current-boundaries)
+- [Known limits](#known-limits)
 
-## Product capabilities
+## What you need
 
-### Governed natural-language to SQL
+**A server**
 
-- Web portal, Microsoft Teams, Zoom, and Slack entry points.
-- Tenant, user, group, table, and schema-aware query scope.
-- Azure OpenAI, OpenAI, and Anthropic model providers, with system defaults and per-client overrides. For Azure OpenAI the endpoint is normalised from whatever form was pasted (resource URL, full chat-completions URL, or a Foundry project URL), the deployment name is resolved rather than guessed from a model id, SQL is generated at temperature 0, and content-filter rejections, empty responses, and rate limits are read as what they are instead of as blank SQL.
-- Database-dialect-aware prompt rules and SQL validation.
-- Read-only SQL enforcement, exact table and column validation, ACL checks, and structured repair feedback.
-- Support for aggregations, rankings, top-N, period comparisons, running totals, contribution analysis, anti-joins, and multi-step CTE queries.
-- Guardrails for fact-to-fact joins, table grain, approved metrics, semantic field sources, and entity-graph relationships.
-- One controlled SQL repair attempt when a generated query fails validation or execution.
+| | Minimum | Recommended |
+|---|---|---|
+| Operating system | Ubuntu 22.04 or 24.04, Debian 12; or Windows Server 2019, 2022 or 2025 | Ubuntu 24.04 |
+| CPU and memory | 2 vCPU, 8 GB | 4 vCPU, 16 GB |
+| Free disk | 15 GB | 30 GB |
+| Python | 3.11 or 3.12, 64-bit (the installers add it when missing) | 3.11 |
 
-### Languages
+The installers set up everything else: Microsoft's ODBC Driver 18 for SQL Server, the Python libraries at the exact
+versions the tests run on (`requirements.lock` on Linux, `requirements-windows.lock` on Windows), the name
+recogniser's English model, and Chromium for pictures and PDFs of scheduled dashboards.
 
-- The portal, the answer card, clarifications, refusals, and follow-up chips are available in English and French. Each user's language is chosen in the portal and remembered on their account.
-- A French question is canonicalised into the English the deterministic detectors read (periods, top-N, comparisons, causal and analytical wording) before planning, so "les 5 meilleurs clients de l'année dernière" reaches the same planner as its English form. The reader's own words are still what the model sees and what retrieval and value resolution use.
-- Every computed sentence comes from one message catalogue with an English and a French value, including number formatting (a non-breaking thin space and a decimal comma in French). Model-written prose is written in the reader's language through a rule in the prompt; column names and category values from the client's database are quoted as they are.
-- A French reader can command the result card in French: *trier par montant décroissant*, *exclure Paris*, *garder les 3 premiers*, *montrer en camembert*, *annuler la dernière modification* are canonicalised into the verbs the card's parser reads. Elided counts ("nombre d'ordres", "combien d'articles") and the words for time ("au fil du temps") canonicalise too.
-- A terminology pack can carry French terms (`terms_fr`). The nouns of a trade -- *ordre de fabrication*, *rebut*, *centre de charge* -- are read as their English before the lexicon runs, longest phrase first, and only for a tenant that selected the pack, so a distributor's *gamme* stays a product range.
-- `python -m evals.sample_rehearsal` drives a client's demo questions through the real pipeline stages in both languages without a warehouse and reports each stage's decision, so a question that quietly answers something else is visible before a demo rather than during it.
+**Accounts and access**
 
-### Knowledge Base and retrieval
+- **An AI service.** An API key for Azure OpenAI (a `gpt-4o` deployment is what the product is tested with),
+  Anthropic or OpenAI; or a model you host yourself behind an OpenAI-compatible endpoint. One question uses about
+  14,000 tokens; size the deployment's tokens-per-minute for the number of people asking at once (about 150,000 per
+  minute for 8 to 10 people asking in the same minute).
+- **A read-only account on each data source:** Azure SQL or SQL Server, Snowflake (key pair or PAT), Oracle,
+  PostgreSQL, or an Excel workbook (uploaded, or a SharePoint/OneDrive link).
+- **Optional:** Microsoft 365 (Graph) or an SMTP server for scheduled emails and alerts; a domain name and
+  certificate for HTTPS.
 
-- Schema discovery with tables, columns, types, primary keys, foreign keys, and sample-value controls.
-- ERP naming enrichment and terminology packs for cryptic warehouse fields: a source-system pack (Infor M3, with its sales, purchasing, inventory and manufacturing files, record prefixes, measure codes and dates) and industry packs layered on top of it (wholesale distribution, manufacturing). The manufacturing pack carries the shop floor's spellings and aliases -- MO, WO, WIP, scrap, yield, rework, work centre, routing, changeover, downtime, OEE, OTIF -- its production date roles (planned and actual start and finish, release, reported) and its French terms. Industry packs never redefine a source system's abbreviations; a pack ships without any customer's name in it.
-- Industry vocabulary is chosen in the setup wizard, in a step right after the source system, and once the schema has been discovered the source step shows what the schema's own naming looks like ("looks like Infor M3, 91% confidence") so the choice is made with the evidence in view. Selecting packs after a KB build calls for a rebuild, and the wizard says so.
-- Human-readable Markdown KB documents plus machine-readable JSON/YAML semantic artifacts.
-- Qdrant vector retrieval combined with BM25 keyword retrieval and document-quality ranking.
-- Table-coverage gap filling when retrieval misses a required table.
-- KB quality reporting for unconfirmed grain, weak field meanings, missing display dimensions, unconnected facts, and unapproved relationships.
-- Admin edits and approved semantic corrections are preserved across rebuilds and re-embedded.
-- A KB build survives its provider: a content-filter rejection skips that one table's request rather than the build, a rate limit is waited out with the build's stop button still honoured, and the token budget for a wide fact table grows in steps instead of failing at a fixed ceiling.
+**Network**
 
-### Semantic layer and metrics
+- During install and updates the server reaches: `pypi.org` and `files.pythonhosted.org`, `download.pytorch.org`,
+  `github.com` (the name recogniser's model), Playwright's browser download, and on Linux `packages.microsoft.com`
+  (the ODBC driver).
+- While running: the AI service, the data sources, and the mail service. People reach the server on its port (8000
+  by default), or on 443 behind HTTPS.
 
-- User-submitted field corrections with administrator review and approval.
-- Approved field meanings and use cases enforced during SQL generation and validation.
-- Governed metric formulas, result formats, filters, allowed dimensions, synonyms, and example questions.
-- Row-level calculated metrics with aggregation, required columns, and required joins.
-- Ratio metrics (`X per Y`) compile to a null-guarded division, so "revenue per active customer" is a structured definition rather than hand-written SQL.
-- Metric formula enforcement prevents the model from silently substituting a nearby measure.
-- Currency, percentage, numeric, and other result formatting metadata flows into the portal result renderer.
+## Install on Linux
 
-**Describing a calculation in chat.** A user who knows the data can state a
-calculation in plain English — which table, which fields, what to divide by —
-and get an answer from it immediately. Two tracks run from one turn:
+On a fresh Ubuntu or Debian server, as a user with sudo:
 
-- The composed definition is validated, dry-run against the live database, and pinned to that conversation thread, so the question is answered now and follow-ups ("now break that down by region") keep using it.
-- Separately, a proposal is raised for an administrator to promote it into the shared metric registry. Nothing a chat handler composes becomes a governed metric on its own.
-
-The model never writes SQL for this. It fills structured slots that reference
-tables and columns by opaque reference, and the formula is compiled locally by
-the metric builder, so injected SQL text cannot reach a formula through either
-side of a ratio. Access control is applied before the planner prompt is built,
-and a table revoked mid-thread invalidates a live draft on the next turn.
-
-### Entity graph and join governance
-
-- Imports database PK/FK metadata as relationship candidates.
-- Supports composite joins and multiple role-playing relationships between the same pair of tables.
-- Admins can add, edit, validate, probe, approve, or disable relationships.
-- Join direction, join type, cardinality, confidence, source, and validation status are retained.
-- The graph resolver selects an approved path; the validator checks that generated SQL follows the governed path.
-- A question over two or more facts ("net sales and returns by warehouse") treats every fact as a root, never as a destination reached through a shared dimension. Each fact is planned to the requested grain on its own edge, the facts are aggregated in isolation and joined only on the dimensions they share, and a grain reached through a snowflake hop counts. Direct fact-to-fact joins are refused; a fact that cannot reach the requested grain blocks the plan with that fact named.
-- Graph health and relationship diagnostics expose weak or untested model areas before users encounter them.
-
-### Contextual and role-playing dates
-
-QueryBot supports facts that reuse one date dimension through several keys, for example:
-
-- `ORDER_DT_DMS_KEY -> DT_DMS.DT_DMS_KEY`
-- `BOOKED_DT_DMS_KEY -> DT_DMS.DT_DMS_KEY`
-- `PAY_DT_DMS_KEY -> DT_DMS.DT_DMS_KEY`
-
-Date bindings record the business role, fact key, dimension key, display date, key representation, aliases, priority, and default status. A metric can therefore use the same revenue expression with different business date contexts such as booked revenue, ordered revenue, invoiced revenue, or daily sales.
-
-Surrogate date IDs are distinguished from native dates, timestamps, and `YYYYMMDD` keys. The validator blocks unsafe attempts to parse a surrogate ID as a calendar date and requires the appropriate date-dimension join instead.
-
-### Business results and analytical UX
-
-- Every answer card carries a computed summary written from the result itself, with no model call: a headline, the leader and its share or the trend and its peak, a decision signal (concentration, dominance, spread, growth, decline), and anomaly callouts. A ranking with two measures narrates both. A listing of records (invoice lines, order headers) is described as records and what they add up to, not as a race between them.
-- After the card, an analyst's explanation of the result arrives as a second message in the reader's language. It is written from a statistical brief of the result, never from the rows, and it is delivered as a second message so the factual answer is never held up by it. It follows every answer by default; the per-client setting **Analyst explanation** can restrict it to questions that ask for analysis or a cause. Causal questions ("why did sales drop in March") additionally run governed drill-down queries.
-- A claim about the whole needs the whole. When a result was cut by a `TOP`, a row cap, or a filter, the trend sentence, the decision signal, median and quartiles are withheld rather than computed over the slice, and the card's badge says what came back: full distribution, top N only, full series, first N periods only, preview, or filtered subset. A default `TOP` that never bound is not a truncation.
-- The reader can talk to a result instead of only commanding it: filter, aggregate, sort, keep the top N, exclude, chart and compare are understood as commands, and anything else ("what is the total?", "why is that?", "what does this column mean?") is answered by the model from the same brief, with the reader's own words the last thing it reads. The card keeps its conversation across transforms (the memory follows the card a transform produced) and remembers what it answered, not only what was asked. A courtesy typed into the card -- thanks, merci, bonjour, bye -- is answered by the card itself, in the reader's language, without a planner, a query or a model. A plan the governance layer stopped is explained in the reader's language, never with the planner's diagnostic.
-- In the main chat, the conversational analyst is handed the result on screen -- what it answers and its statistical brief, never the rows -- where the tenant's policy allows, so "what does this column mean?" is answered about the thing in front of the reader. A figure the analyst asserts that the brief does not hold is withheld and a catalogue line sent instead: the analyst may read a result, never invent one. Told the answer is wrong, the analyst replies about that answer with one concrete way to correct course; the catalogue's tips remain the fallback.
-- When a question cannot be answered -- the validator refused the SQL, the database raised, the query returned no rows -- the card's reason and next step are reworded by the model for this reader, in their language and tied to what they asked, and checked before they are shown: every figure must be one the diagnosis states, every quoted term and column-like identifier must come from the diagnosis or the question. The diagnosis is the system's; a rewording that fails the check, a provider failure or a regulated tenant leaves the catalogue's sentences exactly as before, and a note on the card says whose words they are.
-- Business-readable provenance, confidence evidence, and query-production details, in the tenant's own vocabulary rather than raw table and column codes.
-- Structured zero-row root-cause hints rather than a generic empty result.
-- Result tables, CSV export, charts, contribution views, follow-up questions, and result follow-ups through DuckDB.
-- Chart selection based on result shape and question intent, with user-selectable chart styles and palettes.
-- Personal dashboards with live, movable pinned charts.
-- Statistical signals for ranking gaps, concentration, trends, variance, outliers, contribution, and cross-metric divergence.
-
-**Forecasting.** A projection is offered only when the series can support one,
-and every projection carries a 95% prediction interval — shown as a band on the
-chart and as `forecast_low` / `forecast_high` on the rows. A number without an
-interval is a claim; the band is what makes it a forecast.
-
-A forecast is refused, rather than drawn, when the result is truncated, masked,
-out of order, irregularly spaced, too short, constant, has no real time axis,
-holds more than one series, or when the fit fails both an R-squared and an
-out-of-sample backtest. Each refusal names its own threshold — *"I did not
-project future periods: this series has 2 years and a reliable projection needs
-at least 6"* — because "I could not forecast that" is only useful if it also
-says what would make it possible.
-
-Model selection follows the length and seasonality of the series: ordinary least
-squares under 12 points, damped-trend exponential smoothing above it, and
-seasonal SARIMAX only where there are two full cycles plus room and a real
-autocorrelation at the seasonal lag. If a model is unavailable or will not
-converge, the fit falls back down that ladder and says so; a missing library is
-never a reason to refuse a user a forecast.
-
-**Investigations.** An explicit ask -- *investigate*, *look into*, *dig into*,
-*root-cause analysis of* -- starts a bounded, multi-step inquiry instead of one
-query and one guess. The objective itself is always the first governed
-question; every question after that is a model's own choice, made from
-nothing but the labels and figures each prior step actually found (never the
-row set), to either ask one more question or stop and summarize. The summary
-is checked before a reader ever sees it: every figure it states must be one a
-step found, every quoted term or column-like identifier must come from a step
-or the objective. A summary that fails the check, a planner that returns
-nothing usable, or a budget that runs out first, all fall back to a template
-built from the steps alone. A regulated tenant is refused before the first
-question is even asked. Each investigation runs under its own agent run, with
-a step per question asked, completed or failed as each one actually went.
-
-### Evaluation, learning, and observability
-
-- End-to-end traces from question, retrieval, semantic plan, graph plan, SQL validation, execution, and response.
-- Per-component timings, confidence factors, repair counts, and sanitized LLM audit records.
-- Golden-question evaluation suites and regression checks per client/schema.
-- Thumbs-up/down answer feedback with structured reasons.
-- Successful and failed answers become review candidates, not automatic training data.
-- Only administrator-approved positive examples and negative avoidance rules enter governed retrieval.
-- Governed examples are retrieved as patterns for future generation; QueryBot still validates and executes newly generated SQL rather than blindly replaying stored SQL.
-- Suggestion ranking can learn from impressions, clicks, executions, outcomes, role relevance, and approved examples.
-
-## How a question is answered
-
-```mermaid
-flowchart TD
-    A["User question"] --> B["Authenticate and apply tenant, schema, group, and table scope"]
-    B --> C["Resolve ambiguity, approved fields, metrics, and contextual date intent"]
-    C --> D["Retrieve KB documents and governed examples"]
-    D --> E["Resolve entity graph path and required joins"]
-    E --> F["Generate dialect-aware read-only SQL"]
-    F --> G["Validate syntax, schema, ACL, metrics, fields, dates, and joins"]
-    G -->|valid| H["Execute against the client database"]
-    G -->|repairable| I["One constrained repair with exact validator evidence"]
-    I --> G
-    H --> J["Apply result policy, formatting, diagnostics, and charts"]
-    J --> L["Post-process analytics: contribution, anomaly, cohort, forecast, and the rest"]
-    L --> K["Return answer and record trace/learning candidate"]
+```bash
+git clone https://github.com/sud-sn/Querybot_v2.git solviz
+cd solviz
+sudo bash deploy/linux/deploy.sh --admin-email you@company.com --admin-name "Your Name"
 ```
 
-Post-processing runs after execution and before the answer is sent. Each
-analytic decides for itself whether the result can support it — statistics over
-a truncated result, a forecast over a masked or unordered series, and a
-distribution over a partial one are refused rather than computed, and the
-refusal says so in the answer.
+One command does all of it, and is safe to run again:
 
-The LLM does not connect directly to a client database. The backend supplies governed schema context, executes validated SQL, and controls which result-derived information may be used for narration or follow-up features.
+1. System packages: Python 3.11 or 3.12 with `venv`, git, curl, unixODBC, and Microsoft's ODBC Driver 18.
+2. The virtual environment `./venv` with the exact library versions. PyTorch comes as its CPU build, which saves
+   about 3 GB of GPU libraries Solviz never uses.
+3. The name recogniser's model and Chromium, with the system libraries Chromium needs.
+4. The service: settings in `/etc/querybot/querybot.env` (root only), its secrets generated once and never changed;
+   a systemd unit that starts at boot and restarts after a crash; a health check.
+5. The first Super admin account (it asks for the password), and HTTPS when you give a domain.
 
-## Knowledge and semantic model
+Options:
 
-The KB is intentionally more than a collection of embeddings. It combines several governed sources:
-
-| Layer | Purpose |
+| Option | Does |
 |---|---|
-| Physical schema | Exact databases, schemas, tables, columns, types, PKs, and FKs |
-| Enriched KB | Table purpose, field meaning, ERP abbreviation expansion, examples, and query patterns |
-| Structured semantic model | Grain, dimensions, measures, display fields, date roles, filters, and relationship candidates |
-| Approved semantic overrides | Administrator-approved field meanings and business use cases |
-| Metric registry | Canonical formulas, filters, formats, dimensions, and required joins |
-| Entity graph | Governed relationship paths and join conditions |
-| Contextual dates | Metric-specific and default business-date bindings |
-| Governed examples | Approved positive patterns and negative avoidance rules |
+| `--port 8001` | The port Solviz listens on (default 8000) |
+| `--user solviz` | The Linux user the service runs as (default: the user who ran sudo) |
+| `--domain solviz.company.com --tls-email you@company.com` | HTTPS through nginx with a Let's Encrypt certificate; Solviz then listens only on this server |
+| `--public-url https://...` | The address people open, used in emailed links |
+| `--admin-email` and `--admin-name` | Make (or reset) a Super admin account |
+| `--no-odbc` | Leave out the ODBC driver (no Azure SQL or SQL Server sources) |
+| `--skip-system` | Install no system packages, for a distribution the script does not know (install them first) |
 
-### Recommended onboarding sequence
+Run as a service, Solviz is managed with `sudo systemctl status|restart|stop querybot`, and its logs are read with
+`sudo journalctl -u querybot -f`.
 
-1. Register the client and assign its database.
-2. Select an industry/compliance profile, the source-system terminology pack, and the industry vocabulary packs the wizard offers right after it (once discovery has run, the source step shows what the schema's own naming looks like).
-3. Discover the selected schemas and tables.
-4. Review masking and data-egress previews before KB generation.
-5. Build the KB and inspect its quality report.
-6. Confirm fact grain, display dimensions, field meanings, and date roles.
-7. Validate entity relationships against the live database.
-8. Create or approve the business metrics needed for the demonstration or rollout.
-9. Add users/groups and restrict table access.
-10. Run a client-specific golden-question suite before enabling broad self-service.
+## Install on Windows
 
-## Governance and privacy
-
-### Scope and access controls
-
-- Every query is scoped by `account_id` and the authenticated user's permitted schemas/tables.
-- Portal schema selection narrows retrieval, semantic planning, generation, and validation together.
-- Group and per-user table permissions are enforced before execution.
-- Qdrant payloads and governed examples are filtered by account and accessible schema/table scope.
-- No chat handler promotes anything into the governed model. Conversational surfaces may compose a definition, validate it, and use it for the asking user's own thread, but only a human accept route writes to the registry and triggers a semantic recompile. This holds for the entity-graph chat and for metric authoring alike, and is asserted by tests rather than left to convention.
-
-### Sensitive-data controls
-
-- Schema-time classification identifies common PII, PHI, financial, payment, prescription, credential, and free-text risks.
-- KB samples can be redacted, replaced with synthetic values, tokenized, partially masked, or omitted.
-- Optional local NER strengthens person-name removal from free text without sending it to an external service.
-- Result release policies support redaction, stable safe aliases, partial display, tokenization, and nulling.
-- User-typed PII is scrubbed before LLM prompts for regulated tenants.
-- Regulated profiles can block result-derived LLM calls while still allowing the model to produce SQL from governed metadata.
-- Per-user attestations may allow controlled unmasked result release; each release is written to the decision log.
-
-### Regulated-industry workflow
-
-Banking and healthcare/pharmacy packs provide conservative classifications and policy templates. Activation is gated by readiness checks such as classification review, policy configuration, purposes, provider agreements where required, and identity controls.
-
-These controls are implementation safeguards, not a claim of HIPAA, PCI DSS, SOC 2, or other certification. The deploying organization remains responsible for legal review, provider agreements, identity architecture, retention, monitoring, and operational controls.
-
-## Architecture
-
-| Component | Technology | Responsibility |
-|---|---|---|
-| Application | FastAPI, Starlette, Jinja2 | Admin portal, user portal, APIs, webhooks, WebSockets |
-| Query pipeline | Python | Scoping, retrieval, planning, generation, validation, execution, response |
-| SQL parser/validator | sqlglot | Dialect parsing, structural checks, schema/semantic enforcement |
-| Result follow-ups | DuckDB | Controlled calculations over cached query results |
-| Vector retrieval | Qdrant | Tenant-scoped KB and governed-memory retrieval |
-| Keyword retrieval | BM25 | Exact field, acronym, and business-term matching |
-| Metadata store | SQLite or PostgreSQL | Tenants, users, metrics, graph, traces, policies, learning state |
-| Client databases | Snowflake, Oracle, Azure SQL | Read-only business-data queries |
-| LLM providers | Azure OpenAI, OpenAI, Anthropic | SQL generation and permitted language tasks |
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for module-level behavior and [ARCHITECTURE_VISUAL.html](ARCHITECTURE_VISUAL.html) for the interactive diagrams. Some older sections in those deep-dive documents may lag the implementation; the code and tests remain authoritative.
-
-## Quick start
-
-### Prerequisites
-
-- Python 3.12 recommended; 3.11 and 3.14 are also verified to install cleanly.
-- `pip install -r requirements.txt` pulls statsmodels (and scipy/pandas with it) for the seasonal and exponential-smoothing forecast models — roughly 60MB of wheels. Forecasting still works without them: the models load through a guarded lazy import and fall back to pure-Python least squares, prediction intervals included. CI runs with statsmodels installed, as every deploy is; the fallback is covered by a test that makes the import fail on purpose.
-- A reachable Qdrant service.
-- SQLite for local evaluation, or PostgreSQL for concurrent production-oriented workloads.
-- Native database drivers for the client database. Azure SQL requires Microsoft ODBC Driver 18 for SQL Server.
-- Credentials for one supported LLM provider.
-
-### Local development
+In an **Administrator** PowerShell:
 
 ```powershell
-git clone https://github.com/sud-sn/Querybot_v2.git
-cd Querybot_v2
-py -3.12 -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-windows.txt
-Copy-Item .env.windows.example .env
+git clone https://github.com/sud-sn/Querybot_v2.git C:\Solviz
+cd C:\Solviz
+powershell -ExecutionPolicy Bypass -File deploy\windows\deploy.ps1 -AdminEmail you@company.com -AdminName "Your Name"
 ```
 
-On Linux (the platform `deploy.sh` targets):
+(Without git, install it first: `winget install Git.Git`, or download it from git-scm.com.)
+
+One command does all of it, and is safe to run again:
+
+1. Python 3.11 or 3.12, if missing, for all users (winget, else python.org).
+2. Microsoft's ODBC Driver 18 for SQL Server and the Visual C++ runtime it needs (winget, else Microsoft's download).
+   If neither works, it says so and carries on; download the driver yourself and run again with
+   `-OdbcMsi C:\path\msodbcsql.msi`.
+3. The virtual environment `venv` with the exact library versions, the name recogniser's model, and Chromium.
+4. `.env` in the Solviz folder, its secrets generated once and never changed.
+5. A background task, "QueryBot", that starts with the server and restarts Solviz if it stops; a Windows Firewall
+   rule for the port; a health check.
+6. The first Super admin account (it asks for the password).
+
+Options: `-Port 8001`, `-PublicUrl https://...`, `-AdminEmail` and `-AdminName`, `-OdbcMsi <file>`, `-NoOdbc`,
+`-NoFirewall`.
+
+Manage it with `deploy\windows\querybot-service.ps1 -Action Status|Restart|Stop|Start|Logs`. Logs are in `logs\`.
+
+## After installing
+
+1. Open `http://<server>:8000/admin` and sign in with the admin account you made. Without `--admin-email` /
+   `-AdminEmail`, the first person to open `/admin` sets the admin password: do that straight away, or run the
+   installer again with the option.
+2. **System → AI provider**: choose the provider and paste its key. Keys are stored encrypted.
+3. **Workspaces → New workspace**: connect the data source with its read-only account, run discovery, then **Learn**. Learn
+   studies the tables, links, dates and metrics, and takes a few minutes on a large database.
+4. Check what Learn found on the workspace's data pages (Relationships, Metrics, Dates, Knowledge base) and correct
+   anything that is wrong. Your decisions are kept through every later Learn.
+5. In the workspace, **People**: add users with a role (Viewer, Asker or Creator), their group and tables, and any row rules.
+   **Compliance**: choose Standard or Regulated, and the data posture (Cloud, Private or Air-gapped).
+6. Optional: **System → Email** (Microsoft 365 or SMTP) for scheduled dashboards and alerts.
+
+People then sign in at `http://<server>:8000/portal/login?workspace=<workspace id>`.
+
+## Updating
+
+Linux, as the user the service runs as:
 
 ```bash
-git clone https://github.com/sud-sn/Querybot_v2.git
-cd Querybot_v2
-python3.11 -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.lock
-cp .env.example .env
+cd ~/solviz && bash deploy/linux/update.sh                    # the release (main)
+bash deploy/linux/update.sh --branch core-v2                  # the next version, to try it
 ```
 
-`requirements.lock` holds the exact versions CI tests and `deploy.sh` installs; `requirements.txt` holds the ranges it is generated from. The lock is resolved for Linux x86_64 on Python 3.11 — on other platforms install from `requirements.txt` (Windows: `requirements-windows.txt`), which is not pinned.
+Windows, in an Administrator PowerShell:
 
-### Checks
-
-CI (`.github/workflows/ci.yml`) runs these on every push to `main` and every pull request, and all four must pass:
-
-```bash
-python -m pip install -r requirements.lock -r requirements-dev.txt
-ruff check .                                  # rules and why: [tool.ruff] in pyproject.toml
-mypy                                          # scope and type-debt list: [tool.mypy]
-python -m pytest -q                           # never opens data/querybot.db
-python -m evals.sample_rehearsal --strict     # sample questions, English and French
+```powershell
+cd C:\Solviz; powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1
 ```
 
-Configure `.env`, start Qdrant, and then run:
+Each update copies the Solviz database first (SQLite: `data/querybot.db.bak-<time>`), moves to the latest commit,
+installs the exact library versions that commit needs, restarts, checks health, and prints the line that goes back
+to where the server was. When the release notes say so, run **Learn** again on each workspace; your decisions are
+kept.
 
-```bash
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-```
+## Settings
 
-Open:
+Linux keeps them in `/etc/querybot/querybot.env` (root only); Windows in `.env` in the Solviz folder. The
+installers only ever add to the file. Restart after changing it. Most configuration (AI keys, data sources, email,
+people) is done in the admin console and stored encrypted, not here.
 
-- Admin portal: `http://127.0.0.1:8000/admin`
-- User portal: `http://127.0.0.1:8000/portal`
-- Health endpoint: `http://127.0.0.1:8000/health`
-
-### Qdrant
-
-For local Docker:
-
-```bash
-docker compose -f deploy/qdrant.compose.yml up -d
-```
-
-Set `QDRANT_URL` and, for a secured/cloud deployment, `QDRANT_API_KEY`. Do not expose Qdrant publicly without authentication and network controls.
-
-### Azure Windows VM
-
-Use the maintained Windows runbooks rather than adapting Linux commands:
-
-- [Azure Windows VM overview](deploy/windows/README.md)
-- [Copy-paste installation guide](deploy/windows/STEP-BY-STEP.md)
-- `deploy/windows/install-querybot.ps1`
-- `deploy/windows/start-querybot.ps1`
-- `deploy/windows/verify-querybot.ps1`
-
-For durable production deployments, prefer managed PostgreSQL and Qdrant Cloud or a private Linux Qdrant host. WSL/Docker is suitable for a POC but should not be assumed to provide production backup and recovery.
-
-## Initial configuration
-
-### Environment
-
-The application reads infrastructure secrets from `.env`. Provider API keys and client database credentials can also be configured through the admin UI and are encrypted at rest using the QueryBot key file.
-
-Important settings include:
-
-| Variable | Purpose |
+| Setting | Meaning |
 |---|---|
-| `DATABASE_URL` | PostgreSQL metadata-store URL; omit to use SQLite |
-| `DB_PATH` | SQLite metadata-store path |
-| `QDRANT_URL` | Qdrant endpoint |
-| `QDRANT_API_KEY` | Optional Qdrant authentication key |
-| `SESSION_SECRET` | General session-signing secret |
-| `PORTAL_SESSION_SECRET` | Portal session-signing secret |
-| `ADMIN_SESSION_SECRET` | Admin session-signing secret |
-| `PII_PSEUDONYM_SECRET` | Stable secret used for governed result aliases |
-| `QUERYBOT_KEY_FILE` | External credential-encryption key path |
-| `PORTAL_BASE_URL` | Public HTTPS base URL used in generated links |
+| `PORTAL_BASE_URL` | The address people open, used in emailed links. An `https://` address also makes sign-in cookies HTTPS-only. |
+| `DATABASE_URL` | Solviz's own store in PostgreSQL (`postgresql://user:pass@host:5432/db`). Unset, it is SQLite in `data/querybot.db`, right for one server. |
+| `QUERYBOT_KEY_FILE` | The key that encrypts saved passwords and keys. Back it up with the settings file. |
+| `SESSION_SECRET`, `PORTAL_SESSION_SECRET`, `ADMIN_SESSION_SECRET` | Sign the session cookies. Generated by the installer; changing one signs everyone out. |
+| `PII_PSEUDONYM_SECRET` | Keys the aliases shown for masked people. Never change it once set. |
+| `QUERYBOT_QUERY_TIMEOUT_SECONDS` | The time limit for one query (default 300). |
+| `LLM_AUDIT_RETENTION_DAYS`, `KB_EGRESS_RETENTION_DAYS` | How long the AI call log (default 30) and data-egress log (default 365) are kept. |
+| `QUERYBOT_WORKBOOKS_DIR` | Where uploaded Excel workbooks are kept (default `workbooks/`). |
 
-Never deploy with the example `CHANGE_ME` values or the development fallback secrets. Keep the encryption key outside the repository and include it in protected backup/recovery procedures.
+## HTTPS
 
-### Admin setup
+Do not put real data on a plain-HTTP address.
 
-1. Open **System** and choose the default LLM provider/model.
-2. Save credentials, test the provider connection, and select deployments where applicable.
-3. Configure PostgreSQL for shared/concurrent usage and verify Qdrant health.
-4. Add a client database and test the connection.
-5. Register a client and complete the onboarding sequence described above.
-6. Complete the client's compliance setup and choose a posture. A client with no compliance profile is treated as regulated, which is fail-closed on purpose: the analyst's explanation, follow-up suggestions, and every other feature that shows the model a result are silently off until a posture is chosen.
-7. Review the client's **Analyst explanation** setting (after every answer by default) and its LLM audit setting.
+- **Linux:** `sudo bash deploy/linux/deploy.sh --domain solviz.company.com --tls-email you@company.com`. The domain's
+  DNS must already point at the server, with ports 80 and 443 open. nginx passes the chat's WebSocket, takes 100 MB
+  uploads, and waits up to ten minutes for slow databases; the certificate renews itself.
+- **Windows, or any cloud gateway** (Azure Application Gateway, Front Door, IIS with ARR): end TLS there, forward to
+  `http://<server>:8000` with WebSocket upgrades allowed and the original `Host` header kept, then set
+  `PORTAL_BASE_URL=https://...` (`-PublicUrl` on Windows) and restart.
 
-## Testing
+## Backups and restore
 
-Run the complete suite:
+Back up these together:
 
-```bash
-python -m pytest -q
+| What | Linux | Windows |
+|---|---|---|
+| Solviz's store | `data/querybot.db` (or your PostgreSQL database) | `data\querybot.db` |
+| Workspace files and uploads | `clients/`, `workbooks/` | `clients\`, `workbooks\` |
+| Settings | `/etc/querybot/querybot.env` | `.env` |
+| Encryption key | the `QUERYBOT_KEY_FILE` path (`~/.querybot_key` of the service user) | `%USERPROFILE%\.querybot_key` |
+
+Without the key file, saved data-source passwords cannot be read. For a consistent SQLite copy while running, use
+`venv/bin/python deploy/backup_db.py` (it uses SQLite's own backup); for PostgreSQL, `pg_dump`. To restore: stop the
+service, put the files back, start it.
+
+## Troubleshooting
+
+| Seen | Do |
+|---|---|
+| The page does not open from another machine | Open the port in the cloud firewall (network security group) and the server's firewall. `curl -s http://localhost:8000/health` on the server shows whether Solviz itself is up. |
+| `/health` says `kb_rebuild_needed` | Open that workspace in the admin console and run Learn (and the knowledge-base rebuild, if offered). |
+| Answers fail with a rate-limit message | The AI deployment's tokens-per-minute is too low for the number of people asking. Raise it. |
+| Azure SQL or SQL Server will not connect | ODBC Driver 18 is missing: run the installer again (Windows: with `-OdbcMsi`), and allow the server's IP in the database firewall. |
+| Scheduled emails arrive without pictures or PDF | Chromium is missing or cannot start: run the installer again. On Linux: `sudo venv/bin/python -m playwright install-deps chromium`. |
+| The compliance page says the name recogniser is off | `venv/bin/python -m spacy download en_core_web_md` (Windows: `venv\Scripts\python.exe`), then restart. |
+| Locked out of the admin console | On the server, as the service user: `python -m admin.create_admin you@company.com "Your Name"` with the service's settings, or `python -m admin.reset_password`. |
+
+## How it works
+
+```text
+People ── portal, admin console, Teams/Slack/Zoom, email
+   │
+Access gate ── sign-in, role and workspace, checked for every page, API call and chat message
+   │
+Learn ─── studies the database: tables, links, dates, metrics, names
+Answer ── question → plan (AI) → checked → SQL (code) → run under the person's access → answer, chart, notes
+Dashboards, scheduled emails, alerts ── saved plans run again on live data, with no AI
+   │
+Governed executor ── read-only check, time limit, the person's tables, row rules and masked columns
+   │
+Your databases (read-only)        AI service (gets names and the question, returns a plan)
 ```
 
-The current baseline is **11219 passed, 9 skipped**. Treat any drop as a
-regression rather than noise; the statistical suites are seeded and the coverage
-bounds are set from measurement, not tuned to pass.
+- The AI never writes SQL. It returns a structured plan; code checks every name in it against the model Learn
+  built, compiles SQL for the database's dialect, and runs it read-only.
+- Every answer shows the period, the dates and every condition it applied, and "How it was counted" shows the query.
+- More: [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/core-v2/DESIGN.md](docs/core-v2/DESIGN.md).
 
-No test process opens the application's database. `tests/conftest.py` replaces,
-before collection and again before every test, any database path that is not
-under the temp directory with one temporary database for the run, so a test
-module that names no database of its own cannot write into `data/querybot.db`.
-A module that points itself at its own temporary database is left alone.
+## Security and access
 
-The demo rehearsal is a separate, faster check that runs the real pipeline
-stages over a client's question set in both languages and compares every
-stage's decision with the expected one:
+- **Roles.** Portal users are Viewers (open shared dashboards), Askers (also ask, export, save their own dashboards)
+  or Creators (also build, share and schedule dashboards). Admins are Super admins, Workspace admins or Data
+  stewards. A role never widens data access.
+- **Data access.** Groups decide which tables a person sees; row rules limit rows by a fixed value or the person's own
+  attribute (their region, for example), added inside the query; personal columns are masked unless released by a
+  recorded confidentiality attestation.
+- **The AI boundary.** The AI is given names and the question, never rows to plan from. In a Regulated workspace no
+  data value reaches it at all; elsewhere the optional summary under an answer is written from the answer as shown.
+  People's names typed in a question are found on the server and replaced before anything is sent.
+- **Records.** Admin changes, governed queries (hash-chained in Regulated workspaces), every AI call with its cost,
+  data sent to the AI, exports and emails are logged.
+- **Sign-in.** Salted PBKDF2 password hashes, signed HttpOnly cookies, cross-site requests refused, slower tries after
+  repeated wrong passwords. Single sign-on and two-factor sign-in are not built yet.
+
+## Development
 
 ```bash
-python -m evals.sample_rehearsal
-python -m evals.sample_rehearsal --lang fr --verbose
+python3.11 -m venv venv
+venv/bin/pip install "torch==$(sed -nE 's/^torch==([^ ;]+).*/\1/p' requirements.lock)" --index-url https://download.pytorch.org/whl/cpu
+venv/bin/pip install -r requirements.lock -r requirements-dev.txt
+venv/bin/python -m spacy download en_core_web_md
+venv/bin/uvicorn main:app --reload --port 8000
 ```
 
-High-value focused suites include:
+| Check | Command |
+|---|---|
+| Tests (about 22,000; every test uses a temporary database) | `venv/bin/python -m pytest -q` |
+| Lint | `venv/bin/ruff check .` |
+| Types | `venv/bin/mypy` |
+| Demo rehearsal, English and French | `venv/bin/python -m evals.sample_rehearsal --strict` |
 
-```bash
-python -m pytest -q tests/test_sql_reliability.py
-python -m pytest -q tests/test_entity_graph.py tests/test_graph_governance.py
-python -m pytest -q tests/test_contextual_dates.py tests/test_date_roles.py
-python -m pytest -q tests/test_metric_builder.py tests/test_metric_scope.py
-python -m pytest -q tests/test_metric_foundations.py
-python -m pytest -q tests/test_semantic_layer.py tests/test_semantic_contract.py
-python -m pytest -q tests/test_compliance_engine.py tests/test_regulated_llm_boundary.py
-python -m pytest -q tests/test_forecast_gate.py tests/test_forecast_models.py
-python -m pytest -q tests/test_post_process_actually_runs.py
-python -m pytest -q tests/test_learning_loop_integration.py
-python -m pytest -q tests/test_production_ui.py
-python -m pytest -q tests/test_each_fact_reaches_the_grain_by_its_own_edge.py tests/test_join_planner_v2.py
-python -m pytest -q tests/test_the_analyst_writes_after_every_answer.py tests/test_analysis_reaches_the_reader.py
-python -m pytest -q tests/test_a_limit_that_never_bit_is_not_a_truncation.py tests/test_claims_respect_a_truncated_result.py
-python -m pytest -q tests/test_question_normalizer.py tests/test_a_french_reader_can_ask_for_analysis.py
-```
+The dashboard charts are Vue components in `frontend/`, built into `static/dist/` (committed). After changing them:
+`cd frontend && npm ci && npm run build`.
 
-Tests use isolated fixtures and must not require a production client database. Live database validation, query-plan review, concurrency/load testing, and recovery exercises remain deployment responsibilities.
-
-**A note on what a test here is expected to do.** This repository has repeatedly
-been bitten by assertions that read the source rather than run it — a check that
-`evaluate_forecast_request` appears before `compute_forecast(` in a file passed
-for a full release while the block it described raised `NameError` on every
-call. Prefer tests that execute the path. Two patterns are in use for the cases
-where that is hard:
-
-- `tests/test_post_process_actually_runs.py` compiles a block out of the real pipeline file and executes it, and walks the bytecode of the query entry point for names that do not resolve — the interpreter's own analysis, not a grep.
-- `tests/test_forecast_models.py` checks the prediction interval by drawing hundreds of series from a known process and counting how often the truth lands inside the band, rather than restating the formula in the assertion.
-
-An assertion that accepts either outcome (`assert model in {"ets", "ols"}`)
-tests nothing; one of those hid two broken model branches for a full commit.
-
-Two further habits are now expected of a change here. First, a new test is
-shown to fail before it is trusted: the defect is put back, or the fix is
-mutated in the source, and the test goes red; a test that stays green through
-that is decoration. Second, `tests/test_post_process_actually_runs.py` walks
-every function in the repository for a local that is read before it can be
-bound, including a function-local import that shadows a module import for the
-rest of a long handler. That shape has silently killed a whole feature twice,
-most recently for one commit during the work above, and the detector caught it
-before it shipped.
-
-## Operations
-
-### What to inspect when an answer is wrong
-
-1. Open the answer trace and inspect schema scope, retrieved KB documents, metric/date bindings, graph plan, validator result, and repair history.
-2. Confirm the business field in the Semantic Layer.
-3. Confirm the metric formula, filters, result format, and contextual date binding.
-4. Validate the entity relationship and cardinality against the source database.
-5. Add the question to the client's golden evaluation suite.
-6. Correct or reject the learning candidate; do not promote an answer only because it executed successfully.
-
-### Production checklist
-
-- Use PostgreSQL rather than SQLite for concurrent multi-user workloads.
-- Use HTTPS behind a reverse proxy or application gateway; do not expose Uvicorn directly.
-- Set unique session, pseudonym, and encryption secrets.
-- Restrict Qdrant, PostgreSQL, and database ports to private networks.
-- Use a read-only client database principal with least privilege.
-- Pin and stage-test dependency/container versions.
-- Configure backups for PostgreSQL, Qdrant, the QueryBot key file, and client KB artifacts.
-- Configure centralized logs, alerts, retention, and incident procedures.
-- Run golden regressions after schema, metric, field, graph, date-role, model, or prompt changes.
-- Validate regulated profiles, provider agreements, identity/MFA, and result-release policy before activation.
-
-See [ROLLOUT.md](ROLLOUT.md) for staged feature rollout guidance.
+Changing a library version: edit `requirements.txt`, regenerate `requirements.lock` and
+`requirements-windows.lock` (each file's header says how), and let the full suite pass on the result.
 
 ## Project structure
 
 ```text
-admin/                  Administrator routes, templates, and workflows
-core/                   Query, semantic, retrieval, validation, analytics, and compliance logic
-core/compliance/        Classification, policy, SQL/result guards, and readiness checks
-gateway/                Teams, Zoom, Slack, and web event adapters
-portal/                 User portal routes and templates
-store/                  SQLite/PostgreSQL persistence and repositories
-static/                 Shared visual tokens and frontend assets
-packs/                  ERP terminology and industry vocabulary packs
-evals/                  Golden evaluation definitions and the bilingual demo rehearsal harness
-tests/                  Unit, integration, architecture, UI, and regression tests
-deploy/                 Qdrant and operating-system deployment assets
-main.py                 FastAPI application composition and lifecycle
+main.py            The web application: routes, startup, the background scheduler
+admin/             Admin console: workspaces, Learn, data pages, people, compliance, email, AI settings
+portal/            The users' portal: chat, dashboards, data guide, notifications, settings
+gateway/           Teams, Slack and Zoom webhooks, the portal chat WebSocket, the question API
+core2/             The engine: plan/ (the AI's plan), resolve/ and compile/ (checks and SQL), answer/,
+                   bootstrap/ (Learn), warehouse/ (governed execution), dashboards, recipes, agent/
+core/              Shared services: data-source connections, compliance (policies, masking, row rules),
+                   mail, scheduled dashboards and alerts, AI providers and their audit
+store/             Solviz's own store (SQLite or PostgreSQL): people, workspaces, decisions, logs
+static/, frontend/ Styles, scripts and the Vue chart components
+deploy/            Installers and update scripts for Linux and Windows, backup and settings helpers
+tests/             The test suite
+evals/             Question sets and the demo rehearsal
+docs/              Design notes and runbooks
 ```
 
-Primary implementation entry points:
+## Known limits
 
-| File | Responsibility |
-|---|---|
-| `core/query_pipeline.py` | End-to-end query orchestration |
-| `core/llm.py` | Provider resolution and SQL-generation prompts |
-| `core/validator.py` | SQL, schema, ACL, and semantic validation |
-| `core/semantic_planner.py` | Approved field and metric planning |
-| `core/graph_resolver.py` | Governed join-path resolution, one root per fact |
-| `core/join_planner.py` | Isolated aggregation and shared-grain planning across facts |
-| `core/response_builder.py` | The answer card: computed summary, result scope, decision signal |
-| `core/insight.py` | The statistical brief and the analyst's explanation |
-| `core/analysis_narrative.py` | Evidence-checked phrasing, template or model, in either language |
-| `core/result_conversation.py` | Talking to a result on screen, and the card's own courtesy replies |
-| `core/situation_phraser.py` | A failed turn reworded by the model for the reader, checked, with the catalogue as fallback |
-| `core/vocab_packs.py` | Source-system and industry terminology packs merged into the tenant's vocabulary |
-| `core/investigation.py` | The one tool an investigation calls: an ordinary governed question, captured |
-| `core/investigation_planner.py` | The plan-act-observe loop, its verified synthesis, and the template fallback |
-| `core/agent_runtime.py` | A durable, budgeted agent run and its steps |
-| `core/question_normalizer.py` | French questions canonicalised for the deterministic detectors |
-| `core/i18n.py` | The English and French message catalogue and number formatting |
-| `core/contextual_dates.py` | Metric-aware date-context resolution |
-| `core/semantic_model.py` | Structured semantic artifacts |
-| `core/knowledge.py` | KB retrieval and ranking |
-| `core/masking.py` | KB sample masking and synthetic replacement |
-| `core/compliance/` | Regulated query and result policy boundary |
-| `core/chart_policy.py` | Aggregate-only rule shared by charts and forecasts |
-| `core/pipeline_trace.py` | Trace and learning-candidate lifecycle |
-| `core/result_renderer.py` | Business result rendering |
-| `core/forecast_gate.py` | Whether a series can support a projection, and why not |
-| `core/forecast_models.py` | The only module that touches statsmodels; fits and intervals |
-| `core/temporal_columns.py` | Strict "is this really a time axis" detection |
-| `core/metric_authoring.py` | Composing a metric definition from a described calculation |
-| `core/metric_dryrun.py` | Probing a candidate formula against the live database |
+- Answers depend on what Learn found and the admins approved: links between tables, how each metric adds up,
+  and which date each table is counted by. Review the data pages after the first Learn.
+- Requests that combine several analyses in one sentence, shares within a group, and "did A but not B" between two
+  periods are still being improved; Solviz says what it could not do rather than guess.
+- One server process serves everyone; the AI service's tokens-per-minute is the usual limit on how many can ask at
+  once.
+- SQLite suits one server. Use PostgreSQL for Solviz's own store when you need managed backups or high availability.
+- No single sign-on or two-factor sign-in yet; HTTPS has to be put in front (see [HTTPS](#https)).
+- Compliance features reduce risk; they do not on their own establish regulatory compliance.
 
-A chart and a forecast are the same disclosure in different shapes, so the
-aggregate-only policy rule lives in one module used by both. Two copies of that
-rule would be one copy that can be forgotten.
-
-## Current boundaries
-
-- Semantic correctness still depends on administrator-approved field meanings, metric definitions, fact grain, relationships, and date roles. No LLM can infer every client-specific rule reliably from cryptic schema names alone.
-- Query optimization is guarded and dialect-aware, but generated SQL should not be assumed optimal for every data volume, index strategy, warehouse, or workload. Validate expensive golden queries with the target database's execution plan.
-- SQLite is convenient for demos and single-user evaluation; use PostgreSQL for production-oriented concurrency.
-- Qdrant and the metadata database require explicit backup, restore, monitoring, and capacity planning.
-- Learning is governed retrieval, not autonomous model training. Only approved memories should influence future generation.
-- Compliance features reduce risk but do not independently establish regulatory compliance.
-- **Forecast intervals are calibrated for series with a stable trend, and understate uncertainty at longer horizons when the level itself wanders.** Measured against a nominal 95%: about 0.93–0.98 one step ahead, and 0.82–0.86 three steps ahead on a random walk with drift. Neither a straight line nor a damped trend can express a stochastic level, and no interval built from one of them fully accounts for the model being the wrong shape — a differenced ARIMA would, and the model selector only reaches for one when it detects seasonality. The numbers above are asserted by a test so the limitation cannot quietly get worse.
-- A projection is an extrapolation of the past, not a business plan. It knows nothing about a price change, a lost customer, or a closed site.
-- The tenant vocabulary carries one display label per column, in English. A French sentence therefore names a warehouse column in English ("sur 3 warehouse names") until per-language labels exist in the naming profile. Category values and column names from the database are quoted as they are in both languages by design.
-- A result card's conversation lives in the server process for the session: a page reload starts it afresh, and the memory is the last five turns.
-- "Is that good?" typed in the main chat while a result is on screen is routed as a refinement of that result, not to the analyst; ask it in the card, where the conversational reply reads the same brief.
-- The analyst's offer to run a query ("if you'd like, I can run…") replays the reader's own message when accepted, not the question the analyst proposed.
-- An investigation's live progress is a single status update before the loop starts, not a per-step trail as it happens; the full step-by-step trail is recorded and shown only once the loop returns. The one tool it calls today is an ordinary governed question -- drill, compare, and forecast as distinct typed tools are a natural next step, not yet built. Its checked synthesis catches an invented figure and a quoted or warehouse-shaped term that was not returned, not an ordinary swapped proper noun written in plain prose with neither marker -- the same boundary `core/situation_phraser.py`'s identical check has.
-
-## License and support
-
-No open-source license is declared in this repository. Treat the code as proprietary unless the repository owner provides separate licensing terms.
-
-For implementation details, begin with [ARCHITECTURE.md](ARCHITECTURE.md), and use the admin trace, KB quality, model health, and evaluation pages as the operational source of truth.
+No open-source license is declared in this repository. Treat the code as proprietary unless the repository owner
+provides separate licensing terms.

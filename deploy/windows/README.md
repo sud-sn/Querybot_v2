@@ -1,245 +1,77 @@
-# QueryBot on an Azure Windows VM
+# Solviz on a Windows server
 
-For a command-by-command installation, use
-[`STEP-BY-STEP.md`](STEP-BY-STEP.md).
+Windows Server 2019, 2022 or 2025, 64-bit. Everything below runs in an **Administrator** PowerShell, from the
+Solviz folder. The scripts keep their `querybot` names so servers already running need nothing renamed.
 
-This guide deploys QueryBot on Windows with:
-
-- QueryBot and Uvicorn running natively on Windows
-- PostgreSQL running locally on the VM
-- Qdrant running privately in Docker on Linux/WSL, or in Qdrant Cloud
-- Azure SQL accessed through Microsoft ODBC Driver 18
-
-## 1. Network and software prerequisites
-
-Install:
-
-1. Git for Windows.
-2. 64-bit Python 3.12 with the `py` launcher.
-3. PostgreSQL for Windows, including Command Line Tools.
-4. Microsoft ODBC Driver 18 for SQL Server.
-
-The VM needs outbound HTTPS access to PyPI, Docker Hub, the configured LLM
-provider, and `huggingface.co` when local embedding and cross-encoder models
-are first downloaded.
-
-Do not expose PostgreSQL port 5432 or Qdrant ports 6333/6334 to the public
-internet. QueryBot uses both through localhost.
-
-## 2. Clone and install QueryBot
-
-Run PowerShell:
+## Install (once)
 
 ```powershell
-New-Item -ItemType Directory -Force C:\QueryBot | Out-Null
-Set-Location C:\QueryBot
-git clone https://github.com/sud-sn/Querybot_v2.git app
-Set-Location app
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\install-querybot.ps1
+git clone https://github.com/sud-sn/Querybot_v2.git C:\Solviz
+cd C:\Solviz
+powershell -ExecutionPolicy Bypass -File deploy\windows\deploy.ps1 -AdminEmail you@company.com -AdminName "Your Name"
 ```
 
-For a private repository, authenticate with Git Credential Manager or use a
-read-only deployment token. Do not place a token in a committed URL.
+`deploy.ps1` does every step, and is safe to run again to repair a server that is missing a piece:
 
-## 3. Create the PostgreSQL database
+1. **Python 3.11 or 3.12**, 64-bit: kept when installed, else installed for all users with winget, else from
+   python.org.
+2. **Microsoft ODBC Driver 18 for SQL Server** and the Visual C++ runtime it needs, for Azure SQL and SQL Server
+   data sources: winget, else Microsoft's download. When neither can be reached it says so and carries on; download
+   the x64 installer from Microsoft and run again with `-OdbcMsi C:\path\msodbcsql.msi`.
+3. **The libraries** (`install-querybot.ps1`): the virtual environment `venv` with the exact versions in
+   `requirements-windows.lock`, the name recogniser's English model, and Chromium for pictures and PDFs of
+   scheduled dashboards.
+4. **Settings** in `.env`: the session and pseudonym secrets, generated once and never changed, and the path of the
+   key that encrypts saved passwords (`%USERPROFILE%\.querybot_key`).
+5. **The background task** "QueryBot" (`querybot-service.ps1 -Action Install`): it runs as the Windows user who
+   installed it, starts with the server whether or not anyone is signed in, and starts Solviz again if it stops.
+   Then a Windows Firewall rule for the port, and a health check.
+6. **The first Super admin account**, with `-AdminEmail` (it asks for the password).
 
-Open SQL Shell (`psql`) as the PostgreSQL administrator and run:
+| Option | Does |
+|---|---|
+| `-Port 8001` | The port (default 8000, or the one the task already uses) |
+| `-PublicUrl https://solviz.company.com` | The address people open, used in emailed links |
+| `-AdminEmail`, `-AdminName` | Make (or reset) a Super admin account |
+| `-OdbcMsi <file>` | Install the ODBC driver from a file you downloaded |
+| `-NoOdbc` | Leave out the ODBC driver |
+| `-NoFirewall` | Add no firewall rule |
 
-```sql
-CREATE ROLE querybot LOGIN PASSWORD 'replace-with-a-strong-password';
-CREATE DATABASE querybot OWNER querybot;
-\connect querybot
-GRANT ALL ON SCHEMA public TO querybot;
-```
+If the server cannot download installers at all, install Python 3.12 (64-bit, "Add to PATH"), the Visual C++
+runtime and ODBC Driver 18 by hand first ([STEP-BY-STEP.md](STEP-BY-STEP.md)), then run `deploy.ps1`.
 
-Keep PostgreSQL bound to localhost when the application is on the same VM.
-The QueryBot role needs schema creation/alter privileges during first startup
-because `init_db()` creates and upgrades the application tables.
-
-Set this in `.env`, percent-encoding special URL characters in the password:
-
-```text
-DATABASE_URL=postgresql://querybot:encoded-password@127.0.0.1:5432/querybot
-```
-
-Test it:
+## Run it
 
 ```powershell
-.\venv\Scripts\python.exe -c "from dotenv import load_dotenv; load_dotenv(); from store.db import init_db; init_db(); print('PostgreSQL OK')"
+powershell -ExecutionPolicy Bypass -File deploy\windows\querybot-service.ps1 -Action Status   # running? /health?
+powershell -ExecutionPolicy Bypass -File deploy\windows\querybot-service.ps1 -Action Logs     # follow the newest log
+powershell -ExecutionPolicy Bypass -File deploy\windows\querybot-service.ps1 -Action Restart  # after changing .env
+powershell -ExecutionPolicy Bypass -File deploy\windows\verify-querybot.ps1                   # check every piece
 ```
 
-## 4. Start Qdrant
+Logs are in `logs\` (kept 14 days).
 
-### Recommended for Windows Server
-
-Docker Desktop is not supported on Windows Server. Use one of these:
-
-1. Qdrant Cloud for the simplest production deployment.
-2. A small private Linux VM/container host for self-hosted production.
-3. WSL 2 with Ubuntu and Docker Engine for a POC or demo, if the Azure VM size
-   and Windows Server version support WSL 2 and nested virtualization.
-
-Do not treat Docker-in-WSL as the durable production vector store. Qdrant
-documents Windows/WSL mounted-storage risks; use Cloud or Linux-hosted Qdrant
-when backups and recovery matter.
-
-For WSL 2, install Ubuntu from elevated PowerShell and reboot if requested:
+## Update
 
 ```powershell
-wsl --install -d Ubuntu
+powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1                  # the release (main)
+powershell -ExecutionPolicy Bypass -File deploy\windows\update-querybot.ps1 -Branch core-v2  # the next version
 ```
 
-Install Docker Engine and the Compose plugin inside Ubuntu using Docker's
-official Ubuntu instructions. Then run from the repository:
+It stops Solviz, copies the SQLite database (`data\querybot.db.bak-<time>`), moves to the latest commit of the
+branch, installs the exact library versions it needs, starts Solviz again and prints the line that goes back to
+where the server was. Files changed on the server are kept unless the update changes them too: git then stops,
+nothing changes, and Solviz starts as it was.
 
-```powershell
-wsl -d Ubuntu -- bash -lc "cd '/mnt/c/QueryBot/app' && docker compose -f deploy/qdrant.compose.yml up -d"
-```
+## HTTPS
 
-The Compose file binds Qdrant only to `127.0.0.1`. Confirm Windows can reach it:
+Solviz serves plain HTTP on its port. Put HTTPS in front before real data goes in: Azure Application Gateway or
+Front Door, or IIS with Application Request Routing. Forward to `http://<server>:8000`, allow WebSocket upgrades (the
+chat uses one), keep the original `Host` header, and allow uploads of 100 MB. Then run `deploy.ps1` again with
+`-PublicUrl https://<your address>` (or set `PORTAL_BASE_URL` in `.env`) and restart.
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:6333/healthz
-```
+## Back up
 
-If Windows cannot reach WSL through localhost forwarding, obtain the WSL
-address with `wsl hostname -I`, set `QDRANT_URL` to that private address, and
-keep Windows Firewall restricted to the local/private interface.
-
-For Qdrant Cloud, set:
-
-```text
-QDRANT_URL=https://your-cluster-url
-QDRANT_API_KEY=your-api-key
-```
-
-Before production, pin `QDRANT_IMAGE` to the version validated in staging:
-
-```powershell
-wsl -d Ubuntu -- bash -lc "cd '/mnt/c/QueryBot/app' && QDRANT_IMAGE='qdrant/qdrant:<tested-version>' docker compose -f deploy/qdrant.compose.yml up -d"
-```
-
-## 5. Configure QueryBot
-
-Edit `C:\QueryBot\app\.env`:
-
-1. Set `DATABASE_URL`.
-2. Set `QDRANT_URL` and optionally `QDRANT_API_KEY`.
-3. Generate unique session secrets:
-
-```powershell
-.\venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-4. Set `PORTAL_BASE_URL` to the final HTTPS address.
-5. Keep `QUERYBOT_KEY_FILE` outside the repository and back it up securely.
-
-API keys and client database credentials can then be configured through the
-QueryBot admin UI; they are encrypted using the QueryBot key file.
-
-## 6. Start and verify
-
-Start QueryBot:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\start-querybot.ps1
-```
-
-Verify locally:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-Test-NetConnection 127.0.0.1 -Port 5432
-Test-NetConnection 127.0.0.1 -Port 6333
-Test-NetConnection huggingface.co -Port 443
-```
-
-Open `http://<vm-private-or-public-ip>:8000/admin` only for initial testing.
-For production, place IIS, Azure Application Gateway, or another reverse proxy
-in front of QueryBot and expose HTTPS 443 rather than Uvicorn port 8000.
-
-## 7. Run in the background, start with the server
-
-Once QueryBot answers on its port, stop the console run (Ctrl+C) and install the
-background task, in an Administrator PowerShell, signed in as the Windows user
-QueryBot runs as:
-
-```powershell
-Set-Location C:\QueryBot\app
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\querybot-service.ps1 -Action Install -Port 8000
-```
-
-This:
-
-- adds to `.env`, only where there is no value yet, the four session and
-  pseudonym secrets (random), `QUERYBOT_KEY_FILE` (this user's
-  `.querybot_key`), and where this user's PDF browser and AI model files are.
-  A value already in `.env` is never changed. Never change
-  `PII_PSEUDONYM_SECRET` once it is set: every alias shown before would change;
-- stops a QueryBot already running on that port from a console;
-- registers the scheduled task `QueryBot`. It runs
-  `deploy\windows\run-querybot.ps1` with no window, as this user, at every
-  start of the server whether or not anyone is signed in, and starts QueryBot
-  again ten seconds after it stops for any reason. A click or Ctrl+C in a
-  window can no longer pause or end it.
-
-Logs go to `C:\QueryBot\app\logs\querybot-<start time>.log`, kept 14 days.
-
-```powershell
-.\deploy\windows\querybot-service.ps1 -Action Status    # task, process, /health, newest log
-.\deploy\windows\querybot-service.ps1 -Action Logs      # newest log, followed live
-.\deploy\windows\querybot-service.ps1 -Action Restart   # after changing .env
-.\deploy\windows\querybot-service.ps1 -Action Stop      # also Start, Uninstall
-```
-
-(Prefix each with `powershell -ExecutionPolicy Bypass -File` if scripts are
-blocked on the server.) The user needs Log on as a batch job, read access to
-the repository, and write access to QueryBot's data, client, log and secret
-locations.
-
-## 8. Updating
-
-In an Administrator PowerShell:
-
-```powershell
-Set-Location C:\QueryBot\app
-powershell -ExecutionPolicy Bypass -File .\deploy\windows\update-querybot.ps1
-```
-
-It stops QueryBot, copies the SQLite database (`data\querybot.db.bak-<time>`,
-with the writes not yet folded into the file), sets the local branch to the
-branch on GitHub, installs `requirements-windows.txt`, the PDF browser and the
-name recogniser's English model (`en_core_web_md`, once), starts QueryBot again
-and checks it. Files changed on the server are kept
-unless the update changes them too: git then stops and nothing changes. The
-line to go back to where the server was is printed at the end.
-
-It takes `main`, the release. The next version is built on `core-v2`:
-`-Branch core-v2` moves a test server to it, and the plain command moves it
-back.
-
-Back up PostgreSQL (when `DATABASE_URL` is set), the Qdrant volume or cloud
-collection, `.env` and the `.querybot_key` file before upgrading. Keep `.env`
-and the key file together: without the key, stored database passwords cannot
-be read.
-
-## 9. Learn on a large or busy database
-
-Learn reads four tables at a time and lets each query run for two minutes. A
-table of more than a million rows that the database cannot read whole in that
-time is read on a sample of about a million rows, and the progress log says so. If QueryBot restarts while Learn
-runs (an update, a reboot), press Learn again within a day: it starts where it
-was and reads again only the tables whose columns, size or masking changed.
-
-On a small database that others use during the day, read fewer tables at once
-and give each query longer, in `.env`:
-
-```
-QUERYBOT_LEARN_WORKERS=2
-QUERYBOT_LEARN_QUERY_TIMEOUT_SECONDS=300
-```
-
-then restart QueryBot. On Azure SQL or SQL Server, `deploy/sql/columnstore_suggestions.sql`
-lists the large tables that would answer faster with a columnstore index, with the
-statement to create each. It changes nothing itself: run it in the database
-QueryBot reads and agree the indexes with whoever runs that database.
+Together: `.env`, `%USERPROFILE%\.querybot_key` (without it saved data-source passwords cannot be read),
+`data\querybot.db`, `clients\` and `workbooks\`. To use PostgreSQL for Solviz's own store instead of SQLite, set
+`DATABASE_URL` in `.env` and back that database up with `pg_dump`.
