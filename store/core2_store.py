@@ -520,3 +520,69 @@ def core2_metrics_accepted_since(account_id: str, db_config_id: int | None, sinc
         if key and key not in out:
             out.append(key)
     return out
+
+
+def add_core2_setup_check(account_id: str, db_config_id: int | None, *, file_name: str, uploaded_by: str,
+                          items: list[dict[str, Any]]) -> int:
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO core2_setup_check (account_id, db_config_id, file_name, uploaded_by, items_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (account_id, int(db_config_id or 0), file_name, uploaded_by, json.dumps(items, default=str), _now()))
+        return int(cur.lastrowid)
+
+
+def get_core2_setup_check(account_id: str, check_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM core2_setup_check WHERE account_id = ? AND id = ?",
+                           (account_id, int(check_id))).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    out["items"] = json.loads(out.pop("items_json") or "[]")
+    out["summary"] = json.loads(out.pop("summary_json") or "{}")
+    return out
+
+
+def close_core2_setup_check(account_id: str, check_id: int, *, status: str, summary: dict[str, Any],
+                            expect: str = "waiting") -> bool:
+    """Move a setup check on from ``expect`` (waiting: to applying or discarded; applying: to applied or failed),
+    once only, so two admins never apply the same one twice."""
+    with get_db() as conn:
+        cur = conn.execute(
+            """UPDATE core2_setup_check SET status = ?, summary_json = ?, applied_at = ?
+               WHERE account_id = ? AND id = ? AND status = ?""",
+            (status, json.dumps(summary, default=str), _now(), account_id, int(check_id), expect))
+        return cur.rowcount == 1
+
+
+def list_core2_setup_checks(account_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    """The latest setup checks uploaded for a workspace, without their items."""
+    with get_db() as conn:
+        rows = conn.execute("""SELECT id, file_name, uploaded_by, status, summary_json, created_at, applied_at
+                               FROM core2_setup_check WHERE account_id = ? ORDER BY id DESC LIMIT ?""",
+                            (account_id, int(limit))).fetchall()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["summary"] = json.loads(item.pop("summary_json") or "{}")
+        out.append(item)
+    return out
+
+
+def add_core2_test_question(account_id: str, db_config_id: int | None, *, question: str, expected: str = "",
+                            report: str = "", period: str = "", note: str = "", setup_check_id: int = 0) -> int:
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO core2_test_question (account_id, db_config_id, question, expected, report, period, note,
+                                                setup_check_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (account_id, int(db_config_id or 0), question, expected, report, period, note, int(setup_check_id),
+             _now()))
+        return int(cur.lastrowid)
+
+
+def list_core2_test_questions(account_id: str, db_config_id: int | None) -> list[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute("""SELECT * FROM core2_test_question WHERE account_id = ? AND db_config_id = ?
+                               ORDER BY id""", (account_id, int(db_config_id or 0))).fetchall()
+    return [dict(r) for r in rows]

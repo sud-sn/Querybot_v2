@@ -1854,6 +1854,33 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             updated_at     TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (account_id, user_id)
         );
+        -- A setup check the client answered (core2/setup_check.py): the changes its answers propose, each checked
+        -- on the data, waiting for an admin to apply them.
+        CREATE TABLE IF NOT EXISTS core2_setup_check (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL,
+            db_config_id    INTEGER NOT NULL DEFAULT 0,
+            file_name       TEXT NOT NULL DEFAULT '',
+            uploaded_by     TEXT NOT NULL DEFAULT '',
+            items_json      TEXT NOT NULL DEFAULT '[]',
+            status          TEXT NOT NULL DEFAULT 'waiting',
+            summary_json    TEXT NOT NULL DEFAULT '{}',
+            created_at      TEXT DEFAULT (datetime('now')),
+            applied_at      TEXT NOT NULL DEFAULT ''
+        );
+        -- The client's own questions with the answer from their own reports: what Solviz is checked against.
+        CREATE TABLE IF NOT EXISTS core2_test_question (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL,
+            db_config_id    INTEGER NOT NULL DEFAULT 0,
+            question        TEXT NOT NULL,
+            expected        TEXT NOT NULL DEFAULT '',
+            report          TEXT NOT NULL DEFAULT '',
+            period          TEXT NOT NULL DEFAULT '',
+            note            TEXT NOT NULL DEFAULT '',
+            setup_check_id  INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
         -- How often each kind of suggestion was offered to a reader and asked: asked kinds rise, ignored ones fall.
         CREATE TABLE IF NOT EXISTS core2_suggest_kind (
             account_id     TEXT NOT NULL,

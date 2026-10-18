@@ -92,7 +92,7 @@
         'New metric' if c.kind == 'new_metric' else {'measure': 'Metric', 'attribute': 'Field', 'entity': 'Field',
         'date_role': 'Date'}.get(c.target_kind, 'Change') }}</span>
       <strong>{{ c.target_name }}</strong>
-      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'what Learn found' if c.source == 'learn' else 'the Data guide' }},
+      <span class="rq-who">· {{ c.user_name or 'A reader' }}, from {{ 'the chat' if c.source == 'chat' else 'what Learn found' if c.source == 'learn' else 'the setup check' if c.source == 'setup_check' else 'the Data guide' }},
         {{ (c.created_at or '')[:16] }}</span>
       {% if c.status != 'waiting' %}
       <span class="status-pill {{ {'accepted': 'success', 'rejected': 'danger', 'undone': 'neutral'}.get(c.status, 'neutral') }}">{{

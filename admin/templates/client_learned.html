@@ -59,6 +59,12 @@
 .lq-log li.lq-log-left{color:var(--warning-strong)}
 .lq-log li.lq-log-stop{color:var(--danger);font-weight:var(--weight-semibold)}
 .lq-run summary{cursor:pointer;color:var(--text-muted);font-size:var(--font-sm)}
+.lq-sc p{margin:0 0 .75rem;color:var(--text-muted);max-width:760px;line-height:1.55}
+.lq-sc-actions{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center}
+.lq-sc-upload{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;min-width:0}
+.lq-sc-upload input[type=file]{max-width:100%;font-size:var(--font-sm)}
+.lq-sc-list{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.35rem;font-size:var(--font-sm)}
+.lq-sc-list span{color:var(--text-muted);margin-left:.4rem}
 </style>
 {% endblock %}
 {% block content %}
@@ -102,6 +108,34 @@
   {% if error %}{{ alert(error, "error") }}{% endif %}
   {% if problem %}{{ alert(problem, "warning") }}{% endif %}
   {% if behind and not building %}{{ alert("Discovery has run since Solviz last learned, and found other tables, columns or masking. Learn again so the new core uses them; until then it answers from what it learned.", "warning") }}{% endif %}
+
+  {% if view and not building %}
+  <section class="lq-section" id="setup-check" aria-labelledby="lq-setup-check">
+    <h2 id="lq-setup-check">Setup check with the client's team</h2>
+    <div class="lq-body lq-sc">
+      <p>A workbook of what Solviz found, in plain words with figures from the data: rows to leave out of totals,
+        how each metric is worked out, the date each table is counted by, the links, the codes, the team's own
+        words and their test questions. The client's team answers in the yellow cells; upload it back here to
+        review the changes it proposes, each checked on the data, before any is applied.</p>
+      <div class="lq-sc-actions">
+        <a class="btn btn-secondary" href="/admin/clients/{{ client.account_id }}/learned/setup-check.xlsx">Download the setup check</a>
+        <form method="post" enctype="multipart/form-data" action="/admin/clients/{{ client.account_id }}/learned/setup-check" class="lq-sc-upload">
+          <label for="lq-sc-file" class="sr-only">Filled-in setup check (.xlsx)</label>
+          <input id="lq-sc-file" type="file" name="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+          <button type="submit" class="btn btn-primary">Upload answers</button>
+        </form>
+      </div>
+      {% if setup_checks %}
+      <ul class="lq-sc-list">
+        {% for c in setup_checks %}
+        <li><a href="/admin/clients/{{ client.account_id }}/learned/setup-check/{{ c.id }}">{{ c.file_name or "Setup check" }}</a>
+          <span>{{ c.created_at }} UTC · {{ {"waiting": "waiting for review", "applied": "applied", "applying": "being applied", "failed": "stopped part way", "discarded": "discarded"}.get(c.status, c.status) }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
 
   {% if build and (building or build_lines) %}
   <section class="lq-section lq-run" aria-labelledby="lq-run">
