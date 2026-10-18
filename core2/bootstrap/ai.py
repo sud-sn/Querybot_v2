@@ -12,6 +12,9 @@ import uuid
 from collections.abc import Callable
 from typing import Any, cast
 
+# The most a plan or a metric written as JSON may take. Only what is written is paid for.
+PLAN_TOKENS = 4000
+
 
 def workspace_labeler(account_id: str, client: dict[str, Any], *, tables: list[str],
                       columns: list[str]) -> Callable[[str, str], str]:
@@ -59,9 +62,11 @@ def workspace_planner(account_id: str, client: dict[str, Any], *, question: str,
                                  enabled=bool(client.get("enable_llm_audit")), request_id=request_id,
                                  question_id=question_id or request_id, component="core2_planner",
                                  egress={"question": question}):
+                # A ceiling, not a target: one model writes a plan in about 250 tokens, another in two to three
+                # times that (a line of reasoning before the JSON), and a plan cut off at the ceiling is no plan.
                 text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Answer with one JSON object."),
-                                                tail, provider, model, api_key, max_tokens=1500, temperature=0.0,
-                                                **extra)
+                                                tail, provider, model, api_key, max_tokens=PLAN_TOKENS,
+                                                temperature=0.0, **extra)
                 return text
 
         return asyncio.run(call())
@@ -118,8 +123,8 @@ def metric_writer(account_id: str, client: dict[str, Any], *, description: str) 
                                  question_id=request_id, component="core2_metric_authoring",
                                  egress={"question": description}):
                 text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Answer with one JSON object."),
-                                                tail, provider, model, api_key, max_tokens=1200, temperature=0.0,
-                                                **extra)
+                                                tail, provider, model, api_key, max_tokens=PLAN_TOKENS,
+                                                temperature=0.0, **extra)
                 return text
 
         return asyncio.run(call())
