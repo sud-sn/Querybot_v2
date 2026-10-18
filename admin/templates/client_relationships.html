@@ -244,7 +244,7 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
 </div>
 
 <div class="rx-list"><table class="rx-l">
-  <thead><tr><th>Join</th><th>Matched on</th><th>Rows</th><th>Role</th><th>Condition</th><th>Status</th><th class="n">Data check</th></tr></thead>
+  <thead><tr><th>Join</th><th>Matched on</th><th>Rows</th><th>Rows without a match</th><th>Role</th><th>Condition</th><th>Status</th><th class="n">Data check</th></tr></thead>
   <tbody id="rx-rows"></tbody>
 </table></div>
 
@@ -476,6 +476,8 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
       tr.innerHTML = '<td class="nm">' + esc(j.from_name) + ' → ' + esc(j.to_name) + '</td>' +
         '<td data-label="Matched on">' + j.pairs.map(function (p) { return '<code class="rx-code">' + esc(p.from_name) + ' = ' + esc(p.to_name) + '</code>'; }).join(' ') + '</td>' +
         '<td data-label="Rows">' + ends(j.cardinality).join(' : ') + '</td>' +
+        // What a counted row with no match becomes: kept under Unknown (the default), or left out of every total.
+        '<td data-label="Rows without a match">' + (j.keep_unmatched === false ? 'Left out' : 'Kept as Unknown') + '</td>' +
         '<td data-label="Role">' + (esc(j.role) || '<span class="rx-muted">—</span>') + '</td>' +
         '<td data-label="Condition">' + (j.conditions.length ? j.conditions.map(function (c) { return '<span class="rx-tag req">⏷ ' + esc(c.text) + '</span>'; }).join(' ') : '<span class="rx-muted">—</span>') + '</td>' +
         '<td data-label="Status"><span class="rx-tag ' + ({Confirmed: 'ok', Suggested: 'req'}[j.status] || 'off') + '">' + esc(j.status) + '</span></td>' +
@@ -490,7 +492,7 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
       tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
       body.appendChild(tr);
     });
-    if (!body.children.length) body.innerHTML = '<tr><td colspan="7" class="rx-muted">No join matches.</td></tr>';
+    if (!body.children.length) body.innerHTML = '<tr><td colspan="8" class="rx-muted">No join matches.</td></tr>';
   }
 
   // ── the editor beside the diagram ──
