@@ -136,6 +136,24 @@ def _unknown_parts(model: SemanticModel, expr: Any, filters: list[Any]) -> list[
     return missing
 
 
+def _named_measures(value: Any) -> set[str]:
+    """The measures a stored definition is made of: the keys of its references (``{"measure": key}``)."""
+    named: set[str] = set()
+
+    def walk(e: Any) -> None:
+        if isinstance(e, dict):
+            if set(e) == {"measure"} and isinstance(e["measure"], str):
+                named.add(e["measure"])
+            for v in e.values():
+                walk(v)
+        elif isinstance(e, list):
+            for v in e:
+                walk(v)
+
+    walk(value.get("expr") if isinstance(value, dict) else None)
+    return named
+
+
 def _stray_conditions(model: SemanticModel, join: Join) -> list[str]:
     """Conditions of a link that are not on the table it reaches (or on no column at all)."""
     return [f.column for f in join.conditions
@@ -149,9 +167,23 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
     # Metrics whose own date an admin chose keep it when their table's default changes.
     pinned = {item["object_key"].partition(":")[2] for item in overrides
               if item["field"] == "default_date" and item["object_key"].startswith("measure:")}
-    defines = [item for item in overrides if item["field"] == "define"]
-    for item in sorted(defines, key=lambda item: item["object_key"].startswith("date_role:")):
-        _define(model, item["object_key"], item["value"], notes)
+    # Links first (a date reads its calendar through one), then dates (a metric may be counted by one the admin
+    # added), then metrics, then segments (each the members of a metric's rows). Decisions come back in the order
+    # of their keys: a metric made of another the admin added ("Net charge-offs" of "Recoveries") waits until that
+    # one is in, and only then is checked for what it reads; a segment waits for every metric.
+    order = {"join": 0, "date_role": 1, "measure": 2, "segment": 3}
+    defines = sorted((item for item in overrides if item["field"] == "define"),
+                     key=lambda item: order.get(item["object_key"].partition(":")[0], 2))
+    while defines:
+        waiting = {item["object_key"].partition(":")[2] for item in defines
+                   if item["object_key"].startswith("measure:")}
+        ready = [item for item in defines
+                 if not (item["object_key"].startswith("segment:") and waiting)
+                 and not _named_measures(item["value"]) & waiting - {item["object_key"].partition(":")[2]}]
+        for item in ready or defines:       # none ready: they name each other, and each is said
+            _define(model, item["object_key"], item["value"], notes)
+        done = {id(item) for item in ready or defines}
+        defines = [item for item in defines if id(item) not in done]
     for item in overrides:
         if item["field"] == "define":
             continue

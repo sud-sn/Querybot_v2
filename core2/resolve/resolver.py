@@ -747,12 +747,16 @@ class _PartBuilder:
 
 
 def _measure_expr(model: SemanticModel, measure: Measure) -> MeasureExpr:
-    """References to other measures inlined: the compiler sees only aggregates and operations."""
+    """References to other measures inlined: the compiler sees only aggregates and operations.
+
+    Each measure named keeps its own conditions: charge-offs less recoveries, both of one table, is each kind of
+    event's own total (without them both sides add up every row, and the difference is 0)."""
     def inline(expr: MeasureExpr, depth: int = 0) -> MeasureExpr:
         if depth > 5:
             raise ResolveError("unsupported", f"{measure.business_name} refers to itself")
         if isinstance(expr, RefExpr):
-            return inline(model.measures[expr.measure].expr, depth + 1)
+            ref = model.measures[expr.measure]
+            return _with_filters(inline(ref.expr, depth + 1), ref.filters)
         if isinstance(expr, OpExpr):
             return OpExpr(op=expr.op, args=[inline(a, depth + 1) for a in expr.args], scale=expr.scale)
         return expr
