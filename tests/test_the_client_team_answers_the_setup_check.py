@@ -263,3 +263,32 @@ def test_only_a_figure_that_reads_as_a_rate_or_a_score_is_asked_whether_to_avera
     from core2.setup_check import _SUMMED_LIKE_A_RATE
 
     assert bool(_SUMMED_LIKE_A_RATE.search(name)) is asked
+
+
+def test_a_metric_the_team_describes_waits_in_their_words_to_be_written_in_the_editor(page):
+    """A metric the team uses that Solviz has not (a new row, or a word for something no field holds) is a New
+    metric request in their name and words: the Requests page opens it in the metric editor, written from them."""
+    client, account, store, _ = page
+    wb = _download(client, account)
+    free = _row(wb["2 Metrics"], "Metric", "(A metric your team uses)")
+    free["Metric"].value = "Basket size"
+    free["What Solviz works out"].value = "Net amount divided by the number of orders"
+    words = wb["6 Your words"]
+    words["A6"], words["B6"], words["C6"] = "AOV", "average order value: net amount per order", "AOV by store?"
+    sent = _upload(client, account, wb)
+    items = _items(store, account, int(sent.headers["location"].rsplit("/", 1)[1]))
+    assert {i["what"] for i in items if i["change"] == "To the Requests queue, as a new metric to add"} == {
+        "Basket size", "AOV"}
+    client.post(f"{sent.headers['location']}/apply", data={"item": [str(i["n"]) for i in items if i["ops"] and i["ok"]]},
+                follow_redirects=False)
+
+    waiting = {r["target_name"]: r for r in store.list_core2_requests(account, status="waiting")}
+    assert waiting["Basket size"]["kind"] == "new_metric" and waiting["AOV"]["kind"] == "new_metric"
+    assert waiting["Basket size"]["note"] == "Net amount divided by the number of orders"
+    assert waiting["AOV"]["note"] == "average order value: net amount per order"
+    assert waiting["AOV"]["example"] == "AOV by store?" and waiting["AOV"]["source"] == "setup_check"
+    from admin import core2_requests
+
+    with patch.object(core2_requests, "_is_auth", return_value=True):
+        listed = client.get(f"/admin/clients/{account}/requests?status=waiting").text
+    assert "Write it in the editor" in listed and "describe=Net%20amount%20divided" in listed

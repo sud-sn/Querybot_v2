@@ -657,6 +657,13 @@ def _request(target_kind: str, target_key: str, target_name: str, note: str) -> 
             "note": note}
 
 
+def _new_metric(name: str, words: str, example: str = "") -> dict[str, Any]:
+    """A metric the team uses and Solviz has not: a New metric request in their own name and words, which the
+    Requests page opens in the metric editor, written from those words."""
+    return {"op": "request", "kind": "new_metric", "target_kind": "measure", "target_key": "",
+            "target_name": name[:120], "note": " ".join(words.split())[:1000], "example": example[:300]}
+
+
 def _ident(row: dict[str, Any]) -> list[Any] | None:
     try:
         parts = json.loads(str(row.get(ID_HEADER) or ""))
@@ -734,10 +741,10 @@ def review(model: SemanticModel, answers: dict[str, list[dict[str, Any]]], *, wa
         should = str(row.get("What it should be") or "").strip()
         if ident is None:
             name, how = str(row.get("Metric") or "").strip(), str(row.get("What Solviz works out") or "").strip()
-            if name and not name.startswith("(") and (how and not how.startswith("(") or should):
+            how = "" if how.startswith("(") else how
+            if name and not name.startswith("(") and (how or should):
                 items.append(_item("Metrics", name, "To the Requests queue, as a new metric to add",
-                                   [_request("measure", "", name, f"Setup check, a metric the team uses: {name}: "
-                                                                  f"{how}. {should}".strip())]))
+                                   [_new_metric(name, f"{how} {should}")]))
             continue
         if ident[0] == "suggest":
             if right in ("Yes", "No"):
@@ -874,11 +881,13 @@ def review(model: SemanticModel, answers: dict[str, list[dict[str, Any]]], *, wa
         if found:
             items.append(_item("Your words", word, f"\"{word}\" also means {means}",
                                [{"op": "add_synonyms", "object_key": found[1], "words": [word[:40]]}]))
+        elif means:
+            # A word for something Solviz has no name for ("GDR: generic scripts as a % of all scripts"): a metric
+            # the team uses, to be written in the editor from their words.
+            items.append(_item("Your words", word, "To the Requests queue, as a new metric to add",
+                               [_new_metric(word, means, str(row.get("Example question") or ""))]))
         else:
-            items.append(_item("Your words", word, "To the Requests queue",
-                               [_request("glossary", "", word, f"Setup check, your words: \"{word}\" means {means}. "
-                                                               f"Example: {row.get('Example question') or '-'}")],
-                               "" if means else "No meaning given."))
+            items.append(_item("Your words", word, "Not applied", [], "No meaning given.", False))
 
     # 7 Test questions
     for row in answers.get("7 Test questions", []):
@@ -940,10 +949,10 @@ def apply(account_id: str, client: dict[str, Any], model: SemanticModel, items: 
             elif kind == "name_value":
                 names.setdefault(op["column"], {})[op["code"]] = op["name"]
             elif kind == "request":
-                store.add_core2_request(account_id, db_id, kind="change", user_id="", user_name=f"Setup check ({by})",
-                                        target_kind=op.get("target_kind", ""), target_key=op.get("target_key", ""),
-                                        target_name=op.get("target_name", ""), note=op["note"][:1000],
-                                        source="setup_check")
+                store.add_core2_request(account_id, db_id, kind=op.get("kind", "change"), user_id="",
+                                        user_name=f"Setup check ({by})", target_kind=op.get("target_kind", ""),
+                                        target_key=op.get("target_key", ""), target_name=op.get("target_name", ""),
+                                        note=op["note"][:1000], example=op.get("example", ""), source="setup_check")
                 counts["requests"] += 1
             elif kind in ("accept_request", "reject_request"):
                 request = store.get_core2_request(account_id, int(op["id"]))
