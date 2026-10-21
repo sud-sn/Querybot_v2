@@ -545,7 +545,7 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
     number = _number(value)
     if number is None:
         return None
-    if column.role in ("share", "pct_change"):
+    if column.role in ("share", "pct_change", "share_of_change"):
         return round(number * 100, 4)
     return round(number, 6) if not float(number).is_integer() else int(number)
 
@@ -560,7 +560,7 @@ def _table_format(column: OutColumn) -> str:
         return "text" if column.grain and column.grain.startswith("fiscal") else "date"
     if column.role in ("attribute", "member_code", "time", "unit"):
         return "text"
-    if column.role in ("share", "pct_change"):
+    if column.role in ("share", "pct_change", "share_of_change"):
         return "percentage"
     return _TABLE_FORMAT.get(column.format, "number")
 
@@ -903,6 +903,8 @@ def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en") -> str
         return f"{c.label} : variation %" if fr else f"{c.label}: change %"
     if c.role == "share":
         return f"Part de {c.label.lower()}" if fr else f"Share of {c.label.lower()}"
+    if c.role == "share_of_change":
+        return f"{c.label} : part de la variation totale" if fr else f"{c.label}: share of the total change"
     if c.role == "period":
         if fr:
             return {"week": "Semaine du", "day": "Jour"}.get(c.grain or "", "Période")
@@ -1273,7 +1275,14 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
                 # region alone, as if the region had risen.
                 return ", ".join(str(shown[i][g.name]) for g in pair)
 
-            by = lambda i: _signed(changes[i], m.format, units.of(raw[i]), rounded=True)   # noqa: E731
+            part = next((c for c in cols.columns if c.role == "share_of_change" and c.measure == m.measure), None)
+
+            def by(i: int) -> str:
+                """The change, and its part of the whole change when the question asked for it."""
+                moved = _signed(changes[i], m.format, units.of(raw[i]), rounded=True)
+                whole = _number(raw[i][part.name]) if part is not None else None
+                return f"{moved}, {whole * 100:.0f}% of the total change" if whole is not None else moved
+
             what = _noun(members[0].label) if len(pair) == 1 else \
                 f"{' and '.join(_thing(g.label) for g in pair)} pairs"
             many = f"{len(raw)} {what}{' shown' if logical.limit else ''}"

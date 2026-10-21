@@ -335,7 +335,7 @@ def reason(gaps: list[Gap], hide: Callable[[str], str] | None = None) -> tuple[s
           "a part in asked with plan null only when nothing in the catalog can give it.")
     if any(OF_CHANGE.search(g.words) for g in gaps):
         en += (" Each member's share of a change (\"% of the total increase\", \"how much of the growth came from "
-               "each\") is given by intent \"drivers\" with drivers.dimensions set to that grouping, and the two "
-               "periods in time.window and time.compare.")
+               "each\") is given by intent \"compare\" with group_by that grouping, the two periods in time.window "
+               "and time.compare, and share_of_change true.")
     fr = "La réponse laisse de côté une partie de la demande : " + ", ".join(f"« {g.words} »" for g in gaps) + "."
     return en, fr

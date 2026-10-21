@@ -327,6 +327,9 @@ class Plan(_Strict):
     # intent share: each row's share of this grouping's own total, one of group_by ("% of each region's sales by
     # category": the region); none: of the grand total.
     share_of: str | None = None
+    # intent compare by a grouping: each group's change as a share of the whole change ("how much of the drop came
+    # from each product family", "each region's % of the total increase").
+    share_of_change: bool = False
     forecast: Forecast | None = None
     drivers: Drivers | None = None
     clarify: Clarify | None = None

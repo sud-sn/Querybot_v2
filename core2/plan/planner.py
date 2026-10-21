@@ -176,6 +176,9 @@ How to plan:
    region's sales came from each category", "each department's share of its store's sales", "generic % within
    each therapeutic class") -> intent share, group_by both, share_of the grouping each share is of (the region):
    each region's shares then add up to 100.
+   "How much of the change (the drop, the growth) came from each X", "each X's share of the increase", "% of
+   the total change" -> intent compare, group_by [X], the two periods in time.window and time.compare, and
+   share_of_change true: each X's change as a share of the whole change, beside the change itself.
    "Why did X drop/rise/change", "what drove X", "explain the change in X" -> intent drivers with the
    measure; time.window is the period asked about ("in March" -> March 2026), time.compare only when the
    question names the other period (else the period before is used); drivers.dimensions only when the
@@ -3157,7 +3160,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                      list_date_unasked, each_named, repeat_share, cohort_counted, named_not_coded, a_series_of_months, one_time_axis, restated_rates, margin_over_sales,
                      series_in_a_name, figure_parts_left_out, asks.fields_combined, figure_a_quoted_name_holds,
                      shape_said, analyst_math.two_periods_named, analyst_math.share_in_group,
-                     analyst_math.kept_by_change, analyst_math.total_at_its_level,
+                     analyst_math.kept_by_change, analyst_math.share_of_change, analyst_math.total_at_its_level,
                      analyst_math.members_over_a_total, analyst_math.how_many_is_a_count,
                      analyst_math.absent_of_the_counted, analyst_math.ratio_with_its_parts,
                      analyst_math.share_from_a_member, analyst_math.per_hundred):

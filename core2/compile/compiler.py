@@ -724,6 +724,14 @@ class _Compiler:
                 key = m.measure.key if m.measure else None
                 columns.append(OutColumn(f"{m.name}_change", m.label, "change", m.format, key))
                 columns.append(OutColumn(f"{m.name}_pct_change", m.label, "pct_change", "percent", key))
+                if m.name in q.change_share:
+                    # Each group's part of the whole change, over every group (before a filter on totals keeps
+                    # some): a group that went the other way has a negative part, one that moved more than the
+                    # whole did has more than all of it.
+                    whole = exp.Window(this=exp.Sum(this=change.copy()))
+                    outer = outer.select(D.div(_double(change.copy()), exp.Nullif(this=whole, expression=_num(0)))
+                                         .as_(self.name(f"{m.name}_share_of_change")))
+                    columns.append(OutColumn(f"{m.name}_share_of_change", m.label, "share_of_change", "percent", key))
         if q.share and q.measures:
             m = q.measures[0]
             # Of everything shown, or of each member of a grouping ("% of each region's sales by category").

@@ -226,6 +226,42 @@ def kept_by_change(plan: Plan, model: SemanticModel, question: str) -> Plan:
                                    "intent": plan.intent or "compare"})
 
 
+_MOVE = r"(?:change|drop|growth|increase|decline|decrease|rise|fall|gain|loss|jump|swing|shortfall|uplift)"
+# "how much of the drop came from each product family", "how much of the chain's change came from each region",
+# "each region's % of the total change", "share of the increase", "contribution to the growth", "break the change
+# down by fee type".
+_OF_A_CHANGE = re.compile(
+    r"\bhow\s+much\s+of\s+(?:[a-z'’$-]+\s+){0,4}?" + _MOVE + r"\b.{0,90}?\b(?:came|come|comes|coming|was|were|is|"
+    r"are|due|from)\b|(?:%|\bper\s?cent(?:age)?|\bshare|\bproportion|\bpart)\s+of\s+(?:the\s+|that\s+|this\s+)?"
+    r"(?:total\s+|overall\s+|whole\s+|[a-z'’-]+'s\s+)?" + _MOVE + r"\b|\bcontribut\w*\s+to\s+(?:the\s+|that\s+)?"
+    r"(?:total\s+|overall\s+)?" + _MOVE + r"\b|\bbreak\s+(?:the|that|this)\s+" + _MOVE + r"\s+down\b|"
+    r"\bbreak\s+down\s+(?:the|that|this)\s+" + _MOVE + r"\b", re.IGNORECASE)
+# A question about why: its drivers answer looks for where the change sits, among the groupings a reader checks first.
+_WHY = re.compile(r"\bwhy\b|\bwhat\s+(?:drove|drives|is\s+driving|was\s+driving|caused|explains?)\b|\bexplain\b|"
+                  r"\breasons?\s+for\b", re.IGNORECASE)
+
+
+@_kept_safe
+def share_of_change(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Total originations fell from 2024 to 2025 - how much of the drop came from each product family?" was
+    answered with each family's own % change: the question asks for each family's part of the drop. A comparison
+    by the grouping the question names, with each group's share of the whole change beside its change; planned as
+    a "why" looking only at that grouping, it is that comparison. A question about why keeps its drivers answer."""
+    text = question or ""
+    if plan.kind != "query" or plan.share_of_change or plan.time.compare is None or plan.shaped() \
+            or not _OF_A_CHANGE.search(text) or _WHY.search(text):
+        return plan
+    if plan.intent == "drivers":
+        looked = [d for d in ((plan.drivers.dimensions if plan.drivers else None) or []) if d not in plan.group_by]
+        if not looked and not plan.group_by:
+            return plan
+        return plan.model_copy(update={"intent": "compare", "drivers": None, "group_by": [*plan.group_by, *looked],
+                                       "share_of_change": True})
+    if not plan.group_by:
+        return plan
+    return plan.model_copy(update={"share_of_change": True, "intent": plan.intent or "compare"})
+
+
 # "orders over $200", "baskets above $75 in July", "which orders came to more than $1,500", "invoices of more than
 # 5,000", "transactions worth over $1,000".
 _DOCUMENT_TOTAL = re.compile(

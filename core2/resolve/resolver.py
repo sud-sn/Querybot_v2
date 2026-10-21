@@ -168,6 +168,30 @@ def adds_up(o: OutMeasure) -> bool:
 _ONE_TOTAL = re.compile(r"^\s*(?:SUM|COUNT)\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)\s*$", re.IGNORECASE)
 
 
+def changes_add_up(o: OutMeasure, measures: list[OutMeasure]) -> bool:
+    """Do the groups' changes of ``o`` add up to the whole change, so each one's share of it means something? A sum
+    or a count does, and so does a sum or a difference of them (fees charged less fees reversed, over two tables):
+    an average, a ratio or a percentage does not."""
+    if adds_up(o):
+        return True
+    if o.format in ("percent", "percentage", "days") or o.overlaps \
+            or o.measure is not None and o.measure.additivity == "non_additive":
+        return False
+    parts = {m.name: m for m in measures}
+
+    def linear(e: object) -> bool:
+        if isinstance(e, AggExpr):
+            return e.agg in ("sum", "count")
+        if isinstance(e, OpExpr):
+            return e.op in ("add", "subtract") and all(linear(a) for a in e.args)
+        if isinstance(e, RefExpr):        # one table's part of a measure over several (a hidden column)
+            part = parts.get(e.measure)
+            return part is not None and (adds_up(part) or linear(part.expr))
+        return False
+
+    return linear(o.expr.expr if isinstance(o.expr, Combined) else o.expr)
+
+
 def one_total(o: OutMeasure) -> bool:
     """A definition Learn or an admin wrote as one sum of each row's value (units times their price): its groups'
     values add up to the whole as a summed column's do."""
@@ -343,6 +367,7 @@ class Logical:
     limit: int | None = None
     share: bool = False
     share_within: list[str] = field(default_factory=list)   # each share is of these groupings' own total
+    change_share: list[str] = field(default_factory=list)   # measures shown with each group's share of the change
     having: list[Pred] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     cautions: list[str] = field(default_factory=list)  # said with the answer, not under "How it was counted"
@@ -2313,6 +2338,17 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             share_within = [within]
             label = next((g.label for g in groups if g.name == within), plan.share_of)
             notes.append(f"Each share is of its {label.lower()}'s own total, not of everything.")
+    change_share: list[str] = []
+    if plan.share_of_change and compare is not None \
+            and any(g.kind in ("attribute", "member_code", "time") for g in groups):
+        # Each group's change as a share of the whole change: only where the groups' changes add up to it.
+        shown = [o for o in measures_out if not o.hidden]
+        every = [*measures_out, *(o for p in parts for o in p.measures)]    # each table's part of one over several
+        change_share = [o.name for o in shown if changes_add_up(o, every)]
+        if len(change_share) < len(shown):
+            notes.append(f"No share of the change is worked out for "
+                         f"{', '.join(o.label for o in shown if o.name not in change_share)}: its groups' changes "
+                         "do not add up to the whole change (an average or a ratio).")
     for f in on_shown:
         having.append(_shown_figure_filter(f, measures_out, compare, share, conditions))
     if plan.segment is not None:
@@ -2323,6 +2359,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         cautions.extend(c for c in b.cautions if c not in cautions)
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, share_within=share_within,
+                   change_share=change_share,
                    having=having, notes=_unique(notes), cautions=cautions,
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
                    unit_group=group_names.get(unit_slug) if unit_slug else None, unit_order=unit_order,
