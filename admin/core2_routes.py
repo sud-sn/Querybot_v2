@@ -115,10 +115,23 @@ async def learned_page(request: Request, account_id: str):
         "engine": store.get_query_engine(account_id),
         "answers": store.list_core2_answers(account_id, 20),
         "setup_checks": store.list_core2_setup_checks(account_id),
+        "answers_score": _answers_score(account_id, db_id),
         # What the last Learn cost: its calls naming the tables (core2/bootstrap/ai.py).
         "learn_cost": store.usage_totals(account_id, component_prefix="core2_labels", since=build["started_at"],
                                          until=build.get("finished_at") or "") if build else None,
     })
+
+
+def _answers_score(account_id: str, db_id: int | None) -> dict | None:
+    """The answers check's scorecard for the setup section, or None before any test question."""
+    try:
+        from core2.answers_check import summary
+
+        score = summary(account_id, int(db_id or 0))
+        return score if score["total"] else None
+    except Exception as exc:  # noqa: BLE001 - the scorecard is a pointer to its own page
+        log.warning("core2: the answers check of %s could not be read: %s", account_id, exc)
+        return None
 
 
 def _run_build(account_id: str, started: str | None = None) -> None:

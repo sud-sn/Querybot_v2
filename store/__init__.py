@@ -199,6 +199,9 @@ from store.core2_store import (
     core2_suggest_kinds, count_core2_suggest_kind, core2_metrics_accepted_since,
     add_core2_setup_check, get_core2_setup_check, close_core2_setup_check, list_core2_setup_checks, add_core2_test_question,
     list_core2_test_questions,
+    delete_core2_test_question, release_stopped_core2_answer_checks, prune_core2_answer_checks,
+    claim_core2_answer_check, update_core2_answer_check, latest_core2_answer_check,
+    add_core2_answer_result, core2_answer_results, core2_test_question_workspaces,
 )
 from store.llm_usage_store import (
     record_llm_usage, question_usage, usage_by_question, usage_totals, usage_daily, user_usage_this_month,
@@ -353,6 +356,9 @@ __all__ = [
     "save_core2_start_page", "core2_suggest_kinds", "count_core2_suggest_kind", "core2_metrics_accepted_since",
     "add_core2_setup_check", "get_core2_setup_check", "close_core2_setup_check", "list_core2_setup_checks", "add_core2_test_question",
     "list_core2_test_questions",
+    "delete_core2_test_question", "release_stopped_core2_answer_checks", "prune_core2_answer_checks",
+    "claim_core2_answer_check", "update_core2_answer_check", "latest_core2_answer_check",
+    "add_core2_answer_result", "core2_answer_results", "core2_test_question_workspaces",
     "record_llm_usage","question_usage","usage_by_question","usage_totals","usage_daily","user_usage_this_month",
     "list_llm_prices","save_llm_price","delete_llm_price","unpriced_models","deployments_used",
     "reprice_unpriced",

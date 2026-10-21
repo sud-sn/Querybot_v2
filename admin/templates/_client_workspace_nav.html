@@ -22,7 +22,7 @@
 {% set _seg  = _tail.split('/')[0] if _tail else '' %}
 
 {% set _is_overview   = (_seg == '') %}
-{% set _is_data       = _seg in ['setup', 'learned', 'knowledge', 'relationships', 'dates', 'measures', 'askable', 'requests'] %}
+{% set _is_data       = _seg in ['setup', 'learned', 'answers-check', 'knowledge', 'relationships', 'dates', 'measures', 'askable', 'requests'] %}
 {% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
 {% set _is_people     = _seg in ['users', 'groups', 'row-access', 'pending-users', 'admins'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
@@ -46,7 +46,7 @@
 
 {# The open area's menu: (path segment, label). #}
 {% if _is_data %}
-  {% set _menu = [('setup', 'Setup'), ('learned', 'What Solviz learned'), ('knowledge', 'Knowledge base'),
+  {% set _menu = [('setup', 'Setup'), ('learned', 'What Solviz learned'), ('answers-check', 'Answers check'), ('knowledge', 'Knowledge base'),
                   ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics'),
                   ('askable', 'What readers can ask'), ('requests', 'Requests')] %}
 {% elif _is_questions %}

@@ -586,3 +586,151 @@ def list_core2_test_questions(account_id: str, db_config_id: int | None) -> list
         rows = conn.execute("""SELECT * FROM core2_test_question WHERE account_id = ? AND db_config_id = ?
                                ORDER BY id""", (account_id, int(db_config_id or 0))).fetchall()
     return [dict(r) for r in rows]
+
+
+def delete_core2_test_question(account_id: str, db_config_id: int | None, question_id: int) -> bool:
+    """A test question taken off the answers check, with its results."""
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM core2_test_question WHERE account_id = ? AND db_config_id = ? AND id = ?",
+                           (account_id, int(db_config_id or 0), int(question_id)))
+        conn.execute("""DELETE FROM core2_answer_check_result WHERE account_id = ? AND db_config_id = ?
+                        AND test_question_id = ?""", (account_id, int(db_config_id or 0), int(question_id)))
+        return cur.rowcount > 0
+
+
+# A run its process stopped minding (a restart, a crash) is let go after this long, and another may start.
+ANSWER_CHECK_STALE_MINUTES = 120
+
+
+def release_stopped_core2_answer_checks(account_id: str, db_config_id: int | None) -> None:
+    """A run another process was minding before it stopped (a restart), or one running for hours, is marked
+    stopped: read as running, it would hold the page and every next run for good."""
+    stale = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=ANSWER_CHECK_STALE_MINUTES)
+             ).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        conn.execute("""UPDATE core2_answer_check SET status = 'failed', finished_at = ?,
+                        message = 'Stopped before it finished (the server restarted)'
+                        WHERE account_id = ? AND db_config_id = ? AND status = 'running'
+                        AND (runner != ? OR started_at < ?)""",
+                     (_now(), account_id, int(db_config_id or 0), core2_runner(), stale))
+
+
+def claim_core2_answer_check(account_id: str, db_config_id: int | None, *, mode: str, reason: str, stamp: Any,
+                             total: int, started_by: str = "", whole: bool = True) -> int | None:
+    """Start a run of the answers check, or None while one runs for the workspace (a stopped one let go first).
+    ``whole``: every question, not only some (one asked again alone, new ones)."""
+    db_id = int(db_config_id or 0)
+    now = _now()
+    release_stopped_core2_answer_checks(account_id, db_id)
+    try:
+        with get_db() as conn:
+            cur = conn.execute(
+                """INSERT INTO core2_answer_check (account_id, db_config_id, mode, reason, whole, stamp_json, status,
+                                                   total, started_by, runner, started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)""",
+                (account_id, db_id, mode, reason, 1 if whole else 0, json.dumps(stamp, default=str), int(total),
+                 started_by, core2_runner(), now))
+            return int(cur.lastrowid)
+    except Exception as exc:  # noqa: BLE001 - the unique index says one runs already
+        if "unique" in str(exc).lower():
+            return None
+        raise
+
+
+def update_core2_answer_check(check_id: int, *, done_count: int | None = None, status: str | None = None,
+                              message: str | None = None) -> None:
+    sets, args = [], []
+    if done_count is not None:
+        sets.append("done_count = ?")
+        args.append(int(done_count))
+    if status is not None:
+        sets += ["status = ?", "finished_at = ?"]
+        args += [status, _now() if status != "running" else ""]
+    if message is not None:
+        sets.append("message = ?")
+        args.append(message[:1000])
+    if not sets:
+        return
+    with get_db() as conn:
+        # Only a run still running: one let go as stopped stays stopped.
+        conn.execute(f"UPDATE core2_answer_check SET {', '.join(sets)} WHERE id = ? AND status = 'running'",
+                     (*args, int(check_id)))
+
+
+def _check_row(row: Any) -> dict[str, Any]:
+    item = dict(row)
+    item["stamp"] = json.loads(item.pop("stamp_json") or "[]")
+    return item
+
+
+def latest_core2_answer_check(account_id: str, db_config_id: int | None, *, finished: bool = False,
+                              whole: bool = False) -> dict[str, Any] | None:
+    """The workspace's latest run of the answers check: the latest finished one, with ``finished``; the latest
+    of every question, with ``whole``."""
+    where = ("AND status = 'done' " if finished else "") + ("AND whole = 1" if whole else "")
+    with get_db() as conn:
+        row = conn.execute(f"""SELECT * FROM core2_answer_check WHERE account_id = ? AND db_config_id = ?
+                               {where} ORDER BY id DESC LIMIT 1""",
+                           (account_id, int(db_config_id or 0))).fetchone()
+    return _check_row(row) if row else None
+
+
+def add_core2_answer_result(check_id: int, account_id: str, db_config_id: int | None, test_question_id: int, *,
+                            verdict: str, detail: dict[str, Any], plan: Any = None, headline: str = "",
+                            asked: bool = False) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_answer_check_result (check_id, account_id, db_config_id, test_question_id, verdict,
+                                                      asked, headline, detail_json, plan_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (int(check_id), account_id, int(db_config_id or 0), int(test_question_id), verdict, 1 if asked else 0,
+             headline[:600], json.dumps(detail, default=str),
+             json.dumps(plan, default=str) if plan is not None else "", _now()))
+
+
+def core2_answer_results(account_id: str, db_config_id: int | None, *, per_question: int = 2
+                         ) -> dict[int, list[dict[str, Any]]]:
+    """Each test question's latest results, newest first (its latest and the one before, by default)."""
+    with get_db() as conn:
+        rows = conn.execute("""SELECT * FROM core2_answer_check_result WHERE account_id = ? AND db_config_id = ?
+                               ORDER BY test_question_id, id DESC""", (account_id, int(db_config_id or 0))).fetchall()
+    out: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        kept = out.setdefault(int(row["test_question_id"]), [])
+        if len(kept) < per_question:
+            item = dict(row)
+            item["detail"] = json.loads(item.pop("detail_json") or "{}")
+            text = item.pop("plan_json") or ""
+            item["plan"] = json.loads(text) if text else None
+            kept.append(item)
+    return out
+
+
+# Each question keeps its latest results, and the workspace its latest runs: enough for "was" and the history.
+ANSWER_RESULTS_KEPT = 5
+ANSWER_CHECKS_KEPT = 50
+
+
+def prune_core2_answer_checks(account_id: str, db_config_id: int | None) -> None:
+    """Results of questions taken off, results past the latest few of each question, and runs past the latest
+    ones (never the one running) go."""
+    db_id = int(db_config_id or 0)
+    with get_db() as conn:
+        conn.execute("""DELETE FROM core2_answer_check_result WHERE account_id = ? AND db_config_id = ?
+                        AND test_question_id NOT IN (SELECT id FROM core2_test_question WHERE account_id = ?
+                                                     AND db_config_id = ?)""", (account_id, db_id, account_id, db_id))
+        conn.execute("""DELETE FROM core2_answer_check_result WHERE account_id = ? AND db_config_id = ? AND id NOT IN (
+                            SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY test_question_id ORDER BY id DESC)
+                                            AS n FROM core2_answer_check_result WHERE account_id = ? AND db_config_id = ?)
+                            AS ranked WHERE n <= ?)""", (account_id, db_id, account_id, db_id, ANSWER_RESULTS_KEPT))
+        conn.execute("""DELETE FROM core2_answer_check WHERE account_id = ? AND db_config_id = ? AND status != 'running'
+                        AND id NOT IN (SELECT id FROM (SELECT id FROM core2_answer_check WHERE account_id = ?
+                                       AND db_config_id = ? ORDER BY id DESC LIMIT ?) AS kept)""",
+                     (account_id, db_id, account_id, db_id, ANSWER_CHECKS_KEPT))
+
+
+def core2_test_question_workspaces() -> list[tuple[str, int]]:
+    """Every workspace with test questions to check its answers against."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT DISTINCT account_id, db_config_id FROM core2_test_question").fetchall()
+    return [(str(r["account_id"]), int(r["db_config_id"])) for r in rows]

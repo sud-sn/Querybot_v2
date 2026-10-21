@@ -57,6 +57,13 @@ def run_due_notifications_once() -> None:
     except Exception as exc:
         log.warning("run_due_schedules failed: %s", exc)
 
+    try:
+        from core2.answers_check import run_due_answer_checks
+
+        run_due_answer_checks()
+    except Exception as exc:
+        log.warning("run_due_answer_checks failed: %s", exc)
+
     # Last: what the checks above queued goes out in the same minute.
     try:
         from core.mail.outbox import deliver_due

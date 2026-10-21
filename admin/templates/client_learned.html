@@ -125,6 +125,11 @@
           <button type="submit" class="btn btn-primary">Upload answers</button>
         </form>
       </div>
+      {% if answers_score %}
+      <p class="lq-sc-score"><a href="/admin/clients/{{ client.account_id }}/answers-check">Answers check</a>:
+        {% if answers_score.checked or answers_score.counts.unanswered %}{{ answers_score.counts.matches }} of {{ answers_score.checked }} test question{{ "" if answers_score.checked == 1 else "s" }} with a figure match the client's reports{% if answers_score.counts.close %}, {{ answers_score.counts.close }} close{% endif %}{% if answers_score.counts.different %}, {{ answers_score.counts.different }} different{% endif %}{% if answers_score.counts.unanswered %}, {{ answers_score.counts.unanswered }} not answered{% endif %}.
+        {% else %}{{ answers_score.total }} test question{{ "" if answers_score.total == 1 else "s" }}, not checked yet.{% endif %}</p>
+      {% endif %}
       {% if setup_checks %}
       <ul class="lq-sc-list">
         {% for c in setup_checks %}

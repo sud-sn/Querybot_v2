@@ -1881,6 +1881,45 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             setup_check_id  INTEGER NOT NULL DEFAULT 0,
             created_at      TEXT DEFAULT (datetime('now'))
         );
+        -- Each run of the answers check (core2/answers_check.py): the client's test questions asked (or their
+        -- plans run again), on the model as its stamp says it stood.
+        CREATE TABLE IF NOT EXISTS core2_answer_check (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id      TEXT NOT NULL,
+            db_config_id    INTEGER NOT NULL DEFAULT 0,
+            mode            TEXT NOT NULL DEFAULT 'ask',
+            reason          TEXT NOT NULL DEFAULT '',
+            whole           INTEGER NOT NULL DEFAULT 1,
+            stamp_json      TEXT NOT NULL DEFAULT '[]',
+            status          TEXT NOT NULL DEFAULT 'running',
+            total           INTEGER NOT NULL DEFAULT 0,
+            done_count      INTEGER NOT NULL DEFAULT 0,
+            message         TEXT NOT NULL DEFAULT '',
+            started_by      TEXT NOT NULL DEFAULT '',
+            runner          TEXT NOT NULL DEFAULT '',
+            started_at      TEXT NOT NULL DEFAULT '',
+            finished_at     TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_core2_answer_check ON core2_answer_check (account_id, db_config_id, id);
+        -- One run at a time per workspace, whichever process starts it.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_core2_answer_check_running
+            ON core2_answer_check (account_id, db_config_id) WHERE status = 'running';
+        -- One test question's answer in one run, set beside the figure in the client's report.
+        CREATE TABLE IF NOT EXISTS core2_answer_check_result (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            check_id         INTEGER NOT NULL,
+            account_id       TEXT NOT NULL,
+            db_config_id     INTEGER NOT NULL DEFAULT 0,
+            test_question_id INTEGER NOT NULL,
+            verdict          TEXT NOT NULL,
+            asked            INTEGER NOT NULL DEFAULT 0,
+            headline         TEXT NOT NULL DEFAULT '',
+            detail_json      TEXT NOT NULL DEFAULT '{}',
+            plan_json        TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_core2_answer_check_result
+            ON core2_answer_check_result (account_id, db_config_id, test_question_id, id);
         -- How often each kind of suggestion was offered to a reader and asked: asked kinds rise, ignored ones fall.
         CREATE TABLE IF NOT EXISTS core2_suggest_kind (
             account_id     TEXT NOT NULL,

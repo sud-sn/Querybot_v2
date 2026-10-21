@@ -1,0 +1,191 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, badge %}
+{% block title %}Answers check — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Answers check", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The client's own questions, the figure from their own report, and what Solviz answers, side by side. */
+.ac-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.ac-head p{margin:0 0 16px;color:var(--text-muted);max-width:720px;font-size:var(--font-base);line-height:1.55}
+.ac-run{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:12px 16px;
+  border:1px solid var(--grid-line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-sm);margin-bottom:14px}
+.ac-run p{margin:0;font-size:var(--font-sm);color:var(--text);max-width:640px}
+.ac-run small{display:block;color:var(--text-muted);font-size:var(--font-xs);margin-top:2px}
+.ac-bar{height:6px;border-radius:999px;background:var(--surface-2, var(--grid-line));overflow:hidden;margin-top:8px;max-width:420px}
+.ac-bar > span{display:block;height:100%;background:var(--info);transition:width .4s ease}
+.ac-score{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 10px;padding:0;list-style:none}
+.ac-score li{padding:10px 14px;border:1px solid var(--grid-line);border-radius:12px;background:var(--surface)}
+.ac-score b{display:block;font-size:var(--font-2xl);font-variant-numeric:tabular-nums;color:var(--text-strong);line-height:1.1}
+.ac-score span{font-size:var(--font-xs);color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:var(--weight-semibold)}
+.ac-score .v-matches b{color:var(--success)}
+.ac-score .v-close b{color:var(--warning)}
+.ac-score .v-different b{color:var(--danger)}
+.ac-gate{margin:0 0 18px;font-size:var(--font-base);color:var(--text-strong);font-weight:var(--weight-semibold)}
+.ac-list{display:flex;flex-direction:column;gap:10px;margin-bottom:22px}
+.ac-q{border:1px solid var(--grid-line);border-left-width:4px;border-radius:12px;background:var(--surface);padding:12px 16px;min-width:0}
+.ac-q.v-matches{border-left-color:var(--success-line)}
+.ac-q.v-close{border-left-color:var(--warning-line)}
+.ac-q.v-different,.ac-q.v-unanswered{border-left-color:var(--danger-line)}
+.ac-q-top{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.ac-q h3{margin:0;font-size:var(--font-md);color:var(--text-strong);overflow-wrap:anywhere;max-width:760px}
+.ac-meta{margin:3px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+.ac-was{font-size:var(--font-xs);color:var(--text-muted);margin-left:4px}
+.ac-figs{width:100%;border-collapse:collapse;margin:10px 0 4px;font-size:var(--font-sm)}
+.ac-figs-wrap{overflow-x:auto}
+.ac-figs th{text-align:left;font-size:var(--font-xs);color:var(--text-muted);font-weight:var(--weight-semibold);
+  padding:4px 10px 4px 0;border-bottom:1px solid var(--grid-line);white-space:nowrap}
+.ac-figs td{padding:6px 10px 6px 0;border-bottom:1px solid var(--grid-line);vertical-align:top}
+.ac-figs td.ac-where{color:var(--text-muted);overflow-wrap:anywhere}
+.ac-figs tr.v-different td.ac-got{color:var(--danger);font-weight:var(--weight-semibold)}
+.ac-figs tr.v-close td.ac-got{color:var(--warning);font-weight:var(--weight-semibold)}
+.ac-why{margin:8px 0 0;font-size:var(--font-sm);color:var(--text)}
+.ac-said{margin:6px 0 0;font-size:var(--font-sm);color:var(--text-muted);overflow-wrap:anywhere}
+.ac-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.ac-actions form{margin:0}
+.ac-add{border:1px solid var(--grid-line);border-radius:12px;background:var(--surface);padding:14px 16px}
+.ac-add h2{margin:0 0 4px;font-size:var(--font-md);color:var(--text-strong)}
+.ac-add p{margin:0 0 12px;font-size:var(--font-sm);color:var(--text-muted);max-width:680px}
+.ac-fields{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1.2fr) minmax(0,.8fr) minmax(0,1fr);gap:10px;align-items:end}
+.ac-fields label{display:flex;flex-direction:column;gap:4px;font-size:var(--font-xs);color:var(--text-muted);font-weight:var(--weight-semibold);min-width:0}
+.ac-fields input{width:100%;min-width:0}
+.ac-empty{padding:14px 16px;border:1px dashed var(--grid-line);border-radius:12px;color:var(--text-muted);font-size:var(--font-sm);margin-bottom:18px}
+@media(max-width:820px){.ac-fields{grid-template-columns:minmax(0,1fr)}}
+</style>
+{% endblock %}
+{% block content %}
+{% set names = {"matches": "Matches", "close": "Close", "different": "Different", "unanswered": "Not answered",
+                "unchecked": "Can't compare", "waiting": "Not checked yet"} %}
+{% set tones = {"matches": "green", "close": "amber", "different": "red", "unanswered": "red", "unchecked": "gray",
+                "waiting": "gray"} %}
+{% set base = "/admin/clients/" ~ client.account_id ~ "/answers-check" %}
+<div class="ac-head">
+  <h1>Answers check</h1>
+  <p>The client's own questions, with the answer from their own reports. Solviz asks each one as a reader would
+    and sets its figures beside the report's, rounded the way the report rounds them. It checks again by itself
+    after every Learn, a couple of minutes after decisions stop changing, and as soon as a question is added.</p>
+</div>
+
+{% if saved == 'running' %}{{ alert("Checking now. This page shows each question as it is answered.", "info") }}{% endif %}
+{% if saved == 'added' %}{{ alert("Question added. Solviz asks it within a minute.", "success") }}{% endif %}
+{% if saved == 'removed' %}{{ alert("Question removed.", "success") }}{% endif %}
+{% if error %}{{ alert(error, "error") }}{% endif %}
+{% if not learned %}{{ alert("Solviz has not learned this workspace's database yet. The questions are checked once it has.", "info") }}{% endif %}
+
+{% if check %}
+<div class="ac-run" id="ac-run" data-running="{{ '1' if check.status == 'running' else '' }}" data-status="{{ base }}/status">
+  <div>
+    {% if check.status == 'running' %}
+    <p id="ac-progress" aria-live="polite">Checking: {{ check.done_count }} of {{ check.total }} question{{ "" if check.total == 1 else "s" }} answered.</p>
+    <div class="ac-bar" aria-hidden="true"><span id="ac-progress-bar" style="width:{{ ((check.done_count / check.total * 100) if check.total else 0)|round }}%"></span></div>
+    <small>Started by {{ check.started_by or "Solviz" }} because {{ reason }}, {{ check.started_at }} UTC. {% if check.mode == 'replay' %}The last answers are drawn again on today's decisions; no AI is asked.{% else %}Each question is asked afresh with the workspace's AI.{% endif %}</small>
+    {% else %}
+    <p>{% if check.status == 'failed' %}The last check stopped part way ({{ check.message }}).{% else %}Last checked {{ check.finished_at }} UTC, because {{ reason }}.{% endif %}
+      {% if check.mode == 'replay' %}The last answers were drawn again on the decisions as they stood.{% else %}Each question was asked afresh.{% endif %}</p>
+    {% if behind %}<small>Decisions or what Solviz learned changed since: the check runs again by itself within a few minutes.</small>{% endif %}
+    {% endif %}
+  </div>
+  {% if rows and learned %}
+  <form method="post" action="{{ base }}/run">
+    <button type="submit" class="btn btn-secondary" {% if check.status == 'running' %}disabled{% endif %}>Ask every question again</button>
+  </form>
+  {% endif %}
+</div>
+{% elif rows and learned %}
+<div class="ac-run"><p>Not checked yet: Solviz asks these questions within a minute.</p>
+  <form method="post" action="{{ base }}/run"><button type="submit" class="btn btn-secondary">Ask every question now</button></form>
+</div>
+{% endif %}
+
+{% if rows %}
+<ul class="ac-score" aria-label="Scorecard">
+  {% for v in ["matches", "close", "different", "unanswered", "unchecked"] %}
+  <li class="v-{{ v }}"><b>{{ score.counts[v] }}</b><span>{{ names[v] }}</span></li>
+  {% endfor %}
+  {% if score.waiting %}<li class="v-waiting"><b>{{ score.waiting }}</b><span>{{ names.waiting }}</span></li>{% endif %}
+</ul>
+<p class="ac-gate">{{ score.counts.matches }} of {{ score.checked }} question{{ "" if score.checked == 1 else "s" }} with a figure match the client's reports.</p>
+
+<div class="ac-list">
+  {% for r in rows %}
+  {% set q = r.q %}
+  <article class="ac-q v-{{ r.verdict }}" aria-labelledby="ac-q-{{ q.id }}">
+    <div class="ac-q-top">
+      <div>
+        <h3 id="ac-q-{{ q.id }}">{{ q.question }}</h3>
+        <p class="ac-meta">{% if q.report %}{{ q.report }}{% endif %}{% if q.report and q.period %} · {% endif %}{% if q.period %}{{ q.period }}{% endif %}
+          {% if r.detail.asked and r.detail.asked != q.question %}{% if q.report or q.period %} · {% endif %}asked as “{{ r.detail.asked }}”{% endif %}</p>
+      </div>
+      <span>{{ badge(names[r.verdict], tones[r.verdict]) }}{% if r.was %}<span class="ac-was">was {{ names[r.was]|lower }}</span>{% endif %}</span>
+    </div>
+    {% if r.figures %}
+    <div class="ac-figs-wrap">
+    <table class="ac-figs">
+      <thead><tr><th scope="col">The report says</th><th scope="col">Solviz says</th><th scope="col">Where in Solviz's answer</th></tr></thead>
+      <tbody>
+        {% for f in r.figures %}
+        <tr class="v-{{ f.verdict }}">
+          <td>{% if f.label %}{{ f.label }}: {% endif %}{{ f.expected }}</td>
+          <td class="ac-got num">{{ f.got_said }}</td>
+          <td class="ac-where">{{ f.note or f.where or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% elif q.expected %}
+    <p class="ac-why"><b>The report says:</b> {{ q.expected }}</p>
+    {% endif %}
+    {% if r.detail.why %}<p class="ac-why">{{ r.detail.why }}</p>{% endif %}
+    {% if r.detail.headline %}<p class="ac-said">Solviz answered: {{ r.detail.headline }}</p>{% endif %}
+    <div class="ac-actions">
+      {% if learned %}
+      <form method="post" action="{{ base }}/run"><input type="hidden" name="question" value="{{ q.id }}">
+        <button type="submit" class="btn btn-secondary btn-sm" {% if check and check.status == 'running' %}disabled{% endif %}>Ask again</button></form>
+      {% endif %}
+      <form method="post" action="{{ base }}/questions/{{ q.id }}/delete">
+        <button type="submit" class="btn btn-ghost btn-sm" aria-label="Remove the question: {{ q.question }}">Remove</button></form>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ac-empty">No questions yet. The client's team writes them in the setup check workbook's Test questions tab
+  (on <a href="/admin/clients/{{ client.account_id }}/learned#setup-check">What Solviz learned</a>), or add them below one at a time.</div>
+{% endif %}
+
+<section class="ac-add" aria-labelledby="ac-add">
+  <h2 id="ac-add">Add a question</h2>
+  <p>A question the client's team asks, with the answer from their own report. Write the figures as the report
+    shows them ("North: 41, South: 37", "$1.2M", "12.5%"): Solviz matches anything that rounds to them.</p>
+  <form method="post" action="{{ base }}/questions" class="ac-fields">
+    <label>Question<input type="text" name="question" required maxlength="500" placeholder="How many new orders did each region take?"></label>
+    <label>The answer in the report<input type="text" name="expected" maxlength="300" placeholder="North: 41, South: 37"></label>
+    <label>Period<input type="text" name="period" maxlength="60" placeholder="Q2 2025"></label>
+    <label>Which report<input type="text" name="report" maxlength="120" placeholder="Monthly sales pack"></label>
+    <div><button type="submit" class="btn btn-primary">Add question</button></div>
+  </form>
+</section>
+
+<script>
+(function () {
+  var box = document.getElementById("ac-run");
+  if (!box || !box.dataset.running) return;
+  var text = document.getElementById("ac-progress"), bar = document.getElementById("ac-progress-bar");
+  var timer = setInterval(function () {
+    fetch(box.dataset.status, {credentials: "same-origin"}).then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || !s.ok) return;
+      if (s.status !== "running") { clearInterval(timer); window.location.reload(); return; }
+      if (text) text.textContent = "Checking: " + s.done + " of " + s.total + " question" + (s.total === 1 ? "" : "s") + " answered.";
+      if (bar && s.total) bar.style.width = Math.round(s.done / s.total * 100) + "%";
+    }).catch(function () {});
+  }, 4000);
+})();
+</script>
+{% endblock %}

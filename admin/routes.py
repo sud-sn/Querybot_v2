@@ -13377,6 +13377,7 @@ from admin import core2_knowledge as _core2_knowledge  # noqa: E402,F401
 from admin import core2_requests as _core2_requests  # noqa: E402,F401
 from admin import core2_questions as _core2_questions  # noqa: E402,F401
 from admin import core2_setup_check as _core2_setup_check  # noqa: E402,F401
+from admin import core2_answers_check as _core2_answers_check  # noqa: E402,F401
 from admin import row_access as _row_access  # noqa: E402,F401
 from admin import channels as _channels  # noqa: E402,F401
 from admin import ai_calls as _ai_calls  # noqa: E402,F401

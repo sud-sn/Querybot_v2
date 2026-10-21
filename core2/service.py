@@ -2651,6 +2651,12 @@ _SESSIONS: OrderedDict[str, Session] = OrderedDict()
 _LOCK = threading.Lock()
 
 
+def forget_session(key: str) -> None:
+    """A conversation no one goes on with (the answers check's questions): out of memory at once."""
+    with _LOCK:
+        _SESSIONS.pop(key, None)
+
+
 def _session(key: str) -> Session:
     with _LOCK:
         session = _SESSIONS.pop(key, None) or Session()
