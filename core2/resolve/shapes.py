@@ -1651,8 +1651,9 @@ def _date_role(model: SemanticModel, slug: str) -> DateRole:
         raise ResolveError("unknown", f"no date called {slug}", [])
     role = found[1]
     assert isinstance(role, DateRole)
-    if role.granularity == "month":
-        raise ResolveError("unsupported", f"{role.name} is kept by month, so days late cannot be counted from it")
+    if role.granularity in ("month", "quarter"):
+        raise ResolveError("unsupported", f"{role.name} is kept by {role.granularity}, so days late cannot be "
+                           "counted from it")
     return role
 
 

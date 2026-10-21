@@ -40,8 +40,8 @@ from core2.model.schema import (
 from core2.plan.catalog import left_out_note, left_out_words
 from core2.plan.ir import ALL_TIMES, CALENDAR_TIMES, HOUR, TIME_ATTRIBUTES, YES_NO_TIMES, Duration, Filter, Plan, Rate
 from core2.resolve import paths as P
-from core2.resolve.time import (Range, add_units, partial_periods, periods, resolve_window, shift, year_back_end,
-                                year_basis)
+from core2.resolve.time import (Range, add_units, label as period_label, partial_periods, periods, resolve_window, shift,
+                                unit_start, year_back_end, year_basis)
 from core2.warehouse import dialect as D
 
 # Aliases a validator screens as statements, whatever their quoting.
@@ -80,10 +80,11 @@ class Context:
 class DateUse:
     role: DateRole
     alias: str               # where the date lives: the calendar's alias, or the measure table's
-    mode: str                # day_calendar | month_calendar | date | timestamp | yyyymmdd | yyyymm
-    column: str              # column key of the date (or of the period key)
+    mode: str                # day_calendar | month_calendar | date | timestamp | yyyymmdd | yyyymm | year_quarter
+    column: str              # column key of the date (or of the period key; of the year, for a year and quarter)
     calendar: Calendar | None = None
     join: Joined | None = None
+    quarter: str | None = None   # year_quarter: the quarter number's column key
 
 
 @dataclass
@@ -762,6 +763,8 @@ class _PartBuilder:
             if calendar.grain == "month":
                 return DateUse(role, alias, "month_calendar", calendar.key_column or "", calendar)
             return DateUse(role, alias, "day_calendar", calendar.date_column or "", calendar)
+        if role.quarter_column:
+            return DateUse(role, home, "year_quarter", column.key, quarter=role.quarter_column)
         if column.data_type == "date":
             return DateUse(role, home, "date", column.key)
         if column.data_type == "timestamp":
@@ -1387,8 +1390,9 @@ def _duration_dates(model: SemanticModel, d: Duration) -> tuple[DateRole, DateRo
             raise ResolveError("unknown", f"no date called {slug}", _closest(slug, _slugs(model, "date")))
         role = found[1]
         assert isinstance(role, DateRole)
-        if role.granularity == "month":
-            raise ResolveError("unsupported", f"{role.name} is kept by month, so days cannot be counted from it")
+        if role.granularity in ("month", "quarter"):
+            raise ResolveError("unsupported", f"{role.name} is kept by {role.granularity}, so days cannot be counted "
+                               "from it")
         roles.append(role)
     start, end = roles
     if start.table != end.table:
@@ -1403,9 +1407,26 @@ def _duration_dates(model: SemanticModel, d: Duration) -> tuple[DateRole, DateRo
 def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
     """The first and last day the role's data covers (a monthly date covers its whole last month)."""
     last = role.last
-    if last is not None and role.granularity == "month":
-        last = add_units(last.replace(day=1), "month", 1) - dt.timedelta(days=1)
+    if last is not None and role.granularity in ("month", "quarter"):
+        last = add_units(last.replace(day=1), "month", 3 if role.granularity == "quarter" else 1) - dt.timedelta(days=1)
     return role.first, last
+
+
+def _cut_quarters(ranges: list[Range], role: DateRole, fiscal_start: int | None) -> list[str]:
+    """The quarters a period starts or ends inside, for rows kept by quarter ("Q3 2026", "FY2026 Q1"): each
+    counts in full."""
+    start_month = (fiscal_start or 1) if role.fiscal else 1
+    grain = "fiscal_quarter" if role.fiscal and start_month != 1 else "quarter"
+    cut: list[str] = []
+    for rng in ranges:
+        for day in (rng.start, rng.end):
+            if day is None or (day.day == 1 and (day.month - start_month) % 3 == 0):
+                continue
+            inside = day if day == rng.start else day - dt.timedelta(days=1)
+            name = period_label(unit_start(inside, "quarter", fiscal_start=start_month), grain, fiscal_start=start_month)
+            if name not in cut:
+                cut.append(name)
+    return cut
 
 
 # A name the planner wrote as a slug ("rejection_rate") for a figure it worked out.
@@ -1808,6 +1829,21 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             if caution and caution not in cautions:
                 cautions.append(caution)
         return routed[slug]
+
+    # Rows kept by quarter count a quarter the period only cuts in full: said with the answer.
+    for table, role in {(b.part.table, role.slug): (b.part.table, role) for b, role in builders
+                        if role is not None and role.quarter_column}.values():
+        said: list[str] = []
+        if role.fiscal and not fiscal_start and uses_time:
+            said.append(f"{plural(model.tables[table].business_name)} are kept by fiscal quarter, and this "
+                        "workspace's fiscal year is not set: their quarters are read as the calendar's (Q1 from "
+                        "January). An admin sets the fiscal year on the Dates page.")
+        cut = _cut_quarters([window, *([compare] if compare else [])], role, fiscal_start)
+        if cut:
+            said.append(f"{plural(model.tables[table].business_name)} are kept by quarter: {' and '.join(cut)} "
+                        f"{'counts' if len(cut) == 1 else 'count'} in full, though the period covers only part of "
+                        f"{'it' if len(cut) == 1 else 'them'}.")
+        cautions.extend(c for c in said if c not in cautions)
 
     for slug, attribute, time_attr in wanted:
         if attribute is not None and not time_attr:

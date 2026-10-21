@@ -36,6 +36,21 @@ def _month_add(day: dt.date, months: int) -> dt.date:
     return dt.date(index // 12, index % 12 + 1, 1)
 
 
+def quarter_start(year: int, quarter: int, fiscal_start: int = 1) -> dt.date:
+    """The first day of a quarter kept as a year and a quarter number: a fiscal year starting in ``fiscal_start``
+    is named by the year it ends, so its first quarter starts in the year before (FY2026 Q1 from Nov 2025)."""
+    offset = (fiscal_start - 1) + 3 * (quarter - 1)
+    return dt.date(year - (1 if fiscal_start != 1 else 0) + offset // 12, offset % 12 + 1, 1)
+
+
+def quarter_span(quarters: tuple[int, int], fiscal: bool, fiscal_start: int | None) -> tuple[dt.date, dt.date]:
+    """The first days of the first and last quarter held (year * 10 + quarter), by the fiscal year's quarters when
+    the numbers are the fiscal year's."""
+    start = (fiscal_start or 1) if fiscal else 1
+    return quarter_start(quarters[0] // 10, quarters[0] % 10, start), quarter_start(quarters[1] // 10,
+                                                                                    quarters[1] % 10, start)
+
+
 def unit_start(day: dt.date, unit: str, *, fiscal_start: int | None = None) -> dt.date:
     """The first day of the ``unit`` holding ``day``. Fiscal quarters and years start in ``fiscal_start``."""
     if unit == "day":

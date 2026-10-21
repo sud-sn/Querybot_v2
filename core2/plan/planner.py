@@ -2548,9 +2548,15 @@ def _figure_against_figure(plan: Plan, model: SemanticModel) -> list[str]:
     """A filter that compares a figure with another figure ("stores whose sales were below target") written as
     the other figure's name in quotes: the database compared the sales with the text 'target_amount' and refused."""
     from core2.resolve.resolver import find_slug
+    from core2.resolve.shapes import _FLIPPED
 
+    # The plan's own figure against its own target ("the stores that missed target") is the target's to read: the
+    # actual below the target is the difference below 0.
+    pair = {plan.target.actual, plan.target.target} if plan.target is not None else set()
     out = []
     for f in plan.filters:
+        if f.field in pair and len(f.values) == 1 and f.values[0] in pair - {f.field} and f.op in _FLIPPED:
+            continue
         named = [v for v in f.values if isinstance(v, str) and (found := find_slug(model, v)) is not None
                  and found[0] == "measure"]
         if named:

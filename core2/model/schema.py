@@ -43,7 +43,7 @@ TableKind = Literal["fact", "snapshot", "dimension", "bridge", "calendar", "othe
 Cardinality = Literal["many_to_one", "one_to_one", "one_to_many", "many_to_many"]
 JoinTrust = Literal["admin", "declared", "verified", "proposed", "rejected"]
 DateKind = Literal["event", "snapshot", "planned", "due", "validity", "audit"]
-Granularity = Literal["day", "month", "year", "timestamp"]
+Granularity = Literal["day", "month", "quarter", "year", "timestamp"]
 Additivity = Literal["additive", "semi_additive", "non_additive"]
 TimeAggregation = Literal["last", "average", "first"]
 FilterOp = Literal["in", "not_in", "eq", "ne", "gt", "gte", "lt", "lte", "between",
@@ -270,7 +270,14 @@ class Calendar(_Data):
 class DateRole(Belief):
     key: str
     table: str
-    column: str                     # column key on `table`
+    column: str                     # column key on `table` (the year's, for a quarter kept as two numbers)
+    # A quarter kept as a year number and a quarter number (a target year and quarter): the quarter's column;
+    # the date a row counts on is the quarter's first day.
+    quarter_column: str | None = None
+    fiscal: bool = False            # those numbers are the fiscal year's, named by the year it ends
+    # The first and last quarter held, as year * 10 + quarter (20253): first and last are their first days, worked
+    # out again whenever the workspace's fiscal year changes.
+    quarters: tuple[int, int] | None = None
     name: str = ""                  # "Invoice date"
     slug: str = ""
     calendar: str | None = None     # calendar table key when the column is a key into it

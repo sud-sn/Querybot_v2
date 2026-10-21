@@ -640,8 +640,10 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     raw = [{c.name: row[cols.index[c.name]] for c in shown} for row in rows]
     formats = {c.name: _table_format(c) for c in shown}
     year_before = a_year_before(logical)
-    labels = {c.name: _header(c, year_before=year_before) for c in shown}
-    labels_fr = {c.name: _header(c, year_before=year_before, lang="fr") for c in shown}
+    # A share of the change by period is of each period's own change ("share of each quarter's change").
+    each = next((g.grain.replace("fiscal_", "") for g in logical.groups if g.kind == "period" and g.grain), None)
+    labels = {c.name: _header(c, year_before=year_before, each=each) for c in shown}
+    labels_fr = {c.name: _header(c, year_before=year_before, lang="fr", each=each) for c in shown}
     display: dict[str, dict] = {c.name: _digits(c) for c in shown
                                 if c.role in ("measure", "prior", "change") and _digits(c)}
     for c in cols.of("period"):
@@ -890,7 +892,7 @@ def bar_chart(title: str, x: str, x_label: str, ys: list[tuple[str, str, str]], 
             "intent": intent, "grouped_by": None, "forecast_meta": None, "chart_warnings": []}
 
 
-def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en") -> str:
+def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en", each: str | None = None) -> str:
     """A column's header in the reader's language; the figure before is "a year before" when it is."""
     fr = lang == "fr"
     if c.role == "prior":
@@ -904,6 +906,9 @@ def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en") -> str
     if c.role == "share":
         return f"Part de {c.label.lower()}" if fr else f"Share of {c.label.lower()}"
     if c.role == "share_of_change":
+        if each:
+            return f"{c.label} : part de la variation de chaque période" if fr else \
+                f"{c.label}: share of each {each}'s change"
         return f"{c.label} : part de la variation totale" if fr else f"{c.label}: share of the total change"
     if c.role == "period":
         if fr:
@@ -1278,10 +1283,18 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
             part = next((c for c in cols.columns if c.role == "share_of_change" and c.measure == m.measure), None)
 
             def by(i: int) -> str:
-                """The change, and its part of the whole change when the question asked for it."""
+                """The change, and its part of the whole change when the question asked for it: by period, of
+                that period's ("+$719.6K in Q4 2025, 66% of that quarter's change")."""
                 moved = _signed(changes[i], m.format, units.of(raw[i]), rounded=True)
                 whole = _number(raw[i][part.name]) if part is not None else None
-                return f"{moved}, {whole * 100:.0f}% of the total change" if whole is not None else moved
+                if whole is None:
+                    return moved
+                day = _day(raw[i][periods[0].name]) if periods else None
+                if day is not None:
+                    grain = periods[0].grain or "month"
+                    return (f"{moved} in {period_label(day, grain, fiscal_start=logical.fiscal_start)}, "
+                            f"{whole * 100:.0f}% of that {grain.replace('fiscal_', '')}'s change")
+                return f"{moved}, {whole * 100:.0f}% of the total change"
 
             what = _noun(members[0].label) if len(pair) == 1 else \
                 f"{' and '.join(_thing(g.label) for g in pair)} pairs"

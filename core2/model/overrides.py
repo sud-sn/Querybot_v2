@@ -78,7 +78,11 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
     if isinstance(obj, DateRole):
         known = obj.table in model.tables and obj.column in model.columns \
             and model.columns[obj.column].table == obj.table \
-            and (obj.calendar is None or (obj.calendar in model.calendars and obj.calendar_join in model.joins))
+            and (obj.calendar is None or (obj.calendar in model.calendars and obj.calendar_join in model.joins)) \
+            and (obj.quarter_column is None or (obj.quarter_column in model.columns
+                                                and model.columns[obj.quarter_column].table == obj.table))
+        if obj.quarter_column:
+            obj.granularity = "quarter"     # a year and a quarter number date the quarter, nothing finer
         obj.is_default = False      # a default is its own decision
         from core2 import ids
 
@@ -236,6 +240,12 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
         if kind == "join" and field == "trust":
             obj.trust = value  # type: ignore[attr-defined]
     model.notes = [n for n in model.notes if not n.startswith("A decision")] + notes
+    from core2.resolve.time import quarter_span
+
+    for role in model.date_roles.values():
+        if role.quarter_column and role.quarters:
+            # Kept by fiscal quarter: its first and last days by the fiscal year as set now, not at Learn.
+            role.first, role.last = quarter_span(role.quarters, role.fiscal, model.settings.fiscal_year_start_month)
     return notes
 
 

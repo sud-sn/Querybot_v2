@@ -126,7 +126,8 @@ def start_and_end(model: SemanticModel, may: May = _all) -> tuple[DateRole, Date
     found = []
     listed = {e.table for e in model.entities.values()}
     for role in model.date_roles.values():
-        if not role.is_default or role.granularity == "month" or role.table not in model.tables or not may(role.table) \
+        if not role.is_default or role.granularity in ("month", "quarter") or role.table not in model.tables \
+                or not may(role.table) \
                 or role.table not in listed or role.kind not in ("event", "validity"):
             continue
         ends = [r for r in model.date_roles.values() if r.table == role.table and r.key != role.key
@@ -155,7 +156,7 @@ def due_and_done(model: SemanticModel, may: May = _all) -> tuple[DateRole, DateR
         return any(w in words or any(len(x) >= 4 and w.endswith(x) for x in words) for w in own)
 
     for due in sorted(model.date_roles.values(), key=lambda r: r.slug):
-        if due.kind not in ("planned", "due") or due.granularity == "month" or not may(due.table):
+        if due.kind not in ("planned", "due") or due.granularity in ("month", "quarter") or not may(due.table):
             continue
         # A work order due by its due date is done when it ends, never when a step of it starts: a date that says
         # it ended or arrived first (its own rows' before a step's), one that says it started last.

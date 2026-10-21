@@ -158,3 +158,63 @@ def test_the_request_part_for_it_is_held_by_the_answer(retail):
                                 "asked": [{"words": "% of the total change", "kind": "figure", "plan": "compare"}]})
     payload = _ask(retail, plan.model_dump(mode="json", exclude={"kind"}, exclude_defaults=True), question)
     assert not parts.missing(question, plan, payload, retail[1])
+
+
+BY_QUARTER_AND_REGION = """
+    with y as (select r.region_name, extract(year from c.full_date) as y, extract(quarter from c.full_date) as q,
+                      sum(o.net_amount) as v
+               from order_lines o join calendar c on c.date_key = o.order_date_key
+               join stores s using (store_id) join regions r using (region_id)
+               where c.full_date between date '2024-01-01' and date '2025-12-31' group by 1, 2, 3),
+         d as (select region_name, q, sum(case when y = 2025 then v else -v end) as change from y group by 1, 2)
+    select q, region_name, change * 100.0 / sum(change) over (partition by q) from d"""
+
+
+def test_by_quarter_each_share_is_of_that_quarters_change(retail):
+    # "Quarter by quarter, how much of the change from 2024 to 2025 came from each region": each quarter's regions
+    # add up to that quarter's change, and the answer says so, never one quarter's row as the region's whole change.
+    payload = _ask(retail, {"intent": "trend", "measures": ["net_amount"], "group_by": ["region"],
+                            "time": {**BOTH, "grain": "quarter"}, "share_of_change": True})
+    column = _column(payload, "share of each quarter's change")
+    built, _ = retail
+    truth = {(int(q), name): float(v) for q, name, v in built.con.execute(BY_QUARTER_AND_REGION).fetchall()}
+    rows = payload["data"]["rows"]
+    period = next(k for k in rows[0] if k.startswith("period"))
+    got = {((dt.date.fromisoformat(str(r[period])[:10]).month - 1) // 3 + 1, r["region_name"]): float(r[column])
+           for r in rows}
+    assert got == pytest.approx(truth, abs=1e-3)
+    for q in {q for q, _ in got}:
+        assert sum(v for (k, _), v in got.items() if k == q) == pytest.approx(100.0, abs=0.01)
+    assert "quarter's change" in payload["answer"]["headline"] and "of the total change" not in payload["answer"][
+        "headline"], payload["answer"]["headline"]
+
+
+def test_a_quantity_kept_by_unit_has_each_units_own_shares():
+    # Kilograms never share a change counted with boxes: each unit's items add up to that unit's change.
+    from tests.test_a_unit_filter_reads_each_rows_own_unit import _quantity, _warehouse
+    from core2.bootstrap.build import BuildOptions, build_model
+    from core2.bootstrap.inventory import from_duckdb
+    from core2.warehouse.runner import DuckDBWarehouse
+
+    con = _warehouse()
+    con.execute("UPDATE sales_lines SET sale_date = sale_date - INTERVAL 1 YEAR WHERE line_id % 2 = 0")
+    con.execute("UPDATE sales_lines SET sold_qty = sold_qty * 10 WHERE uom = 'KG' AND sale_date >= DATE '2026-01-01'")
+    warehouse = DuckDBWarehouse(con)
+    model = build_model(warehouse, from_duckdb(warehouse), client_id="t-unit-share", options=BuildOptions(workers=1))
+    quantity = _quantity(model)
+    item = next(a.slug for a in model.attributes.values() if model.columns[a.column].name == "item_name")
+    plan = {"kind": "query", "intent": "compare", "measures": [quantity.slug], "group_by": [item],
+            "share_of_change": True,
+            "time": {"window": {"kind": "between", "start": "2026-01-01", "end": "2026-05-31"},
+                     "compare": {"kind": "window", "window": {"kind": "between", "start": "2025-01-01",
+                                                              "end": "2025-05-31"}}}}
+    services = Services(model=model, warehouse=warehouse, complete=lambda s, t: json.dumps(plan),
+                        index=MemberIndex(), today=dt.date(2026, 6, 30))
+    payload = answer_question("how much of the change in units sold came from each item", services, Session())
+    rows = payload["data"]["rows"]
+    share = _column(payload, "share of the total change")
+    unit = next(k for k in rows[0] if "unit" in k)
+    sums: dict[str, float] = {}
+    for r in rows:
+        sums[r[unit]] = sums.get(r[unit], 0.0) + float(r[share] or 0)
+    assert len(sums) == 3 and all(v == pytest.approx(100.0, abs=0.01) for v in sums.values()), sums

@@ -92,6 +92,11 @@ class DateCandidate:
     last: dt.date | None = None
     is_default: bool = False
     evidence: list[Evidence] = field(default_factory=list)
+    # A quarter kept as two numbers: ``column`` is the year's, this the quarter's; ``span`` the first and last
+    # (year, quarter) the rows hold, dated once the workspace's fiscal year is known.
+    quarter_column: str | None = None
+    fiscal: bool = False
+    span: tuple[tuple[int, int], tuple[int, int]] | None = None
 
     def add(self, kind: str, weight: float, detail: str, **data: object) -> None:
         self.score += weight
@@ -234,7 +239,14 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
             if c.first and c.first.year <= 1901:
                 c.first = None   # a sentinel, not a date
             candidates.append(c)
+        # A year and a quarter kept as two numbers date only a table with no date of its own (a target, a budget):
+        # beside a real date they are its fiscal year and quarter, worked out from it, and stay groupings.
+        quarterly = attempt(warehouse, f"the year and quarter check on {table.name}",
+                            partial(_year_and_quarter, warehouse, inventory, key, profile), [])
         if not candidates:
+            if quarterly:
+                quarterly[0].is_default = True
+                out[key] = quarterly[:1]
             continue
 
         table_words = names.core_table(table.name)
@@ -322,10 +334,76 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
         attempt(warehouse, f"the date-order check on {table.name}",
                 partial(_first_of, warehouse, inventory, key, candidates), None)
         business = [c for c in candidates if _business(c)] or _period_of_a_plan(table, candidates)
+        if not business and quarterly:
+            candidates += quarterly[:1]     # its only dates a load stamp or a person's: dated by its quarter
+            business = quarterly[:1]
         ranked = sorted(business or [], key=lambda c: (-c.score, [x.name for x in table.columns].index(c.column)))
         if ranked:
             ranked[0].is_default = True
         out[key] = candidates
+    return out
+
+
+_YEAR_WORDS = {"year", "yr", "yyyy", "fy"}
+_QUARTER_WORDS = {"quarter", "qtr", "qr", "qt", "fq"}
+_FISCAL_WORDS = {"fiscal", "fisc", "fscl", "fy", "fq"}
+
+
+def _year_and_quarter(warehouse: Warehouse, inventory: Inventory, key: str, profile: TableProfile
+                      ) -> list[DateCandidate]:
+    """A quarter kept as two numbers on the same rows, a year (2024) and a quarter (1 to 4): a store's target per
+    quarter (TGT_YR, TGT_QTR), a branch's budget per fiscal quarter (FiscalYear, FiscalQuarter). With no other date,
+    the table could not be told apart by period. The quarter's first day is the date its rows count on; "fiscal"
+    in either name reads them as the fiscal year's."""
+    t = inventory.tables[key]
+
+    def numbers(words: set[str], low: float, high: float) -> list[str]:
+        found = []
+        for column in t.columns:
+            p = profile.columns.get(column.name)
+            said = set(names.tokens(column.name))
+            if p is None or column.data_type not in ("integer", "decimal") or not said & words or not p.non_null \
+                    or p.min_num is None or p.max_num is None or (p.integer_share or 1.0) < 1.0:
+                continue
+            if low <= p.min_num and p.max_num <= high:
+                found.append(column.name)
+        return found
+
+    years, quarters = numbers(_YEAR_WORDS, 1990, 2100), numbers(_QUARTER_WORDS, 1, 4)
+    if not years or not quarters:
+        return []
+
+    def rest(column: str) -> set[str]:
+        return set(names.tokens(column)) - _YEAR_WORDS - _QUARTER_WORDS - _FISCAL_WORDS
+
+    # The same other words (TGT_YR with TGT_QTR), or none on one side (FiscalYear with FiscalQuarter, YEAR with
+    # TARGET_QUARTER); never an order's year with a shipment's quarter.
+    pairs = [(y, q) for y in years for q in quarters if rest(y) == rest(q)] or \
+        [(y, q) for y in years for q in quarters if not rest(y) or not rest(q)]
+    d = warehouse.dialect
+    source = D.table_sql(t.database, t.schema, t.name, d)
+    out = []
+    for year, quarter in pairs[:1]:
+        cy, cq = t.read(year, d), t.read(quarter, d)
+        packed = exp.Add(this=exp.Mul(this=cy, expression=exp.Literal.number(10)), expression=cq)
+        query = exp.select(exp.Min(this=packed.copy()), exp.Max(this=packed.copy()), exp.Count(this=cq.copy())) \
+            .from_(exp.to_table("__SRC__")).where(exp.Between(this=cq.copy(), low=exp.Literal.number(1),
+                                                              high=exp.Literal.number(4)))
+        low, high, held = warehouse.query(query.sql(dialect=d).replace("__SRC__", source)).rows[0]
+        if low is None or high is None:
+            continue
+        rows = profile.rows or 1
+        said = set(names.tokens(year)) | set(names.tokens(quarter))
+        c = DateCandidate(table=key, column=year, via_calendar=None, granularity="quarter",
+                          quarter_column=quarter, fiscal=bool(said & _FISCAL_WORDS),
+                          span=((int(low) // 10, int(low) % 10), (int(high) // 10, int(high) % 10)))
+        c.coverage = float(held or 0) / rows
+        c.add("base", 0.5, "a date of this table")
+        c.add("year_and_quarter", -0.2, f"{names.readable(year)} and {names.readable(quarter)} are the year and "
+              "quarter each row is for: its quarter's first day is the date it counts on")
+        if c.coverage < 0.999:
+            c.add("coverage", -0.4 * (1 - c.coverage), f"{c.coverage:.0%} of rows have a year and a quarter")
+        out.append(c)
     return out
 
 

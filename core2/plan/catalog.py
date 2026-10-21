@@ -242,7 +242,9 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
         # The years alone where the data's values are withheld: a day is a value of the data (a fill's, a visit's).
         first, last = (r.first, r.last) if values_allowed else (str(r.first or "")[:4] or None, str(r.last or "")[:4] or None)
         span = f"{first or '?'} to {last or '?'}" if (first or last) else "range unknown"
-        grain = "monthly" if r.granularity == "month" else ("date and time" if r.granularity == "timestamp" else "daily")
+        grain = {"month": "monthly", "quarter": "quarterly", "timestamp": "date and time"}.get(r.granularity, "daily")
+        if r.quarter_column and r.fiscal:
+            grain = "by fiscal quarter"
         lines.append(f"- {r.slug} | {r.name} | {r.kind}, {grain}, on {model.tables[r.table].business_name} | "
                      f"{span}{_synonyms(r.synonyms)}")
     lines.append("")

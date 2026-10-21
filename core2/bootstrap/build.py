@@ -53,6 +53,7 @@ from core2.model.schema import (
     Versions,
 )
 from core2.warehouse.runner import Warehouse
+from core2.resolve.time import quarter_span
 
 
 @dataclass
@@ -352,7 +353,11 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
         for c in roles:
             if people[key].get(c.column) == personal.PII:
                 continue     # a birth date is never a date questions count by
-            if c.via_calendar and c.via_calendar.role:
+            if c.quarter_column:
+                # A year and a quarter kept as two numbers: named by the quarter's (target quarter, fiscal quarter).
+                text = names.read_tokens(names.core_column(c.quarter_column)) or "quarter"
+                name = text[:1].upper() + text[1:]
+            elif c.via_calendar and c.via_calendar.role:
                 name = c.via_calendar.role
             elif not names.opaque(c.column):
                 # A key into a calendar is named by what it keys: PRD_DMS_KEY is the period.
@@ -362,13 +367,20 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             else:
                 name = names.readable(c.column)
             if c.via_calendar is None and not names.opaque(c.column) and "date" not in name.lower() \
-                    and c.granularity != "timestamp" and name.lower() not in _PERIOD_NAMES:
+                    and c.granularity not in ("timestamp", "quarter") and name.lower() not in _PERIOD_NAMES:
                 name = f"{name} date"
             base = ids.slug(name)
             slug = ids.unique_slug(base if base not in date_slugs else ids.slug(f"{table_name} {name}"), date_slugs)
             key_c = ck[(key, c.column)]
+            quarters = None
+            if c.span is not None:
+                quarters = (c.span[0][0] * 10 + c.span[0][1], c.span[1][0] * 10 + c.span[1][1])
+                c.first, c.last = quarter_span(quarters, c.fiscal, model.settings.fiscal_year_start_month)
+            unknown_year = bool(c.quarter_column and c.fiscal and not model.settings.fiscal_year_start_month)
             model.date_roles[key_c] = DateRole(
                 key=key_c, table=key, column=key_c, name=name, slug=slug,
+                quarter_column=ck[(key, c.quarter_column)] if c.quarter_column else None, fiscal=c.fiscal,
+                quarters=quarters,
                 calendar=c.via_calendar.to_table if c.via_calendar else None,
                 calendar_join=join_key_of.get((key, c.column)) if c.via_calendar else None,
                 granularity=c.granularity,  # type: ignore[arg-type]
@@ -377,8 +389,14 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 placeholder_share=round(c.placeholder_share, 4), whole_year_share=round(c.whole_year_share, 4),
                 first=c.first, last=c.last,
                 evidence=c.evidence, confidence=max(0.0, min(1.0, c.score)), provenance="profile",
-                status="verified" if c.is_default and not close_call(roles) else "proposed")
+                status="verified" if c.is_default and not close_call(roles) and not unknown_year else "proposed")
             taken.add(slug)
+            if unknown_year:
+                model.review.append(ReviewItem(
+                    key=f"fiscal_year:{key_c}", object=key_c,
+                    question=f"{table_name} is kept by fiscal quarter: in which month does the fiscal year start?",
+                    choice_made="January (the calendar's quarters) until it is set",
+                    alternatives=["Set the fiscal year on the Dates page"], evidence=c.evidence))
         runner = close_call(roles)
         default = next((c for c in roles if c.is_default), None)
         if runner and default:

@@ -40,7 +40,7 @@ from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
 from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, MemberAbsent,
                                     Part, PartGroup, Semi)
-from core2.resolve.time import Range
+from core2.resolve.time import Range, add_units
 from core2.warehouse import dialect as D
 
 _LOW = dt.date(1901, 1, 1)       # dates before this are placeholders
@@ -228,9 +228,24 @@ class _Compiler:
         raise CompileError(f"unsupported filter {op}")
 
     # ── dates ──────────────────────────────────────────────────────────────
-    def stored_date(self, use: DateUse) -> exp.Column:
-        """The stored date (a DATE, a timestamp, or an order-preserving date number)."""
-        return self.col(use.alias, use.column)
+    def stored_date(self, use: DateUse) -> exp.Expression:
+        """The stored date (a DATE, a timestamp, or an order-preserving date number). A year and a quarter kept as
+        two numbers are their quarter's first day as a yyyymmdd number, in plain arithmetic every warehouse writes
+        alike: a fiscal year named by the year it ends starts in the workspace's fiscal month of the year before."""
+        if use.mode != "year_quarter":
+            return self.col(use.alias, use.column)
+        year, quarter = self.col(use.alias, use.column), self.col(use.alias, use.quarter or "")
+        # The workspace's fiscal year, also for a question worked out without one (a list of members).
+        start = (self.q.fiscal_start or self.model.settings.fiscal_year_start_month or 1) if use.role.fiscal else 1
+        # Months from January of the year it starts in: a quarter starting past December is in the next year.
+        offset = D.add(_num(start - 1), exp.Mul(this=_num(3), expression=exp.Paren(this=D.sub(quarter, _num(1)))))
+        later = exp.Case(ifs=[exp.If(this=exp.GTE(this=offset.copy(), expression=_num(12)), true=_num(1))],
+                         default=_num(0))
+        first_year = D.sub(year, _num(1)) if start != 1 else year
+        calendar_year = D.add(first_year, later)
+        month = D.sub(D.add(offset.copy(), _num(1)), exp.Mul(this=_num(12), expression=later.copy()))
+        return D.add(D.add(exp.Mul(this=exp.Paren(this=calendar_year), expression=_num(10000)),
+                           exp.Mul(this=exp.Paren(this=month), expression=_num(100))), _num(1))
 
     def date_value(self, use: DateUse) -> exp.Expression:
         """The date a row is counted on, as a DATE or timestamp."""
@@ -243,6 +258,14 @@ class _Compiler:
         """``use`` within ``[start, end)``; an open end stops at the placeholder bounds."""
         c = self.stored_date(use)
         lo, hi = rng.start or _LOW, rng.end or _HIGH
+        if use.mode == "year_quarter":
+            # Each quarter the period touches, in full (the resolver says so when the period cuts one): its first
+            # day before the period's end, its last after the period's start.
+            touched = add_units(lo, "month", -3) if lo != _LOW else lo
+            return exp.and_(
+                exp.GT(this=c.copy(), expression=_num(touched.year * 10000 + touched.month * 100 + touched.day)),
+                exp.LT(this=c.copy(), expression=_num(hi.year * 10000 + hi.month * 100 + hi.day)),
+                exp.Between(this=self.col(use.alias, use.quarter or ""), low=_num(1), high=_num(4)))
         if use.mode in ("month_calendar", "yyyymm"):
             last = hi - dt.timedelta(days=1)
             return exp.and_(
@@ -259,8 +282,9 @@ class _Compiler:
     def days(self, start: DateUse, end: DateUse) -> exp.Expression:
         """Days from ``start`` to ``end`` on each row; NULL where either is missing or a placeholder."""
         for use in (start, end):
-            if use.mode in ("month_calendar", "yyyymm"):
-                raise CompileError(f"{use.role.name or 'this date'} is kept by month: it has no days")
+            if use.mode in ("month_calendar", "yyyymm", "year_quarter"):
+                kept = "quarter" if use.mode == "year_quarter" else "month"
+                raise CompileError(f"{use.role.name or 'this date'} is kept by {kept}: it has no days")
         real = exp.and_(self.range_condition(start, Range(None, None)), self.range_condition(end, Range(None, None)))
         return exp.Case(ifs=[exp.If(this=real, true=D.days_between(self.date_value(start), self.date_value(end),
                                                                       self.d))])
@@ -272,6 +296,9 @@ class _Compiler:
         monthly = use.mode in ("month_calendar", "yyyymm")
         if monthly and grain in ("day", "week"):
             raise CompileError(f"{use.role.name or 'this date'} is monthly: it has no {grain}s")
+        if use.mode == "year_quarter" and grain in ("day", "week", "month", "fiscal_month"):
+            raise CompileError(f"{use.role.name or 'this date'} is kept by quarter: it has no "
+                               f"{grain.replace('fiscal_', '')}s")
         value = self.date_value(use)
         if grain in ("month", "fiscal_month"):
             return value if monthly else D.period_start(value, "month", self.d)
@@ -286,6 +313,9 @@ class _Compiler:
     def time_attribute(self, use: DateUse, name: str) -> exp.Expression:
         """Computed from the date itself, so it means the same on every warehouse and calendar."""
         value = self.date_value(use)
+        if use.mode == "year_quarter" and name not in ("quarter_of_year",):
+            raise CompileError(f"{use.role.name or 'this date'} is kept by quarter: it has no "
+                               f"{name.replace('_', ' ')}")
         if name == "day_of_week":
             if use.mode in ("month_calendar", "yyyymm"):
                 raise CompileError(f"{use.role.name or 'this date'} is monthly: it has no weekdays")
@@ -727,8 +757,10 @@ class _Compiler:
                 if m.name in q.change_share:
                     # Each group's part of the whole change, over every group (before a filter on totals keeps
                     # some): a group that went the other way has a negative part, one that moved more than the
-                    # whole did has more than all of it.
-                    whole = exp.Window(this=exp.Sum(this=change.copy()))
+                    # whole did has more than all of it. The whole is each period's and each unit's own: a quarter's
+                    # regions add up to that quarter's change, kilograms never to a change counted in boxes.
+                    within = [self.out("q", g.name) for g in q.groups if g.kind == "period" or g.name == q.unit_group]
+                    whole = exp.Window(this=exp.Sum(this=change.copy()), partition_by=within or None)
                     outer = outer.select(D.div(_double(change.copy()), exp.Nullif(this=whole, expression=_num(0)))
                                          .as_(self.name(f"{m.name}_share_of_change")))
                     columns.append(OutColumn(f"{m.name}_share_of_change", m.label, "share_of_change", "percent", key))
