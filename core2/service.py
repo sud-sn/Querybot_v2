@@ -28,6 +28,7 @@ from typing import Any
 
 from core2 import ids
 from core2.bootstrap import names
+from core2.answer import beyond
 from core2.answer.builder import _period_badge, against, build_answer, no_member, sparkline
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
@@ -93,6 +94,12 @@ class Services:
     always: list[Standing] = field(default_factory=list)
     keep_always: Callable[[Standing], None] | None = None
     drop_always: Callable[[str], None] | None = None
+    # The admin's switch: a question about business in general is answered from the AI's general knowledge,
+    # labelled as such (core2/answer/beyond.py). On unless the admin turns it off.
+    general_knowledge: bool = True
+    # The workspace's AI sorting a question the data cannot answer (business in general, something else, or data it
+    # does not hold), audited as its own call; None: such a question is said to be beyond the data.
+    beyond: Complete | None = None
 
 
 @dataclass
@@ -234,17 +241,105 @@ def _read(question: str, last: Turn | None, model: SemanticModel, found: list[Va
                      members=[m.text for m in found])
 
 
-def _describe(question: str, plan: Plan, services: Services) -> dict[str, Any]:
-    """A question about the data itself, answered from the model: a short lead, a section per subject or thing
-    asked about, and example questions to ask next (core2/answer/describe.py)."""
-    said = describe(services.model, plan.about, today=services.today, allowed=services.allowed_tables,
+def _describe(question: str, plan: Plan, services: Services, *, question_id: str = "",
+              masked: Masked | None = None) -> dict[str, Any]:
+    """A question about the data itself, answered from the model: a lead, a card per table or the thing asked
+    about, what to know, and example questions to ask next (core2/answer/describe.py). The workspace's AI may open
+    it with a paragraph written from the cards, after it is shown (``portal_overview``)."""
+    about = list(plan.about) or [x for x in [beyond.meaning_asked(question)] if x]
+    said = describe(services.model, about, today=services.today, allowed=services.allowed_tables,
                     values=services.values_allowed)
-    frame = _frame(question, said.headline, sections=said.sections,
+    if said.missing:
+        # Asked in the reader's own words ("what does net sales mean?"): the name those words give it.
+        from core2.plan.words import named
+
+        about = [(named(services.model, a) or a) if a in said.missing else a for a in about]
+        said = describe(services.model, about, today=services.today, allowed=services.allowed_tables,
+                        values=services.values_allowed)
+    if said.missing:
+        # "What does EBITDA mean?" with nothing of that name in the data: business in general, or data it does not
+        # hold, answered as such (core2/answer/beyond.py), never the description of everything else. The AI is told
+        # what was missing in the words it may see: the plan's own, or the question's as it was given them (people's
+        # names scrubbed, members masked), never the words as typed.
+        words = [a for a in said.missing if a in plan.about] or \
+            [x for x in [beyond.meaning_asked(_as_the_ai_sees(question, services, masked))] if x]
+        why = f"this data has nothing called {', '.join(words)}" if words else "this data has nothing of that name"
+        return _beyond(question, why, None, services, None, masked)
+    frame = _frame(question, said.headline, kind="describe_data", sections=said.sections,
                    follow_up_suggestions=[{"label": q, "question": q} for q in said.examples],
-                   trust={"engine": "core2", "data_source": services.data_source,
+                   trust={"engine": "core2", "data_source": services.data_source, "question_id": question_id,
                           "model_version": services.model.version})
     frame["answer"]["scope_note"] = said.note
     return frame
+
+
+def _beyond(question: str, why: str, tried: Plan | None, services: Services, session: Session | None,
+            masked: Masked | None, *, chat: bool = False) -> dict[str, Any]:
+    """A question the data cannot answer, answered as a person would (core2/answer/beyond.py): business in general from
+    the AI's general knowledge, labelled, where the admin allows it; anything else declined with questions to try;
+    data the workspace does not hold said, with what it does hold, the nearest questions and a button asking the
+    admin for it. Kept in the conversation as unanswered, as a refusal is. ``chat``: the planner read it as no
+    question about the data ("bye!", "tell me a joke"), so it is never said to be data the workspace lacks."""
+    lang = "fr" if beyond.french(question) else "en"
+    said = describe(services.model, [], today=services.today, allowed=services.allowed_tables,
+                    values=services.values_allowed)
+    tables = [s["title"] for s in said.sections if s.get("label")]
+    found = beyond.sort(_as_the_ai_sees(question, services, masked), why, tables, services.beyond, lang=lang)
+    nearest = _nearest(services, tried) or beyond.nearest(question, found.wanted, said.examples)
+    chips = [{"label": q, "question": q} for q in nearest]
+    if found.kind == beyond.GENERAL and services.general_knowledge:
+        return _refused(question, found.answer, tried, services, why, session, masked, unsupported=True,
+                        kind="general_knowledge", general={"label": beyond.LABEL[lang]},
+                        follow_up_suggestions=chips)
+    if found.kind == beyond.PRODUCT:
+        # A question about Solviz the topics in code did not answer: what it does, never another tool's how-to.
+        return _refused(question, beyond.about_solviz(lang=lang), tried, services, why, session, masked,
+                        unsupported=True, kind="product_help", follow_up_suggestions=chips)
+    if chat and found.kind == beyond.NOT_HERE:
+        found = beyond.Sorted(beyond.OFF_TOPIC)
+    if found.kind in (beyond.OFF_TOPIC, beyond.GENERAL):
+        text = beyond.decline(question, lang=lang) if found.kind == beyond.OFF_TOPIC else beyond.general_off(lang=lang)
+        return _refused(question, text, tried, services, why, session, masked, unsupported=True, kind=found.kind,
+                        follow_up_suggestions=chips)
+    holds = describe_holds(said.sections)
+    # "Your data does not hold monthly recurring revenue" where a field of that name is there (Learn kept it as each
+    # subscription's property): never said, of what the reader may see.
+    has = beyond.held(_visible_names(services), f"{found.wanted} {question}")
+    lead, note = beyond.not_here(found.wanted, why, holds, lang=lang, has=has)
+    frame = _refused(question, lead, tried, services, why, session, masked, unsupported=True, kind="data_not_here",
+                     follow_up_suggestions=chips,
+                     request_data={"name": (found.wanted or question)[:120], "question": question})
+    frame["answer"]["scope_note"] = note
+    return frame
+
+
+def _as_the_ai_sees(question: str, services: Services, masked: Masked | None) -> str:
+    """The question as the planner was given it: members masked where values are kept from the AI, people's
+    details scrubbed where the workspace scrubs (core2/plan/planner.py::question_tail)."""
+    text = masked.question if masked is not None else question
+    return services.scrub(text) if services.scrub else text
+
+
+def _visible_names(services: Services) -> list[str]:
+    """The names of what the reader may see: figures, fields and dates on their tables, none hidden or sensitive."""
+    model, allowed = services.model, services.allowed_tables
+    seen = [c.business_name for c in model.columns.values()
+            if not c.hidden and c.sensitivity == "none" and (allowed is None or c.table in allowed)]
+    seen += [m.business_name for m in model.measures.values() if not m.hidden and (allowed is None or m.table in allowed)]
+    return [n for n in dict.fromkeys(seen) if n]
+
+
+def describe_holds(sections: list[dict[str, Any]]) -> str:
+    """What the reader's data holds, in a few words: what it records, then the lookups ("order lines, returns and
+    sales targets, with customers, products and stores")."""
+    def listed(items: list[str]) -> str:
+        return items[0] if len(items) == 1 else ", ".join(items[:-1]) + f" and {items[-1]}" if items else ""
+
+    happened = [names.plural(s["title"].lower()) for s in sections if s.get("label") in ("Activity", "Snapshots")]
+    lookups = [names.plural(s["title"].lower()) for s in sections if s.get("label") == "Lookup"]
+    if happened and lookups:
+        return f"{listed(happened)}, with {listed(lookups)}"
+    return listed(happened or lookups)
 
 
 _OPS = {"eq": "is", "in": "is one of", "ne": "is not", "not_in": "is none of", "gt": ">", "gte": ">=", "lt": "<",
@@ -617,6 +712,13 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     small = small_talk(question) if planned is None else None
     if small is not None:
         return _frame(question, small, kind="smalltalk")     # "thanks!", "bonjour": answered with no AI
+    helped = beyond.product_help(question) if planned is None else None
+    if helped is not None:
+        # "How do I share a dashboard?": what Solviz does, answered in code with no AI.
+        fr = beyond.french(question)
+        chip = "Quelles données avez-vous ?" if fr else "What data do you have?"
+        return _frame(question, helped[0], kind="product_help", help_topic=helped[1],
+                      follow_up_suggestions=[{"label": chip, "question": chip}])
     last = session.turns[-1].plan if session.turns else None
     shown = changes_data(question, on_screen=last is not None and last.kind == "query")
     if shown is not None:
@@ -907,15 +1009,18 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
-        said = small_talk(question) or small_talk("hello", french=bool(S.french(question)))
-        return _frame(question, said or "", kind="smalltalk")
+        said = small_talk(question)
+        if said is None:
+            # "Tell me a joke", "how are you?": not a greeting or thanks, so declined as anything beyond the data is.
+            return _beyond(question, "it is not a question about the data", None, services, session, outcome.masked,
+                           chat=True)
+        return _frame(question, said, kind="smalltalk")
     if plan.kind == "describe_data":
-        return _describe(question, plan, services)
+        return _describe(question, plan, services, question_id=question_id, masked=outcome.masked)
     if plan.kind == "unsupported":
         why = " ".join(plan.notes) or "nothing in this data measures it"
         # After a repair round, the plan that was tried first says what was looked at.
-        return _refused(question, f"I cannot answer that from this data: {why}", outcome.tried or plan, services,
-                        why, session, outcome.masked, unsupported=True)
+        return _beyond(question, why, outcome.tried or plan, services, session, outcome.masked)
     if plan.kind == "clarify" and plan.clarify is not None:
         # Kept in the conversation: the reply ("the first one") answers this question.
         _keep(session, Turn(question, plan, outcome.masked))
@@ -3007,7 +3112,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     import store
     from core.schema import load_known_tables
     from core.value_index import value_index_enabled
-    from core2.bootstrap.ai import metric_writer, workspace_planner
+    from core2.bootstrap.ai import beyond_writer, metric_writer, workspace_planner
     from core2.bootstrap.service import answering_model, keep_decisions_current
     from core2.kpi_proposals import industry_of, waiting_metrics
     from core2.warehouse.governed import GovernedWarehouse
@@ -3053,7 +3158,16 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         # offered only where the question itself may reach the AI as typed.
         write_metric=(lambda words: metric_writer(account_id, client, description=words))
         if scrub is None and indexing else None, industry=industry_of(account_id),
-        waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client)), None
+        waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client),
+        general_knowledge=general_knowledge_enabled(state),
+        beyond=beyond_writer(account_id, client, question=scrub(question) if scrub else question,
+                             question_id=question_id)), None
+
+
+def general_knowledge_enabled(state: dict[str, Any] | None) -> bool:
+    """The admin's switch for answers from the AI's general knowledge (Settings): on unless turned off."""
+    flag = (state or {}).get("general_knowledge_enabled") if isinstance(state, dict) else None
+    return flag is None or (bool(flag) and str(flag).lower() not in ("0", "false", "no", "off"))
 
 
 def _question_map(account_id: str, client: dict[str, Any]):
@@ -3089,6 +3203,27 @@ def portal_summary(account_id: str, question: str, payload: dict[str, Any], *, q
         return None
     complete = summary_writer(account_id, client, question=asked, question_id=question_id)
     return write(payload, asked, complete)
+
+
+def portal_overview(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "",
+                    lang: str = "en") -> str | None:
+    """The opening paragraph of an answer about the data itself, by the workspace's AI (core2/answer/overview.py),
+    or None. The cards hold the data's spans and the values its tables leave out, so it is written only where member
+    values may reach the AI, and only where the workspace's answers may."""
+    import store
+    from core.value_index import value_index_enabled
+    from core2.answer.overview import eligible, write
+    from core2.bootstrap.ai import summary_writer
+
+    client = store.get_client(account_id) or {}
+    scrub = question_scrubber(account_id)
+    values_allowed = scrub is None and value_index_enabled(store.get_client_state(account_id) or {})
+    if not eligible(payload, values_allowed=values_allowed):
+        return None
+    if not _answers_may_reach_ai(account_id, question, "core2_summary"):
+        return None
+    complete = summary_writer(account_id, client, question=question, question_id=question_id)
+    return write(payload, question, complete, lang=lang)
 
 
 def portal_note(account_id: str, question: str, payload: dict[str, Any], *, question_id: str = "",

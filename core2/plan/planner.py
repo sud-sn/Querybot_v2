@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from core2.answer.beyond import meaning_asked
 from core2.bootstrap import names
 from core2.model.schema import AggExpr, DateRole, Entity, Measure, SemanticModel
 from core2.plan import analyst_math, asks
@@ -3142,8 +3143,10 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                               'counted and the condition on its rows (a status or a flag that says it), rather than '
                               'refusing.'], ""
             continue
+        # "What is margin?", "what does EBITDA mean?": a meaning asked, answered as such (core2/service.py::_describe).
         if (plan.kind == "unsupported" and _VAGUE.search(" ".join(plan.notes)) or plan.kind == "describe_data"
-                and not plan.about and not _ABOUT_THE_DATA.search(question)) and main_figures(model, question):
+                and not plan.about and not _ABOUT_THE_DATA.search(question) and not meaning_asked(question)) \
+                and main_figures(model, question):
             # "How are we doing?" was refused as too vague (the sector stress test): a question that names no
             # figure is asked back, with the data's main figures to pick from.
             plan = Plan(kind="clarify", clarify=Clarify(about="other", question=_WHICH_FIGURES,

@@ -205,7 +205,8 @@ def test_greetings_questions_about_the_data_and_the_unanswerable_are_answered_as
     assert hello["answer"]["headline"].startswith("Hello")
     about = answer_question("what can I ask?", _services(model, warehouse, Recorded('{"kind": "describe_data"}')),
                             Session())
-    assert about["answer"]["headline"].startswith("This data covers 3 subjects")
+    assert about["answer"]["headline"].startswith("This data has 7 tables: stock movements record what happened; "
+                                                  "daily balances and monthly balances record how things stood")
     assert any("on hand quantity" in b for s in about["sections"] for b in s["bullets"])
     sales = answer_question("sales last month", _services(model, warehouse, Recorded(
         '{"kind": "unsupported", "notes": ["this warehouse holds stock, not sales"]}')), Session())

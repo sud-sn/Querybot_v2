@@ -66,6 +66,7 @@ class Described:
     sections: list[dict] = field(default_factory=list)       # {"title", "body", "bullets"}
     examples: list[str] = field(default_factory=list)
     note: str = ""                                           # a line under the lead
+    missing: list[str] = field(default_factory=list)          # what was asked about that the data has nothing of
 
 
 def _span(first: dt.date | None, last: dt.date | None, granularity: str = "day") -> str:
@@ -74,6 +75,9 @@ def _span(first: dt.date | None, last: dt.date | None, granularity: str = "day")
     if granularity == "month" or (first.day == 1 and last.month != first.month):
         return f"{first:%B %Y} to {last:%B %Y}"
     return f"{first.day} {first:%B %Y} to {last.day} {last:%B %Y}"
+
+
+LEAD_LISTED = 6           # the tables of a kind named in the lead; a warehouse of sixty says "and 54 more"
 
 
 def _listed(items: list[str], limit: int | None = None) -> str:
@@ -204,24 +208,184 @@ def _subject_section(reader: _Reader, table: str, *, full: bool = False) -> dict
     return {"title": reader.name(table), "body": "", "bullets": bullets}
 
 
+# What a table is to a reader: the rows of what happened, the lookups that name who and what they are about.
+_ACTIVITY = ("fact", "snapshot")
+_LOOKUP = ("dimension",)
+
+
+def _tables(reader: _Reader) -> list[str]:
+    """Every table the reader may see, as an analyst would go through them: what happened first, the largest
+    first; then the lookups; then the tables that pair them (a product's tags). Calendars and hidden tables are
+    the data's plumbing, never described."""
+    model = reader.model
+    seen = [k for k, t in model.tables.items() if reader.may(k) and not t.hidden and t.kind != "calendar"]
+    order = {kind: i for i, kind in enumerate((*_ACTIVITY, *_LOOKUP, "bridge", "other"))}
+    return sorted(seen, key=lambda k: (order.get(model.tables[k].kind, 9), -(model.tables[k].row_count or 0),
+                                       reader.name(k).casefold()))
+
+
+def _links(reader: _Reader, table: str) -> tuple[list[str], list[str]]:
+    """The tables ``table``'s rows point at ("each order line names a customer"), and the ones pointing at it."""
+    model = reader.model
+    out, into = [], []
+    for j in model.joins.values():
+        if j.trust == "rejected" or j.to_calendar or j.from_table == j.to_table:
+            continue
+        if j.from_table == table and reader.may(j.to_table) and not model.tables[j.to_table].hidden:
+            out.append(j.role or reader.name(j.to_table))
+        elif j.to_table == table and reader.may(j.from_table) and not model.tables[j.from_table].hidden:
+            into.append(reader.name(j.from_table))
+    return list(dict.fromkeys(n.lower() for n in out)), list(dict.fromkeys(n.lower() for n in into))
+
+
+def _fields(reader: _Reader, table: str) -> list[str]:
+    """What a table's rows are described by: its fields a reader may group and filter by, never a person's data."""
+    model = reader.model
+    return list(dict.fromkeys(
+        a.business_name.lower() for a in model.attributes.values()
+        if a.column in model.columns and model.columns[a.column].table == table and a.kind != "identifier"
+        and not model.columns[a.column].hidden and model.columns[a.column].sensitivity == "none"
+        and model.columns[a.column].personal != "detail"))
+
+
+def _left_out(reader: _Reader, table: str) -> list[str]:
+    """The rows a table leaves out unless asked ("rows where status is Cancelled"), by their names where the
+    reader may see member values."""
+    model = reader.model
+    said = []
+    for f in model.tables[table].default_filters:
+        column = model.columns.get(f.column)
+        if column is None:
+            continue
+        values = [str(v) for v in (f.shown or f.values)] if reader.values and column.values_allowed else []
+        what = column.business_name.lower() or column.name
+        if f.op in ("not_in", "ne") and values:
+            said.append(f"rows where {what} is {_listed(values, 4)} are left out unless you ask for them")
+        elif f.op in ("is_null", "not_null"):
+            said.append(f"rows with {'no ' if f.op == 'not_null' else 'a '}{what} are left out unless you ask for "
+                        f"them")
+        else:
+            said.append(f"some rows are left out by {what} unless you ask for them")
+    return said
+
+
+def _no_match(reader: _Reader, table: str) -> list[str]:
+    """Rows of ``table`` that name nothing in a table they point at ("1 in 7 order lines has no customer"), as Learn
+    measured them."""
+    model = reader.model
+    rows = names.plural(reader.name(table).lower())
+    said = []
+    for j in model.joins.values():
+        if j.from_table != table or j.trust == "rejected" or j.to_calendar or not reader.may(j.to_table):
+            continue
+        other = (j.role or reader.name(j.to_table)).lower()
+        if j.null_rate >= 0.005:
+            share = j.null_rate
+            ratio = f"1 in {round(1 / share)}" if 0 < share < 0.5 and round(1 / share) >= 2 else f"{share:.0%}"
+            said.append(f"{ratio} {rows} {'has' if ratio.startswith('1 in') else 'have'} no {other}")
+        if j.orphan_rows:
+            said.append(f"{j.orphan_rows:,} {rows} name a {other} the {other} list does not hold")
+    return said
+
+
+def _table_card(reader: _Reader, table: str, *, full: bool = False) -> dict:
+    """A table as an analyst would tell a manager about it: what one row is and how many there are, what it
+    measures and is described by, its dates, what it links to, and what to know before counting it."""
+    model = reader.model
+    t = model.tables[table]
+    kind = t.kind
+    count = t.row_count or 0
+    grain = t.grain_text or f"one row per {reader.name(table).lower()}"
+    entity = next((e for e in model.entities.values() if e.table == table), None)
+    if kind in _LOOKUP and entity is not None and entity.members:
+        sized = f"{entity.members:,} {names.plural(reader.word(entity)) if entity.members != 1 else reader.word(entity)}"
+    else:
+        sized = f"{count:,} rows" if count else ""
+    lead = t.description.strip() or f"{grain[:1].upper()}{grain[1:]}{f' ({sized})' if sized else ''}."
+    bullets = []
+    if t.description.strip() and (grain or sized):
+        bullets.append(f"{grain[:1].upper()}{grain[1:]}{f'; {sized}' if sized else ''}.")
+    measures = list(dict.fromkeys(m.business_name.lower() for m in reader.measures(table) if m.kind != "count")) \
+        or list(dict.fromkeys(m.business_name.lower() for m in reader.measures(table)))
+    if measures:
+        bullets.append(f"Figures: {_listed(measures, None if full else MEASURES_LISTED)}.")
+    fields = _fields(reader, table)
+    if fields:
+        bullets.append(f"Described by: {_listed(fields, None if full else 8)}.")
+    dates = reader.dates(table)
+    if dates:
+        span = _span(dates[0].first, dates[0].last, dates[0].granularity)
+        named = _listed([r.name.lower() for r in dates], None if full else 4)
+        bullets.append(f"Dates: {named}{f', {span}' if span else ''}.")
+    out, into = _links(reader, table)
+    if out:
+        bullets.append(f"Each row names its {_listed(out)}.")
+    if into and kind not in _ACTIVITY:
+        bullets.append(f"Used by: {_listed([names.plural(n) for n in into])}.")
+    for said in [*_left_out(reader, table), *_no_match(reader, table)]:
+        bullets.append(f"Worth knowing: {said}.")
+    label = {"fact": "Activity", "snapshot": "Snapshots", "dimension": "Lookup", "bridge": "Pairs"}.get(kind, "")
+    return {"title": reader.name(table), "label": label, "body": lead, "bullets": bullets}
+
+
+def _things_to_know(reader: _Reader) -> list[str]:
+    """What a reader should know about the figures as a whole: a balance never added up over time, a fiscal year
+    that is not the calendar's, the latest day there is data for."""
+    model = reader.model
+    said = []
+    balances = [m.business_name.lower() for m in reader.measures() if m.additivity == "semi_additive"]
+    if balances:
+        said.append(f"{_listed(balances, 4)[:1].upper()}{_listed(balances, 4)[1:]} "
+                    f"{'is a balance' if len(balances) == 1 else 'are balances'}: each period shows its last value, "
+                    f"never a sum over time.")
+    start = model.settings.fiscal_year_start_month
+    if start and 1 < start <= 12:
+        said.append(f"The fiscal year starts in {dt.date(2000, start, 1):%B}: \"this year\" can mean either; "
+                    f"say \"fiscal\" for the fiscal one.")
+    return said
+
+
 def _overview(reader: _Reader) -> Described:
     subjects = reader.subjects()
-    if not subjects:
+    tables = _tables(reader)
+    if not subjects and not tables:
         return Described("There is no data here you can ask about yet.")
+    model = reader.model
+    activity = [t for t in tables if model.tables[t].kind in _ACTIVITY]
+    happened = [t for t in activity if model.tables[t].kind == "fact"]
+    stood = [t for t in activity if model.tables[t].kind == "snapshot"]
+    lookups = [t for t in tables if model.tables[t].kind in _LOOKUP]
     # The span of what happened: a budget or target set into next year is not data yet.
-    spans = [r for t in subjects for r in reader.dates(t)[:1] if r.first and r.last and r.last <= reader.today]
+    spans = [r for t in (activity or subjects) for r in reader.dates(t)[:1]
+             if r.first and r.last and r.last <= reader.today]
     first = min((r.first for r in spans if r.first), default=None)
     last = max((r.last for r in spans if r.last), default=None)
-    covered = f", with data from {first:%B %Y} to {last:%B %Y}" if first and last else ""
-    named = _listed([reader.name(t) for t in subjects])
-    head = (f"This data covers {len(subjects)} subjects: {named}{covered}." if len(subjects) > 1
-            else f"This data covers {named}{covered}.")
+    covered = f", from {first:%B %Y} to {last:%B %Y}" if first and last else ""
+    parts = []
+    if happened:
+        said = _listed([names.plural(reader.name(t).lower()) for t in happened], LEAD_LISTED)
+        parts.append(f"{said} record what happened{'' if stood else covered}")
+    if stood:
+        said = _listed([names.plural(reader.name(t).lower()) for t in stood], LEAD_LISTED)
+        parts.append(f"{said} record how things stood{covered}")
+    if lookups:
+        looked = _listed([names.plural(reader.name(t).lower()) for t in lookups], LEAD_LISTED)
+        parts.append(f"{looked} describe who and what "
+                     f"{'it is' if len(activity) == 1 else 'they are'} about")
+    elif not activity:
+        parts.append(_listed([names.plural(reader.name(t).lower()) for t in tables], LEAD_LISTED))
+    head = f"This data has {len(tables)} table{'s' if len(tables) != 1 else ''}"
+    head += f": {'; '.join(parts)}." if parts else "."
+    head = head[:1].upper() + head[1:]
+    sections = [_table_card(reader, t) for t in tables]
+    known = _things_to_know(reader)
+    if known:
+        sections.append({"title": "Things to know", "label": "", "body": "", "bullets": known})
     # Then an analysis or two the data can give (how long between orders, who came back, headcount, on time).
     analyses = questions(reader.model, this_year=reader.today.year, may=reader.may)[:ANALYSES]
-    return Described(head, [_subject_section(reader, t) for t in subjects],
-                     _example_questions(reader, subjects) + analyses,
+    return Described(head, sections, _example_questions(reader, subjects) + analyses,
                      "Ask for a total, a breakdown, a trend, a ranking or a comparison of any of them, "
-                     "or what a measure means.")
+                     "or what a table, a field or a figure means.")
 
 
 def _measure_sentence(reader: _Reader, m: Measure) -> str:
@@ -315,6 +479,12 @@ def _group(reader: _Reader, thing: Entity | Attribute) -> Described:
     examples = [f"List the {names.plural(word)}"] if isinstance(thing, Entity) else []
     if measured:
         examples.append(f"{measured[0].business_name} by {word}{_when(reader, measured[0].table)}")
+    if isinstance(thing, Entity) and table in _tables(reader):
+        # "Tell me about the customers": their table's card too (what one row is, its dates, what uses it, what to
+        # know before counting by it), after what they are grouped by and what can be broken down by them.
+        card = _table_card(reader, table, full=True)
+        bullets += [b for b in card["bullets"] if not b.startswith(("Described by:", "Figures:"))]
+        return Described(head, [{**card, "bullets": bullets}], examples)
     return Described(head, [{"title": thing.business_name, "body": "", "bullets": bullets}], examples)
 
 
@@ -330,7 +500,8 @@ def _find(reader: _Reader, wanted: str) -> Measure | DateRole | Entity | Attribu
     def plain(text: str) -> str:
         return " ".join(names.singular(w) for w in text.strip().lstrip("#").casefold().split())
 
-    return next((t for t in reader.subjects() if plain(reader.name(t)) == plain(wanted)), None)
+    return next((t for t in _tables(reader) if plain(reader.name(t)) == plain(wanted)
+                 or plain(reader.model.tables[t].name.replace("_", " ")) == plain(wanted)), None)
 
 
 def describe(model: SemanticModel, about: list[str], *, today: dt.date, allowed: set[str] | None = None,
@@ -348,8 +519,8 @@ def describe(model: SemanticModel, about: list[str], *, today: dt.date, allowed:
         elif isinstance(thing, (Entity, Attribute)):
             parts.append(_group(reader, thing))
         elif isinstance(thing, str):
-            parts.append(Described(f"Here is what you can ask about {reader.name(thing)}.",
-                                   [_subject_section(reader, thing, full=True)],
+            parts.append(Described(f"Here is what the {reader.name(thing).lower()} table holds.",
+                                   [_table_card(reader, thing, full=True)],
                                    _example_questions(reader, [thing])))
         else:
             missing.append(wanted.removeprefix("time:").replace("_", " "))
@@ -357,6 +528,7 @@ def describe(model: SemanticModel, about: list[str], *, today: dt.date, allowed:
         whole = _overview(reader)
         if missing:
             whole.note, whole.headline = whole.headline, f"This data has nothing called {_listed(missing)}."
+            whole.missing = missing
         return whole
     if len(parts) == 1:
         return parts[0]

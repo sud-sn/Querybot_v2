@@ -133,6 +133,24 @@ def readings(model: SemanticModel, question: str) -> list[Reading]:
     return kept[:MAX_READINGS]
 
 
+def named(model: SemanticModel, said: str) -> str | None:
+    """The slug a reader's words name as a whole ("net sales", "item groups", "on hand qty"): written as the name or
+    one of its other names, or in their own words; None when they name nothing the data holds."""
+    asked = [names.singular(w) for w in names.tokens(said) if w not in ("of", "the", "a", "an")]
+    if not asked:
+        return None
+    for _, slug, _, phrase in _phrases(model):
+        if [names.singular(w) for w in phrase] == asked:
+            return slug
+    whole = [r for r in readings(model, said) if len(names.tokens(r.said)) == len(names.tokens(said))]
+    if whole:
+        return whole[0].slug
+    # A name written in part ("margin" for Margin percent): the one name that holds those words, in that order.
+    within = {slug for _, slug, _, phrase in _phrases(model)
+              if any([names.singular(w) for w in phrase[i:i + len(asked)]] == asked for i in range(len(phrase)))}
+    return next(iter(within)) if len(within) == 1 else None
+
+
 def readings_text(model: SemanticModel, question: str) -> str:
     """The readings as the planner is shown them (empty when there are none)."""
     found = readings(model, question)

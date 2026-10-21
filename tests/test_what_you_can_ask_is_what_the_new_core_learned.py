@@ -48,17 +48,19 @@ def _page(model, *, engine="core2", allowed=None):
 
 def test_it_says_what_can_be_asked(model):
     learned = _page(model)["learned"]
-    assert learned.headline.startswith("This data covers 3 subjects")
+    assert learned.headline.startswith("This data has ")
     titles = [s["title"] for s in learned.sections]
-    assert titles == ["Order line", "Return", "Sales target"]
-    assert any(line.startswith("Measures: net amount") for line in learned.sections[0]["bullets"])
+    assert titles[:3] == ["Order line", "Return", "Sales target"]
+    assert any(line.startswith("Figures: net amount") for line in learned.sections[0]["bullets"])
     assert "Net amount by store in 2026" in learned.examples
 
 
 def test_a_reader_limited_to_some_tables_sees_only_those(model):
     learned = _page(model, allowed={"ORDER_LINES", "STORES", "REGIONS", "CUSTOMERS", "PRODUCTS", "CATEGORIES",
                                     "CALENDAR"})["learned"]
-    assert [s["title"] for s in learned.sections] == ["Order line"]
+    # The lookups the reader may see are described too; the returns and the targets they may not, never.
+    titles = [s["title"] for s in learned.sections if s["label"]]
+    assert titles == ["Order line", "Customer", "Product", "Store", "Category", "Region"], titles
 
 
 def test_todays_pipeline_keeps_its_field_list_alone(model):

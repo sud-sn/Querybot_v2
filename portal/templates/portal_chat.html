@@ -661,6 +661,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .own-metric-only, .own-metric-note, .own-metric-done { font-size: var(--font-sm); color: var(--text-muted); margin: 0; }
 .own-metric-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .own-metric-used { font-size: var(--font-xs); color: var(--text-muted); margin: 0 0 6px; }
+.request-data { display: grid; gap: 6px; justify-items: start; margin-top: 4px; }
 .answer-figures { gap: 10px; }
 .answer-figure { display: grid; gap: 4px; }
 .answer-figure + .answer-figure { border-top: 1px solid var(--line); padding-top: 8px; }
@@ -3509,6 +3510,8 @@ function _answerBadgesHtml(msg) {
     : `<span class="badge">${escHtml(_inLang(b, 'text'))}</span>`);
   const scope = (msg.result_scope || {}).badge || answer.scope_badge || '';
   if (scope) items.push(`<span class="badge">${escHtml(scope)}</span>`);
+  // An answer from the AI's general knowledge says so before anything else: it is not from the reader's data.
+  if (msg.general && msg.general.label) items.unshift(`<span class="badge badge-info" data-badge="general">${qbIcon('info', 13)}${escHtml(msg.general.label)}</span>`);
   return items.length ? `<div class="answer-badges">${items.join('')}</div>` : '';
 }
 
@@ -4075,6 +4078,40 @@ function _figuresHtml(msg) {
     + `</section>`;
 }
 
+// Data the workspace does not hold: one button asks the admin for it, filed in their Requests queue.
+function _requestDataHtml(msg) {
+  const wanted = msg.request_data;
+  if (!wanted || !wanted.name) return '';
+  // Double-quoted: escHtml escapes " (never '), so a question with an apostrophe stays whole and adds no attribute.
+  return `<div class="request-data" data-request-data="${escHtml(JSON.stringify({name: wanted.name, question: wanted.question || msg.question || ''}))}">`
+    + `<button type="button" class="btn btn-secondary btn-sm">${qbIcon('inbox', 14)}${escHtml(t('ui.chat.request_data'))}</button>`
+    + `<p class="own-metric-done" role="status" hidden></p></div>`;
+}
+
+function _wireRequestData(root) {
+  root.querySelectorAll('[data-request-data]').forEach(box => {
+    const button = box.querySelector('button');
+    const done = box.querySelector('.own-metric-done');
+    button.addEventListener('click', async () => {
+      const wanted = safeJsonParse(box.dataset.requestData || '{}') || {};
+      if (!wanted.name) return;
+      button.disabled = true;
+      let data;
+      try {
+        const response = await fetch('/portal/api/requests', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({kind: 'new_metric', name: wanted.name, source: 'chat', example: wanted.question,
+                                description: t('ui.chat.request_data_note', {question: wanted.question})})});
+        data = await response.json();
+      } catch (exc) { data = {ok: false, error: exc.message}; }
+      done.hidden = false;
+      if (!data.ok) { button.disabled = false; done.textContent = t('ui.chat.own.failed', {error: data.error || ''}); return; }
+      button.remove();
+      done.textContent = t('ui.chat.own.asked');
+    });
+  });
+}
+
 function _wireFigures(root) {
   root.querySelectorAll('.answer-figure[data-figure-token]').forEach(box => {
     const button = box.querySelector('[data-figure-ask]');
@@ -4203,12 +4240,15 @@ function answerCardHtml(msg, ids, env) {
   }
   // What an analytical answer worked out ("Each customer's net amount in Q1 2026, then the middle value of ...").
   const definitionHtml = answer.definition ? `<p class="answer-definition">${escHtml(answer.definition)}</p>` : '';
-  // An answer about the data itself reads as titled parts under its lead.
+  // An answer about the data itself reads as titled parts under its lead, opened by the AI's paragraph when it
+  // comes (placed under the lead as it arrives, and there again when the thread is reopened).
   const sections = Array.isArray(msg.sections) ? msg.sections : [];
+  const describing = msg.kind === 'describe_data';
   const sectionsHtml = sections.map(s => {
     const sb = Array.isArray(s.bullets) ? s.bullets : [];
+    // A table described is labelled by what it is to the reader: what happened, or a lookup that names it.
     return `<div class="analysis-section">`
-      + (s.title ? `<div class="analysis-section-title">${escHtml(s.title)}</div>` : '')
+      + (s.title ? `<div class="analysis-section-title">${escHtml(s.title)}${s.label ? ` <span class="badge">${escHtml(s.label)}</span>` : ''}</div>` : '')
       + (s.body ? `<div class="analysis-body">${escHtml(s.body)}</div>` : '')
       + (sb.length ? `<ul class="analysis-list">${sb.map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : '')
       + `</div>`;
@@ -4304,9 +4344,10 @@ function answerCardHtml(msg, ids, env) {
     + _figuresHtml(msg)
     + _answerReplyHtml(msg)
     + _answerBadgesHtml(msg)
-    + leadHtml + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml
+    + leadHtml + (describing ? _answerSummaryHtml(msg.summary) : '')
+    + definitionHtml + lowWarnHtml + scopeNoteHtml + caveatsHtml + sectionsHtml + _requestDataHtml(msg)
     + localOperationProofHtml + dashboardConfirmHtml
-    + visualHtml + bodyHtml + (_analystNoteHtml(msg) || (_answerSummaryHtml(msg.summary) + insightsHtml))
+    + visualHtml + bodyHtml + (_analystNoteHtml(msg) || ((describing ? '' : _answerSummaryHtml(msg.summary)) + insightsHtml))
     + actionsHtml + feedbackPanelHtml
     + _answerHowHtml(msg, env)
     + chipsHtml
@@ -4398,6 +4439,7 @@ function appendAssistantResponse(msg, opts = {}){
   _wireOwnMetric(div);
   _wireFigures(div);
   _wireDateFix(div, msg);
+  _wireRequestData(div);
 
   // How it was counted opens in place, from the link in the action row.
   const howBtn = div.querySelector('[data-open-how]');

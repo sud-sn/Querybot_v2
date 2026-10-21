@@ -74,6 +74,37 @@ def workspace_planner(account_id: str, client: dict[str, Any], *, question: str,
     return complete
 
 
+def beyond_writer(account_id: str, client: dict[str, Any], *, question: str,
+                  question_id: str = "") -> Callable[[str, str], str]:
+    """The workspace's AI sorting a question the data cannot answer (core2/answer/beyond.py), and answering one about
+    business in general: given the question and the reader's table names, never a row. Audited as its own call and
+    costed to the question."""
+    from core.llm import Provider, llm_complete, resolve_provider
+    from core.llm_audit import llm_audit_scope
+    from core.prompt_cache import CachedPrompt
+
+    request_id = f"core2-beyond-{uuid.uuid4().hex[:12]}"
+
+    def complete(stable: str, tail: str) -> str:
+        # The provider is read when the call is made: most questions never need this one.
+        name, model, api_key, extra = resolve_provider(client, purpose="query")
+        provider = cast(Provider, name)
+
+        async def call() -> str:
+            with llm_audit_scope(account_id=account_id, question=question,
+                                 enabled=bool(client.get("enable_llm_audit")), request_id=request_id,
+                                 question_id=question_id or request_id, component="core2_beyond",
+                                 egress={"question": question}):
+                text, _, _ = await llm_complete(CachedPrompt(stable=stable, volatile="Answer with one JSON object."),
+                                                tail, provider, model, api_key, max_tokens=600, temperature=0.0,
+                                                **extra)
+                return text
+
+        return asyncio.run(call())
+
+    return complete
+
+
 def summary_writer(account_id: str, client: dict[str, Any], *, question: str,
                    question_id: str = "") -> Callable[[str, str], str]:
     """The workspace's AI writing an answer's summary: plain sentences, never the planner's JSON.

@@ -816,6 +816,8 @@ async def answer_instead(engine: str, adapter: Any, websocket: Any, account_id: 
     sent = await _send(adapter, websocket, payload)
     if sent and payload.get("data") is not None:
         _not_todays_result(adapter)
+    # An answer, or one about the data itself: its summary, note or opening paragraph follows it.
+    if sent and (payload.get("data") is not None or payload.get("kind") == "describe_data"):
         from core.background_tasks import spawn
 
         lang = str((portal_user or {}).get("lang") or "en")
@@ -830,9 +832,25 @@ async def _summarize(adapter: Any, websocket: Any, account_id: str, question: st
                      lang: str = "en") -> None:
     """The answer's analyst note (or, for an answer with no facts, its written summary), sent after it (the answer
     never waits for the AI) and kept with it."""
-    from core2.service import portal_note, portal_reply, portal_summary
+    from core2.service import portal_note, portal_overview, portal_reply, portal_summary
 
     question_id = str((payload.get("trust") or {}).get("question_id") or "")
+    if payload.get("kind") == "describe_data":
+        # The cards about the data, opened by a paragraph in the workspace's AI's words.
+        try:
+            text = await asyncio.wait_for(asyncio.to_thread(portal_overview, account_id, question, payload,
+                                                            question_id=question_id, lang=lang), TIMEOUT_SECONDS)
+        except Exception as exc:     # noqa: BLE001 - the cards stand without their opening
+            log.warning("core2 could not open the description of the data for %s: %s", account_id, exc)
+            return
+        if text:
+            await _send(adapter, websocket, {"type": "answer_summary", "question_id": question_id, "summary": text})
+            if payload.get("trace_id"):
+                try:
+                    await asyncio.to_thread(_keep_summary, int(payload["trace_id"]), text)
+                except Exception as exc:     # noqa: BLE001 - shown; only a reopened thread will lack it
+                    log.warning("core2 could not keep the summary of trace %s: %s", payload.get("trace_id"), exc)
+        return
     if payload.get("reply"):
         # What the answer saw when it looked at itself, said as a person would: it replaces the facts' own
         # sentences in place, and stands for the summary (core2/agent/talk.py).
@@ -1012,6 +1030,11 @@ def channel_text(payload: dict[str, Any], *, link: str = "") -> str:
     answer = payload.get("answer") or {}
     headline = str(answer.get("headline") or "").strip()
     lines = [f"**{headline}**"] if headline else []
+    general = str((payload.get("general") or {}).get("label") or "").strip()
+    if general and lines:
+        # Business in general, from the AI's knowledge: said first, as the portal's badge says it, so it never reads
+        # as an answer from the data.
+        lines.insert(0, f"_{general}_")
     data = payload.get("data") or {}
     headers = [h for h in (data.get("headers") or []) if h]
     rows = data.get("rows") or []

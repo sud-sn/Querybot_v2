@@ -489,7 +489,7 @@
   <div class="kb-learned-grid">
     {% for section in learned.sections %}
     <div class="card"><div class="card-body">
-      <h2 class="kb-learned-title">{{ section.title }}</h2>
+      <h2 class="kb-learned-title">{{ section.title }}{% if section.label %} <span class="badge">{{ section.label }}</span>{% endif %}</h2>
       {% if section.body %}<p class="kb-learned-body">{{ section.body }}</p>{% endif %}
       {% if section.bullets %}<ul class="kb-learned-list">{% for line in section.bullets %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     </div></div>

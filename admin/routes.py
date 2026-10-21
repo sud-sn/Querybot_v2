@@ -2531,6 +2531,7 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "latest_sql_pass_rate": latest_sql_pass_rate,
         "teams_platforms": store.list_platforms("teams"),
         "llm_audit_forced": _audit_forced(account_id),
+        "general_knowledge_enabled": _general_knowledge_enabled(client),
         "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
         **_channel_view(request, client),
     })
@@ -2893,7 +2894,24 @@ async def client_update(
         return RedirectResponse(
             f"/admin/clients/{account_id}?error={quote(str(exc))}", status_code=303,
         )
+    # Answers from the AI's general knowledge (core2/answer/beyond.py): changed only by a form that shows the switch.
+    if form.get("general_knowledge_shown"):
+        client = store.get_client(account_id) or {}
+        state_data = json.loads(client.get("state_data") or "{}")
+        state_data["general_knowledge_enabled"] = bool(form.get("general_knowledge"))
+        store.update_client_state(account_id, client.get("state") or "configured", state_data)
     return RedirectResponse(f"/admin/clients/{account_id}?saved=1", status_code=303)
+
+
+def _general_knowledge_enabled(client: dict | None) -> bool:
+    """The workspace's switch for answers from the AI's general knowledge, as the chat reads it (on by default)."""
+    from core2.service import general_knowledge_enabled
+
+    try:
+        state = json.loads((client or {}).get("state_data") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    return general_knowledge_enabled(state)
 
 
 def _list_erp_packs() -> list[dict]:

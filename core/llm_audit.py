@@ -233,6 +233,8 @@ _VALUE_BEARING_MARKERS: tuple[tuple[str, str], ...] = (
     ("LISTED VALUES: common values", "catalog_values"),
     # core2/answer/summary.py::material -- the answer's rows, as the reader sees them.
     ("THE ANSWER AS SHOWN", "answer_rows"),
+    # core2/answer/overview.py::material -- the data's tables as described: their spans, sizes and left-out values.
+    ("THE DATA AS DESCRIBED", "data_description"),
     # core2/answer/notes.py::_given -- facts worked out from the answer's rows.
     ("Facts:\n- [", "answer_facts"),
     # core2/bootstrap/labels.py::table_brief -- a column's common values and its range, for Learn to name it.

@@ -3,10 +3,11 @@
 "What can you tell me about my data?" was answered with one paragraph of bold
 headline: every subject's first six measure names run together, "…" where it
 stopped, and the breakdowns after them -- beside today's pipeline's readable
-summary. The answer is now built from the model, never written by the AI: a
-one-sentence lead naming the subjects and the period the data covers, a section
-per subject (its measures, what they break down by, its dates), a line saying
-what can be asked, and example questions that each answer.
+summary. The answer is now built from the model, as an analyst would tell it: a
+lead naming what the tables record and the period the data covers, a card per
+table (what one row is and how many there are, its figures and fields, dates,
+what it links to, what to know before counting it), a line saying what can be
+asked, and example questions that each answer.
 
 A question about one thing gets that thing: a measure's definition, how it adds
 up, the date it is counted by and the period covered; a breakdown's size and
@@ -65,15 +66,27 @@ def _plan_for(model, question: str) -> Plan:
 def test_the_whole_data_is_a_lead_a_section_per_subject_and_questions_that_answer(retail):
     model, built = retail
     said = describe(model, [], today=TODAY)
-    # The period is what happened: the sales targets run to December 2026, which is not data yet.
-    assert said.headline == ("This data covers 3 subjects: Order line, Return and Sales target, "
-                             "with data from January 2023 to June 2026.")
+    # As an analyst tells it: every table, what happened first, then the lookups that name who and what it is
+    # about. The period is what happened: the sales targets run to December 2026, which is not data yet.
+    assert said.headline == ("This data has 8 tables: order lines, returns and sales targets record what happened, "
+                             "from January 2023 to June 2026; customers, products, stores, categories and regions "
+                             "describe who and what they are about.")
     assert said.note.startswith("Ask for a total, a breakdown, a trend")
-    assert [s["title"] for s in said.sections] == ["Order line", "Return", "Sales target"]
+    assert [(s["title"], s["label"]) for s in said.sections] == [
+        ("Order line", "Activity"), ("Return", "Activity"), ("Sales target", "Activity"), ("Customer", "Lookup"),
+        ("Product", "Lookup"), ("Store", "Lookup"), ("Category", "Lookup"), ("Region", "Lookup"),
+        ("Things to know", "")]
+    assert said.sections[0]["body"] == "One row per order line (32,451 rows)."
     order_line = said.sections[0]["bullets"]
-    assert order_line[0].startswith("Measures: net amount, gross amount")         # sales first, costs after
-    assert order_line[1] == "Broken down by: customer, product, store, category and region"
-    assert order_line[2] == "Dates: order date (the default), delivered date and ship date; January 2023 to June 2026"
+    assert order_line[0].startswith("Figures: net amount, gross amount")          # sales first, costs after
+    assert order_line[2] == "Dates: order date, delivered date and ship date, January 2023 to June 2026."
+    assert order_line[3] == "Each row names its customer, product and store."
+    # What Learn measured on the data, said before anyone counts by it.
+    assert "Worth knowing: 73 order lines name a product the product list does not hold." in order_line
+    assert said.sections[3]["body"] == "One row per customer (240 customers)."
+    assert "Used by: order lines and returns." in said.sections[3]["bullets"]
+    assert said.sections[-1]["bullets"] == [
+        'The fiscal year starts in April: "this year" can mean either; say "fiscal" for the fiscal one.']
     assert "…" not in json.dumps(said.sections)                                   # nothing cut mid-list
     # Every example question names a measure and a breakdown that reach each other, in a year with data; the
     # analyses the data gives follow (each answered in test_core2_learn_offers_the_analyses_its_data_can_answer).
@@ -131,17 +144,19 @@ def test_a_date_is_its_range_beside_the_others(retail):
 def test_a_subject_named_as_the_catalog_names_it_is_described_in_full(retail):
     model, _ = retail
     said = describe(model, ["## Return"], today=TODAY)
-    assert said.headline == "Here is what you can ask about Return."
+    assert said.headline == "Here is what the return table holds."
     assert describe(model, ["returns"], today=TODAY).headline == said.headline        # as a reader says it
-    assert describe(model, ["time:month_of_year"], today=TODAY).headline.startswith("This data covers")
-    assert said.sections[0]["bullets"][0] == "Measures: refund amount and return quantity"
+    assert describe(model, ["time:month_of_year"], today=TODAY).headline.startswith("This data has 8 tables")
+    assert said.sections[0]["bullets"][0] == "Figures: refund amount and return quantity."
+    # A lookup is a table too: "tell me about the customers table".
+    assert describe(model, ["customers"], today=TODAY).headline == "Here is what the customer table holds."
 
 
 def test_what_the_data_does_not_have_is_said_and_the_rest_offered(retail):
     model, _ = retail
     said = describe(model, ["ebitda"], today=TODAY)
     assert said.headline == "This data has nothing called ebitda."
-    assert said.note.startswith("This data covers 3 subjects") and len(said.sections) == 3
+    assert said.note.startswith("This data has 8 tables") and len(said.sections) == 9
 
 
 def test_a_reader_is_told_only_about_the_tables_they_may_use(retail):
@@ -149,7 +164,7 @@ def test_a_reader_is_told_only_about_the_tables_they_may_use(retail):
     returns = next(k for k, t in model.tables.items() if t.business_name == "Return")
     said = describe(model, [], today=TODAY, allowed=set(model.tables) - {returns})
     text = json.dumps([said.headline, said.note, said.sections, said.examples])
-    assert said.headline.startswith("This data covers 2 subjects: Order line and Sales target")
+    assert said.headline.startswith("This data has 7 tables: order lines and sales targets record what happened")
     assert "Refund" not in text and "refund" not in text and "Return" not in text
     assert describe(model, ["refund_amount"], today=TODAY, allowed=set(model.tables) - {returns}).headline \
         == "This data has nothing called refund amount."
@@ -178,9 +193,9 @@ def test_through_the_service_it_is_a_card_with_sections_chips_and_no_query(retai
                         index=MemberIndex(), today=TODAY, data_source="duckdb")
     frame = answer_question("what can you tell me about my data?", services, Session())
     assert frame["type"] == "assistant_response" and frame["engine"] == "core2" and frame["data"] is None
-    assert frame["answer"]["headline"].startswith("This data covers 3 subjects")
+    assert frame["answer"]["headline"].startswith("This data has 8 tables")
     assert frame["answer"]["scope_note"].startswith("Ask for a total")
-    assert [s["title"] for s in frame["sections"]] == ["Order line", "Return", "Sales target"]
+    assert [s["title"] for s in frame["sections"]][:3] == ["Order line", "Return", "Sales target"]
     assert [c["question"] for c in frame["follow_up_suggestions"]][0] == "Net amount by store in 2026"
     assert not Watched.ran and not frame.get("unsupported")
     json.dumps(frame)
@@ -207,12 +222,12 @@ def test_an_admins_count_does_not_lead_and_a_budget_set_ahead_asks_about_this_ye
     gross.business_name = "Net amount"                                          # two columns, one name
     said = describe(copy, [], today=TODAY)
     listed = said.sections[0]["bullets"][0]
-    assert listed.startswith("Measures: net amount, quantity") and said.examples[0].startswith("Net")
-    assert listed.endswith("and number of sales lines")
+    assert listed.startswith("Figures: net amount, quantity") and said.examples[0].startswith("Net")
+    assert listed.endswith("and number of sales lines.")
     _, finance = learn(domains.build("finance"), "descriptive")
     budget = describe(finance, [], today=TODAY)
-    assert "Budget" in budget.headline and budget.examples and not any("2027" in q for q in budget.examples)
-    assert budget.headline.endswith("with data from July 2023 to June 2026.")   # the budget runs to June 2027
+    assert "budgets" in budget.headline and budget.examples and not any("2027" in q for q in budget.examples)
+    assert "from July 2023 to June 2026" in budget.headline                  # the budget runs to June 2027
 
 
 def test_an_example_never_needs_the_reader_to_name_a_role():
@@ -236,3 +251,23 @@ def test_an_example_never_needs_the_reader_to_name_a_role():
     assert any(q.endswith("by store") for q in said.examples), said.examples
     _, alone = _learn({"customers": customers, "orders": orders.drop(columns=["store_id"])})
     assert not [q for q in describe(alone, [], today=TODAY).examples if " by " in q and "month" not in q]
+
+
+def test_a_subject_asked_about_is_its_table_card_too(retail):
+    # Found with gpt-4o: "tell me about the customers table" was one line ("There are 240 customers ...").
+    model, _ = retail
+    said = describe(model, ["customer"], today=TODAY)
+    card = said.sections[0]
+    assert card["label"] == "Lookup" and card["body"] == "One row per customer (240 customers)."
+    assert "Used by: order lines and returns." in card["bullets"]
+    assert any(b.startswith("Measures that can be broken down by customer") for b in card["bullets"])
+
+
+def test_the_lead_names_a_few_tables_of_each_kind_and_counts_the_rest(retail):
+    from core2.answer import describe as D
+
+    model, _ = retail
+    with __import__("unittest.mock").mock.patch.object(D, "LEAD_LISTED", 2):
+        said = describe(model, [], today=TODAY)
+    assert said.headline.startswith("This data has 8 tables: order lines, returns and 1 more record what happened")
+    assert "customers, products and 3 more describe who and what they are about" in said.headline

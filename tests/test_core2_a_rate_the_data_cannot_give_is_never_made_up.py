@@ -42,7 +42,8 @@ def _ask(learned, question: str, plan: dict) -> dict:
 def test_a_rate_over_visits_the_data_has_none_of_is_said_missing(retail, question):
     got = _ask(retail, question, WEB_SHARE)
     text = str((got.get("answer") or {}).get("headline") or got.get("text") or got.get("message") or "")
-    assert "cannot answer" in text and "%" not in text, text
+    # Said in the reader's language (core2/answer/beyond.py), never with a rate made up.
+    assert ("cannot answer" in text or "ne peux pas répondre" in text) and "%" not in text, text
     assert not (got.get("export_rows") or []), got.get("export_rows")
 
 

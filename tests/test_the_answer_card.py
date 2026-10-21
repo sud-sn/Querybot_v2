@@ -50,6 +50,7 @@ FUNCTIONS = [
     "function _oneOffs(msg)",
     "function _oneOffToggleHtml(msg)",
     "function _answerSummaryHtml(text)",
+    "function _requestDataHtml(msg)",
     "function _replyText(reply)",
     "function _answerReplyHtml(msg)",
     "function _noteFromReading(reading)",

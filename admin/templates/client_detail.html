@@ -394,6 +394,17 @@
             </span>
           </label>
         </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <input type="hidden" name="general_knowledge_shown" value="1">
+          <label class="form-switch">
+            <input type="checkbox" name="general_knowledge" value="1" {% if general_knowledge_enabled %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Answer general business questions</span>
+              <span class="form-switch-description">A question about business in general rather than this data (what a good stock turn is, what EBITDA means) is answered from the AI's general knowledge, marked &ldquo;General knowledge, not from your data&rdquo;. Only the question is sent, never the data. Off: Solviz says it answers from the workspace's data only.</span>
+            </span>
+          </label>
+        </div>
         <div class="form-grid" style="margin-top:.25rem">
           <div class="form-group">
             <label>SQL accuracy target</label>
@@ -480,7 +491,7 @@
    URL and its old #schema-browser bookmark both still land somewhere useful. #}
 
 {% set cost_step_labels = {
-    'core2_planner': 'Reading the question', 'sql_generation': 'Writing the query', 'sql_candidate': 'Writing the query',
+    'core2_planner': 'Reading the question', 'core2_beyond': 'Replying beyond the data', 'sql_generation': 'Writing the query', 'sql_candidate': 'Writing the query',
     'sql_repair': 'Fixing the query', 'sql_repair_progressive': 'Fixing the query', 'sql_shape_correction': 'Fixing the query',
     'kb_query_repair': 'Fixing the query', 'sql_cannot_generate_recovery': 'Fixing the query',
     'analysis': 'Writing the answer', 'conversational_analyst': 'Writing the answer', 'corroboration': 'Checking the answer',
