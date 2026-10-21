@@ -397,6 +397,23 @@ def as_text(value: exp.Expression, dialect: str) -> exp.Expression:
     return exp.Cast(this=value, to=exp.DataType.build(target, dialect=dialect))
 
 
+def listed(value: exp.Expression, dialect: str) -> exp.Expression:
+    """The values of a column among a group's rows, each once and in order, joined by commas ("Dish Soap, Paper
+    Towels"): STRING_AGG or LISTAGG. T-SQL takes no DISTINCT there; its repeats, next to each other in that order,
+    are taken out once the rows are read (core2/answer/builder.py). Oracle's list stops at its 4,000 bytes with
+    "..." rather than fail the question (ORA-01489)."""
+    if dialect == "tsql":
+        inner: exp.Expression = exp.Cast(this=value.copy(), to=exp.DataType.build("NVARCHAR(MAX)", dialect=dialect))
+        order: exp.Expression = value.copy()             # in the column's own order, never by a MAX text
+    else:
+        order = as_text(value, dialect)
+        inner = exp.Distinct(expressions=[order.copy()])
+    overflow = exp.OverflowTruncateBehavior(this=exp.Literal.string("..."), with_count=False) \
+        if dialect == "oracle" else None
+    return exp.GroupConcat(this=exp.Order(this=inner, expressions=[exp.Ordered(this=order, nulls_first=False)]),
+                           separator=exp.Literal.string(", "), on_overflow=overflow)
+
+
 def day_start(value: exp.Expression, dialect: str) -> exp.Expression:
     """Midnight of a timestamp's day, in the timestamp's own type (for time-of-day tests)."""
     text = {"snowflake": "DATE_TRUNC('DAY', __X__)", "tsql": "CAST(CAST(__X__ AS DATE) AS DATETIME2)",

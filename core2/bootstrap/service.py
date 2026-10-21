@@ -551,7 +551,11 @@ def load_model(account_id: str, db_id: int | None, version: int | None = None) -
     model = SemanticModel.model_validate_json(row["model_json"])
     model.version = row["version"]
     good_news(model)
+    from core2.bootstrap.build import numbered_documents, numbered_documents_kept
+
+    made = numbered_documents(model)        # a model learned before Learn numbered the documents of a lines table
     apply_overrides(model, store.list_core2_overrides(account_id, db_id))
+    numbered_documents_kept(model, made)
     return model
 
 

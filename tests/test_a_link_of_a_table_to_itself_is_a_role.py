@@ -64,6 +64,19 @@ def test_people_reporting_to_each_manager(hr):
     assert [(r["employee_number"], r["number_of_employees"]) for r in payload["data"]["rows"]] == want
 
 
+def test_the_rows_whose_role_names_no_one_are_named_by_the_role(hr):
+    # Found on an invented network-equipment business with a real model: "bookings by each rep's manager" put the
+    # sales of the reps who have no manager on a line "No sales rep recorded", though every sale has its rep: it is
+    # the manager that is missing. The pay lines of the staff with no manager are "No manager recorded".
+    built, _ = hr
+    payload = _ask(hr, {"intent": "breakdown", "measures": ["overtime_hours"], "group_by": ["employee.number"],
+                        "via": {"employee.number": "role:Manager"}})
+    found = {r["employee_number"]: r["overtime_hours"] for r in payload["data"]["rows"]}
+    (unmanaged,), = built.con.execute("SELECT SUM(p.overtime_hours) FROM payroll p JOIN employees e "
+                                      "USING (employee_id) WHERE e.manager_id IS NULL").fetchall()
+    assert unmanaged and "No employee recorded" not in found, sorted(found)[-3:]
+    assert found.get("No manager recorded") == unmanaged, sorted(found)[-3:]
+
 def test_a_parent_account_is_reached_from_the_ledger():
     model = learn(domains.build("finance"), "descriptive")[1]
     accounts = next(t.key for t in model.tables.values() if t.key.endswith(".accounts"))

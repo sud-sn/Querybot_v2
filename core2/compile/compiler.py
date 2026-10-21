@@ -66,6 +66,9 @@ class OutColumn:
     ordinal: bool = False           # its members are amounts (transit days, fill number): drawn in number order
     bands: list[str] = field(default_factory=list)   # a range grouping: its ranges' names, in their own order
     computed: bool = False          # worked out from the rows after the query (a running total): not in its SQL
+    missing: str = ""               # the name of the rows with no member, where the link names none ("No customer
+                                    # recorded"); "Unknown" otherwise
+    dated: bool = False             # a list's rows by the day of their own date, headed by its name ("Order date")
 
 
 @dataclass
@@ -422,6 +425,63 @@ class _Compiler:
         attribute = self.model.attributes.get(slug) if slug else None
         return attribute is not None and attribute.kind == "number"
 
+    def _missing(self, g: Group) -> str:
+        """The name of the rows grouped under no member of ``g``'s attribute, when every one of them is a row
+        whose link names none: an attribute of another table that is never empty there (each customer has a
+        segment), so the sales with no segment are the sales with no customer -- "No customer recorded". Reached
+        through a role, it is the role that names none: the sales by each rep's manager that have none are "No
+        manager recorded", never "No sales rep recorded" (each has its rep). Empty when an empty value could be
+        the member's own, or a row's number a member the other table does not hold ("Unknown")."""
+        attribute = self.model.attributes.get(g.attribute) if g.attribute else None
+        column = self.model.columns.get(attribute.column) if attribute is not None else None
+        table = self.model.tables.get(column.table) if column is not None else None
+        profile = column.profile if column is not None else None
+        if table is None or not table.business_name or not self.q.parts \
+                or any(p.table == column.table for p in self.q.parts) \
+                or (column.nullable and (profile is None or not profile.rows or profile.non_null < profile.rows)):
+            return ""
+        steps = [self._reached_by(p, g.name) for p in self.q.parts]
+        if not all(self._every_number_found(p, step) for p, step in zip(self.q.parts, steps)):
+            return ""
+        names = {step.what or table.business_name for step in steps if step is not None}
+        if len(names) != 1:
+            return ""
+        name = names.pop()
+        return f"No {name if name[:2].isupper() else name[:1].lower() + name[1:]} recorded"
+
+    @staticmethod
+    def _reached_by(part: Part, name: str) -> Joined | None:
+        """The step by which ``part``'s rows reach the table of its grouping ``name`` (a sale's rep, or that rep's
+        manager)."""
+        group = next((pg for pg in part.groups if pg.name == name), None)
+        return next((j for j in part.joins if group is not None and j.alias == group.alias), None)
+
+    def _every_number_found(self, part: Part, step: Joined | None) -> bool:
+        """Does every filled number on the way from ``part``'s rows to ``step`` name a row there? Only Learn's own
+        measure of a link on all of its rows says so (core2/bootstrap/joins.py). A link measured on a sample of a
+        large table, brought over from today's setup or added by an admin, one that keeps only some rows of its
+        table (a condition), or whose numbers were not all found, may leave a row whose number names no member: its
+        empty rows stay "Unknown"."""
+        steps = {j.alias: j for j in part.joins}
+        if step is None:
+            return False
+        while step is not None:
+            left, right = {c for _, c, _ in step.on}, {c for _, _, c in step.on}
+            link = next((j for j in self.model.joins.values() if j.trust != "rejected" and (
+                (set(j.from_columns), set(j.to_columns)) in ((left, right), (right, left)))), None)
+            if link is None or link.orphan_rows or link.match_rate < 1.0 or link.conditions or step.conds \
+                    or not self._measured_on_every_row(link):
+                return False
+            step = steps.get(next((a for a, _, _ in step.on), ""))
+        return True
+
+    def _measured_on_every_row(self, link: Join) -> bool:
+        """Did Learn test ``link`` on every row of its table, and find each filled number?"""
+        table = self.model.tables.get(link.from_table)
+        rows = table.row_count if table is not None else 0
+        return bool(rows) and any(e.kind == "test_run" and not (e.data or {}).get("unmatched")
+                                  and int((e.data or {}).get("rows") or 0) >= rows for e in link.evidence)
+
     def _flag(self, slug: str | None) -> bool:
         """Is the attribute ``slug`` a yes/no flag (its members a thing and its opposite)?"""
         attribute = self.model.attributes.get(slug) if slug else None
@@ -474,6 +534,8 @@ class _Compiler:
                 return exp.Count(this=exp.Distinct(expressions=[value]))
             if expr.agg == "avg":
                 return exp.Avg(this=_double(value))      # an integer average is not truncated
+            if expr.agg == "list":
+                return D.listed(value, self.d)
             if expr.agg == "min":
                 return exp.Min(this=value)
             return exp.Max(this=value)
@@ -728,8 +790,8 @@ class _Compiler:
         columns: list[OutColumn] = [self.group_column(g) for g in q.groups]
         for m in q.measures:
             key = m.measure.key if m.measure else None
-            columns.append(OutColumn(m.name, m.label, "measure", m.format, key))
-            if q.compare is not None:
+            columns.append(OutColumn(m.name, m.label, "list" if m.format == "list" else "measure", m.format, key))
+            if q.compare is not None and m.format != "list":     # the products sold are no amount to compare
                 columns.append(OutColumn(f"{m.name}_prior", m.label, "prior", m.format, key))
 
         # Output columns are always listed by name, never alias.*: QueryBot's production
@@ -739,7 +801,7 @@ class _Compiler:
         outer = exp.select(*[self.out("q", c.name) for c in columns], *[self.out("q", n) for n in kept]) \
             .from_(body.subquery(self.name("q")))
         if q.compare is not None:
-            for m in q.measures:
+            for m in (x for x in q.measures if x.format != "list"):
                 cur, pri = self.out("q", m.name), self.out("q", f"{m.name}_prior")
                 # A member missing on one side changed by all of the other ("new this month"); missing on both,
                 # nothing is known, and the change is no value, never 0.
@@ -790,7 +852,8 @@ class _Compiler:
     def group_column(self, g: Group) -> OutColumn:
         return OutColumn(g.name, g.label, g.kind, "date" if g.kind == "period" else "",
                          grain=g.grain if g.kind == "period" else None, flag=self._flag(g.attribute),
-                         numbered=self._numbered(g.attribute), ordinal=self._ordinal(g.attribute), bands=list(g.bands))
+                         numbered=self._numbered(g.attribute), ordinal=self._ordinal(g.attribute), bands=list(g.bands),
+                         missing=self._missing(g) if g.kind == "attribute" else "", dated=g.dated)
 
     def _combine(self, body: exp.Select) -> exp.Select:
         """The groupings and every shown measure, those over several tables worked out from their parts."""

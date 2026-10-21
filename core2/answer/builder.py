@@ -536,9 +536,14 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
         if column.name.startswith("fiscal_week"):
             return f"Fiscal week {n}"
         return str(n)
+    if column.role == "list":
+        # Each value once, in order: T-SQL lists repeats side by side (core2/warehouse/dialect.py).
+        pieces = [] if value in (None, "") else str(value).split(", ")
+        return ", ".join(p for i, p in enumerate(pieces) if i == 0 or p != pieces[i - 1])
     if column.role in ("attribute", "member_code", "unit"):
         if value is None:
-            return "Unknown"
+            # The rows with no member have no code either: an empty cell beside "No customer recorded".
+            return "" if column.role == "member_code" else column.missing or "Unknown"
         if isinstance(value, float) and value.is_integer():
             return str(int(value))
         return str(value)
@@ -550,6 +555,15 @@ def _cell(column: OutColumn, value: Any, logical: Logical) -> Any:
     return round(number, 6) if not float(number).is_integer() else int(number)
 
 
+_NO_MEMBER = re.compile(r"No [^\W\d_][\w '’-]* recorded")
+
+
+def no_member(value: Any) -> bool:
+    """Is a cell the rows with no member: empty, "Unknown", or the rows whose link names none ("No customer
+    recorded", core2/compile/compiler.py)?"""
+    return value in (None, "", "Unknown") or isinstance(value, str) and bool(_NO_MEMBER.fullmatch(value))
+
+
 def display_value(column: OutColumn, value: Any, logical: Logical) -> Any:
     """A cell as the portal shows it (for answers built outside :func:`build_answer`)."""
     return _cell(column, value, logical)
@@ -558,7 +572,7 @@ def display_value(column: OutColumn, value: Any, logical: Logical) -> Any:
 def _table_format(column: OutColumn) -> str:
     if column.role == "period":
         return "text" if column.grain and column.grain.startswith("fiscal") else "date"
-    if column.role in ("attribute", "member_code", "time", "unit"):
+    if column.role in ("attribute", "member_code", "time", "unit", "list"):
         return "text"
     if column.role in ("share", "pct_change", "share_of_change"):
         return "percentage"
@@ -707,11 +721,12 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
         caveats.append(gaps)
 
     units = _units(cols, raw, logical.unit_order)
-    headline = _headline(logical, cols, raw, records, partial, units)
+    headline = _headline(logical, cols, raw, records, partial, units, truncated=truncated)
     short_value, comparison = _lead(logical, cols, raw, units)
     drawn = [r for r, plain in zip(records, raw) if not units.mixed or units.key(plain) == units.main]
     unit = units.main if units.main and units.main != "Unknown" else ""
-    chart = _chart(logical, cols, drawn, formats, labels, display, gaps=bool(gaps), unit=unit)
+    chart = _chart(logical, cols, drawn, formats, labels, display, gaps=bool(gaps), unit=unit,
+                   asked=bool(chart_type) and chart_type != "table")
     if chart is not None and unit:
         if units.mixed:
             chart["chart_warnings"] = [*chart["chart_warnings"], f"Only {units.main} is drawn: the other "
@@ -764,7 +779,8 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
                  suggestions=[], headers=[c.name for c in shown], labels=labels, records=records,
                  formats=formats, display=display, sql=compiled.sql, row_count=len(rows), duration_ms=duration_ms,
                  data_source=data_source, question_id=question_id, notes=notes,
-                 model_version=model_version, window=counted_days(logical), named=named_members(logical))
+                 model_version=model_version, window=counted_days(logical), named=named_members(logical),
+                 totals=column_totals(logical, cols, raw, units), totals_complete=not truncated)
     if reading is not None and reading.facts:
         # What the analyst's note is written from (notes.py): the facts, the headline in the analyst's words, and
         # the one-offs set apart in the reading.
@@ -823,9 +839,11 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
           records: list[dict], formats: dict[str, str], display: dict[str, dict] | None = None, sql: str,
           row_count: int, duration_ms: float, data_source: str, question_id: str, notes: list[str],
           model_version: int, window: dict | None = None, named: list[str] | None = None,
-          caveats_fr: dict[str, str] | None = None, labels_fr: dict[str, str] | None = None) -> dict[str, Any]:
+          caveats_fr: dict[str, str] | None = None, labels_fr: dict[str, str] | None = None,
+          totals: dict[str, float] | None = None, totals_complete: bool = True) -> dict[str, Any]:
     """The frame the web portal renders (the same shape today's pipeline sends). ``window``: the days counted
-    (``counted_days``); ``named``: the data's names its words state (``named_members``)."""
+    (``counted_days``); ``named``: the data's names its words state (``named_members``); ``totals``: each figure
+    that adds up, over every row read (``column_totals``), and ``totals_complete``: whether those are all there are."""
     return {
         "type": "assistant_response",
         "engine": "core2",
@@ -852,6 +870,10 @@ def frame(question: str, *, headline: str, short_value: str = "", comparison: st
             "rows": records[:PREVIEW_ROWS],
             "total_rows": len(records),
             "truncated": len(records) > PREVIEW_ROWS,
+            # Each figure that adds up, over every row the query returned -- the table's own sum adds up only
+            # the first rows it shows -- and whether those are all the rows there are.
+            "column_totals": dict(totals or {}),
+            "totals_complete": totals_complete,
             "column_formats": formats,
             "display_formats": display or {},
             "currency_columns": [n for n, f in formats.items() if f == "currency"],
@@ -911,6 +933,8 @@ def _header(c: OutColumn, *, year_before: bool = False, lang: str = "en", each: 
                 f"{c.label}: share of each {each}'s change"
         return f"{c.label} : part de la variation totale" if fr else f"{c.label}: share of the total change"
     if c.role == "period":
+        if c.dated and c.label and not fr:
+            return c.label              # the date a list's rows are by: "Order date"
         if fr:
             return {"week": "Semaine du", "day": "Jour"}.get(c.grain or "", "Période")
         return {"week": "Week of", "day": "Day"}.get(c.grain or "", "Period")
@@ -930,7 +954,7 @@ def _thing(label: str) -> str:
 def _said(g: OutColumn, value: object) -> object:
     """A member of a grouping of numbers or codes as a sentence names it: "fill number 0", "GL account code 4000";
     any other member as it is."""
-    if not g.numbered or value in (None, "", "Unknown") or not re.fullmatch(r"-?[\d.,]+", str(value)):
+    if not g.numbered or no_member(value) or not re.fullmatch(r"-?[\d.,]+", str(value)):
         return value
     return f"{_thing(g.label)} {value}"
 
@@ -957,7 +981,7 @@ def _two_groupings(lead: str, members: list[OutColumn], m: OutColumn, raw: list[
     pair called the leader. Not adding up: the highest pair, named as a pair."""
     def name(r: dict, c: OutColumn) -> str:
         return str(_said(c, r[c.name]))
-    real = [i for i in range(len(raw)) if all(shown[i][c.name] not in (None, "", "Unknown") for c in members)]
+    real = [i for i in range(len(raw)) if all(not no_member(shown[i][c.name]) for c in members)]
     if not real:
         return ""
     across, down = sorted(members, key=lambda c: -len({str(raw[i][c.name]) for i in real}))
@@ -967,7 +991,7 @@ def _two_groupings(lead: str, members: list[OutColumn], m: OutColumn, raw: list[
                 f"{value(raw[best])}, of {len(real):,} pairs of {_noun(across.label)} and {_noun(down.label)}.")
     totals: dict[str, float] = {}
     for i in range(len(raw)):             # a store's total takes in its rows with no segment
-        if shown[i][across.name] not in (None, "", "Unknown"):
+        if not no_member(shown[i][across.name]):
             key = name(shown[i], across)
             totals[key] = totals.get(key, 0.0) + (_number(raw[i][m.name]) or 0.0)
     leader = max(totals, key=lambda k: totals[k])
@@ -1039,6 +1063,24 @@ def short_span(rng: Range, lang: str = "en") -> str:
         return f"{head} – {months[last.month - 1]} {last.year}"
     head = f"{day(start)} {months[start.month - 1]}" + ("" if start.year == last.year else f" {start.year}")
     return f"{head} – {day(last)} {months[last.month - 1]} {last.year}"
+
+
+def column_totals(logical: Logical, cols: _Columns, raw: list[dict], units: _Units) -> dict[str, float]:
+    """Each figure of the table that adds up, over every row read: the table on screen holds only its first rows,
+    and its footer's sum of them is not the answer's total. None for an average, a ratio or a percentage, for figures
+    in more than one unit, nor for a balance (stock on hand) over periods."""
+    if units.mixed:
+        return {}
+    over_time = bool(cols.of("period") or cols.of("time"))
+    totals: dict[str, float] = {}
+    for m in cols.of("measure"):
+        out = next((o for o in logical.measures if o.name == m.name), None)
+        if out is None or not adds_up(out) or m.format in ("percent", "percentage", "days", "list"):
+            continue
+        if over_time and getattr(out, "semi", False):
+            continue
+        totals[m.name] = sum(_number(r.get(m.name)) or 0.0 for r in raw)
+    return totals
 
 
 def totals_over_time(out: Any, m: OutColumn) -> bool:
@@ -1185,7 +1227,7 @@ def _signed(number: float, format_: str, unit: str | None = None, *, rounded: bo
 
 
 def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dict], partial: set[str],
-              units: _Units) -> str:
+              units: _Units, *, truncated: bool = False) -> str:
     measures = cols.of("measure")
     before, span = scope_words(logical)
     if not raw:
@@ -1195,24 +1237,54 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         if not groups:
             return f"{len(raw):,} rows{(' ' + span) if span else ''}."
         first, beside = groups[0], groups[1:3]
-        code = next(iter(cols.of("member_code")), None)
-        named = collections.Counter(str(r.get(first.name)) for r in raw)
+        # The first one's own code (a customer's number beside their name), never another grouping's.
+        codes = {c.name: next((k for k in cols.of("member_code") if k.name == f"{c.name}_code"), None)
+                 for c in [first, *beside]}
+        code = codes[first.name]
+
+        def namesakes(c: OutColumn) -> collections.Counter:
+            """How many members of each name the rows hold: two customers named alike, never one on several rows."""
+            k = codes[c.name]
+            return collections.Counter(n for n, _ in {(str(r.get(c.name)), str(r.get(k.name)) if k else "")
+                                                      for r in raw})
+        named = {c.name: namesakes(c) for c in [first, *beside]}
+
+        def told(c: OutColumn, r: dict) -> list[str]:
+            # Two members of one name are told apart by their code ("Avery Ashford (patient name code 1042)").
+            k = codes[c.name]
+            return [f"{_thing(k.label)} {r[k.name]}"] if k is not None and named[c.name][str(r.get(c.name))] > 1 \
+                and not no_member(r.get(k.name)) else []
 
         def details(r: dict) -> list[str]:      # what else the list shows of it: "base rate 5.9", "carrier FedEx"
-            # Two members of one name are told apart by their code ("Avery Ashford (patient name code 1042)").
-            told = [f"{_thing(code.label)} {r[code.name]}"] if code is not None and named[str(r.get(first.name))] > 1 \
-                and r.get(code.name) not in (None, "") else []
-            return told + [f"{_thing(c.label)} {r[c.name]}" for c in beside if r.get(c.name) not in (None, "")]
+            return told(first, r) + [w for c in beside if not no_member(r.get(c.name))
+                                     for w in [f"{_thing(c.label)} {r[c.name]}", *told(c, r)]]
 
         looked_up = re.search(rf"(?<![\w-]){re.escape(str(shown[0][first.name]))}(?![\w-])", span) if raw else None
         if len(raw) == 1 and beside and details(shown[0]) and looked_up:
             # One looked up by its own name or number: "Tracking number 81067: carrier FedEx, status Delivered."
             thing = _thing(first.label)
             return f"{thing[:1].upper() + thing[1:]} {shown[0][first.name]}: {', '.join(details(shown[0]))}."
-        listed = [str(r[first.name]) + (f" ({', '.join(details(r))})" if details(r) else "")
+        # Documents listed by their number ("Order ID"): "1 order: order 109194", never "1 order ID: 109194".
+        words = _thing(first.label).split()
+        document = " ".join(words[:-1]) if first.numbered and len(words) > 1 and words[-1].casefold() in (
+            "id", "number", "no", "num", "nbr", "#") else ""
+        listed = [(f"{document} {r[first.name]}" if document else str(r[first.name]))
+                  + (f" ({', '.join(details(r))})" if details(r) else "")
                   for r in shown[:8] if r[first.name] not in (None, "")]
         more = f", and {len(raw) - 8:,} more" if len(raw) > 8 else ""
         what = _thing(first.label) if len(raw) == 1 else _noun(first.label)     # "1 service", never "1 services"
+        if document:
+            what = document if len(raw) == 1 else _noun(document)
+        # A member on several rows (each store a customer bought from, each day) is counted once: "42 rows for 30
+        # customers", never "42 customers".
+        members = {(str(r.get(first.name)), str(r.get(code.name)) if code is not None else "") for r in raw
+                   if not no_member(r.get(first.name))}
+        if 0 < len(members) < len(raw):
+            one, many = (document, _noun(document)) if document else (_thing(first.label), _noun(first.label))
+            what = f"rows for {len(members):,} {one if len(members) == 1 else many}"
+        if truncated:
+            # Cut at the answer's limit: there are more, so the count is no count of them all.
+            return f"The first {len(raw):,} rows{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
         return f"{len(raw):,} {what}{(' ' + span) if span else ''}: {', '.join(listed)}{more}."
     m = measures[0]
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
@@ -1379,12 +1451,13 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         if lowest:
             ranked_by = next(c for c in measures if c.name == logical.sort[0][0])
             low = min(range(len(raw)), key=lambda i: _number(raw[i][ranked_by.name]) or float("inf"))
-            count_of = len({str(r[g.name]) for r in shown})
+            own_code = next((c.name for c in cols.of("member_code") if c.name == f"{g.name}_code"), None)
+            count_of = len({(str(r[g.name]), str(p.get(own_code)) if own_code else "") for r, p in zip(shown, raw)})
             among = f" of the {count_of:,} {_noun(g.label)} shown" if count_of > 1 and g.role != "time" else ""
             return f"{lead}: {shown[low][g.name]} is lowest{among}, at {value(raw[low], ranked_by)}."
         # "Unknown" is rows with no member: never the leader, never counted ("across 7 territories" beside an
         # insight on the 6 there are), and said apart when it would have led.
-        named = [i for i in range(len(raw)) if shown[i][g.name] not in (None, "", "Unknown")]
+        named = [i for i in range(len(raw)) if not no_member(shown[i][g.name])]
         # Only a member with something to show leads instead: where every member has nothing ("X leads with 0;
         # 1,200 have no category"), the rows with none are the answer, as they were.
         if not named or not any((_number(raw[i][m.name]) or 0) > 0 for i in named):
@@ -1414,13 +1487,16 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
 
         share = share_of(top)
         nameless = [i for i in range(len(raw)) if i not in named]
-        no_member = ""
+        unnamed = ""
         if nameless and (_number(raw[nameless[0]][m.name]) or float("-inf")) > (_number(top[m.name]) or float("-inf")):
             noun = _lower(g.label).split()
             while len(noun) > 1 and noun[-1] in ("name", "description", "desc", "label", "title", "code"):
                 noun.pop()              # "has no item group", not "has no item group description"
-            no_member = f"; {value(raw[nameless[0]])}{share_of(raw[nameless[0]])} has no {' '.join(noun)}"
-        count_of = len({str(shown[i][g.name]) for i in named})
+            without = _lower(g.missing) if g.missing else f"no {' '.join(noun)}"     # "no customer recorded"
+            unnamed = f"; {value(raw[nameless[0]])}{share_of(raw[nameless[0]])} has {without}"
+        # Members told apart by their code too: 60 customer names are shared by 191 customers.
+        own_code = next((c.name for c in cols.of("member_code") if c.name == f"{g.name}_code"), None)
+        count_of = len({(str(shown[i][g.name]), str(raw[i].get(own_code)) if own_code else "") for i in named})
         # Days of the week and weekends are always the same few, and a yes/no grouping is a thing and its opposite:
         # counting them says nothing ("across 2 is weekends", "across 2 is steriles").
         count = (f" across {count_of:,} {_noun(g.label)}" if count_of > 1 and g.role != "time" and not g.flag
@@ -1469,7 +1545,7 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         # region's alone (row access), or after a filter that leaves one. Its figure, as all there is.
         if len(raw) == 1 and len(named) == 1 and not logical.limit and verb == "leads with":
             return f"{lead}: {leader}, {value(top)}{also}."
-        return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{together}{no_member}."
+        return f"{lead}: {leader} {verb} {value(top)}{share}{also}{count}{together}{unnamed}."
     if not members and not periods:
         if units.column is not None and len(raw) > 1:
             ordered = sorted(raw, key=lambda r: -(_number(r[m.name]) or 0.0))
@@ -1496,8 +1572,10 @@ def _led_by_period(logical: Logical, period: OutColumn, member: OutColumn, m: Ou
     among the 5 regions", or the leaders of the first and last whole periods. Never a total over the
     periods: a share, an average or a distinct count does not add up across them."""
     grain = period.grain or "month"
+    # The rows with no member (no customer on file) are no member: never the leader, never counted among them.
     rows = [i for i in range(len(raw)) if (not units.mixed or units.key(raw[i]) == units.main)
-            and _day(raw[i][period.name]) is not None and _number(raw[i][m.name]) is not None]
+            and _day(raw[i][period.name]) is not None and _number(raw[i][m.name]) is not None
+            and not no_member(shown[i][member.name])]
     if not rows:
         return ""
     days = sorted({d for d in (_day(raw[i][period.name]) for i in rows) if d is not None})
@@ -1777,7 +1855,7 @@ def _fold(rows: list[dict], x: str, ys: list[str], keep: int, share: str | None,
         values = [r.get(key) for r in among if r.get(key) is not None]
         return sum(values) if values else None
     # "Unknown" is the rows with no member: in the rest's figure, never counted as one of the members.
-    named = sum(1 for r in rest if r.get(x) not in (None, "", "Unknown"))
+    named = sum(1 for r in rest if not no_member(r.get(x)))
     label = f"Other ({named:,})"
     rest_total = total(ys[0], rest) or 0.0
     if abs(rest_total) <= max(abs(r.get(ys[0]) or 0.0) for r in kept):
@@ -1807,12 +1885,13 @@ def _with_gaps(rows: list[dict], x: str, ys: list[str], expected: list[dt.date])
 
 
 def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
-           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "") -> dict | None:
+           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "",
+           asked: bool = False) -> dict | None:
     """The chart for the kind of answer, then in the form its data asks for, with a note saying why
     (core2/answer/shape_of_data.py): no one-point line, no pie of one slice, no forty thin bars."""
     from core2.answer.shape_of_data import settle as shaped
 
-    chart = _drawn(logical, cols, records, formats, labels, display, gaps=gaps, unit=unit)
+    chart = _drawn(logical, cols, records, formats, labels, display, gaps=gaps, unit=unit, asked=asked)
     if chart is None:
         return None
     temporal = ((chart.get("chart_spec") or {}).get("x") or {}).get("role") == "temporal"
@@ -1825,9 +1904,29 @@ def _chart(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
 
 
 def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[str, str],
-           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "") -> dict | None:
+           labels: dict[str, str], display: dict[str, dict], *, gaps: bool = False, unit: str = "",
+           asked: bool = False) -> dict | None:
     measures = cols.of("measure")
     periods, members = cols.of("period"), cols.of("attribute") + cols.of("time")
+    if logical.intent == "list" and asked and measures and cols.of("attribute"):
+        # "Show that as a chart" on a list (each customer's Dish Soap orders, by store and date): a bar per member
+        # of the list for its figure, added up over its rows; the table keeps every row.
+        first, figure = cols.of("attribute")[0], measures[0]
+        out = next((o for o in logical.measures if o.name == figure.name), None)
+        # Added up over its rows: never a balance (stock on hand) over the days of the list.
+        if not (totals_over_time(out, figure) if cols.of("period") or cols.of("time") else _adds(logical, figure.name)):
+            return None
+        # Each member once, told apart by its own code where two share a name.
+        code = next((c for c in cols.of("member_code") if c.name == f"{first.name}_code"), None)
+        totals: dict[tuple, float] = {}
+        for r in records:
+            key = (r[first.name], r[code.name] if code is not None else None)
+            totals[key] = totals.get(key, 0.0) + (_number(r[figure.name]) or 0.0)
+        named = collections.Counter(name for name, _ in totals)
+        records = [{first.name: f"{name} ({c})" if named[name] > 1 and c not in (None, "") else name, figure.name: v}
+                   for (name, c), v in sorted(totals.items(), key=lambda kv: -kv[1])]
+        logical = replace(logical, intent="breakdown", limit=None)
+        periods, members, measures = [], [first], [figure]
     if not measures or len(records) < 2 or logical.intent == "list":
         return None
     from core2.resolve.shapes import CohortShape, FunnelShape, TogetherShape
@@ -1958,7 +2057,7 @@ def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
             other = {"label": "", "count": 0, "ranges": True}     # its bars are ranges, never one member to open
     elif kind == "bar" and not temporal and not ranked and compare is None and len(rows) > MOST_BARS \
             and pair is None and all(_adds(logical, y) for y in ys):     # pairs are never "the other products"
-        named = sum(1 for r in rows if r[x.name] not in (None, "", "Unknown"))
+        named = sum(1 for r in rows if not no_member(r[x.name]))
         rows, other, said = _fold(rows, x.name, ys, TOP_BARS, share.name if share is not None else None,
                                   format_=m.format, things=names.plural(_thing(labels[x.name])))
         if said:
@@ -1984,7 +2083,7 @@ def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
         geo = {"map": place, "file": GEO_FILES[place], "regions": named}
         if kind == "map":
             missing = off_map_zips(values) if place == "us_zip" else \
-                [v for v in values if v not in named and v != "Unknown"]
+                [v for v in values if v not in named and not no_member(v)]
             if missing:
                 warnings.append(f"{_listed(missing, 'and')} {'is' if len(missing) == 1 else 'are'} not on the map: "
                                 "every one is in the table.")
@@ -2042,7 +2141,7 @@ def _cross(logical: Logical, first: OutColumn, second: OutColumn, m: OutColumn, 
     colours it is a grid, a cell for each pair, darker for more. The largest bars or rows are drawn, said so;
     the table keeps every row."""
     def key(r: dict, c: OutColumn) -> str:
-        return "Unknown" if r[c.name] in (None, "") else str(r[c.name])
+        return (c.missing or "Unknown") if r[c.name] in (None, "") else str(r[c.name])
     totals: dict[str, dict[str, float]] = {first.name: {}, second.name: {}}
     for r in records:
         value = abs(_number(r[m.name]) or 0.0)
@@ -2158,7 +2257,7 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
            formats: dict[str, str], labels: dict[str, str], display: dict[str, dict], *, unit: str = "") -> dict:
     totals: dict[str, float] = {}
     for r in records:
-        key = "Unknown" if r[member.name] is None else str(r[member.name])
+        key = (member.missing or "Unknown") if r[member.name] is None else str(r[member.name])
         totals[key] = totals.get(key, 0.0) + abs(_number(r[m.name]) or 0.0)
     ranked = [k for k, _ in sorted(totals.items(), key=lambda kv: -kv[1])]
     # Past a handful of lines the chart is a tangle: the largest, and the rest added up as one "Other" line
@@ -2168,7 +2267,7 @@ def _pivot(logical: Logical, period: OutColumn, member: OutColumn, m: OutColumn,
     other = {"label": f"Other ({len(ranked) - TOP_LINES:,})", "count": len(ranked) - TOP_LINES} if folded else None
     by_period: dict[str, dict] = {}
     for r in records:
-        key = "Unknown" if r[member.name] is None else str(r[member.name])
+        key = (member.missing or "Unknown") if r[member.name] is None else str(r[member.name])
         row = by_period.setdefault(str(r[period.name]), {period.name: str(r[period.name])})
         value = _number(r[m.name])
         if key in ranked[:MOST_LINES]:

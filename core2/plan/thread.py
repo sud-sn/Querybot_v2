@@ -25,7 +25,7 @@ from core2.bootstrap import names
 from core2.model.schema import SemanticModel
 from core2.plan.followup import asks_series, names_own_period
 from core2.plan import asks
-from core2.plan.ir import Filter, Plan, Window
+from core2.plan.ir import Filter, Plan, Sort, Window
 
 # "Overall", "in total", "for everyone": every filter of the answer above lets go.
 _OVERALL = re.compile(r"\b(?:overall|in\s+total|altogether|company[-\s]wide|across\s+the\s+board|everyone|everything|"
@@ -141,7 +141,20 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
         if plan.intent == "breakdown":
             update["intent"] = "trend" if plan.time.grain else "value"
     time = plan.time
-    if time.compare is not None and time.compare == previous.time.compare and plan.intent != "drivers" \
+    if plan.intent != "drivers" and asks.takes_off_comparison(question):
+        if time.compare is not None or previous.time.compare is not None:
+            # "Drop the vs last year column" after this year against last year by store: this year so far by
+            # store, the biggest first -- no longer a comparison, nor in the order of a change it no longer shows.
+            time = time.model_copy(update={"compare": None})
+            update["sort"] = [s for s in plan.sort if s.by not in ("change", "pct_change")]
+            if not update["sort"] and plan.group_by and plan.measures:
+                update["sort"] = [Sort(by=plan.measures[0], desc=True)]
+            if plan.intent == "compare":
+                update["intent"] = "breakdown" if plan.group_by else "value"
+        if time.window != previous.time.window and not names_own_period(asks.without_taken_off(question)):
+            # "Hide the comparison with last year": the words name the period taken off, never the answer's own.
+            time = time.model_copy(update={"window": previous.time.window})
+    elif time.compare is not None and time.compare == previous.time.compare and plan.intent != "drivers" \
             and names_own_period(question) and not _COMPARES.search(question) and not asks.compares(question):
         # "Break 1997 down by region" after 1997 against 1996: 1997 by region, no longer a comparison.
         time = time.model_copy(update={"compare": None})
@@ -239,6 +252,108 @@ def _named_split(model: SemanticModel, slug: str, question: str) -> bool:
                   and w not in ("name", "code")}
     said = {names.singular(w) for w in re.findall(r"[a-z]+", question.lower())}
     return bool({names.singular(w) for w in words} & said)
+
+
+# A turn that only says how to show the answer on screen: "show that as a chart", "as a bar chart please", "chart it".
+_FORMS = (("pie", r"pie"), ("donut", r"donut|doughnut|ring"), ("stacked", r"stacked(?:\s+bars?)?"),
+          ("heatmap", r"heat\s?map|grid"), ("scatter", r"scatter"), ("map", r"map"), ("area", r"area"),
+          ("line", r"line"), ("bar", r"bars?"), ("table", r"table"))
+_SHOWN_AS = re.compile(r"^\s*(?:(?:can|could|would)\s+you\s+|please\s+)?(?:(?:show|draw|make|turn|put|display|"
+                       r"give|see|view)\s+(?:me\s+)?)?(?:(?:that|it|this|these|those|them|the\s+same|the\s+(?:answer|"
+                       r"list|table|report|results?))\s+)?(?:(?:as|in|into|on)\s+)?(?:an?\s+)?(?:(?P<form>"
+                       + "|".join(f for _, f in _FORMS) + r")\b\s*)?(?:chart|graph|plot|form|view|instead)?"
+                       r"(?:\s+(?:instead|please|now|then))*\s*[?.!]*\s*$|^\s*(?:chart|graph|plot)\s+(?:it|that|this)"
+                       r"(?:\s+please)?\s*[?.!]*\s*$", re.IGNORECASE)
+
+
+# A form that is an everyday noun too ("show that line": a row of the table) is a form only as one: "as a line",
+# "line chart".
+_NOUNS = {"line", "area", "map", "table", "heatmap", "donut"}
+# The same in French: "affiche-le en graphique", "en camembert", "montre ça sous forme de courbe".
+_FR_FORMS = (("pie", r"camembert|secteurs|graphique\s+(?:à|en)\s+secteurs"),
+             ("line", r"courbes?|graphique\s+en\s+(?:courbes?|lignes?)|lignes?"),
+             ("bar", r"barres|histogramme|graphique\s+(?:à|en)\s+barres"), ("table", r"tableau"), ("map", r"carte"),
+             ("area", r"aires?"), ("", r"graphique|diagramme"))
+_SHOWN_AS_FR = re.compile(r"^\s*(?:(?:peux-tu|pouvez-vous|pourriez-vous|tu\s+peux|vous\s+pouvez)\s+)?(?:et\s+)?"
+                          r"(?P<verb>(?:affiche|montre|présente|dessine|mets|afficher|montrer|présenter|dessiner|mettre)"
+                          r"(?:z)?(?:-(?:le|la|les|moi))?\s+(?:(?:ça|cela|le|la|les)\s+)?)?(?P<how>en|sous\s+forme\s+d[e']|"
+                          r"comme)\s*(?:une?\s+)?(?P<form>" + "|".join(f for _, f in _FR_FORMS) + r")\s*"
+                          r"(?:,?\s*(?:s'il\s+(?:te|vous)\s+pla[iî]t|stp|svp|plutôt))*\s*[?.!]*\s*$", re.IGNORECASE)
+
+
+def shown_as(plan: Plan, previous: Plan | None, question: str) -> Plan:
+    """ "Show that as a chart" after a list of the customers who bought Dish Soap, their stores, order dates and
+    quantities came back as a line of quantity by day: the AI wrote the plan anew. A turn that only says how to
+    show the answer on screen is that answer, shown so: its plan as it was, with the form asked ("bar", "pie"; a
+    list's figure as bars when no form is named)."""
+    if previous is None or previous.kind != "query":
+        return plan
+    french = _SHOWN_AS_FR.match(question or "")
+    hit = _SHOWN_AS.match(question or "")
+    if french is not None and re.fullmatch(r"lignes?|carte", french.group("form"), re.IGNORECASE) \
+            and not french.group("verb") and not french.group("how").lower().startswith("sous"):
+        return plan     # "et en ligne ?" (and online?), "et en carte ?" (by card?): a question, never a form
+    if french is not None:
+        said = " ".join(french.group("form").split())
+        form = next((name for name, words in _FR_FORMS if re.fullmatch(words, said, re.IGNORECASE)), "") or None
+    elif hit is None or not re.search(r"\b(?:chart|graph|plot|" + "|".join(f for _, f in _FORMS) + r")\b", question,
+                                      re.IGNORECASE):
+        return plan
+    else:
+        said = (hit.group("form") or "").strip()
+        form = next((name for name, words in _FORMS if re.fullmatch(words, said, re.IGNORECASE)), None)
+        if form in _NOUNS and not re.search(rf"\b(?:as|in|into|on)\s+(?:an?\s+)?{re.escape(said)}\b|"
+                                            rf"\b{re.escape(said)}\s+(?:chart|graph|plot|view|form)\b", question,
+                                            re.IGNORECASE):
+            return plan             # "show that line": a row of the answer, never a line chart
+    if form is None:
+        form = "bar" if previous.intent == "list" else None
+    return previous.model_copy(update={"chart": form, "follow_up": "refine",
+                                       "asked": plan.asked if plan.kind == "query" else []})
+
+
+# "Also add the order date", "with the date they bought": a date as a column of the list, not a series.
+_DATE_ADDED = re.compile(r"\b(?:add|adding|also|plus|include|including|with|and|show)\b[^.?!]*\b(?:date|day|when)\b",
+                         re.IGNORECASE)
+# What keeps a series a series: "the day-by-day quantity", "quantity by date", a line asked for ("add a line of
+# quantity by date"); and a date that narrows the rows rather than adds a column ("those with an order date in July").
+_BY_DATE = re.compile(r"\b(?:by|per)\s+date\b|\bday-by-day\b|\bjour\s+(?:par|après)\s+jour\b", re.IGNORECASE)
+_DRAWN = re.compile(r"\b(?:line|area)\s+(?:chart|graph|of)\b|\b(?:chart|graph|plot|courbe|graphique)\b", re.IGNORECASE)
+_DATE_CONDITION = re.compile(r"\b(?:date|day)s?\s+(?:in|between|from|after|before|since|during|on)\b|\bdated\b",
+                             re.IGNORECASE)
+
+
+def list_kept(plan: Plan, previous: Plan | None, model: SemanticModel, question: str) -> Plan:
+    """ "Also add the order date and the quantity" after a list of customers, their stores and cities came back as
+    the quantity day by day ("Saffron Market South led in 6 Jul 2026"): a date added to a list is one more column
+    of each row -- the day each one bought -- and the list stays a list, unless the turn asks for a series ("by
+    month", "over time", "day-by-day", a line) or the date narrows the rows ("an order date in July")."""
+    if previous is None or previous.kind != "query" or previous.intent != "list" or plan.kind != "query" \
+            or plan.follow_up == "new" or not _DATE_ADDED.search(question or "") or asks_series(question) \
+            or _BY_DATE.search(question) or _DRAWN.search(question) \
+            or _DATE_CONDITION.search(question) and names_own_period(question):
+        return plan
+    named = _date_named(model, question)
+    if plan.intent in ("trend", "breakdown") and plan.time.grain:
+        return plan.model_copy(update={"intent": "list", "time": plan.time.model_copy(update={
+            "grain": "day", "date": plan.time.date or named}), "chart": None if plan.chart in ("line", "area")
+            else plan.chart})
+    if plan.intent == "list" and not plan.time.grain and named:
+        # The date asked for, left out of the list ("also add the order date and the quantity" came back without
+        # the date): each row by its day.
+        return plan.model_copy(update={"time": plan.time.model_copy(update={"grain": "day",
+                                                                            "date": plan.time.date or named})})
+    return plan
+
+
+def _date_named(model: SemanticModel, question: str) -> str | None:
+    """The slug of the date the question names by its name ("the order date"), or None."""
+    said = question.casefold()
+    for role in model.date_roles.values():
+        name = " ".join((role.name or "").casefold().split())
+        if name and role.slug and re.search(rf"\b{re.escape(name)}s?\b", said):
+            return role.slug
+    return None
 
 
 def figures_carried(plan: Plan, previous: Plan) -> Plan:

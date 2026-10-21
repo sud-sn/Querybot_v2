@@ -53,8 +53,10 @@ def zip5(value: str) -> str:
 
 def off_map_zips(values: list[str]) -> list[str]:
     """The members that are no ZIP code the map has a point for (a PO box's own code, a typo)."""
+    from core2.answer.builder import no_member
+
     known = _zips()
-    return [v for v in values if v and v != "Unknown" and zip5(v) not in known]
+    return [v for v in values if not no_member(v) and zip5(v) not in known]
 
 
 def _words(*texts: str) -> set[str]:
@@ -69,7 +71,9 @@ def place_kind(label: str, column: str, values: list[str]) -> str | None:
     province or a country is one whose members are four in five that map's regions, named for one ("State",
     "Customer country"); or, unnamed, nearly all of them written out in full ("California"), never codes
     alone."""
-    distinct = {v.strip() for v in values if v and v.strip() and v.strip() != "Unknown"}
+    from core2.answer.builder import no_member
+
+    distinct = {v.strip() for v in values if v and not no_member(v.strip())}
     if len(distinct) < 3:
         return None
     words = _words(label, column)

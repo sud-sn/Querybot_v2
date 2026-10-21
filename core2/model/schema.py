@@ -295,7 +295,9 @@ class DateRole(Belief):
 
 
 class AggExpr(_Data):
-    agg: Literal["sum", "count", "count_distinct", "avg", "min", "max"]
+    # "list": a field's values among a group's rows, joined ("the products of each order"), worked out for a
+    # question (core2/resolve/resolver.py), never a stored measure.
+    agg: Literal["sum", "count", "count_distinct", "avg", "min", "max", "list"]
     column: str | None = None       # None with count = count rows
     filters: list[ColumnFilter] = Field(default_factory=list)
     table: str | None = None        # whose rows a count with no column counts; None = the measure's own table

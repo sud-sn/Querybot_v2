@@ -329,9 +329,10 @@ def ranges_headline(payload: dict[str, Any], logical: Logical) -> str:
     counted = m is not None and isinstance(m.expr, AggExpr) and m.expr.agg in ("count", "count_distinct")
     if m is None or not (adds_up(m) or counted):
         return ""
+    from core2.answer.builder import no_member
+
     records = payload.get("export_rows") or []
-    unknown = {None, "", "Unknown"}
-    known = [r for r in records if r.get(g.name) not in unknown and _float(r.get(m.name)) is not None]
+    known = [r for r in records if not no_member(r.get(g.name)) and _float(r.get(m.name)) is not None]
     if not known:
         return ""
     total = sum(_float(r.get(m.name)) or 0.0 for r in records)
@@ -342,7 +343,7 @@ def ranges_headline(payload: dict[str, Any], logical: Logical) -> str:
     lead = " ".join(w for w in (what[:1].upper() + what[1:], before, span) if w)
     share = f" ({value / total:.0%})" if total > 0 and adds_up(m) else ""   # an order in two ranges: no share
     said = f"{lead} by {g.label[:1].lower() + g.label[1:]}: the most, {fmt(value, m.format)}{share}, in {best[g.name]}"
-    missing = sum(_float(r.get(m.name)) or 0.0 for r in records if r.get(g.name) in unknown)
+    missing = sum(_float(r.get(m.name)) or 0.0 for r in records if no_member(r.get(g.name)))
     if missing and counted:
         said += f"; {fmt(missing, m.format)} {what} have no value for it"
     return said + "."

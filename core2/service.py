@@ -28,7 +28,7 @@ from typing import Any
 
 from core2 import ids
 from core2.bootstrap import names
-from core2.answer.builder import _period_badge, against, build_answer, sparkline
+from core2.answer.builder import _period_badge, against, build_answer, no_member, sparkline
 from core2.answer.describe import describe
 from core2.answer.drivers import answer_drivers
 from core2.answer.extra import extra_facts
@@ -1398,7 +1398,8 @@ def _compute(question: str, plan: Plan, services: Services, ctx: Context, *, que
     logical = fill_edges(logical, model, warehouse.dialect, lambda sql: warehouse.query(sql, max_rows=1).rows)
     compiled = compile_query(logical, model, warehouse.dialect)
     result = warehouse.query(compiled.sql, max_rows=compiled.row_cap)
-    payload = build_answer(question, logical, compiled, result.columns, _with_a_figure(compiled, result.columns, result.rows),
+    rows = _members_listed(compiled, logical, result.columns, _with_a_figure(compiled, result.columns, result.rows))
+    payload = build_answer(question, logical, compiled, result.columns, rows,
                            duration_ms=(time.perf_counter() - started) * 1000, truncated=result.truncated,
                            chart_type=plan.chart, **common)
     dates = date_choices(plan, logical, model)
@@ -1450,6 +1451,23 @@ def _with_a_figure(compiled: Any, names: list[str], rows: list[tuple]) -> list[t
         return rows
     kept = [r for r in rows if any(r[i] is not None for i in at)]
     return kept or rows
+
+
+def _members_listed(compiled: Any, logical: Any, names: list[str], rows: list[tuple]) -> list[tuple]:
+    """A list of members ("all the customers who bought Dish Soap in the last 90 days") lists members: the rows that
+    name none (Dish Soap sold with no customer on file) were counted as one more customer. They are left out, and
+    the answer says so."""
+    first = next((c for c in compiled.columns if c.role == "attribute"), None)
+    if logical.intent != "list" or first is None or not first.missing or first.name not in names:
+        return rows
+    at = names.index(first.name)
+    kept = [r for r in rows if r[at] is not None]
+    if kept and len(kept) < len(rows):
+        thing = first.missing.removeprefix("No ").removesuffix(" recorded")
+        logical.notes.append(f"Rows with {first.missing[:1].lower() + first.missing[1:]} are left out: they name no "
+                             f"{thing}.")
+        return kept
+    return rows
 
 
 def _more_for_the_note(plan: Plan, logical: Any, payload: dict[str, Any], services: Services, ctx: Context,
@@ -1602,7 +1620,7 @@ def _members_shown(logical: Any, payload: dict[str, Any], most: int = 500) -> li
     change = f"{measure}_change" if measure else None
 
     def member(value: Any) -> str | None:
-        return None if value in (None, "", "Unknown") else str(value)
+        return None if no_member(value) else str(value)
 
     out: list[tuple] = []
     for row in (payload.get("export_rows") or (payload.get("data") or {}).get("rows") or [])[:most]:
@@ -1910,7 +1928,7 @@ def _one_step_down(question: str, plan: Plan, payload: dict[str, Any], services:
         return
     lead = top["leaders"][0]
     member, moved = lead.get("member"), _amount(lead.get("change"))
-    if member in (None, "", "Unknown") or moved is None or abs(moved) < CARRIED * abs(change):
+    if no_member(member) or moved is None or abs(moved) < CARRIED * abs(change):
         return
     slug = top["slug"]
     named = model.entities[slug].label_column if slug in model.entities else None
@@ -1951,7 +1969,7 @@ def _one_step_down(question: str, plan: Plan, payload: dict[str, Any], services:
         lead2 = nxt["leaders"][0]
         moved2 = _amount(lead2.get("change"))
         thing2 = str(nxt.get("word") or nxt.get("label") or "").lower()
-        if lead2.get("member") not in (None, "", "Unknown") and moved2 is not None:
+        if not no_member(lead2.get("member")) and moved2 is not None:
             en += f" Inside {member}, {thing2} {lead2['member']} moved most: {said(moved2)}."
             fr += f" Dans {member}, c'est {thing2} {lead2['member']} qui a le plus bougé : {said(moved2, 'fr')}."
             checked.append({"en": f"Step 2, inside {member}, the change by {thing2}: {lead2['member']} {said(moved2)}.",

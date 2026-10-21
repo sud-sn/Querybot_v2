@@ -1974,8 +1974,9 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
     shape_x = (payload.get("chart") or {}).get("x_key")
     if not drill and len(groups) == 1 and shape_x and ((payload.get("chart") or {}).get("chart_spec") or {}).get(
             "x", {}).get("role") != "temporal":
-        members = sorted({str(r.get(shape_x)) for r in data.get("rows") or []
-                          if r.get(shape_x) not in (None, "", "Unknown")})[:100]
+        from core2.answer.builder import no_member
+
+        members = sorted({str(r.get(shape_x)) for r in data.get("rows") or [] if not no_member(r.get(shape_x))})[:100]
         # One member is a choice too while other filters narrow it: the filter stays in the bar.
         if len(members) >= 2 or (members and narrowed):
             label = str((data.get("header_labels") or {}).get(shape_x) or "")

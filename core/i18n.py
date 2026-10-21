@@ -4685,6 +4685,9 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{shown} of {total} rows shown",
         "fr": "{shown} lignes affichées sur {total}",
     },
+    # The toolbar's sum: of the rows the filter leaves on screen, or of the rows the answer read (cut at its limit).
+    "ui.chat.table.sum_rows_shown": {"en": "(rows shown)", "fr": "(lignes affichées)"},
+    "ui.chat.table.sum_rows_read": {"en": "(first {count} rows)", "fr": "({count} premières lignes)"},
     "ui.chat.hist.rows": {"en": "{count} rows", "fr": "{count} lignes"},
     "ui.chat.hist.duration": {"en": "{count} ms", "fr": "{count} ms"},
     "ui.chat.hist.turns": {"en": "{count} turns", "fr": "{count} échanges"},

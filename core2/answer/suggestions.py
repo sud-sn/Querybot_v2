@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core2.answer.builder import condition_words, span_words
+from core2.answer.builder import condition_words, no_member, span_words
 from core2.answer.drivers import Grouping, candidates
 from core2.model.schema import SemanticModel, value_names
 from core2.plan.ir import Plan
@@ -76,7 +76,7 @@ def follow_ups(plan: Plan, logical: Logical, payload: dict[str, Any], model: Sem
                         f"Prévision de {fr.lower} pour {_NEXT_FR[period.grain]}{fr.tail}"))
     elif grouped and period is None:
         top = next((str(r.get(grouped[0].name)) for r in rows
-                    if r.get(grouped[0].name) not in (None, "", "Unknown")), "")
+                    if not no_member(r.get(grouped[0].name))), "")
         # A class, a stage or a pair an analysis made is no member a question can name.
         if top and (not plan.shaped() or (grouped[0].attribute and measures[0].measure is not None)):
             out.append(("member", f'Monthly {words.lower} for "{top}"{words.tail}',

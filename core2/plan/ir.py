@@ -13,6 +13,7 @@ import datetime as dt
 from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 Grain = Literal["day", "week", "month", "quarter", "year", "fiscal_month", "fiscal_quarter", "fiscal_year"]
 Unit = Literal["day", "week", "month", "quarter", "year"]
@@ -319,6 +320,10 @@ class Plan(_Strict):
     rates: list[Rate] = Field(default_factory=list)
     durations: list[Duration] = Field(default_factory=list)
     group_by: list[str] = Field(default_factory=list)       # attribute slugs and time:... attributes
+    # Fields shown on each row as the list of their values among its own rows, never as a grouping: "every order over
+    # $200 with the customer, store and products" is a row per order, its products listed ("Dish Soap, Paper Towels").
+    # Set by code (core2/plan/analyst_math.py), never offered to the AI: kept out of the schema in its prompt.
+    listed: SkipJsonSchema[list[str]] = Field(default_factory=list)
     via: dict[str, str] = Field(default_factory=dict)       # attribute slug -> the entity it is reached through
     filters: list[Filter] = Field(default_factory=list)
     time: TimeSpec = Field(default_factory=TimeSpec)

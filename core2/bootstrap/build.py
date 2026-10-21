@@ -528,6 +528,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
                 m.business_name = "Gross sales"
 
     _entities_and_attributes(model, f, ck, taken, people)
+    numbered_documents(model)
     # A person's birth date, on the table that lists them: proposed to the admin as usable through age only.
     listed = {e.table for e in model.entities.values() if len(e.key_columns) == 1}
     for column in model.columns.values():
@@ -669,6 +670,64 @@ def _flag_value(value: object) -> object:
     except (TypeError, ValueError):
         return str(value)
     return int(number) if number.is_integer() else number
+
+
+def numbered_documents(model: SemanticModel) -> list[str]:
+    """The number of the document a table's lines belong to (an order ID beside the line number in their key), as
+    what the documents are told apart by: "every order over $200 with the customer and store" is a row per order,
+    each its own total -- with no list of orders anywhere else, it is the only place they are numbered. Run on a
+    model learned before (core2/bootstrap/service.py), as Learn does. Returns the attributes made."""
+    made: list[str] = []
+    held = {a.column for a in model.attributes.values()}
+    for key, number in _document_numbers(model):
+        if number.key in held or _numbered_elsewhere(model, key, number.key):
+            continue
+        slug = ids.unique_slug(f"{model.tables[key].slug}.{ids.slug(number.business_name or number.name)}",
+                               set(model.attributes))
+        model.attributes[slug] = Attribute(
+            slug=slug, column=number.key, entity=None, business_name=number.business_name or number.name,
+            members=number.profile.distinct if number.profile else 0, kind="identifier", provenance="profile",
+            status="verified", confidence=0.7)
+        made.append(slug)
+    return made
+
+
+def _document_numbers(model: SemanticModel) -> list[tuple[str, Column]]:
+    """Each lines table's document number: the other column of a two-column key beside the line's (an order ID
+    beside the line number), on a fact no list of members is made of."""
+    from core2.bootstrap.measures import _WITHIN
+
+    found = []
+    listed = {e.table for e in model.entities.values()}
+    for key, table in model.tables.items():
+        if table.kind != "fact" or len(table.primary_key) != 2 or key in listed:
+            continue
+        columns = [model.columns[c] for c in table.primary_key if c in model.columns]
+        lines = [c for c in columns if set(names.tokens(c.name)) & _WITHIN]
+        documents = [c for c in columns if c not in lines and c.data_type in ("integer", "text")]
+        if len(columns) == 2 and len(lines) == 1 and len(documents) == 1:
+            found.append((key, documents[0]))
+    return found
+
+
+def _numbered_elsewhere(model: SemanticModel, table: str, column: str) -> bool:
+    """Do the lines of ``table`` point by their document's number ``column`` at a table of the documents (an orders
+    table), or are they lines of other lines (returns by order and line)? That table numbers them."""
+    return any(column in j.from_columns and j.from_table == table and j.to_table != table and j.trust != "rejected"
+               for j in model.joins.values())
+
+
+def numbered_documents_kept(model: SemanticModel, made: list[str]) -> None:
+    """The documents' numbers Learn made (``numbered_documents``, at Learn or on load), once the admin's decisions
+    are on: a link the admin added from the lines to a table of the documents numbers them there, so the number made
+    from the lines' key goes again. One the admin made or changed stays."""
+    numbers = {number.key for _, number in _document_numbers(model)}
+    for slug, attribute in list(model.attributes.items()):
+        column = model.columns.get(attribute.column)
+        ours = slug in made or attribute.column in numbers and attribute.entity is None \
+            and attribute.kind == "identifier" and attribute.provenance == "profile"
+        if ours and column is not None and _numbered_elsewhere(model, column.table, column.key):
+            del model.attributes[slug]
 
 
 def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[str, str], str],

@@ -353,6 +353,7 @@ class Group:
     grain: str | None = None
     attribute: str | None = None
     bands: list[str] = field(default_factory=list)      # a range grouping: its ranges' names, in order
+    dated: bool = False      # a list's rows by the day of their own date, headed by that date's name ("Order date")
 
 
 @dataclass
@@ -1553,6 +1554,28 @@ def _resolve(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     return resolve_plain(plan, model, ctx)
 
 
+def _told_apart(model: SemanticModel, plan: Plan) -> dict[str, str]:
+    """The name of each figure of the answer that shares its name with another figure of it, its table's name put
+    before it: units sold and returned were "2,634 quantity and 65 quantity", the return rate "Quantity ÷
+    Quantity"; they are the order line quantity and the return quantity."""
+    slugs = [*plan.measures, *(s for d in plan.derived for s in d.measures), *(r.measure for r in plan.rates)]
+    by_name: dict[str, dict[str, Measure]] = {}
+    for slug in dict.fromkeys(slugs):
+        found = find_slug(model, slug)
+        if found and found[0] == "measure" and found[1].business_name:
+            m = found[1]
+            by_name.setdefault(" ".join(m.business_name.casefold().split()), {})[m.key] = m
+    out: dict[str, str] = {}
+    for same in by_name.values():
+        tables = {model.tables[m.table].business_name for m in same.values() if m.table in model.tables}
+        if len(same) < 2 or len(tables) < len(same):
+            continue                      # one figure of the name, or two on one table: their names stand
+        for m in same.values():
+            name = m.business_name if m.business_name[:2].isupper() else m.business_name[:1].lower() + m.business_name[1:]
+            out[m.key] = f"{model.tables[m.table].business_name} {name}"
+    return out
+
+
 def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     """A plan with no analytical shape (or the plain rows a shape is worked out over)."""
     aliases = _Aliases()
@@ -1581,6 +1604,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                      "is counted twice.")
 
     twins: dict[str, list[Measure]] | None = None      # measures sharing a name with another, found once
+    told = _told_apart(model, plan)
     made_here = {_plain(d.name) for d in plan.derived}
     for slug in dict.fromkeys(plan.measures):      # a measure named twice is shown once
         found = find_slug(model, slug)
@@ -1603,7 +1627,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             by_activity = _members_by_activity(model, plan, m)
         if by_activity is not None:
             counted, on, said = by_activity
-            chosen.append((m, counted, on, m.business_name, m.format))
+            chosen.append((m, counted, on, told.get(m.key, m.business_name), m.format))
             notes.append(said)
             said = Condition("activity", model.tables[on].business_name.lower())
             if said not in conditions:            # warehouses and items, both counted on the same rows: said once
@@ -1611,9 +1635,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             continue
         homes = _homes(model, m.table, m.expr)
         if len(homes) > 1:
-            combine(m, m.business_name, m.format, m.expr, m.table, m.filters)
+            combine(m, told.get(m.key, m.business_name), m.format, m.expr, m.table, m.filters)
         else:
-            chosen.append((m, expr, homes.pop() if homes else m.table, m.business_name, m.format))
+            chosen.append((m, expr, homes.pop() if homes else m.table, told.get(m.key, m.business_name), m.format))
         if m.filters:
             notes.append(f"{m.business_name} counts only rows where " + "; ".join(
                 f"{model.columns[f.column].business_name} {_op_words(f)}"
@@ -1651,7 +1675,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
                 raise ResolveError("unknown", f"no measure called {slug}", _closest(slug, _slugs(model, "measure")))
             m = found[1]
             assert isinstance(m, Measure)
-            parts.append((RefExpr(measure=m.key), [m], m.format, m.business_name))
+            parts.append((RefExpr(measure=m.key), [m], m.format, told.get(m.key, m.business_name)))
         (tree_a, of_a, fmt_a, label_a), (tree_b, of_b, fmt_b, label_b) = parts
         if _plain(d.measures[0]) == _plain(d.measures[1]):
             # A figure taken from or divided by itself is always 0 or 1 ("% increase" as (x - x) / x ranked every
@@ -1718,6 +1742,23 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             raise ResolveError("unsupported", f"{attribute.business_name} is free text: it can be searched "
                                "(contains), not grouped by")
         wanted.append((slug, _shown(model, attribute, slug, entity=found[0] == "entity", personal=ctx.personal_shown), None))
+    for slug in dict.fromkeys(plan.listed):
+        # "Every order over $200 with the customer, store and products": each order's products, listed on its row
+        # ("Dish Soap, Paper Towels"), never a row per product splitting the order and its total.
+        found = find_slug(model, slug)
+        if not found or found[0] not in ("attribute", "entity"):
+            raise ResolveError("unknown", f"nothing to list called {slug}", _closest(slug, _slugs(model, "attribute")))
+        attribute = _entity_label(model, slug) if found[0] == "entity" else found[1]
+        assert isinstance(attribute, Attribute)
+        _shown(model, attribute, slug, entity=found[0] == "entity", personal=ctx.personal_shown)
+        column = model.columns[attribute.column]
+        home = chosen[0][2] if chosen else model.columns[wanted[0][1].column].table if wanted and wanted[0][1] \
+            else column.table
+        if column.table != home and not _reaches(model, home, column.table):
+            raise ResolveError("unsupported", f"{attribute.business_name} is not on the rows listed")
+        named = found[1].business_name if found[0] == "entity" else attribute.business_name
+        chosen.append((None, AggExpr(agg="list", column=column.key, table=column.table), home,
+                       plural(named), "list"))
 
     intent = plan.intent or ("trend" if plan.time.grain else ("breakdown" if wanted else "value"))
     if not chosen:
@@ -1785,7 +1826,12 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     groups: list[Group] = []
     group_names: dict[str, str] = {}
     if plan.time.grain:
-        groups.append(Group("period", "Period", "period", plan.time.grain))
+        # A list of rows by the day they happened ("also add the order date") names the column by its date.
+        # The date named, else the one the rows are counted by.
+        dated = (next((r.name for r in model.date_roles.values() if r.slug == plan.time.date and r.name), "")
+                 or next((role.name for _, role in builders if role is not None and role.name), "")) \
+            if plan.intent == "list" and plan.time.grain == "day" else ""
+        groups.append(Group("period", dated or "Period", "period", plan.time.grain, dated=bool(dated)))
         group_names["__period__"] = "period"
         out_names.add("period")
     identity_names: dict[str, tuple[str, str]] = {}     # slug -> (output name, column key) of a member's code
@@ -2719,10 +2765,11 @@ def _fallback_measure(model: SemanticModel, table: str) -> Measure | None:
 
 
 def _rows_naming_all(model: SemanticModel, tables: set[str], allowed: set[str] | None,
-                     timed: bool) -> str | None:
+                     timed: bool, *, figures_first: bool = False) -> str | None:
     """The table of rows that reaches every one of ``tables`` (a prescription reaches its patient and its
     prescriber): rows of events first, then of what happened, then the nearest, the busiest. None when none
-    does."""
+    does. ``figures_first``: the rows the data's figures are counted on before any other (the sales lines, never
+    the support tickets, for "the customers who bought in May")."""
     found = []
     for key, table in model.tables.items():
         if table.kind == "calendar" or (allowed is not None and key not in allowed):
@@ -2738,9 +2785,11 @@ def _rows_naming_all(model: SemanticModel, tables: set[str], allowed: set[str] |
         else:
             if timed and not table.default_date and not _documents(model, key):
                 continue
-            found.append((_ROWS_FIRST.get(table.kind, 2), steps, _happened(model, table), -(table.row_count or 0),
-                          key))
-    return min(found)[4] if found else None
+            summed = sum(1 for m in model.measures.values() if m.table == key and not m.hidden
+                         and isinstance(m.expr, AggExpr) and m.expr.agg == "sum")
+            found.append((_ROWS_FIRST.get(table.kind, 2), -summed if figures_first else 0, steps,
+                          _happened(model, table), -(table.row_count or 0), key))
+    return min(found)[-1] if found else None
 
 
 def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, aliases: _Aliases, intent: str) -> Logical:
@@ -2757,8 +2806,21 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
               and not P.crossings(model, column.table, t)}
     base = column.table
     timed = plan.time.window.kind != "all"
-    if needed and not any(P.all_paths(model, t, column.table) for t in needed):
-        base = _rows_naming_all(model, listed | named, ctx.allowed_tables, timed) or base
+    # The date the question counts by, on rows that reach every table listed ("bought between 3 and 4 January":
+    # the order date, on the order lines): the list is of the members on those rows.
+    dated = next((r.table for r in model.date_roles.values() if plan.time.date and r.slug == plan.time.date
+                  and r.table != base and r.table in model.tables), None)
+    if dated is not None and not all(t == dated or _ways(model, dated, t) for t in listed | named | {base}):
+        dated = None
+    if timed and dated is not None and (ctx.allowed_tables is None or dated in ctx.allowed_tables):
+        base = dated
+    elif needed and not any(P.all_paths(model, t, column.table) for t in needed) \
+            or timed and not model.tables[base].default_date and dated is None:
+        # "The customers who bought in the last 90 days": a list of a table with no date of its own over a period
+        # is of its members on the dated rows that reach them, those the data's figures are counted on first --
+        # never every customer, the period dropped unsaid.
+        base = _rows_naming_all(model, listed | named | {base}, ctx.allowed_tables, timed,
+                                figures_first=timed and not needed) or base
     builder = _PartBuilder(model, base, aliases, ctx)
     builder._allowed(base)
     part = builder.part

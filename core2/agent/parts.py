@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core2.plan.asks import without_taken_off
 from core2.plan.ir import Plan
 
 CHART_WORDS = re.compile(r"\b(?:chart|graph|plot|bars?|lines?|pie|donut|visual|graphique|courbe|camembert)\b", re.I)
@@ -140,8 +141,13 @@ def missing(question: str, plan: Plan, payload: dict[str, Any], model: Any, *,
     known = {_plain(m.slug) for m in model.measures.values()} if model is not None else set()
     conditions = bool(_conditions(plan) or plan.segment or plan.within or plan.target or plan.include_left_out)
     figured = bool(plan.measures or worked) or not plan.shaped()
+    # What a command takes off the answer is no part to show ("drop the vs last year column").
+    asked_words, kept_words = (question or "").casefold(), without_taken_off(question or "").casefold()
     for part in plan.asked:
         ref = _plain(part.plan)
+        words = part.words.casefold().strip()
+        if words and words in asked_words and words not in kept_words:
+            continue
         if part.plan and part.kind in ("figure", "other") and not figured and AMOUNT_WORDS.search(part.words) \
                 and ref not in figures and ref not in known:
             # An amount given to an analysis that only counts ("the amount owed in each bucket" given to the ageing,

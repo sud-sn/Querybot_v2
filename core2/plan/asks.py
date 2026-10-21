@@ -98,8 +98,11 @@ _ASKS = re.compile(r"^\s*(?:which|what|where|who|whose|when|how|did|do|does|has|
                    re.IGNORECASE)
 
 
-def _without_drops(q: str) -> str:
-    """The question with each command to drop something off the answer taken out ("drop the share column")."""
+def _without_drops(q: str, *, what: bool = False) -> str:
+    """The question with each command to drop something off the answer taken out ("drop the share column");
+    ``what``: each one marked instead, so what it drops is taken out with it (``_taken_off``)."""
+    cut = _CUT if what else " "
+
     def taken(m: re.Match) -> str:
         if m.group(0).lstrip()[:1] in ",;.!?":
             # Its own clause: a command, unless a question goes on with a period ("..., then drop this year?").
@@ -108,11 +111,80 @@ def _without_drops(q: str) -> str:
                 r"\s+(?:(?:this|last|next)\s+(?:year|month|quarter|week|period|season|time)|(?:in|during)\s+(?:[\w-]+\s+){0,2}?"
                 r"(?:(?:19|20)\d{2}|q[1-4]|jan\w*|feb\w*|mar\w*|apr\w*|may|jun\w*|jul\w*|aug\w*|sep\w*|oct\w*|nov\w*|"
                 r"dec\w*))\s*\?\s*$", follows, re.IGNORECASE)
-            return m.group(0) if asked else " "
+            return m.group(0) if asked else (m.group(0)[:1] + _CUT if what else " ")
         start = max(q.rfind(c, 0, m.start() + 1) for c in ".?!;") + 1
         before = q[start:m.start()]
-        return m.group(0) if before.strip() and _ASKS.match(before) else " "
+        return m.group(0) if before.strip() and _ASKS.match(before) else cut
     return _DROP_SAID.sub(taken, q)
+
+
+# What a command takes off the answer, to the end of its clause: "drop the vs last year column", "remove the change
+# and add units" (the change only), "hide the comparison", "without the vs last year". The words of what it takes off
+# ask for nothing: "drop the vs last year column" is no comparison, "remove the run rate" no run rate. A command
+# takes off what it names on the answer ("remove the ...", "hide last year"), never rows asked for beside a
+# comparison ("remove cancelled orders vs last year", "take out orders this year vs last year": take-out orders).
+_CUT = "\x00"
+_IN_CLAUSE = r"(?:[^,;.!?\x00]|(?<=vs)\.)"            # "vs." is no end of the clause
+_CLAUSE_END = r"(?=\s+(?:and|then|et|puis)\b|[,;!?]|(?<!vs)\.|$)"
+_DROPPED_WHAT = re.compile(_CUT + _IN_CLAUSE + r"*?" + _CLAUSE_END, re.IGNORECASE)
+# "Can you remove ...", "could you please hide ...", "pouvez-vous enlever ...": the command after its courtesy.
+_POLITE = re.compile(r"^\s*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|please\s+|kindly\s+|"
+                     r"(?:pouvez|pourriez)[\s-]vous\s+|(?:peux|pourrais)[\s-]tu\s+|merci\s+de\s+)", re.IGNORECASE)
+_DETERMINER = r"(?:the|that|this|these|those|it|them|its|their|our|my|la|le|les|l['’]|cette|ce|ces)"
+# What names the comparison itself: the period compared with, or the comparison.
+_COMPARISON_NAMED = (r"(?:vs\.?|versus|comparisons?|compar\w*|last|prior|previous|yoy|y/y|year|ann[ée]e|an\b|columns?|colonnes?|"
+                     r"n-1)")
+_TAKEN_OFF = re.compile(
+    r"(?:^|(?<=[,;.!?])|\band\b|\bthen\b|\bet\b|\bpuis\b)\s*(?:(?:please|now|just|also|ok(?:ay)?|and|then|so)\s+)*"
+    r"(?:remove|hide|take\s+(?:off|out)|leave\s+out|get\s+rid\s+of|enl[eè]ve[rz]?|retire[rz]?|masque[rz]?|"
+    r"supprime[rz]?)\s+"
+    # Its object names the comparison at once ("the vs last year column", "last year"), or it is something on the
+    # answer with no comparison asked beside it in its clause.
+    r"(?:(?=(?:" + _DETERMINER + r"\s*)?" + _COMPARISON_NAMED + r"\b)|(?=" + _DETERMINER + r"\b)(?!" + _IN_CLAUSE
+    + r"*\b(?:vs\.?|versus|compared|against|par\s+rapport)\b))" + _IN_CLAUSE + r"*?" + _CLAUSE_END, re.IGNORECASE)
+_WITHOUT_COMPARED = re.compile(
+    r"\b(?:without|sans)\s+(?:the\s+|any\s+|a\s+|la\s+|le\s+|les\s+)?(?:vs\.?|versus|comparisons?|compar\w*|change|"
+    r"yoy|y/y|year[\s-]+over[\s-]+year|(?:last|prior|previous)\s+year(?:'s|’s)?|year\s+before|l['’]an\s+dernier|"
+    r"l['’]ann[ée]e\s+(?:derni[èe]re|pr[ée]c[ée]dente))\b" + _IN_CLAUSE + r"*?" + _CLAUSE_END, re.IGNORECASE)
+
+
+def _taken_off(q: str) -> tuple[str, list[str]]:
+    """(the question without what its commands take off the answer, what they take off)."""
+    gone: list[str] = []
+
+    def cut(m: re.Match) -> str:
+        gone.append(m.group(0).lstrip(_CUT))
+        return " "
+    q = _without_drops(_POLITE.sub("", q or "", count=1), what=True)
+    q = _DROPPED_WHAT.sub(cut, q)
+    q = _TAKEN_OFF.sub(cut, q)
+    return _WITHOUT_COMPARED.sub(cut, q), gone
+
+
+def without_taken_off(q: str) -> str:
+    """The question without what its commands take off the answer: their words ask for nothing."""
+    return _taken_off(q)[0]
+
+
+# The period compared with, named: what taking off the comparison names ("the vs last year column", "the year
+# before", "the comparison", "l'année précédente").
+_PERIOD_COMPARED = re.compile(r"\b(?:vs\.?|versus|against|compar\w*|yoy|y/y|year[\s-]+over[\s-]+year|"
+                              r"(?:last|prior|previous)\s+(?:year|month|quarter|week|period)|"
+                              r"(?:year|month|quarter|week|period)\s+before|l['’]an\s+dernier|"
+                              r"l['’]ann[ée]e\s+(?:derni[èe]re|pr[ée]c[ée]dente)|n-1)\b", re.IGNORECASE)
+# The change between the two periods, taken off alone: "drop the % change vs last year" keeps both years.
+_THE_CHANGE = re.compile(r"%|\b(?:change|difference|diff|growth|variance|variation|[ée]cart|[ée]volution)\b",
+                         re.IGNORECASE)
+
+
+def takes_off_comparison(question: str) -> bool:
+    """Does a command take the comparison off the answer ("drop the vs last year column", "hide last year")?
+    Never the change alone ("drop the % change column", "drop the % change vs last year" keep both years)."""
+    q = question or ""
+    kept, gone = _taken_off(q)
+    if not _PERIOD_COMPARED.search(q) or _PERIOD_COMPARED.search(kept):
+        return False
+    return not any(_THE_CHANGE.search(g) for g in gone if _PERIOD_COMPARED.search(g))
 
 
 # "Are we growing?", "Is spend going up?": yes or no about the whole, said against the period before.
@@ -169,8 +241,9 @@ def _unit_of(match: "re.Match[str] | None") -> str | None:
 
 
 def ask_of(question: str) -> Ask | None:
-    """The business ask the question's words make, or None."""
-    q = question or ""
+    """The business ask the question's words make, or None. What a command takes off the answer asks for nothing
+    ("drop the vs last year column" keeps the report, never makes it a comparison)."""
+    q = without_taken_off(question or "")
     if _RUN_RATE.search(q):
         return Ask("run_rate")
     if _OWN_DATES.search(q):

@@ -2823,7 +2823,21 @@ function _totalledColumn(cells, header) {
     .some(v => v !== '' && !isNaN(_parseDisplayNumber(v)));
 }
 
-function _mountDataTableControls(wrapEl, question) {
+// The total under a column of the table: the answer's own, over every row it read, while nothing is filtered
+// (the table holds only its first rows, and their sum is not the answer's total), said so when the rows read were
+// cut short; otherwise the rows on screen, said so whenever they are not all the rows.
+function _footerTotal(data, key, shownSum, filtered, rowsHere) {
+  var totals = (data && data.column_totals) || {};
+  var total = data && data.total_rows != null ? data.total_rows : rowsHere;
+  if (!filtered && key !== undefined && Object.prototype.hasOwnProperty.call(totals, key)) {
+    var cut = data.totals_complete === false;
+    return {sum: Number(totals[key]) || 0,
+            note: cut ? ' ' + t('ui.chat.table.sum_rows_read', {count: window.qbNum(total)}) : ''};
+  }
+  return {sum: shownSum, note: (filtered || total > rowsHere) ? ' ' + t('ui.chat.table.sum_rows_shown') : ''};
+}
+
+function _mountDataTableControls(wrapEl, question, data) {
   if (!wrapEl) return;
   const table = wrapEl.querySelector('.data-table');
   if (!table) return;
@@ -2848,10 +2862,16 @@ function _mountDataTableControls(wrapEl, question) {
   })();
 
   let sortCol = -1, sortDir = 1;
+  // Text in the filter box: the rows on screen may all match while rows past the page do not.
+  let filtering = false;
 
   function getVisibleRows() {
     return allRows.filter(r => !r.classList.contains('dt-hidden'));
   }
+
+  const answerData = data || (() => {
+    try { return wrapEl.closest('.msg-content')?._querybotPayload?.data || {}; } catch { return {}; }
+  })();
 
   function updateAgg() {
     const vis = getVisibleRows();
@@ -2859,13 +2879,15 @@ function _mountDataTableControls(wrapEl, question) {
     // Show sum for the first numeric column
     const ci = numColIndexes.findIndex(Boolean);
     if (ci < 0) { aggEl.textContent = ''; return; }
-    const sum = vis.reduce((acc, r) => {
+    const colName = headers[ci]?.textContent ?? '';
+    const fmt = dataFormats.get(_normaliseColumnKey(colName));
+    const key = (answerData.headers || [])[Number(headers[ci]?.dataset?.col ?? ci)];
+    const shownSum = vis.reduce((acc, r) => {
       const v = _parseDisplayNumber(r.cells[ci]?.textContent ?? '');
       return acc + (isNaN(v) ? 0 : v);
     }, 0);
-    const colName = headers[ci]?.textContent ?? '';
-    const fmt = dataFormats.get(_normaliseColumnKey(colName));
-    aggEl.textContent = `Σ ${colName}: ${_formatAggregateValue(sum, fmt)}`;
+    const total = _footerTotal(answerData, key, shownSum, filtering || vis.length < allRows.length, allRows.length);
+    aggEl.textContent = `Σ ${colName}: ${_formatAggregateValue(total.sum, fmt)}${total.note}`;
   }
 
   function applySort() {
@@ -2912,6 +2934,7 @@ function _mountDataTableControls(wrapEl, question) {
   if (filterEl) {
     filterEl.addEventListener('input', () => {
       const term = window.qbFold(filterEl.value);
+      filtering = term.length > 0;
       allRows.forEach(r => {
         const text = window.qbFold(Array.from(r.cells).map(c => c.textContent).join(' '));
         r.classList.toggle('dt-hidden', term.length > 0 && !text.includes(term));
@@ -3315,7 +3338,7 @@ function renderArtifactPreview(msg){
   const root = document.getElementById('artifactBody');
   root.innerHTML = `<section class="artifact-surface"><div class="artifact-tabs qb-tabs" role="tablist" aria-label="${escHtml(title)}">${tabs.join('')}</div>${panels.join('')}</section>`;
   window.qbTabs(root.querySelector('.artifact-tabs'), {onChange: _artifactTabShown});
-  root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || ''));
+  root.querySelectorAll('.data-table-wrap').forEach(wrap => _mountDataTableControls(wrap, msg.question || '', msg.data));
   if (hasChart) {
     window._chartPayloads[artifactChartId] = Object.assign({}, msg.chart);
     renderChartInto(document.getElementById(artifactChartId), msg.chart);
@@ -4339,7 +4362,7 @@ function appendAssistantResponse(msg, opts = {}){
     });
   }
   const tableEl = div.querySelector('.answer-table');
-  const _mountTable = () => tableEl?.querySelectorAll('.data-table-wrap').forEach(w => _mountDataTableControls(w, msg.question || ''));
+  const _mountTable = () => tableEl?.querySelectorAll('.data-table-wrap').forEach(w => _mountDataTableControls(w, msg.question || '', msg.data));
   _mountTable();
   div.querySelectorAll('.answer-seg [data-view]').forEach(btn => btn.addEventListener('click', () => {
     const showTable = btn.dataset.view === 'table';

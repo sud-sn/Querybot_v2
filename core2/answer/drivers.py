@@ -33,7 +33,7 @@ from decimal import Decimal
 from typing import Any
 
 from core2.answer.builder import (answer_badges, bar_chart, conditions_tail, display_value, fmt, frame, named_members,
-                                  scoped_label, spoken, span_words, versus)
+                                  no_member, scoped_label, spoken, span_words, versus)
 from core2.compile.compiler import CompileError, Compiled, compile_query
 from core2.model.schema import SemanticModel
 from core2.plan.ir import Compare, Filter, Plan, TimeSpec, Window
@@ -547,7 +547,7 @@ def answer_drivers(question: str, plan: Plan, *, model: SemanticModel, warehouse
     if reported:
         top = reported[0]
         suggestions.append(f"{m.label} by {top.word} by month{tail}")
-        leader = next((x.member for x in top.leaders if x.member != "Unknown"), None)
+        leader = next((x.member for x in top.leaders if not no_member(x.member)), None)
         if leader:
             suggestions.append(f'Monthly {m.label.lower()} for "{leader}"{tail}')
     payload = frame(question, headline=headline, short_value=short_value, comparison=comparison,

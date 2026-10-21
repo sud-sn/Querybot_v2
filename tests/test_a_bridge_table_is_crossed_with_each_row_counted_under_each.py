@@ -25,6 +25,7 @@ import json
 import duckdb
 import pytest
 
+from core2.answer.builder import no_member
 from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import from_duckdb
 from core2.plan.values import MemberIndex
@@ -110,8 +111,7 @@ def _rows(payload) -> dict:
     headers = data.get("headers") or []
     assert headers, payload["answer"]["headline"] + " / " + str(payload.get("trust", {}).get("stopped"))
     # Rows with no member (a product with no tag) are one group, as in every breakdown: not a member.
-    return {r[headers[0]]: float(r[headers[-1]]) for r in data.get("rows") or []
-            if r[headers[0]] not in (None, "Unknown")}
+    return {r[headers[0]]: float(r[headers[-1]]) for r in data.get("rows") or [] if not no_member(r[headers[0]])}
 
 
 def _notes(payload) -> str:
@@ -316,7 +316,7 @@ def test_two_bridges_in_one_question_each_need_groups_of_one_member(shop):
     headers = data.get("headers") or []
     assert headers, str((both.get("trust") or {}).get("stopped"))
     got = {(r[headers[0]], r[headers[1]]): float(r[headers[-1]]) for r in data["rows"]
-           if None not in (r[headers[0]], r[headers[1]]) and "Unknown" not in (r[headers[0]], r[headers[1]])}
+           if not no_member(r[headers[0]]) and not no_member(r[headers[1]])}
     want = {(t, s_): float(v) for t, s_, v in con.execute(
         "SELECT t.tag_name, su.supplier_name, SUM(s.sale_amount) FROM sales s "
         "JOIN product_tags pt ON pt.product_id = s.product_id JOIN tags t ON t.tag_id = pt.tag_id "

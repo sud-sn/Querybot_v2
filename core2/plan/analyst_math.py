@@ -474,10 +474,29 @@ def total_at_its_level(plan: Plan, model: SemanticModel, question: str) -> Plan:
     tables = {m.table for m in measured if m.table}
     numbers = [a for a in model.attributes.values() if a.kind == "identifier" and a.column in model.columns
                and model.columns[a.column].table in tables and word in _words(a.business_name)]
-    if len(numbers) != 1 or numbers[0].slug in plan.group_by:
+    if len(numbers) != 1:
         return plan
-    return plan.model_copy(update={"group_by": [numbers[0].slug, *plan.group_by],
+    number = numbers[0].slug
+    # A field named in the plural ("with the customer, store and products") is each document's list of them, on its
+    # row: grouped by, it split the order into a row per product, each under the amount -- whether or not the plan
+    # already groups by the order's number.
+    listed = [g for g in plan.group_by if g != number and _named_in_plural(model, g, question)]
+    if number in plan.group_by and not listed:
+        return plan
+    return plan.model_copy(update={"group_by": [number, *(g for g in plan.group_by if g not in listed and g != number)],
+                                   "listed": [*plan.listed, *(g for g in listed if g not in plan.listed)],
                                    "intent": plan.intent if plan.intent in ("list", "rank") else "list"})
+
+
+def _named_in_plural(model: SemanticModel, slug: str, question: str) -> bool:
+    """Does the question name the field ``slug`` in the plural only ("products", never "product")?"""
+    thing = model.entities.get(slug) or model.attributes.get(slug)
+    word = _words(getattr(thing, "business_name", "") or "")[-1:] if thing is not None else []
+    if not word or word[0] in ("name", "description", "code", "id"):
+        return False
+    many = names.plural(word[0])
+    return many != word[0] and bool(re.search(rf"\b{re.escape(many)}\b", question, re.IGNORECASE)) \
+        and not re.search(rf"\b{re.escape(word[0])}\b", question, re.IGNORECASE)
 
 
 def _slug_of(model: SemanticModel, slug: str) -> str | None:
@@ -714,6 +733,99 @@ def _members_named(question: str, entity) -> bool:
     return bool(re.search(rf"\b(?:how\s+many|number\s+of|which|what|list(?:\s+the)?|combien\s+(?:de|d')\s*)\s*"
                           rf"(?:(?!by\b|per\b|in\b|each\b|for\b)\w+\s+)?(?:{words})\b|^\s*(?:the\s+)?(?:\w+\s+)?"
                           rf"(?:{words})\s+(?:who|that|which|with|where)\b", question, re.IGNORECASE))
+
+
+# What came back of what went out: returned, refunded, sent back, reversed, credited.
+_CAME_BACK = re.compile(r"\b(?:came|come|comes|coming|sent|send|brought|taken)\s+back\b|\breturn\w*|\brefund\w*|"
+                        r"\brevers\w*|\bcredit(?:ed|s)?\b|\bretourn\w*|\brembours\w*|\brenvoy\w*", re.IGNORECASE)
+# The figure counted on the rows that meet the condition, not the linked figure: "% of net sales came from lines that
+# were later refunded", "what share of sales had a refund" (the sales of those lines over all sales).
+_FROM_ROWS = re.compile(r"\b(?:came|come|comes|coming)\s+from\b|\bfrom\s+(?:the\s+)?(?:\w+\s+)?(?:lines?|orders?|rows?|"
+                        r"items?|transactions?|invoices?|tickets?)\s+(?:that|which|with|where|later)\b|\b(?:had|has|have|"
+                        r"having)\s+(?:a|an|any|some)\b|\bprovenan\w*\s+d|\bissu\w*\s+d|\bayant\s+(?:eu\s+)?(?:un|une|des)\b",
+                        re.IGNORECASE)
+
+
+@_kept_safe
+def rate_of_linked_rows(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Of the units each store sold in 2025, what % came back as returns?" was planned as a rate of the units sold
+    whose condition is on the returns ("a return quantity above 0", "a return reason filled in"): rows of another
+    table that point to the sales lines, so no sales line meets the condition and the plan was refused, or read
+    as each store's share of the units. What came back over what went out is the figure of those rows over the
+    figure counted, each added up on its own rows: units returned over units sold, refunds over sales."""
+    from core2.plan.ir import Derived
+    from core2.resolve.resolver import _reaches, find_slug
+
+    if plan.kind != "query" or not plan.rates:
+        return plan
+    kept, made = [], []
+    for rate in plan.rates:
+        ratio = _linked_ratio(plan, model, rate, find_slug, _reaches, question)
+        if ratio is None:
+            kept.append(rate)
+        else:
+            made.append(Derived(name=rate.name, op="ratio", measures=list(ratio), scale=100))
+    if not made:
+        return plan
+    # The request's part planned as the rate ("rates", or its name) is this figure now, so it is not left out.
+    renamed = {"rates": made[0].name} if len(made) == 1 and not kept else {}
+    renamed |= {d.name.casefold(): d.name for d in made}
+    asked = [a.model_copy(update={"plan": renamed[a.plan.casefold()]}) if a.plan and a.plan.casefold() in renamed
+             else a for a in plan.asked]
+    return plan.model_copy(update={"rates": kept, "derived": [*plan.derived, *made], "asked": asked})
+
+
+def _linked_ratio(plan: Plan, model: SemanticModel, rate, find_slug, reaches,
+                  question: str = "") -> tuple[str, str] | None:
+    """The (figure of the linked rows, figure counted) a rate stands for, or None when it is a rate of its own rows."""
+    from core2.model.schema import AggExpr
+
+    found = find_slug(model, rate.measure)
+    if len(rate.where) != 1 or not found or found[0] != "measure":
+        return None
+    counted = found[1]
+    if not isinstance(counted.expr, AggExpr) or counted.expr.agg != "sum" or not counted.table:
+        return None             # a share of the orders that had a return is a rate of the orders: left as it is
+    cond = rate.where[0]
+    named = find_slug(model, cond.field)
+    if named is None:
+        return None
+    if named[0] == "measure":
+        if cond.op not in ("gt", "gte", "ne", "not_null") or cond.op != "not_null" and cond.values not in ([0], [0.0]):
+            return None
+        table = named[1].table
+    elif named[0] in ("attribute", "entity") and cond.op == "not_null":
+        thing = named[1]
+        column = model.columns.get(getattr(thing, "column", "") or "")
+        table = column.table if column is not None else getattr(thing, "table", "")
+    else:
+        return None
+    if not table or table == counted.table or not reaches(model, table, counted.table) \
+            or reaches(model, counted.table, table):
+        return None             # rows the counted rows read (the customer's country): a share, not this
+    def summed(m) -> bool:
+        return not m.hidden and m.table == table and isinstance(m.expr, AggExpr) and m.expr.agg == "sum"
+
+    if named[0] == "measure":
+        figure = named[1] if summed(named[1]) else None
+    else:
+        planned = [m for m in model.measures.values() if summed(m) and m.slug in plan.measures]
+        alike = [m for m in model.measures.values() if summed(m) and m.format == counted.format]
+        figure = (planned or alike)[0] if len(planned or alike) == 1 else None
+    if figure is None or figure.slug == counted.slug:
+        return None
+    # The same kind of figure, what came back over what went out: units over units, refunds over sales -- the same
+    # format and unit, whatever each is called ("Units returned" over "Units sold"). Never units over dollars ("% of
+    # net sales from lines later returned" is a rate of the sales lines), nor a discount over the revenue it was
+    # given on ("% of revenue from lines with a discount"), nor the linked figure where the question asks for the
+    # counted figure of the rows that meet the condition ("% of net sales came from lines later refunded").
+    if figure.format != counted.format or (figure.unit or counted.unit) and figure.unit != counted.unit:
+        return None
+    if _words(figure.business_name) != _words(counted.business_name) and not _CAME_BACK.search(question or ""):
+        return None
+    if _FROM_ROWS.search(question or ""):
+        return None
+    return figure.slug, counted.slug
 
 
 @_kept_safe

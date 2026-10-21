@@ -29,7 +29,7 @@ from core2.plan.followup import (asks_series, keeps_period, measures_named, name
                                  points_at_period, the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Segment, Sort, Window, schema_text
-from core2.plan.thread import derived_as_above, figures_carried, kept_from_above, member_of
+from core2.plan.thread import derived_as_above, figures_carried, kept_from_above, list_kept, member_of, shown_as
 from core2.plan.values import Masked, ValueMatch, about_people, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -3041,6 +3041,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             problems, hint = [_short(exc)], ""
             continue
         plan = _about_figures(plan, model)
+        plan = listed_sorted(plan, model)        # "listed" the AI copied from the plan above, put as it can be
+        plan = analyst_math.rate_of_linked_rows(plan, model, question)   # units returned over units sold
         plan = _share_not_rate(plan)
         if attempt == 0 and plan.kind == "clarify" and plan.clarify is not None and plan.clarify.about == "member" \
                 and matches and len({m.text.casefold() for m in matches}) == len(matches):
@@ -3149,6 +3151,9 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
         plan = fill_in(plan, model, before if history and reading is None else None,
                         '"follow_up"' in text, question)
         plan = carried(plan, before, reading)
+        plan = left_out_unasked(plan, model, question, before)    # "the sales with no customer as their own line"
+        plan = shown_as(plan, before, question)                    # "show that as a chart": the answer above, drawn
+        plan = list_kept(plan, before, model, question)            # "also add the order date": a list stays one
         if before is not None and before.kind == "query" and plan.kind == "query":
             if plan.follow_up != "new":
                 plan = derived_as_above(plan, before, model, question)  # "drop the cost column" after a margin made of a figure
@@ -3348,23 +3353,103 @@ def _restated(rate: Any, plan: Plan) -> bool:
     return all(any(same(w, f) for f in plan.filters) for w in rate.where)
 
 
+def listed_sorted(plan: Plan, model: SemanticModel) -> Plan:
+    """The fields a plan lists on each row (``listed``, set in code) as they can be: "also add the order date and
+    the quantity" after a list of orders came back with "listed": ["order_date", "quantity"], copied from the plan
+    above, and the plan was refused twice. A figure put there is one of the plan's figures, a date the day each row
+    is of, and a name the model does not have is dropped."""
+    from core2.resolve.resolver import find_slug
+
+    if plan.kind != "query" or not plan.listed:
+        return plan
+    kept, measures, date = [], list(plan.measures), None
+    for slug in plan.listed:
+        found = find_slug(model, slug)
+        if found is not None and found[0] in ("attribute", "entity"):
+            kept.append(slug)
+        elif found is not None and found[0] == "measure":
+            measures += [slug] if slug not in measures else []
+        elif found is not None and found[0] == "date":
+            date = date or slug
+    update: dict = {"listed": kept, "measures": measures}
+    if date is not None and not plan.time.grain:
+        update["time"] = plan.time.model_copy(update={"grain": "day", "date": plan.time.date or date})
+    return plan.model_copy(update=update)
+
+
+# Words asking for the rows a table leaves out by default, whatever they are: "including", "with test orders too",
+# "even the cancelled ones", "y compris", "left out", "excluded".
+# Words that ask for the rows a table leaves out, whatever they are. "Including", "too" and "excluding" are not:
+# "including the sales with no customer as their own line", "excluding the Business segment".
+_LEFT_OUT_ASKED = re.compile(r"\b(?:left\s+out|by\s+default|filtered\s+out|every\s+status|all\s+statuses|any\s+status|"
+                             r"regardless|no\s+matter|whatever\s+(?:happened|its|their|the)|quel(?:le)?s?\s+que\s+soi\w*|"
+                             r"peu\s+importe)\b", re.IGNORECASE)
+_STEM_ENDS = ("lation", "ation", "lled", "led", "ing", "ed", "es", "s")
+
+
+def left_out_unasked(plan: Plan, model: SemanticModel, question: str, previous: Plan | None) -> Plan:
+    """ "What share of 2025 net sales came from each customer segment? Put the sales with no customer on file as
+    their own line" was planned with the rows tables leave out by default put back (the cancelled lines): every
+    figure and share came out larger than the business's own. Those rows are counted when the question asks for
+    them or about them -- names one (cancelled, voided), their field (order status) or including what is left out
+    -- when a rate counts them, or when the answer above did; the sales with no customer are a line either way."""
+    if plan.kind != "query" or not plan.include_left_out or not question \
+            or previous is not None and previous.include_left_out \
+            or plan.rates and _rate_on_left_out(plan, model) or _LEFT_OUT_ASKED.search(question) \
+            or _filters_left_out(plan, model):
+        return plan
+    said = re.findall(r"[^\W\d_]+", question.casefold())
+
+    def stem(word: str) -> str:
+        for end in _STEM_ENDS:
+            if word.endswith(end) and len(word) - len(end) >= 4:
+                return word[: -len(end)]
+        return word
+
+    asked = " ".join(said)
+    for table in model.tables.values():
+        for kept_out in table.default_filters:
+            # A row left out, by its value (cancelled, voided): any form of the word.
+            for name in [*(str(v) for v in kept_out.values), *kept_out.shown]:
+                for word in re.findall(r"[^\W\d_]+", name.casefold()):
+                    root = stem(word)
+                    if len(root) >= 4 and any(w.startswith(root) for w in said):
+                        return plan
+            # Their field, by its whole name ("by order status"): never a word of it ("orders").
+            column = model.columns.get(kept_out.column)
+            for name in [column.business_name, column.name.replace("_", " ")] if column else []:
+                phrase = " ".join(re.findall(r"[^\W\d_]+", (name or "").casefold()))
+                if phrase and re.search(rf"\b{re.escape(phrase)}(?:es)?\b", asked):
+                    return plan
+    return plan.model_copy(update={"include_left_out": False})
+
+
+def _filters_left_out(plan: Plan, model: SemanticModel) -> bool:
+    """Does the plan keep to rows by a column a table leaves rows out by, or by the name of its code in a table of
+    them ("chiffre d'affaires des commandes annulées", "net sales on voided orders": a filter on the status)? Then
+    it asks for those rows, in any words."""
+    return any(_names_left_out(model, f.field) for f in plan.filters)
+
+
 def _rate_on_left_out(plan: Plan, model: SemanticModel) -> bool:
     """Does a rate's condition name a column whose rows a table leaves out by default, or a column of the lookup
     that column names ("Closed - Cancelled", the name of status 4)?"""
+    return any(_names_left_out(model, f.field) for rate in plan.rates for f in rate.where)
+
+
+def _names_left_out(model: SemanticModel, field: str) -> bool:
+    """Is ``field`` a column whose rows a table leaves out by default, or a column of the table that column's codes
+    name (the name of status 4, "Cancelled")?"""
     from core2.resolve.resolver import find_slug
 
     left_out = {df.column for t in model.tables.values() for df in t.default_filters}
     lookups = {j.to_table for j in model.joins.values() if left_out & set(j.from_columns) and j.to_table != j.from_table}
-    for rate in plan.rates:
-        for f in rate.where:
-            found = find_slug(model, f.field)
-            thing = found[1] if found is not None else None
-            # A field, or a list named by itself ("booking_status"): its name, code and key columns.
-            columns = {getattr(thing, "column", None), getattr(thing, "label_column", None),
-                       getattr(thing, "code_column", None), *(getattr(thing, "key_columns", None) or [])} - {None}
-            if any(c in left_out or c in model.columns and model.columns[c].table in lookups for c in columns):
-                return True
-    return False
+    found = find_slug(model, field)
+    thing = found[1] if found is not None else None
+    # A field, or a list named by itself ("booking_status"): its name, code and key columns.
+    columns = {getattr(thing, "column", None), getattr(thing, "label_column", None),
+               getattr(thing, "code_column", None), *(getattr(thing, "key_columns", None) or [])} - {None}
+    return any(c in left_out or c in model.columns and model.columns[c].table in lookups for c in columns)
 
 
 _SPANS = {"month": 1, "quarter": 3, "half": 6, "year": 12}
@@ -3870,9 +3955,11 @@ def those_members(plan: Plan, model: SemanticModel, question: str, previous: Pla
     """The members of the ranking on screen, by name, when a follow-up asks about them in another period or as a
     series: "How did those items do in Q1 2026?" after the top 5 items of Q2 was ranked again in Q1, five other
     items. In the same period and shape, its order and its limit find them again, and are kept as they are. Once
-    named, they stay named for the next "their" ("show their monthly quantity")."""
+    named, they stay named for the next "their" ("show their monthly quantity"). "Drop the vs last year column"
+    after the 2 customers who grew most: the change that ranked them is taken off with the comparison, so they are
+    kept by name, not ranked again by the figure left."""
     if plan.kind != "query" or previous is None or previous.kind != "query" or not on_screen \
-            or not _THOSE.search(question or ""):
+            or not (_THOSE.search(question or "") or _ranked_by_a_change_taken_off(plan, previous, question)):
         return plan
     field = str(on_screen[0][0])
     attribute = model.attributes.get(field)
@@ -3896,6 +3983,12 @@ def those_members(plan: Plan, model: SemanticModel, question: str, previous: Pla
         return plan
     return plan.model_copy(update={"filters": [*plan.filters, Filter(field=field, op="in", values=members)],
                                    "group_by": group_by, "limit": None})
+
+
+def _ranked_by_a_change_taken_off(plan: Plan, previous: Plan, question: str) -> bool:
+    """Were the members on screen the first few by a change the question takes off with the comparison?"""
+    return bool(previous.limit) and previous.time.compare is not None and plan.time.compare is None \
+        and any(s.by in ("change", "pct_change") for s in previous.sort) and asks.takes_off_comparison(question)
 
 
 def one_member_series(plan: Plan, model: SemanticModel) -> Plan:
