@@ -29,7 +29,7 @@ from core2.plan.followup import (asks_series, keeps_period, measures_named, name
                                  points_at_period, the_period)
 from core2.plan.analyses import basket, due_and_done, funnel_dates, leading, ranked_entity, start_and_end, target_pair
 from core2.plan.ir import Clarify, Compare, Derived, Filter, PerMember, Plan, Segment, Sort, Window, schema_text
-from core2.plan.thread import figures_carried, kept_from_above, member_of
+from core2.plan.thread import derived_as_above, figures_carried, kept_from_above, member_of
 from core2.plan.values import Masked, ValueMatch, about_people, mask, placeholder, unmask
 from core2.resolve import paths as P
 from core2.resolve.resolver import Context, ResolveError, resolve
@@ -3150,6 +3150,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                         '"follow_up"' in text, question)
         plan = carried(plan, before, reading)
         if before is not None and before.kind == "query" and plan.kind == "query":
+            if plan.follow_up != "new":
+                plan = derived_as_above(plan, before, model, question)  # "drop the cost column" after a margin made of a figure
             plan = figures_carried(plan, before)       # "and by formula" after a figure worked out above
         plan = late_asked(plan, question)
         plan = pointed_in(plan, model, matches, question, on_screen)
@@ -3169,7 +3171,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                      analyst_math.kept_by_change, analyst_math.share_of_change, analyst_math.total_at_its_level,
                      analyst_math.members_over_a_total, analyst_math.how_many_is_a_count,
                      analyst_math.absent_of_the_counted, analyst_math.ratio_with_its_parts,
-                     analyst_math.share_from_a_member, analyst_math.per_hundred):
+                     analyst_math.share_from_a_member, analyst_math.per_hundred, analyst_math.share_of_the_whole, analyst_math.share_of_those_with,
+                     analyst_math.bought_but_never, analyst_math.valued_at_unit_cost):
             # 2024 as a date filter, "where do we have", "$1,000 each", "patients with more than 10 fills", "which
             # techs had fewer than 3", "did we fill", "how many managers", "movement documents", Q1 vs Q2, "average
             # subtotal", "by ship method" (no ship date), "bought in Q2" (not by the customer's own first invoice

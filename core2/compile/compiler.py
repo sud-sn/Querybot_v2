@@ -765,7 +765,7 @@ class _Compiler:
                                          .as_(self.name(f"{m.name}_share_of_change")))
                     columns.append(OutColumn(f"{m.name}_share_of_change", m.label, "share_of_change", "percent", key))
         if q.share and q.measures:
-            m = q.measures[0]
+            m = next((x for x in q.measures if x.name == q.share_figure), q.measures[0])
             # Of everything shown, or of each member of a grouping ("% of each region's sales by category").
             total = exp.Window(this=exp.Sum(this=self.out("q", m.name)),
                                partition_by=[self.out("q", n) for n in q.share_within] or None)

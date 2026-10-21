@@ -251,17 +251,24 @@ def explain(payload: dict[str, Any], logical: Logical, columns: list[str], rows:
         things = plural(absence.member)
         activity = _noun(absence.activity_label)
         when = span_words(absence.window) if (absence.window.start or absence.window.end) else "ever"
-        had = f" with {activity} {span_words(absence.had_in)}" if absence.had_in is not None else ""
+        # "with order lines of Dish Soap in 2025 had none of Laundry Pods at any time": what they had, and had none
+        # of, by the members named.
+        had_what = f" of {absence.had_what}" if absence.had_what else ""
+        none_of = f" of {absence.none_of}" if absence.none_of else ""
+        had = f" with {activity}{had_what}" + (f" {span_words(absence.had_in)}" if absence.had_in is not None else "")
+        had = had if absence.had_in is not None or had_what else ""
+        when = "at any time" if when == "ever" and none_of else when
         lead = str(answer.get("headline") or "")
         if not rows:
-            answer["headline"] = (f"Every {absence.member}{had} had {activity} {when} too." if had else
-                                  f"Every {absence.member} had {activity} {when}.")
+            answer["headline"] = (f"Every {absence.member}{had} had {activity}{none_of} {when} too." if had else
+                                  f"Every {absence.member} had {activity}{none_of} {when}.")
         elif absence.listed:
             n = len(rows)
             answer["headline"] = (f"{n:,} {things if n != 1 else absence.member}{had} had "
-                                  f"{'none' if had else f'no {activity}'} {when}." + (f" {lead}" if lead else ""))
+                                  f"{'none' if had else f'no {activity}'}{none_of} {when}." +
+                                  (f" {lead}" if lead else ""))
         else:
-            answer["headline"] = (f"Counting only {things}{had} with no {activity} {when}." +
+            answer["headline"] = (f"Counting only {things}{had} with no {activity}{none_of} {when}." +
                                   (f" {lead}" if lead else ""))
         definition = definition or next((n for n in logical.notes if n.startswith("Listed:")), "")
     if isinstance(logical.target, TargetInfo):

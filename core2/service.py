@@ -407,11 +407,53 @@ _REFUSALS = {
 # A request to change the data, not to read it: "delete the cancelled movements of 2024", "close out all the open
 # bookings", "supprime les fiches des employés partis". Solviz reads data; it never deletes, changes or adds
 # rows, and says so before any planning (a French one was answered with a count). The rows it names can be shown.
+# Money words: what can be put on a record or taken off one ("the late fee", "a $50 credit", "les frais de port").
+_MONEY = (r"(?:fees?|charges?|surcharges?|discounts?|credits?|debits?|refunds?|payments?|penalt(?:y|ies)|interest|"
+          r"tax(?:es)?|bonus(?:es)?|commissions?|adjustments?|rebates?|shipping|postage|freight|coupons?|vouchers?|"
+          r"promo(?:tion)?s?|remises?|frais|cr[ée]dits?|p[ée]nalit[ée]s?|remboursements?|r[ée]ductions?)")
+_HOLD = r"(?:holds?|blocks?|freezes?|locks?|suspensions?|restrictions?)"
+# "... and show the new revenue", "what would margin be": a what-if, a question about the data as it would be ("... and
+# show me the balance" or "I would like it done today" is not).
+_WHAT_IF = (r"(?![^.?!]*\b(?:what\s+if|what\s+would|what(?:'s|\s+is|\s+are)\s+the\s+new|how\s+(?:much|many)\s+would|"
+            r"how\s+(?:would|does|do|will)\s+[\w-]+|would\s+(?:[\w-]+\s+){0,3}be|(?:revenue|margin|sales|profit)\s+impact|"
+            r"affect|and\s+(?:show|tell)\s+(?:me\s+)?(?:the\s+)?(?:new|resulting|impact|effect|revenue|margin)))")
+_AMOUNT = r"(?:[$€£]\s?\d[\d,.]*|\d[\d,.]*\s*(?:%|percent|€|\$|dollars?|euros?)(?!\w))"
+# Where money goes when it is put on something: a record, never the answer ("put the discount on the chart", "apply the
+# promo filter to the results").
+_ONTO = (r"\s+(?:to|onto|on|for|à|au|aux|sur)\s+(?!(?:the\s+|la\s+|le\s+|les\s+)?(?:chart|graph|graphique|axis|[xy][\s-]axis|"
+         r"results?|table|tableau|answer|view|report|résultats?|lines?|rows?|columns?|colonnes?)\b)")
+# Words that make a money word a field on the answer: "a payment date", "a discount amount", "a coupon code".
+_FIELD_WORDS = (r"(?:rates?|ratios?|%|percent(?:age)?s?|shares?|counts?|totals?|columns?|colonnes?|figures?|numbers?|"
+                r"breakdowns?|trends?|splits?|limits?|dates?|amounts?|codes?|flags?|methods?|status|types?|reasons?|"
+                r"values?|levels?|by|per)")
 _CHANGE = re.compile(
     r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:"
     # Verbs that only ever change data: whatever follows.
     r"(?:delete|erase|purge|wipe|supprime[rz]?|efface[rz]?)\b\s+"
     r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)*"
+    # Money put on: "add a $50 credit to customer 1042", "add a late fee to every order", "apply the discount to every
+    # order" ("add a refund rate", "add a payment date", "put the discount on the chart" are the answer's).
+    r"|(?P<money>(?:add|apply|post|put|place|charge|ajoute[rz]?|applique[rz]?)\s+(?:a|an|un|une)\s+(?:"
+    + _AMOUNT + r"\s+(?:[\w-]+\s+){0,2}?" + _MONEY + r"\b(?!(?:\s+[\w-]+){0,2}?\s+" + _FIELD_WORDS + r"\b)|"
+    r"(?:(?!colonnes?\b|columns?\b)[\w-]+\s+){0,2}?" + _MONEY
+    + r"\b(?!(?:\s+[\w-]+){0,2}?\s+" + _FIELD_WORDS + r"\b)(?:\s+(?:of|de)\s+" + _AMOUNT + r"|(?:\s+[\w-]+){0,4}?"
+    + _ONTO + r"))" + _WHAT_IF
+    + r"|(?:apply|post|put|place|charge|applique[rz]?)\s+(?:the|these|those|la|le|les|l')\s*(?:[\w-]+\s+){0,2}?"
+    + _MONEY + r"(?:\s+[\w-]+)?" + _ONTO + _WHAT_IF + r")"
+    # A hold put on or lifted: "lift the hold on account 7", "put a hold on customer 1042" ("apply a restriction to only
+    # 2025 orders" is a filter).
+    r"|(?P<held>(?:lift|release|clear|put|place|apply)\s+(?:the\s+|a\s+|an\s+|any\s+|these\s+|all\s+)?" + _HOLD
+    + r"\s+(?:on|from|off|for|to)\s+(?!(?:(?:only|just)\s+)?(?:(?:19|20)\d{2}|this|last|recent)\b|the\s+(?:chart|graph|"
+    r"results?|table|answer|view|report)\b)|"
+    r"(?:lift|release|clear)\s+(?:the\s+|any\s+|these\s+|all\s+)?" + _HOLD + r"\s*[?.!]?\s*$)"
+    # Verbs that are also figures ("credit sales in 2025", "refund rate by store", "write off amounts by region"): a command
+    # only before the records they would change ("refund all orders placed by customer 1042", "charge every customer $5
+    # per month", "write off these invoices") or a record by its number ("credit customer 1042 with $50", "write off
+    # $500 for customer 1042"); never a year ("refund orders 2025 by month"). Nothing is ever written, so a command
+    # read as a question is only answered as one; a question read as a command would not be answered at all.
+    r"|(?P<owed>(?:credit|debit|charge|bill|refund|reimburse|write\s+off|waive)\s+(?:(?:the|these|those|all|every|each|"
+    r"our|my)\s+(?!(?:year|month|week|quarter|period|time|day)s?\b)|(?:" + _AMOUNT + r"\s+(?:for|to|on|from)\s+)?"
+    r"(?:customer|client|account|invoice|order|card)s?\s*(?:#|no\.?|number)?\s*(?:[A-Z]+-\d|(?!(?:19|20)\d{2}\b)\d)))"
     # Verbs that also read ("change in sales", "close rate", "add up"): only before what they would change.
     r"|(?:remove|drop|update|change|modify|edit|insert|add|create|close\s+out|close|cancel|void|archive|approve|"
     r"reject|mark|set|assign|merge|rename|reset|increase|raise|decrease|reduce|lower|cut|"
@@ -431,6 +473,45 @@ _EDIT_VERB = re.compile(r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:drop|re
                         r"enlève|enleve|retire|ajoute|masque)\b", re.IGNORECASE)
 _NEW_VALUE = re.compile(r"\b(?:to|by|as|at|à|de)\s+[$€£]?\s?\d|\b(?:to|as)\s+(?:paid|closed|open|cancelled|canceled|done|"
                         r"complete|completed|active|inactive|zero|null|blank|empty)\b", re.IGNORECASE)
+# With an answer on screen, "add the units sold", "add the sales rep who took the order", "remove the practice" put a
+# field or figure on the answer or take one off; only a new record, or every record at once, is data.
+_NEW_RECORD = re.compile(r"\b(?:new|records?|entr(?:y|ies)|nouveau|nouvelle|nouveaux|fiches?)\b|"
+                         r"^\s*(?:(?:please|can you|could you|pls)\s+)?\w+(?:\s+out)?\s+(?:(?:all|every|tous|toutes)\b|"
+                         r"(?:the\s+|les\s+)?\d)|"     # every record at once; an amount put on ("add the 5 units")
+                         r"\b(?:to|into|from|in)\s+(?:the\s+)?(?:database|system|crm|ledger|base|stock|inventory|"
+                         r"balance|account)\b", re.IGNORECASE)
+# Money put on records or taken off them is data too, however little it names: "add the shipping fee to every order",
+# "add the late fee to all customer accounts", "ajoute les frais de port à chaque commande"; so is anything put on or
+# taken off a numbered record ("add the coupon to order SO-1001", "remove the credit from customer 1042"), a hold put
+# on or lifted ("remove the freeze for these accounts"), or records put on or taken off the books. A field put beside
+# the answer is not ("add the category to each order line", "add the cost to each order", "add the credit to each
+# customer", "remove the flag column", "add the author to the books"). Only the verbs that can edit the answer reach
+# this: "add", "remove", "ajoute", "retire".
+_RECORD = r"(?:orders?|invoices?|accounts?|records?|bills?|transactions?|claims?)"
+_NUMBERED = (r"(?:(?:order|invoice|account|record|bill|transaction|claim|customer|client|card)\s*(?:#|no\.?|number)?|"
+             r"(?:orders|invoices|accounts|records|bills|transactions|claims|customers|clients|cards)\s*(?:#|no\.?|"
+             r"numbers?))\s*[A-Z]*-?\d|(?:orders|invoices|accounts|records|bills|transactions|claims|customers|clients|"
+             r"cards)\s+[A-Z]*-?\d[\w-]*(?:\s*(?:,|and|&)\s*[A-Z]*-?\d[\w-]*)+")
+_ON_RECORDS = re.compile(
+    r"^\s*(?:(?:please|can you|could you|pls)\s+)?add\s+(?:the\s+|a\s+|an\s+|these\s+|those\s+)?(?:[\w$€£%.,-]+\s+){0,2}?"
+    + _MONEY + r"(?:\s+(?:costs?|fees?|charges?))?\s+(?:to|onto|on)\s+(?:(?:the|every|each|all|these|"
+    r"those|this|that|our)\s+)?(?:[\w-]+(?:'s|’s|s'|’)?\s+){0,2}?" + _RECORD
+    + r"\b(?!\s+(?:lines?|items?|table|list|report|view|chart|columns?|values?|amounts?|totals?|counts?|sizes?|levels?|"
+    r"dates?)\b)|"
+    r"\b(?:on|from|off|to|onto|into)\s+(?:(?:the|these|those|this|that)\s+)?" + _NUMBERED + r"|"
+    r"\b(?:à|au|aux|sur|de|du)\s+(?:la\s+|le\s+|l')?(?:commande|facture|compte|client)\s*(?:n°|no\.?|numéro|#)?\s*"
+    r"[A-Z]*-?\d|"
+    r"^\s*(?:ajout|retir|enl[eè]v)\w*\s+(?:la\s+|le\s+|les\s+|l'|une?\s+|des\s+)?(?:[\w-]+\s+){0,2}?" + _MONEY
+    + r"(?:\s+(?:de|du|des|d')\s*[\w-]+)?\s+(?:à|au|aux|sur)\s+|"
+    r"^\s*(?:(?:please|can you|could you|pls)\s+)?add\s+(?:the\s+|a\s+|an\s+)?(?:[\w-]+\s+)?(?:" + _HOLD
+    + r"|tags?|notes?)\s+(?:to|onto|on)\s+(?:(?:the|every|each|all|these|those|this|that|our)\s+)?(?:[\w-]+(?:'s|’s)\s+)?"
+    + r"(?:" + _RECORD + r"|customers?|clients?|cards?)\b(?!\s+(?:lines?|items?|table|list|report|view|chart|columns?)\b)|"
+    r"^\s*(?:(?:please|can you|could you|pls)\s+)?(?:remove|take\s+off)\s+(?:the\s+|a\s+|any\s+|these\s+|all\s+)?"
+    r"(?:" + _HOLD + r"|flags?)\s+(?:on|from|off|for)\b|"
+    r"^\s*(?:(?:please|can you|could you|pls)\s+)?remove\s+(?:the\s+|any\s+|these\s+|all\s+)?" + _HOLD + r"\s*[?.!]?\s*$|"
+    r"\b(?:" + _RECORD + r"|" + _MONEY + r"|entr(?:y|ies)|rows?|them|it|these|those)\b[^,.;]{0,40}?\b(?:to|into|onto|from|"
+    r"off)\s+the\s+"
+    r"(?:books|ledger)\b(?!\s+(?:category|genre|section|department|segment|table|columns?)\b)", re.IGNORECASE)
 _ANSWER_EDIT = re.compile(
     r"\b(?:instead|column|columns|colonne|colonnes|from\s+the\s+(?:table|answer|list|chart|report|view)|"
     r"as\s+(?:a\s+)?(?:%|percent|share)|"
@@ -439,16 +520,38 @@ _ANSWER_EDIT = re.compile(
     r"cost|costs|margin|change|ratio|rate|number|numbers|chart|table|labels?|decimals?))\b", re.IGNORECASE)
 
 
-def changes_data(question: str) -> str | None:
-    """The rows a request to change the data names, as a question that shows them; None for a question."""
+def changes_data(question: str, *, on_screen: bool = False) -> str | None:
+    """The rows a request to change the data names, as a question that shows them; None for a question.
+    ``on_screen``: an answer is on screen, which "add the units sold" or "drop the practice" changes."""
     found = _CHANGE.match(question or "")
     if not found:
         return None
-    if not _DESTROYS.match(question) and _EDIT_VERB.match(question) and not _NEW_VALUE.search(question) \
-            and _ANSWER_EDIT.search(question):
+    put_on = bool(found.group("money") or found.group("owed") or found.group("held"))
+    if not put_on and not _DESTROYS.match(question) and _EDIT_VERB.match(question) and not _NEW_VALUE.search(question) \
+            and not _ON_RECORDS.search(question) \
+            and (_ANSWER_EDIT.search(question) or on_screen and not _NEW_RECORD.search(question)):
         return None          # "drop the count and show ... instead": the answer changes, the data never
     rest = question[found.end():].strip().rstrip("?.!").removesuffix("for me").removesuffix("s'il te plaît")
+    named = re.search(r"\b(?:customer|client|account|invoice|order|card)s?\s*(?:#|no\.?|number)?\s*[A-Z]*-?\d[\w-]*"
+                      r"(?:\s*(?:,|and|&)\s*[A-Z]*-?\d[\w-]*)*", question, re.IGNORECASE)
+    if found.group("owed") and named:
+        rest = named.group(0)                            # "credit customer 1042 with $50": that customer
+    elif found.group("owed"):
+        rest = re.sub(r"^(?:(?:the|these|those|all|every|our|my)\s+)+", "", rest)   # "write off the overdue invoices"
+    elif found.group("money") or found.group("held"):
+        # "add a $50 credit to customer 1042", "lift the hold on these accounts": the records it would go on or come
+        # off, when the request names them
+        on = re.findall(r"\b(?:to|onto|on|from|off|for|à|au|aux|sur)\s+(?:(the|these|those|this|that|la|le|les|l')\s+|"
+                        r"(every|each|all|chaque|toutes\s+les|tous\s+les)\s+)?([^,;?.!]+)", question, re.IGNORECASE)
+        _, every, rest = on[-1] if on else ("", "", "")
+        rest = rest.strip()
+        if every and every.lower() in ("every", "each", "chaque"):
+            # "to every order in 2025": the orders in 2025
+            head = re.split(r"\s+(?=(?:in|from|for|of|with|on|at|by|during|since|en|de|du|des)\b)", rest, maxsplit=1)[0]
+            rest = (head if head.endswith(("s", "x")) else head + "s") + rest[len(head):]
     rest = rest.removesuffix("please").strip(" ,")
+    if re.match(r"(?:to|into|onto|from|off|on|for)\b", rest, re.IGNORECASE):
+        rest = ""                                        # "add these to the books": nothing named to show
     if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:update|change|modify|edit|mark|set|assign|rename|"
                 r"modifie|mets|mettez|renomme)", question, re.IGNORECASE):
         rest = re.sub(r"\s+(?:to|as|en|à|comme)\s+[\w'-]+$", "", rest)      # "... to closed": the new value goes
@@ -456,9 +559,13 @@ def changes_data(question: str) -> str | None:
                 r"rédui|diminu)", question, re.IGNORECASE):
         # "... by 10%", "... to $50,000": the change goes, the figure it would change stays
         rest = re.sub(r"\s+(?:by|to|of|de|à)\s+[$€]?\s*[\d][\d.,\s]*\s*(?:%|percent|points?|pts|\$|€)?$", "", rest)
-    french = bool(re.match(r"\s*(?:supprim|effac|retir|modifi|mets|mettez|ajout|cré|annul|clôtur|ferm|archiv|"
+    french = bool(re.match(r"\s*(?:supprim|effac|retir|modifi|mets|mettez|ajout|appliqu|cré|annul|clôtur|ferm|archiv|"
                            r"valid|renomm|augment|baiss|rédui|diminu)", question, re.IGNORECASE))
     lead = (_SHOW["fr"] + "les ") if french else (_SHOW["en"] + "the ")
+    if french and put_on:
+        one = re.match(r"(commande|facture|client|compte)\b", rest, re.IGNORECASE)
+        if one:                                          # "au client 1042": le client 1042
+            lead = _SHOW["fr"] + ("la " if one.group(1).lower() in ("commande", "facture") else "le ")
     return f"{lead}{rest}" if rest else ""
 
 
@@ -510,7 +617,8 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     small = small_talk(question) if planned is None else None
     if small is not None:
         return _frame(question, small, kind="smalltalk")     # "thanks!", "bonjour": answered with no AI
-    shown = changes_data(question)
+    last = session.turns[-1].plan if session.turns else None
+    shown = changes_data(question, on_screen=last is not None and last.kind == "query")
     if shown is not None:
         french = shown.startswith(_SHOW["fr"])
         text = ("Je lis les données sans jamais les modifier : je ne peux ni supprimer, ni changer, ni ajouter de "

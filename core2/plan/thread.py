@@ -118,6 +118,9 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
                 filters.append(f)
     if filters != list(plan.filters):
         update["filters"] = filters
+    order = _order_kept(plan, previous, question)
+    if order is not None and answers(plan.model_copy(update=order)):
+        update.update(order)
     if previous.segment is not None and plan.segment is None and not _OVERALL.search(question) \
             and not _LET_GO.search(question) and answers(plan.model_copy(update={"segment": previous.segment})):
         update["segment"] = previous.segment       # "and by month" after returning customers' sales: still theirs
@@ -155,6 +158,45 @@ def kept_from_above(plan: Plan, model: SemanticModel, question: str, previous: P
     if time != plan.time:
         update["time"] = time
     return plan.model_copy(update=update) if update else plan
+
+
+# A count written out ("top five by margin").
+_COUNT = r"(?:two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|cinq|dix|vingt)"
+# The reader orders the rows anew: "sorted by units", "highest first", "rank them by margin", "trié par".
+# An order of the follow-up's own: said ("sorted", "highest first"), or rows ranked anew ("top 5 by orders", "the
+# bottom 5", "by units sold instead"); "show units sold instead of the share" or "for the same top 5" keep the order.
+_ORDER_SAID = re.compile(r"\b(?:sort(?:ed)?|order(?:ed)?|rank(?:ed)?|highest|lowest|biggest|smallest|largest|most|"
+                         r"least|fewest|ascending|descending|tri[ée]e?s?|class(?:é|ée|és|ées)|classe[rz]|ordre|croissant|"
+                         r"d[ée]croissant)\b|\b(?:top|bottom|best|worst)\s+(?:[\w-]+\s+){0,2}?by\b|"
+                         r"\b(?:top|bottom|first|last|best|worst)\s+(?:\d+|" + _COUNT + r")\s+(?!(?:days?|weeks?|months?|"
+                         r"quarters?|years?)\b)(?:[\w-]+\s+){0,2}?by\b|"
+                         r"\b(?:\d+|" + _COUNT + r")\s+(?:best|worst|top|bottom|biggest|smallest)\s+(?:[\w-]+\s+){0,2}?by\b|"
+                         r"\bbottom\s+(?:\d+|" + _COUNT + r")\b|"
+                         # "by units sold rather than margin", "now by margin instead": a ranking said anew where its clause
+                         # opens ("show the margin by product rather than the share" swaps a figure, the rows kept).
+                         r"(?:^|[,;:]\s*|\b(?:now|just|then|and|but|so|rank(?:ed)?|sort(?:ed)?|order(?:ed)?|about|them|it|these|"
+                         r"those)\s+)by\s+(?:the\s+)?"
+                         r"(?:[\w-]+\s+){0,3}?[\w-]+,?\s+(?:instead|rather\s+than)\b|"
+                         r"\b(?:premiers|derniers|meilleurs|pires)\s+(?:[\w-]+\s+){0,2}?par\b|"
+                         r"(?:^|[,;:]\s*|\b(?:maintenant|puis|et|class[ée]s?|tri[ée]s?|les|classe(?:-les)?|trie(?:-les)?)\s+)par\s+"
+                         r"(?:[\w-]+\s+){0,3}?[\w-]+,?\s+"
+                         r"(?:plut[oô]t|au\s+lieu)\b", re.IGNORECASE)
+
+
+def _order_kept(plan: Plan, previous: Plan, question: str) -> dict | None:
+    """The order of the rows above, for a follow-up on the same rows that says no order of its own ("drop the
+    share column and add units sold" after the top 5 products by gross margin: the same 5, ranked as they were),
+    when the figure they were ranked by is still on the answer; None otherwise."""
+    if plan.sort or not previous.sort or plan.group_by != previous.group_by or not plan.group_by \
+            or plan.time.grain or _ORDER_SAID.search(question):
+        return None                # "top 5 by orders instead", "by month": an order of its own
+    shown = {*plan.measures, *(d.name for d in plan.derived), *(f.name for f in plan.figures), *plan.group_by,
+             "period"}
+    if plan.time.compare is not None:
+        shown |= {"change", "pct_change"}
+    if any(s.by not in shown for s in previous.sort):
+        return None
+    return {"sort": list(previous.sort)}
 
 
 _POINTER = r"(?:the|that|this|our|le|la|ce|cette|cet)"
@@ -209,6 +251,89 @@ def figures_carried(plan: Plan, previous: Plan) -> Plan:
                                    *(m for d in plan.derived for m in d.measures), *(r.measure for r in plan.rates)]}
     carried = [f for f in previous.figures if ids.slug(f.name) not in have and ids.slug(f.name) in named]
     return plan.model_copy(update={"figures": [*plan.figures, *carried]}) if carried else plan
+
+
+def derived_as_above(plan: Plan, previous: Plan, model: SemanticModel, question: str = "") -> Plan:
+    """A figure worked out above and named again keeps what it was made of: "drop the cost column and add the units
+    sold" after a margin made of the cost at standard cost (a figure worked out for that question) was planned with
+    the margin made of the cost the AI first named. Each part of a derived figure of the same name that was a
+    figure above, and that the AI writes again as what the figure was worked out from (the column its formula
+    multiplies, or by the figure's own words: "standard cost", "list_price"), is that figure again; a part the
+    reader makes it of ("on the gross amount instead", "use the standard cost amount booked on each line") stays
+    theirs."""
+    from core2 import ids
+    from core2.model import authoring
+    from core2.model.schema import AggExpr
+    from core2.resolve.resolver import find_slug
+
+    def plain(text: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", (text or "").lower().replace("_", " ")))
+
+    asked, said = plain(question), (question or "").lower().replace("_", " ")
+
+    def chosen(name: str) -> bool:
+        """Does the reader make a figure of this part ("switch the margin to the standard cost amount", "use the standard
+        cost amount column for the margin", "work it out on the gross amount instead")? Naming it to show it, look at
+        it or sort by it is no choice ("same for 2024 with the standard cost amount shown too", "switch to a bar chart
+        with the standard cost amount shown too", "sort on the standard cost amount")."""
+        phrase = r"\s+".join(re.escape(w) for w in re.findall(r"[a-z0-9]+", name.lower().replace("_", " ")))
+        for h in (re.finditer(rf"\b{phrase}\b", said) if phrase else ()):
+            clause = re.split(r"[,.;:?!]|\b(?:and|then)\b", said[:h.start()])[-1]
+            if re.match(r"\s*(?:shown|showing|too|as\s+well|beside|alongside|next\s+to)\b", said[h.end():]) \
+                    or re.search(r"\b(?:show|showing|display|add|include|plus|also|look\s+at|focus\s+on|report\s+on|"
+                                 r"(?:sort|order|rank)(?:ed)?\s+(?:it\s+|them\s+)?(?:by|on))\s+(?:the\s+|its\s+|their\s+)?$",
+                                 clause):
+                continue
+            # A choosing verb that governs the part, not the chart or the period ("change the year to 2024 with ...").
+            verb = list(re.finditer(r"\b(?:use|using|switch|replace|swap|change|compute|computed|calculate|calculated|"
+                                    r"work(?:ed)?\s+(?:[\w-]+\s+){0,2}?out|based\s+on|made\s+(?:of|from)|minus|less|"
+                                    r"subtract|take|via|instead|should\s+be|make|out\s+of)\b", clause))
+            between = clause[verb[-1].end():] if verb else ""
+            if verb and not re.search(r"\b(?:chart|graph|table|view|year|month|quarter|week|it|this|that|(?:19|20)\d{2})\b",
+                                      between):
+                return True
+            if re.search(r"\b(?:on|from|against|via)\s+(?:the\s+|its\s+|each\s+|their\s+)?$", clause):
+                return True
+        return False
+
+    # Words the reader names only to take them off ("drop the list price column"): never a choice of part.
+    dropped = set().union(*(plain(m.group(1)) for m in re.finditer(
+        r"\b(?:drop|remove|without|hide|lose|take\s+(?:off|out)|leave\s+out|instead\s+of)\s+([^,.;]{1,40}?)"
+        r"(?=\s+(?:column|and|then)\b|[,.;]|$)",
+        (question or "").lower())))
+    figures = {ids.slug(f.name): f for f in previous.figures}
+
+    def made_of(slug: str, figure) -> bool:
+        """Is this part of the plan what the figure above was worked out from, and not the reader's own choice?"""
+        found = find_slug(model, slug)
+        column, names = None, plain(slug)
+        if found is not None and found[0] in ("measure", "attribute"):
+            what = found[1]
+            column = (what.expr.column if isinstance(what.expr, AggExpr) else None) if found[0] == "measure" \
+                else what.column
+            names |= plain(what.business_name) | plain(model.columns[column].name if column in model.columns else "")
+            own = plain(what.business_name)
+            if own and own <= asked and not own <= dropped and chosen(what.business_name):
+                return False           # the reader makes it of this: "use the standard cost amount booked on each line"
+        if column and column in model.columns and f"[{authoring.field_ref(model, column)}]" in figure.formula:
+            return True
+        at = figure.name.lower().split(" at ", 1)
+        words = plain(at[1]) if len(at) == 2 else set()
+        return bool(words) and words <= names
+
+    above = {d.name.casefold(): d for d in previous.derived}
+    derived, changed = [], False
+    for d in plan.derived:
+        before = above.get(d.name.casefold())
+        if before is None or before.op != d.op or len(before.measures) != len(d.measures):
+            derived.append(d)
+            continue
+        parts = [figures[ids.slug(b)].name if ids.slug(b) in figures and ids.slug(b) != ids.slug(m)
+                 and made_of(m, figures[ids.slug(b)]) else m
+                 for b, m in zip(before.measures, d.measures)]
+        changed = changed or parts != list(d.measures)
+        derived.append(d.model_copy(update={"measures": parts}))
+    return plan.model_copy(update={"derived": derived}) if changed else plan
 
 
 def _nothing_carried(plan: Plan, question: str, previous: Plan) -> Plan:

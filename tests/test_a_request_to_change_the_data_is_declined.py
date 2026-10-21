@@ -48,7 +48,15 @@ def test_a_request_to_change_the_data_names_the_rows_to_show(request_, shown):
                                       # follow-up was declined as a request to change records).
                                       "drop the count and the average, and show each balance as % of the "
                                       "region's total instead", "remove the cost column", "drop the margin",
-                                      "add the count next to it"])
+                                      "add the count next to it",
+                                      # Words that change data only as a command, never as a reading.
+                                      "Refund rate by store", "Write-offs by month", "Waived fees by month",
+                                      "Create a dashboard of sales by region",
+                                      "write off amounts by region in 2025", "refund this year vs last year",
+                                      "charge this year by month", "credit card 2025 spend by state",
+                                      "refund orders 2025 by month", "add a refund rate", "add a discount breakdown",
+                                      "apply a 10% discount to all 2025 orders and show the new revenue",
+                                      "apply a 10% discount to last year's sales: what would revenue be?"])
 def test_a_question_with_the_same_words_is_a_question(question):
     assert changes_data(question) is None
 
@@ -62,6 +70,76 @@ def test_a_request_that_writes_stays_declined(request_):
     assert changes_data(request_) is not None
 
 
+@pytest.mark.parametrize("edit", [
+    "add the units sold and how many orders each one was on", "add the sales rep who took the order",
+    "drop the practice and add how many fills we dispensed", "remove the West region",
+    "ajoute le magasin de chaque client", "add the region of each order"])
+def test_with_an_answer_on_screen_adding_or_taking_off_a_field_changes_the_answer(edit):
+    # "add the units sold ..." after a report was declined as a request to add records.
+    assert changes_data(edit) is not None, "with nothing on screen it reads as a change to the data"
+    assert changes_data(edit, on_screen=True) is None
+
+
+@pytest.mark.parametrize("edit", [
+    "add the units sold to the table", "add the margin next to net sales", "add the number of orders on each one",
+    "add the category to each order line", "add the margin column to each order", "add the customer name to each order",
+    "add the payer to the claims", "add the reject reason to each claim", "add the balance to each account",
+    "add the city to every order", "remove the flag column", "remove the holds column", "ajoute la région à chaque commande",
+    "remove the products in books", "drop the stores from the books category", "add the discount to each order line",
+    "add the shipping fee to each order line", "add the credit to each customer", "add the rebate to each customer",
+    "add the late fee to the customers", "remove the rows for customer 1042", "add a discount column",
+    "add the cost to each order", "add the cost to each order instead", "add the unit cost to each order",
+    "add the costs to the invoices", "add the refund amount to each invoice", "add the author to the books",
+    "add the price to the books", "add a credit limit column", "add a payment method breakdown",
+    "ajoute une colonne crédit", "ajoute le nombre de commandes 2024"])
+def test_a_field_put_beside_the_answer_is_never_read_as_put_on_records(edit):
+    assert changes_data(edit, on_screen=True) is None
+
+
+@pytest.mark.parametrize("request_", [
+    "add the new customer Acme", "add the refund to the ledger", "remove all the cancelled orders",
+    "delete the West region", "add the 5 units to the stock of Pasta", "add the order as paid",
+    "ajoute les nouvelles fiches client", "drop every store in the West",
+    # Something put on records or taken off them, however little it names.
+    "add the shipping fee to every order", "add the discount to order SO-1001", "add the late fee to Acme's account",
+    "remove the cancelled orders from the books", "remove the hold on these accounts",
+    "remove the refund on order 5512", "ajoute la remise à la commande 5512",
+    # Anything put on a numbered record, costs and vouchers on every order, rows on or off the books, holds lifted.
+    "add the coupon to order SO-1001", "add the item to order 5512", "add the shipping cost to every order",
+    "add the voucher to every order", "add the tag to these accounts", "add the refund to the books",
+    "add these invoices to the books", "remove the test orders from the books for 2024", "remove the hold for these accounts",
+    "remove the freeze for these accounts", "remove the holds", "remove the credit from customer 1042",
+    "ajoute les frais de port à chaque commande", "ajoute les produits à la commande 5512",
+    "retire les frais sur la facture 77", "ajoute la note à la facture 77",
+    # Money on records named with their owner ("customer accounts"), these put on the books.
+    "add the late fee to all customer accounts", "add the credit to the customer account",
+    "add the late fee to customers' accounts", "add the discount to all customer orders",
+    "add the late fee to each customer invoice", "add the late fee to customer Acme's account",
+    "add these to the books", "add a $50 credit to each customer"])
+def test_with_an_answer_on_screen_a_new_record_or_every_record_is_still_data(request_):
+    assert changes_data(request_, on_screen=True) is not None
+
+
+@pytest.mark.parametrize("request_, shown", [
+    ("add a $50 credit to customer 1042", "Show the customer 1042"),
+    ("credit customer 1042 with $50", "Show the customer 1042"),
+    ("apply a 10% discount to every order", "Show the orders"),
+    ("add a late fee to every order", "Show the orders"),
+    ("write off these invoices", "Show the invoices"),
+    ("waive the late fee on invoice INV-77", "Show the invoice INV-77"),
+    ("ajoute un crédit de 50 € au client 1042", "Montre le client 1042"),
+    ("add a late fee to every order in 2025", "Show the orders in 2025"),
+    ("charge customers 1042 and 1043 $5", "Show the customers 1042 and 1043"),
+    # A hold put on or lifted, money applied: verbs that never edit the answer.
+    ("lift the hold on account 7", "Show the account 7"), ("put a hold on customer 1042", "Show the customer 1042"),
+    ("apply the discount to every order", "Show the orders"),
+    ("applique la remise à toutes les commandes", "Montre les commandes")])
+def test_money_put_on_a_record_is_declined_with_the_record_to_show(request_, shown):
+    # "Add a $50 credit to customer 1042" was answered as a question, with or without an answer on screen.
+    assert changes_data(request_) == shown
+    assert changes_data(request_, on_screen=True) == shown
+
+
 def test_it_is_declined_before_any_planning():
     asked = []
     services = Services(model=SemanticModel(client_id="t"), warehouse=None,
@@ -70,3 +148,19 @@ def test_it_is_declined_before_any_planning():
     assert not asked
     assert payload["kind"] == "changes_data" and "jamais les modifier" in payload["answer"]["headline"]
     assert payload["follow_up_suggestions"][0]["question"].startswith("Montre les fiches")
+
+
+def test_with_an_answer_on_screen_add_a_field_goes_to_the_planner():
+    # "add the units sold and how many orders each one was on" after a top-5 list was declined before any planning.
+    from core2.plan.ir import Plan
+    from core2.plan.planner import Turn
+
+    asked = []
+    services = Services(model=SemanticModel(client_id="t"), warehouse=None,
+                        complete=lambda s, t: asked.append(t) or "{}", index=MemberIndex(), today=dt.date(2026, 6, 1))
+    session = Session(turns=[Turn("Top 5 products by net sales in May 2026",
+                                  Plan.model_validate({"kind": "query", "intent": "rank", "measures": ["net_amount"]}))])
+    payload = answer_question("add the units sold and how many orders each one was on", services, session)
+    assert payload.get("kind") != "changes_data" and asked, "planned as a change to the answer on screen"
+    payload = answer_question("add the units sold and how many orders each one was on", services, Session())
+    assert payload["kind"] == "changes_data", "with nothing on screen it is still read as a change to the data"

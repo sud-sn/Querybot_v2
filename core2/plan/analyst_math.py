@@ -145,6 +145,186 @@ def share_in_group(plan: Plan, model: SemanticModel, question: str) -> Plan:
                                    "share_of": within, "sort": sort})
 
 
+# "What share of total sales each one made up", "their share of May's total sales", "what % of total 2024 revenue
+# each one is", "share of the year's total margin": a share of everything, beside a ranking or a breakdown.
+_EACH_OWN = re.compile(r"\b(?:of|within|in)\s+(?:each|every|its|their)\b", re.IGNORECASE)
+_OF_ALL = re.compile(r"(?:%|\bper\s?cent(?:age)?|\bshare|\bproportion|\bfraction)\s+of\s+(?:[\w$'’]+\s+){0,3}?"
+                     r"(?:total|all|everything|overall|whole|grand|entire)\b", re.IGNORECASE)
+# A rate, not a share of the answer's figure: "what % of all orders were returned", "what % of all customers are new",
+# "what share of all claims ended up rejected", "% of all orders shipped late": the whole goes on to say what its rows
+# did, and names none of the answer's rows. "Their share of all loans booked in that half", "% of total sales
+# accounted for by each store", "% of total revenue generated", "what % of all 2025 rejections came from that code"
+# and "% of total revenue came from online orders by store" are shares.
+_ROWS_NAMED = re.compile(r"\b(?:each|every|their|theirs|its|them|they|these|those|apiece|respective(?:ly)?|there)\b|"
+                         r"\b(?:from|by|for|through|at|in|of|to|with|under|had|has|have)\s+(?:that|this)\s+"
+                         r"(?!(?:month|week|year|quarter|day|period|time|same|window|range|span|half|season|timeframe|"
+                         r"interval|stretch|point|fiscal|calendar|past|last|next|previous|current|\d)\w*\b)\w+",
+                         re.IGNORECASE)
+_THEY_DID = re.compile(r"^\s*(?:[\w-]+\s+){1,3}?(?:that\s+|which\s+|who\s+)?(?:are|is|were|was|got|get|gets|have|has|"
+                       r"had|came|come|comes|went|go|goes|did|do|does|aren't|isn't|weren't|wasn't|didn't|haven't|"
+                       r"hasn't)\b", re.IGNORECASE)
+# After "all <rows>" a verb alone says what they did ("% of all orders shipped late", "included a discount", "% of all
+# orders returned", "returned in 2025"); after "total <figure>" it says which of it ("% of total revenue generated", "of
+# total margin earned"), and so does a verb that only says the rows are there ("% of all loans booked in that half", "of
+# all rejections recorded", "of all sales captured").
+_THERE = (r"(?:booked|placed|made|recorded|logged|sold|submitted|created|issued|filed|received|written|opened|processed|"
+          r"generated|earned|registered|raised|entered|shipped|dispensed|filled|ordered|bought|purchased|captured|achieved|"
+          r"collected|brought|taken|done)")
+_THEY_DID_ED = re.compile(r"^\s*(?:[\w-]+\s+){1,3}?(?:(?!" + _THERE + r"\b)\w+ed\b|" + _THERE + r"\s+(?!(?:in|during|this|last|"
+                          r"since|over|between|from|within|by|for|on|at|to|that|the)\b)(?=\w))", re.IGNORECASE)
+# The answer's rows named after the verb: "made by the store", "came from each region" (bare "by store" after "all
+# orders were returned" is the rate per store).
+_A_ROW_OF = re.compile(r"\b(?:the|that|this|each|every|their|its|which)\s+((?:[\w-]+\s+)?[\w-]+)", re.IGNORECASE)
+
+
+def _a_rate(text: str, hit: re.Match, groups: list[list[str]] = ()) -> bool:
+    """Is this "% of all ..." a rate of rows that did something, rather than each row's share of a whole? A share
+    names the answer's rows or one of its groupings after the verb ("came from that code", "by store")."""
+    clause = re.split(r"[,.;:?!]", text[hit.end():], maxsplit=1)[0]
+    did = _THEY_DID.match(clause) or (re.search(r"\ball\s*$", hit.group(0), re.IGNORECASE) and
+                                      _THEY_DID_ED.match(clause))
+    if not did:
+        return False
+    before = " ".join(re.split(r"[,.;:?!]", text[:hit.start()])[-1].split()[-3:])
+    after = clause[did.end():]
+    # The whole's own rows come before the verb ("all customers are new" beside a ranking of customers is a rate); after
+    # "all <rows>" the answer's rows are named with "the", "each" ("were made by the store").
+    # A verb that only says the rows are there takes the grouping bare: "orders were placed by store" is each store's.
+    there = re.search(r"\b(?:" + _THERE + r"|came|come|comes)\b", clause[:did.end() + 20], re.IGNORECASE)
+    named = _words(after) if there or not re.search(r"\ball\s*$", hit.group(0), re.IGNORECASE) else \
+        [w for m in _A_ROW_OF.finditer(after) for w in _words(m.group(1))]
+    return not (_ROWS_NAMED.search(f"{before} {clause}") or _names_one(named, list(groups)))
+
+
+@_kept_safe
+def share_of_the_whole(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Which 10 customers spent the most in the last 90 days, with their segment and city, and what share of total
+    sales each one made up" was planned as a ranking with the share asked for and never shown (a share was worked
+    out for a "share" question only): each row's share of the whole, the top 10 and their fields kept. The share is
+    of the figure the whole names ("their % of total net sales" beside a ranking by discount: of net sales); a rate
+    ("what % of all orders were returned": the orders that were) is no share of the answer's figure."""
+    if plan.kind != "query" or plan.shaped() or plan.intent not in ("rank", "breakdown") or not plan.group_by \
+            or not (plan.measures or plan.derived) or plan.time.compare is not None or plan.share_of_change:
+        return plan
+    text = question or ""
+    said = _whole_said(text, [n for g in plan.group_by for n in _group_names(model, g)])
+    if said is None or _EACH_OWN.search(text):
+        return plan                # "% of each region's sales" is a share within: share_in_group's
+    if plan.share_of in plan.group_by and _names_one(said, _group_names(model, plan.share_of)):
+        return plan.model_copy(update={"intent": "share"})      # "% of total regional sales": each region's own
+    figures = _figure_names(plan, model)
+    named = _figure_named(plan, model, said) or (plan.share_of if plan.share_of in figures else None)
+    measures = list(plan.measures)
+    if named and named not in measures and any(d.name == named for d in plan.derived):
+        measures.append(named)     # "their share of total margin" beside a margin %: the margin shown, its share
+    return plan.model_copy(update={"intent": "share", "share_of": named, "measures": measures})
+
+
+def _whole_said(text: str, groups: list[list[str]] = ()) -> list[str] | None:
+    """The words naming the whole a share is of ("of all 2025 rejections": ["rejection"]; "of the total": []), or
+    None when the question asks no share of a whole (a rate is none: "what % of all orders were returned"). ``groups``:
+    the names of the answer's groupings, which a share names and a rate does not."""
+    text = text or ""
+    hit = next((h for h in _OF_ALL.finditer(text) if not _a_rate(text, h, groups)), None)
+    if hit is None:
+        return None
+    # The words between "of" and "total" name it too ("of the region's total", "of May's total").
+    said = [w for w in _words(re.sub(r"^.*?\bof\b", "", hit.group(0), flags=re.IGNORECASE))
+            if w not in _DETERMINERS and w not in _WHOLE_WORDS and not w.isdigit()]
+    for w in _words(re.split(r"[,.;:?!()]", text[hit.end():], maxsplit=1)[0]):
+        if w in _WHOLE_ENDS or len(said) == 4:
+            break
+        if not w.isdigit() and w not in _WHOLE_WORDS:
+            said.append(w)
+    return said
+
+
+def _figure_names(plan: Plan, model: SemanticModel) -> dict[str, tuple[list[list[str]], list[list[str]]]]:
+    """Each figure of the plan that adds up, by the name the plan gives it: (its own names, its table's name)."""
+    by_slug = {m.slug: m for m in model.measures.values()}
+    out: dict[str, tuple[list[list[str]], list[list[str]]]] = {}
+    for slug in plan.measures:
+        m = by_slug.get(slug)
+        if m is not None:
+            own = [_words(m.business_name), _words(slug.replace("_", " ")),
+                   *(_words(w) for words in m.synonyms.values() for w in words)]
+            out[slug] = (own, [_words(model.tables[m.table].business_name)] if m.table in model.tables else [])
+    for d in plan.derived:
+        if d.op != "ratio":
+            out[d.name] = ([_words(d.name)], [])
+    for f in plan.figures:
+        if f.format != "percent":
+            out[f.name] = ([_words(f.name)], [])
+    return out
+
+
+def _figure_named(plan: Plan, model: SemanticModel, said: list[str]) -> str | None:
+    """The one figure of the plan the words of a whole name ("total net sales": net_amount, its synonym "Net
+    sales"), by its own names first, its table's name after; None when they name none, or two alike."""
+    if not said:
+        return None
+    figures = _figure_names(plan, model)
+    for side in (0, 1):
+        scored = {name: max((sum(_names_one([w], [n]) for w in said) for n in names[side]), default=0)
+                  for name, names in figures.items()}
+        best = max(scored.values(), default=0)
+        top = [name for name, score in scored.items() if score == best]
+        if best and len(top) == 1:
+            return top[0]
+        if best:
+            return None
+    return None
+
+
+# Where the words naming a whole end: "of all loans booked | in that half", "of total margin | each one makes up".
+_WHOLE_ENDS = {"each", "every", "that", "this", "these", "those", "in", "for", "by", "per", "of", "which", "who",
+               "they", "it", "one", "during", "across", "among", "within", "and", "with", "from", "over", "is", "are",
+               "was", "were", "been", "be", "has", "have", "had", "did", "do", "does", "got", "make", "made", "came"}
+
+
+_DETERMINERS = {"the", "a", "an", "our", "its", "their", "his", "her", "this", "that", "these", "those", "s", "my"}
+_WHOLE_WORDS = {"total", "all", "everything", "overall", "whole", "grand", "company", "business", "entire"}
+
+
+def _names_one(words: list[str], names: list[list[str]]) -> bool:
+    """Does one of the words name one of these: the same word, or one the start of the other ("rejection", the
+    reject code)?"""
+    have = {w for n in names for w in n if len(w) > 2}
+    return any(w == h or (min(len(w), len(h)) >= 5 and (w.startswith(h) or h.startswith(w))) for w in words
+               for h in have)
+
+
+@_kept_safe
+def share_of_those_with(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Top 5 claim reject reasons in 2025, with how many and what % of all 2025 rejections each one is": the
+    whole is the rejections, the claims that have a reject reason, never every claim (3% where 22% is right); "their
+    share of all loans booked" is of every loan, those with no officer among them. The words after "of all" say
+    which: a whole that names a grouping of the answer, and not the figure counted, is the rows that have one."""
+    if plan.kind != "query" or plan.intent != "share" or plan.share_of in plan.group_by or not plan.group_by:
+        return plan
+    said = _whole_said(question, [n for g in plan.group_by for n in _group_names(model, g)])
+    if not said:
+        return plan                # "% of the total": of every row
+    by_slug = {m.slug: m for m in model.measures.values()}
+    counted: list[list[str]] = [_words(d.name) for d in plan.derived] + [_words(f.name) for f in plan.figures]
+    for slug in [*plan.measures, *(s for d in plan.derived for s in d.measures)]:
+        m = by_slug.get(slug)
+        if m is None:
+            continue
+        counted += [_words(m.business_name), _words(slug.replace("_", " ")),
+                    *(_words(s) for words in m.synonyms.values() for s in words)]
+        if m.table in model.tables:
+            counted.append(_words(model.tables[m.table].business_name))
+    if _names_one(said, counted):
+        return plan                # "of all loans": the figure's own rows, every one
+    filtered = {f.field for f in plan.filters if f.op == "not_null"}
+    marked = [g for g in plan.group_by if not g.startswith("time:") and g not in filtered
+              and _names_one(said, _group_names(model, g))]
+    if not marked:
+        return plan
+    return plan.model_copy(update={"filters": [*plan.filters, *(Filter(field=g, op="not_null") for g in marked)]})
+
+
 _OF_WHOLE = re.compile(r"(?:%|\bper\s?cent(?:age)?\b|\bproportion\b|\bshare\b|\bratio\b|\brate\b|\bfraction\b)"
                        r"\s+(?:of|to|against|over)\s+", re.IGNORECASE)
 
@@ -629,3 +809,146 @@ def per_hundred(plan: Plan, model: SemanticModel, question: str) -> Plan:
     fixed = [d.model_copy(update={"op": "ratio", "scale": n})
              if d.op == "product" and d.scale == n or d.op == "ratio" and d.scale == 1.0 else d for d in plan.derived]
     return plan if fixed == list(plan.derived) else plan.model_copy(update={"derived": fixed})
+
+
+# "Have never bought", "never filled", "n'ont jamais acheté": no such rows at any time, not only in the period.
+_NEVER = re.compile(r"\b(?:never|not\s+ever|at\s+no\s+time|jamais)\b", re.IGNORECASE)
+# A period written in the clause after "never" ("... but never bought Olive Oil in 2025") is the never's own; the
+# clause ends where the request goes on ("? give their segment and what they spent in 2025", "plus what they spent
+# in 2025", "and the amount they spent in 2025", "mais ont acheté A en 2025", "even though they shopped in 2025");
+# "never bought B while it was on promotion in 2025" and "de produits qui sont sortis en 2025" are still the never's.
+_FIGURE_WORDS = (r"(?:amount|total|sum|value|spend|spent|number|count|revenue|sales|cost|margin|what|how|their|orders?|"
+                 r"dates?|last|first|purchases?|visits?|units?|quantity|share|list)\b")
+_CLAUSE_END = re.compile(r"[?.;!,]|&\s*(?:their|the|what)\b|\b(?:with|give|show|list|but|yet|whereas|even\s+though|"
+                         r"although|though\s+(?:they|we|he|she)|despite|including|"
+                         r"along\s+with|together\s+with|as\s+well\s+as|plus\s+(?:the\s+)?" + _FIGURE_WORDS + r"|"
+                         r"and\s+(?:give|show|list|their|what|how|who|which|that|have|has|did|bought|ordered|also|spent|"
+                         r"spend|paid|made|include|the\s+" + _FIGURE_WORDS + r")|mais|avec|donne|montre|qui\s+ont\s+(?:dépensé|acheté|commandé|payé|passé)|"
+                         r"et\s+(?:leur|leurs|ce|combien|qui|ont|donne|montre))\b", re.IGNORECASE)
+_A_PERIOD = re.compile(r"\b(?:19|20)\d{2}\b|\bq[1-4]\b|\bh[12]\b|\bfy\s?'?\d{2,4}\b|\b(?:ytd|mtd|qtd)\b|"
+                       r"\bsince\s+(?!(?:joining|signing|sign[\s-]?up|signup|registering|registration|enrolling|enrol+ment|"
+                       r"onboarding|subscribing|buying|purchasing|ordering|they|we|he|she|it|becoming|opening|then|their|"
+                       r"day\s+one|account\s+open\w*|(?:the\s+)?first\s+(?:order|purchase|visit|sale|time|transaction|booking)|"
+                       r"the\s+(?:customer|account))\b)"
+                       r"\w|\bsince\s*(?:[?.!]|$)|\bcette\s+(?:ann[ée]e|semaine)\b|\bce\s+(?:mois|trimestre)\b|"
+                       r"\bl'an\s+(?:dernier|pass[ée])\b|\bl'ann[ée]e\s+(?:derni[eè]re|pass[ée]e)\b|"
+                       r"\b(?:le|la)\s+(?:mois|semaine|trimestre)\s+(?:derni[eè]re?|pass[ée]e?)\b|\btrailing\s+(?:\d+|one|two|three|six|twelve)\s+(?:days?|weeks?|months?|quarters?|years?)\b|"
+                       r"\b(?:last|past|previous|recent)\s+\d+\s+(?:days?|weeks?|months?|quarters?|years?)\b|"
+                       r"\b(?:year|month|quarter)[\s-]to[\s-]date\b|\b(?:this|last|that|same|previous|current|en)\s+"
+                       r"(?:year|quarter|month|week|period|ann[ée]e|mois|trimestre)\b|\b(?:in|during|en)\s+"
+                       r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|janv|f[ée]v|avr|mai|juin|juil|ao[uû]|d[ée]c)",
+                       re.IGNORECASE)
+
+
+@_kept_safe
+def bought_but_never(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "Customers who bought Dish Soap in 2025 but have never bought Laundry Pods, with what they spent on dish
+    soap in 2025" was planned with Dish Soap and 2025 as the question's own filter and period, and Laundry Pods as
+    the rows they had none of: the period went to the absence (Laundry Pods in 2025 only), the figures were counted
+    over all time, and the absence was looked for among Dish Soap rows (no row is both). The rows they had (Dish
+    Soap, in 2025) are the absence's ``had``, and the figures are counted over them; the rows they had none of are
+    looked for at any time when the question says "never", else in the same period."""
+    from core2.plan.ir import Window
+
+    a = plan.absent
+    if plan.kind != "query" or a is None or a.had or not a.without:
+        return plan
+    fields = {f.field for f in a.without}
+    mine = [f for f in plan.filters if f.field in fields and f not in a.without]
+    if not mine:
+        return plan
+    had = list(mine)
+    update: dict = {"filters": [f for f in plan.filters if f not in mine]}
+    window = plan.time.window
+    if window.kind == "between" and window.start is not None and window.end is not None:
+        activity = next((m for m in model.measures.values() if m.slug == a.measure), None)
+        key = plan.time.date or (activity.default_date if activity is not None else None) \
+            or (model.tables[activity.table].default_date if activity is not None and activity.table in model.tables
+                else None)
+        role = model.date_roles.get(key or "") or next((r for r in model.date_roles.values() if r.slug == key), None)
+        if role is None or not role.slug:
+            return plan
+        had.append(Filter(field=role.slug, op="between", values=[window.start.isoformat(), window.end.isoformat()]))
+        never = _NEVER.search(question or "")
+        clause = _CLAUSE_END.split(question[never.end():], maxsplit=1)[0] if never else ""
+        if never and not _A_PERIOD.search(clause):
+            update["time"] = plan.time.model_copy(update={"window": Window(kind="all"), "compare": None})
+    elif window.kind != "all":
+        return plan                  # a period read from today ("the last 90 days"): left as the AI wrote it
+    update["absent"] = a.model_copy(update={"had": had})
+    return plan.model_copy(update=update)
+
+
+# "Cost at each product's standard cost", "valued at list price", "au coût standard": a figure kept per unit on what
+# is sold, times the quantity of each line.
+_AT_UNIT = re.compile(r"\b(?:at|à|au)\s+(?:(?:each|the|its|their|our|leur|leurs|son|sa|ses)\s+)?(?:[\w-]+(?:'s|’s)\s+)?"
+                      r"((?:standard|unit|list|std|catalog(?:ue)?)\s+(?:cost|price)|co[uû]t\s+standard|"
+                      r"prix\s+unitaire)\b", re.IGNORECASE)
+_QUANTITY = re.compile(r"\b(?:qty|quantity|quantities|units?|pieces|quantit[ée]s?)\b", re.IGNORECASE)
+
+
+@_kept_safe
+def valued_at_unit_cost(plan: Plan, model: SemanticModel, question: str) -> Plan:
+    """ "For 2024, give me revenue, cost (at each product's standard cost), margin in $ and margin %" was planned
+    with the product table's standard cost added up: one product's cost once per product in the category ($813 for
+    every bike sold), not what the bikes sold cost. A cost or a price kept once per product is worth something
+    only times the quantity on each line that sold it: SUM(line quantity × the product's standard cost), worked out
+    for the question, with the figures made of it (the margin) made of that."""
+    from core2.model import authoring
+    from core2.model.schema import AggExpr
+    from core2.plan.ir import Figure
+
+    said = _AT_UNIT.search(question or "")
+    if plan.kind != "query" or said is None:
+        return plan
+    from core2.resolve.resolver import find_slug
+
+    by_slug = {m.slug: m for m in model.measures.values()}
+    named = list(dict.fromkeys([*plan.measures, *(s for d in plan.derived for s in d.measures)]))
+    words = set(_words(said.group(1)))
+
+    def says(slug: str) -> bool:
+        """Is this figure of the plan the cost the question names ("standard cost")?"""
+        found = find_slug(model, slug)
+        if found is None or found[0] not in ("measure", "attribute"):
+            return False
+        what = found[1]
+        column = what.expr.column if found[0] == "measure" and isinstance(what.expr, AggExpr) else \
+            getattr(what, "column", None)
+        return words <= set(_words(f"{what.business_name} {slug} {model.columns[column].name if column in model.columns else ''}"))
+
+    asked = [s for s in named if says(s)]
+    facts = {by_slug[s].table for s in named if s in by_slug and s not in asked}
+    if len(asked) != 1 or len(facts) != 1:
+        return plan
+    slug, fact = asked[0], next(iter(facts))
+    found = find_slug(model, slug)
+    if found is not None and found[0] == "measure" and found[1].table == fact:
+        return plan                # each line's own value, as booked: added up as it is
+    # The cost kept once per member, on a table each line points to: the product's own standard cost.
+    kept = [c.key for j in model.joins.values()
+            if j.from_table == fact and j.cardinality == "many_to_one" and j.trust != "rejected"
+            and model.tables.get(j.to_table) is not None and model.tables[j.to_table].kind == "dimension"
+            for c in model.columns.values()
+            if c.table == j.to_table and c.data_type in ("integer", "decimal", "float") and not c.hidden
+            and words <= set(_words(f"{c.business_name} {c.name}"))]
+    if len(set(kept)) != 1:
+        return plan
+    column = kept[0]
+    quantities = {m.expr.column for m in model.measures.values()
+                  if m.table == fact and isinstance(m.expr, AggExpr) and m.expr.agg == "sum" and m.expr.column
+                  and m.expr.column in model.columns
+                  and _QUANTITY.search(f"{m.business_name} {model.columns[m.expr.column].name.replace('_', ' ')}")}
+    if len(quantities) != 1:
+        return plan
+    kind = "Cost" if re.search(r"cost|co[uû]t", said.group(1), re.IGNORECASE) else "Value"
+    figure = Figure(name=f"{kind} at {said.group(1).lower()}"[:80],
+                    formula=f"SUM([{authoring.field_ref(model, next(iter(quantities)))}] * "
+                            f"[{authoring.field_ref(model, column)}])",
+                    format="currency")      # a cost or a price times a quantity: money, never the quantity's unit
+    swap = {slug: figure.name}
+    return plan.model_copy(update={
+        "measures": [swap.get(s, s) for s in plan.measures],
+        "derived": [d.model_copy(update={"measures": [swap.get(s, s) for s in d.measures]}) for d in plan.derived],
+        "sort": [s.model_copy(update={"by": swap.get(s.by, s.by)}) for s in plan.sort],
+        "figures": [*plan.figures, figure]})

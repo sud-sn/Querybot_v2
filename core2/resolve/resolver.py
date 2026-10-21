@@ -368,6 +368,7 @@ class Logical:
     limit: int | None = None
     share: bool = False
     share_within: list[str] = field(default_factory=list)   # each share is of these groupings' own total
+    share_figure: str = ""              # the measure each share is of (the one ranked by, else the first shown)
     change_share: list[str] = field(default_factory=list)   # measures shown with each group's share of the change
     having: list[Pred] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -1850,6 +1851,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             route(slug, model.columns[attribute.column].table, attribute.business_name)
 
     parts: list[Part] = []
+    listed_only: list[Pred] = []        # rows kept off the answer once each share of the whole is worked out
     measures_out: list[OutMeasure] = []
     component_of = {id(item[1]): (c, i) for c in composites for i, item in enumerate(c.items)}
     position: dict[int, int] = {}       # an output measure's place among those asked for
@@ -1934,9 +1936,16 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             elif plan.limit and slug != unit_slug:
                 # A top n ranks real members; rows with none are not a member (a
                 # breakdown keeps them as one empty group, so it adds up to the total).
-                part.preds.append(Pred(alias, column.key, "not_null", []))
+                if plan.intent == "share" and plan.share_of not in plan.group_by:
+                    # "Their share of all loans booked": the whole is every row, those with no member among them;
+                    # they are taken off the rows shown once each share is worked out.
+                    if (name, "not_null") not in {(h.column, h.op) for h in listed_only}:
+                        listed_only.append(Pred("", name, "not_null", [], ""))
+                else:
+                    part.preds.append(Pred(alias, column.key, "not_null", []))
                 if _can_lack(model, path, column):
-                    notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking.")
+                    notes.append(f"Rows with no {attribute.business_name.lower()} are left out of the ranking"
+                                 + ("; each share is of every row, theirs included." if listed_only else "."))
         if band is not None:
             part.groups.append(_band_part_group(model, builder, band, group_names["__band__"]))
         if plan.time.grain:
@@ -1968,7 +1977,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         position[id(out)] = c.at
 
     # Filters: attributes, other dates, totals.
-    having: list[Pred] = []
+    having: list[Pred] = list(listed_only)
     on_shown: list[Filter] = []       # each group's change or share: kept once they are worked out
     for f in plan.filters:
         if f.field in SHOWN_FIGURES:
@@ -2326,9 +2335,20 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
             expected = [s for s in starts if (first is None or add_units(s, step, 1) > first)
                         and (last is None or s <= last)]
 
+    # The figure each share is of: the one the plan names ("with their % of total net sales" beside a ranking by
+    # discount: share_of the figure, not a grouping), else the one the answer is ranked by ("top 5 products by
+    # margin, with their share of the total margin"), else the first shown. Only that figure need add up, never a
+    # margin % shown beside it; a sort or a condition on the share is on its share.
+    shown = [o for o in measures_out if not o.hidden]
+    every = [*measures_out, *(o for p in parts for o in p.measures)]    # each table's part of one over several
+    named = _sort_name(plan.share_of, shown, {}, model) if plan.share_of and plan.share_of not in group_names else ""
+    ranked = next((n for n in (_sort_name(s.by, shown, {}, model) for s in plan.sort if s.by not in SHOWN_FIGURES)
+                   if n), "")
+    figure = next((o for o in shown if o.name == (named or ranked)), shown[0] if shown else None)
     sort = []
     for s in plan.sort:
-        name = _sort_name(s.by, measures_out, group_names, model)
+        name = f"{figure.name}_share" if s.by == "share" and figure is not None \
+            else _sort_name(s.by, measures_out, group_names, model)
         if not name:
             # Dropped, the order fell back to the periods: "the month with the highest discount rate"
             # answered with the first month, as if it were the highest.
@@ -2355,15 +2375,15 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if any(p.snapshot for p in parts) and not plan.time.grain:
         conditions.append(Condition("snapshot", ""))     # a series of snapshots is read period by period
     share = intent == "share"
-    if share and not all(adds_up(o) for o in measures_out if not o.hidden):
+    if share and (figure is None or not changes_add_up(figure, every)):
         share = False
-        if any(o.overlaps for o in measures_out):
+        if figure is not None and figure.overlaps:
             notes.append("No share of a total is worked out: its groups overlap.")
-        else:
-            notes.append(f"{', '.join(o.label for o in measures_out if not o.hidden and not adds_up(o))} does not "
-                         "add up across its groups (an average or a ratio): no share of a total is worked out.")
+        elif figure is not None:
+            notes.append(f"{figure.label} does not add up across its groups (an average or a ratio): no share of a "
+                         "total is worked out.")
     share_within: list[str] = []
-    if share and plan.share_of:
+    if share and plan.share_of and not named:
         within = group_names.get(plan.share_of)
         if within is None:
             raise ResolveError("unsupported", f"a share of each {plan.share_of}'s own total needs {plan.share_of} "
@@ -2378,15 +2398,13 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     if plan.share_of_change and compare is not None \
             and any(g.kind in ("attribute", "member_code", "time") for g in groups):
         # Each group's change as a share of the whole change: only where the groups' changes add up to it.
-        shown = [o for o in measures_out if not o.hidden]
-        every = [*measures_out, *(o for p in parts for o in p.measures)]    # each table's part of one over several
         change_share = [o.name for o in shown if changes_add_up(o, every)]
         if len(change_share) < len(shown):
             notes.append(f"No share of the change is worked out for "
                          f"{', '.join(o.label for o in shown if o.name not in change_share)}: its groups' changes "
                          "do not add up to the whole change (an average or a ratio).")
     for f in on_shown:
-        having.append(_shown_figure_filter(f, measures_out, compare, share, conditions))
+        having.append(_shown_figure_filter(f, measures_out, compare, share, conditions, figure))
     if plan.segment is not None:
         from core2.resolve.segments import attach
 
@@ -2395,6 +2413,7 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         cautions.extend(c for c in b.cautions if c not in cautions)
     return Logical(intent=intent, parts=parts, groups=groups, measures=measures_out, window=window, compare=compare,
                    sort=sort, sort_asked=bool(plan.sort), limit=limit, share=share, share_within=share_within,
+                   share_figure=figure.name if share and figure is not None else "",
                    change_share=change_share,
                    having=having, notes=_unique(notes), cautions=cautions,
                    partial=partial, fiscal_start=fiscal_start, max_rows=ctx.max_rows,
@@ -2407,7 +2426,7 @@ SHOWN_FIGURES = ("change", "pct_change", "share")
 
 
 def _shown_figure_filter(f: Filter, measures: list[OutMeasure], compare: Range | None, share: bool,
-                         conditions: list[Condition]) -> Pred:
+                         conditions: list[Condition], share_figure: OutMeasure | None = None) -> Pred:
     """Each group kept by a figure the answer works out beside its measure: its change between the compared periods
     ("only the products that sold less than in Q2": change lt [0]), its % change or its share, given in percent."""
     shown = [o for o in measures if not o.hidden]
@@ -2423,7 +2442,7 @@ def _shown_figure_filter(f: Filter, measures: list[OutMeasure], compare: Range |
         values = [float(v) for v in f.values]
     except (TypeError, ValueError):
         raise ResolveError("unsupported", f"the {f.field.replace('_', ' ')} is compared with a number") from None
-    m = shown[0]
+    m = share_figure if f.field == "share" and share_figure is not None else shown[0]
     stored = values if f.field == "change" else [v / 100.0 for v in values]   # % change and share are fractions
     conditions.append(Condition(f.field, m.label.lower(), f.op, values, format=m.format))
     return Pred("", f"{m.name}_{f.field}", f.op, stored, f"{m.label} {f.field.replace('_', ' ')} {_op_words(f)}")

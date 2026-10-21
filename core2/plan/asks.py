@@ -75,6 +75,46 @@ _GREW = re.compile(r"\b(?:grew|grown|grow(?:s|ing)?|growth|increas(?:e|ed|es|ing
 _FELL = re.compile(r"\b(?:fell|fallen|fall(?:s|ing)?|declin(?:e|ed|es|ing)|drop(?:ped|s)?|decreas(?:e|ed|es|ing)|"
                    r"shr[aiu]nk(?:ing)?|less\s+(?:\w+\s+)?than\s+last|baiss[ée](?:s|nt)?|recul[ée](?:s|nt)?|"
                    r"diminu[ée](?:s|nt)?|en\s+baisse)\b", re.IGNORECASE)
+# "Drop the share column", "just drop this", "drop last year", "drop by store": a command opening its clause takes
+# something off the answer, no fall ("where did sales drop the most", "a drop in sales", "then drop by 10%", "drop by
+# store vs last year" and "then drop sharply" are falls).
+_DROP_SAID = re.compile(r"(?:^|[,;.!?]|\band\b|\bthen\b)\s*(?:(?:please|now|just|also|ok(?:ay)?|and|then|so)\s+)*"
+                        r"drop\b(?!\s+(?:in|of|below|under|compared|vs|versus|against|over|during)\b)"
+                        r"(?!\s+off\b(?!\s+(?:the|these|those)\b|\s+(?:this|that)\s+(?!(?:year|month|quarter|week|"
+                        r"period|season|time)\b)))"
+                        r"(?!\s+by\s+(?:[$€£]?\d|(?:about|around|over|more|less|nearly|almost|half|one|two|three|four|"
+                        r"five|six|seven|eight|nine|ten|twenty|fifty|a\s+(?:lot|third|quarter|fifth|bit))\b))"
+                        r"(?!\s+(?:to|from)\s+(?:[$€£]\s?\d|\d[\d.,]*\s?(?:%|percent|[kmb]\b)))"
+                        r"(?!\s+(?:(?:sharply|significantly|steeply|dramatically)\b|a\s+lot\b|the\s+most\s*(?:[?.!,]|$|"
+                        r"(?:in|this|last|since|over|from|between)\b)))"
+                        r"(?!(?!\s+(?:the|this|that|these|those|it|them|its|their|my|our)\b)"
+                        r"(?:(?!\b(?:and|then)\b)[^,.;?!])*\b(?:vs\.?|versus|compared|against|year\s+over\s+year|yoy|"
+                        r"from\s+(?:last|the\s+previous|previous|a\s+year))\b)(?!\s*(?:[?.!,]|$))", re.IGNORECASE)
+# A sentence that asks ("which products did well last year and drop this year") goes on with a fall when "and" or
+# "then" joins it; after a comma, or opening its own sentence, "drop" is a command ("which stores sold the most, and
+# drop the share column").
+_ASKS = re.compile(r"^\s*(?:which|what|where|who|whose|when|how|did|do|does|has|have|is|are|was|were|"
+                   r"(?:(?:show|list|give)\s+(?:me\s+)?)?(?:the\s+|all\s+)?\w+\s+(?:whose|that|where|which|who))\b",
+                   re.IGNORECASE)
+
+
+def _without_drops(q: str) -> str:
+    """The question with each command to drop something off the answer taken out ("drop the share column")."""
+    def taken(m: re.Match) -> str:
+        if m.group(0).lstrip()[:1] in ",;.!?":
+            # Its own clause: a command, unless a question goes on with a period ("..., then drop this year?").
+            follows = q[m.end():]
+            asked = _ASKS.match(q[:m.start()]) and re.match(
+                r"\s+(?:(?:this|last|next)\s+(?:year|month|quarter|week|period|season|time)|(?:in|during)\s+(?:[\w-]+\s+){0,2}?"
+                r"(?:(?:19|20)\d{2}|q[1-4]|jan\w*|feb\w*|mar\w*|apr\w*|may|jun\w*|jul\w*|aug\w*|sep\w*|oct\w*|nov\w*|"
+                r"dec\w*))\s*\?\s*$", follows, re.IGNORECASE)
+            return m.group(0) if asked else " "
+        start = max(q.rfind(c, 0, m.start() + 1) for c in ".?!;") + 1
+        before = q[start:m.start()]
+        return m.group(0) if before.strip() and _ASKS.match(before) else " "
+    return _DROP_SAID.sub(taken, q)
+
+
 # "Are we growing?", "Is spend going up?": yes or no about the whole, said against the period before.
 _YES_NO = re.compile(r"^\s*(?:and\s+|so\s+)?(?:are|is|have|has|did|was|were)\b|^\s*(?:est-ce\s+que|sommes-nous|"
                      r"avons-nous|est-ce)\b", re.IGNORECASE)
@@ -146,7 +186,7 @@ def ask_of(question: str) -> Ask | None:
         unit = this                          # "this year ... last year"
     comparing = bool(_COMPARISON.search(q) or _HOW_DOING.search(q) or _ON_TRACK.search(q)) and \
         not _MEMBERS_SIDE_BY_SIDE.search(q)
-    grew, fell = bool(_GREW.search(q)), bool(_FELL.search(q))
+    grew, fell = bool(_GREW.search(q)), bool(_FELL.search(_without_drops(q)))
     if unit is None and lasts and (comparing or grew or fell):
         unit = lasts[0]                      # "compare revenue with last month"
     said = unit is not None or comparing or ((grew or fell) and bool(_YES_NO.search(q)))

@@ -1395,14 +1395,19 @@ def _headline(logical: Logical, cols: _Columns, raw: list[dict], shown: list[dic
         total = sum(_number(r[m.name]) or 0.0 for r in raw)
         # The share the query worked out is of everything; the rows shown may be the top 10 of many, and a
         # share of their sum said "11%" beside a share column saying 3%.
-        worked_out = next((c for c in cols.of("share") if c.measure == (m.measure or None)), None)
+        # Matched by name: the share may be of another figure shown ("top 5 stores by discount, with their % of total
+        # net sales"), and is then never this one's.
+        worked_out = next((c for c in cols.of("share") if c.name == f"{m.name}_share"), None)
 
         def share_of(row: dict) -> str:
             if not units.mixed and worked_out is not None and _number(row.get(worked_out.name)) is not None:
                 portion = _number(row[worked_out.name]) or 0.0      # a fraction, as the query returns it
                 return f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
-            if not units.mixed and (logical.share or (m.format in ("currency", "number", "integer", "count") and total
-                                                      and len(raw) > 1 and not logical.limit and _sums(logical, m))):
+            # Of the rows shown only when they are every row: no share of another figure worked out, no condition
+            # on totals keeping some ("66% of the total" of the stores over 10%), no top N.
+            if not units.mixed and not logical.share and not logical.having and m.format in (
+                    "currency", "number", "integer", "count") and total and len(raw) > 1 and not logical.limit \
+                    and _sums(logical, m):
                 portion = (_number(row[m.name]) or 0.0) / total if total else 0.0
                 return f" ({portion:.0%} of the total)" if 0 < portion < 1 else ""
             return ""
@@ -1923,7 +1928,7 @@ def _drawn(logical: Logical, cols: _Columns, records: list[dict], formats: dict[
 
     # The share of the whole each bar is, when the query worked it out: drawn beside the bar's value (a
     # second measure on its own axis would read as one more amount).
-    share = next((c for c in cols.of("share") if c.measure == m.measure), None) \
+    share = next((c for c in cols.of("share") if c.name == f"{m.name}_share"), None) \
         if len(ys) == 1 and compare is None and kind in ("bar", "pie") else None
     if funnel and len(ys) == 1:
         share = next((c for c in cols.columns if c.name == logical.shape.columns["of_first"]), None)

@@ -68,6 +68,7 @@ def worked_out(plan: "Plan", model: SemanticModel, ctx: "Context") -> tuple["Pla
             kind="metric", provenance="ai", status="approved", tested=False,
             description=f"Worked out for this question: {authoring.to_text(model, read.expr)}")
         notes.append(f"{called} was worked out for this question: {authoring.to_text(model, read.expr)}.")
+        notes += _not_valued(model, read, called)
     extended = _with(model, made)
 
     def named(ref: str) -> str:
@@ -92,6 +93,27 @@ def worked_out(plan: "Plan", model: SemanticModel, ctx: "Context") -> tuple["Pla
               "derived": [d.model_copy(update={"measures": [named(s) for s in d.measures]}) for d in plan.derived],
               "rates": [r.model_copy(update={"measure": named(r.measure)}) for r in plan.rates]}
     return plan.model_copy(update=update), extended, notes
+
+
+def _not_valued(model: SemanticModel, read: authoring.Read, called: str) -> list[str]:
+    """A figure made of a field kept on another table ("each product's list price") has nothing for the rows whose
+    member is not on file, or has no value for it: said, never shown as a figure of nothing (the "Unknown" category
+    at a 100% margin)."""
+    out = []
+    for key in sorted(read.columns):
+        column = model.columns.get(key)
+        if column is None or column.table == read.table:
+            continue
+        link = next((j for j in model.joins.values() if j.from_table == read.table and j.to_table == column.table
+                     and j.trust != "rejected"), None)
+        profile = column.profile
+        empty = profile is not None and profile.rows and profile.non_null < profile.rows
+        if link is None or not (link.orphan_rows or link.null_rate or empty):
+            continue
+        rows, member = model.tables[read.table].business_name, model.tables[column.table].business_name
+        out.append(f"{rows}s with no {member.lower()} on file, or no {column.business_name.lower()} for it, "
+                   f"count as nothing in {called.lower()}.")
+    return out
 
 
 def _with(model: SemanticModel, made: dict[str, Measure]) -> SemanticModel:

@@ -848,7 +848,8 @@ def _absent_window(plan: Plan, model: SemanticModel, ctx: Context, measure: Meas
             had_in, had_on = asked, role
         window, role = absent_in, absent_on
         _after_the_data(window, _first_last(role)[1] if role is not None else last)
-    if had_in is not None and _same_span(had_in, window):
+    # Rows of one kind had and not had in one span is no question; Dish Soap bought and no Laundry Pods in 2025 is.
+    if had_in is not None and _same_span(had_in, window) and sorted(map(repr, had)) == sorted(map(repr, without)):
         from core2.answer.builder import span_words
 
         raise ResolveError("unsupported", f"they cannot have had {plural(measure.business_name.lower())} and none "
@@ -999,6 +1000,8 @@ class Absence:
     window: Range                  # when they had none
     had_in: Range | None           # when the figures are counted (and they had some); None: any time
     listed: bool = True            # each row is one member (not their number in each group)
+    had_what: str = ""             # the rows they had, by the members named: "Dish Soap"
+    none_of: str = ""              # the rows they had none of: "Laundry Pods"
 
 
 def _absent_figures(plan: Plan, model: SemanticModel, ctx: Context, entity: Entity, key: str, measure: Measure,
@@ -1081,14 +1084,22 @@ def _absent_figures(plan: Plan, model: SemanticModel, ctx: Context, entity: Enti
             raise ResolveError("unsupported", f"{plural(entity.business_name.lower())} cannot be told apart in "
                                f"these figures: ask for the {plural(entity.business_name.lower())} themselves")
         part.absent.append(MemberAbsent(holds[0], holds[1], act, act_key, activity_column=key))
+        # Rows with no member (sales with no customer on file) are no member who had none.
+        part.preds.append(Pred(holds[0], holds[1], "not_null", []))
     info = Absence(member=entity.business_name.lower(), activity_label=measure.business_name, window=window,
-                   had_in=had_in, listed=plan.absent.of in group_by)
+                   had_in=had_in, listed=plan.absent.of in group_by, had_what=_named_values(had),
+                   none_of=_named_values(without))
     inner.absence = info
     shape = AbsentShape(entity=act, key=key, activity=act, activity_key=act_key, member=info.member,
                         activity_label=info.activity_label, had_in=had_in)
     inner.notes.append(absent_note(shape, window, False))
     inner.conditions.append(Condition("absent", measure.business_name.lower(), dates=window))
     return inner
+
+
+def _named_values(filters: list) -> str:
+    """The members a list of filters names, for the answer's sentence: "Dish Soap", "Statins or Insulin"."""
+    return " or ".join(str(v) for f in filters if f.op in ("eq", "in") for v in f.values)
 
 
 def _own_field(model: SemanticModel, slug: str, entity: Entity) -> bool:
