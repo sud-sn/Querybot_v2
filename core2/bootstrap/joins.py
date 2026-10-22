@@ -21,6 +21,7 @@ trusted: both are proposed and the choice goes to the review queue.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -70,6 +71,7 @@ class JoinFinding:
     second_role: bool = False         # found by values beside a link the names make to the same table
     self_role: bool = False           # a table's own key named with a role before it, on that table
     history: int = 0                  # queries in the warehouse's own history that join it this way
+    glued: bool = False               # named only by the end of a table's glued name: proposed, never verified
     # One target row per key, as measured: a declared link may point at a column that repeats (a customer
     # number kept once per version of the customer), and following it would count a row once per match.
     to_unique: bool = True
@@ -120,6 +122,7 @@ _COUNT_LEAD = {"number", "num", "nbr", "nb", "no", "count", "cnt", "total", "tot
 _STEP_WORDS = {"to", "by", "of", "into", "under"}
 # A table's own number beside its key: BOOKING_NUMBER beside BOOKING_ID.
 _NUMBER_WORDS = {"number", "nr"}
+_IDENTIFIER_WORDS = {"uuid", "guid"}        # CARD_UUID is the card's, as CARD_ID is
 # A row's number and nothing more (Id, ID, RowId, PK): every table numbers its rows 1, 2, 3 under such a name, so two
 # of them hold the same values without one pointing at the other.
 _ROW_NUMBER = {"id", "key", "pk", "sk", "row", "rowid", "uuid", "guid", "oid"}
@@ -333,6 +336,9 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     # A table's other unique keys (a circuit code beside the service id): pointed at only by a column
     # of the same name, or one the database declares; values alone would find them by accident.
     alternates: set[tuple[str, str]] = set()
+    # Of those, the unique columns only their values' shape makes keys (a UUID beside the row number): pointed at
+    # only by name, since every table of an application's database may keep one.
+    identifiers: set[tuple[str, str]] = set()
     copies = _copies(inventory)
     # Which tables hold a column of each name: a code of one length named alike in two tables (a prescriber's NPI
     # on the prescribers and on the prescriptions) is the code of the one it is unique in, whatever its last word.
@@ -341,6 +347,18 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         for c in table.columns:
             if not names.opaque(c.name):
                 holders.setdefault(tuple(names.tokens(c.name)), set()).add(key)
+    # The tables each UUID's name is unique in. Named alike and unique on many (an application's database keeps one
+    # on every table), it names each table's own rows; unique on one alone (a card's, held again on its rulings), it
+    # is that table's key.
+    identifier_owners: dict[tuple[str, ...], set[str]] = {}
+    for key, table in inventory.tables.items():
+        for unique in keys[key].unique_columns:
+            own_words = names.tokens(bare(table, unique))
+            # The table's own: a bare UUID, or one naming the table (CARD_UUID on the cards). A profile's USER_UUID,
+            # unique on the profiles, is the user's, held once each.
+            if own_words and own_words[-1] in _IDENTIFIER_WORDS and (
+                    len(own_words) == 1 or _names_its_table(bare(table, unique), table.name)):
+                identifier_owners.setdefault(tuple(own_words), set()).add(key)
     for key, table in inventory.tables.items():
         if key in calendars:
             cal = calendars[key]
@@ -367,8 +385,15 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # Many members, all of one length: a code (an NPI), not three names that happen to be four letters.
                 shared_code = kind == "text" and p.pattern == "code" and p.min_len == p.max_len \
                     and p.distinct >= SMALL_TARGET and len(holders.get(tuple(words), ())) > 1
-                if not (words and words[-1] in names.KEY_SUFFIXES | _NUMBER_WORDS or shared_code):
+                # A machine's identifier named so (a card's UUID beside its row number) is a key too, on the one
+                # table it is unique in. Not any long text of one length: a name kept in a padded CHAR column is as
+                # long as every other.
+                keyed = bool(words) and words[-1] in names.KEY_SUFFIXES | _NUMBER_WORDS or shared_code
+                if not (keyed or kind == "text"
+                        and len(identifier_owners.get(tuple(names.tokens(bare(table, unique))), ())) == 1):
                     continue   # a unique name or title is what a member is called, not what points at it
+                if not keyed:
+                    identifiers.add((key, unique))
                 if profiles[key].rows < 20 or not _names_its_table(unique, table.name):
                     if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
                         continue   # FILM_ID unique on a film's one category row is still the film's key
@@ -386,7 +411,12 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         if any(table.type_of(c) == "text" and c not in keys[key].primary_key for c in keys[key].unique_columns)}
 
     candidates: dict[tuple[str, str, str, str], JoinFinding] = {}
+    # A number pointing at a same-named number kept as text, held back until the column's other candidates are known.
+    as_text: dict[tuple[str, str, str, str], JoinFinding] = {}
     roles_by_value: list[tuple[tuple[str, str, str, str], float, bool]] = []
+    # Every word of each table's name, for the tables something may point at.
+    target_words = {key: names.core_table(inventory.tables[key].name) for key, _ in targets
+                    if not names.opaque(inventory.tables[key].name)}
     # What the database declares is a candidate whatever the values look like: one value in every row
     # (every film in one language), a key of two columns, a target that is not the table's own key.
     for fk in inventory.foreign_keys:
@@ -454,7 +484,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 if (key, column.name, to_table, to_column) in candidates:
                     continue          # declared, and already a candidate
                 to_type = inventory.tables[to_table].type_of(to_column)
-                mixed = code_to_number(column.data_type, to_type)
+                mixed = text_and_number(column.data_type, to_type)
                 if not (_compatible(column.data_type, to_type) or mixed):
                     continue
                 ident = (key, column.name, to_table, to_column)
@@ -473,15 +503,32 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                     score, role = 0.8, [w for w in column_words if w not in names.KEY_SUFFIXES]
                 if single_valued and not (is_declared or score >= 0.8):
                     continue
-                if mixed and not (is_declared or score >= 0.9):
-                    continue          # a code kept as text ('0007') points at a number key when the names say so
+                to_text = mixed and not code_to_number(column.data_type, to_type) and not is_declared
+                if mixed and not is_declared and (
+                        score < 0.9 if not to_text
+                        else score < 1.0 or _kept_copy(inventory.tables[to_table].name)
+                        or not _key_names_table(bare(inventory.tables[to_table], to_column),
+                                                inventory.tables[to_table].name)
+                        or min(a.distinct, profiles[to_table].columns[to_column].distinct) < SMALL_TARGET):
+                    continue          # a code kept as text ('0007') points at a number key when the names say so;
+                    #                   a number at a text code only of its own name, kept as text on the table it
+                    #                   names (PLAYER_API_ID on the players), never at another (CUS_DMS_KEY beside
+                    #                   CUS_CD, a department's CODE beside a cost centre's) nor at a load's copy
+                    #                   (STG_CUSTOMER), and only many of them: five status numbers fit any short
+                    #                   list of codes
                 k = profiles[to_table].columns[to_column]
                 plausible, coverage = _value_plausible(a, k, a_type=column.data_type,
                                                        k_is_dimension=to_table in dimension_like)
+                gated = (to_table, to_column) in alternates or (to_table, to_column) in identifiers
+                to_plain = bare(inventory.tables[to_table], to_column) if gated else to_column
+                in_full = gated and _names_in_full(plain, inventory.tables[to_table].name, to_plain)
+                if (to_table, to_column) in identifiers and not is_declared and not (score >= 0.95 or in_full):
+                    continue          # an identifier is pointed at by name: an audit entry's SUBJECT_UUID holds
+                                      # the cards' and much else, and no name says which
                 if (to_table, to_column) in alternates and not (
-                        is_declared or score >= 0.95 or plausible and column.data_type == "text"):
-                    continue          # another unique column of the table: named the same, declared, or a code
-                                      # whose values are its codes (tested: every row must find one)
+                        is_declared or score >= 0.95 or plausible and column.data_type == "text" or in_full):
+                    continue          # another unique column of the table: named the same, declared, named in
+                                      # full, or a code whose values are its codes (tested: every row must find one)
                 to_calendar = to_table in calendars
                 if to_calendar:
                     # Date keys are recognised by shape, whatever their names: a day key
@@ -509,19 +556,32 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 # Identifiers of one length on both sides (UUIDs) meet only where one is the other's: their values
                 # speak for them whatever the column is called (APPOINTMENTID holding the encounters' Id).
                 same_identifiers = identifier_text(a) and identifier_text(k) and a.max_len == k.max_len
+                glued = False
                 if plausible and not (is_declared or score) and not to_calendar and not same_identifiers \
                         and not names.opaque(column.name) and not _shares_a_word(plain, inventory.tables[to_table].name):
-                    plausible = False   # whole-number keys collide by chance: a meaningful name must agree
-                    if words and words[-1] in names.KEY_SUFFIXES and to_table != key:
-                        roles_by_value.append((ident, coverage, column.name in tkeys.unique_columns))
+                    glued = _glued(plain, inventory.tables[to_table].name, table,
+                                   lambda word, skip=(key, to_table): any(
+                                       names.same_word(word, w) for other, ws in target_words.items()
+                                       if other not in skip for w in ws))
+                    if not glued:
+                        plausible = False   # whole-number keys collide by chance: a meaningful name must agree
+                        if words and words[-1] in names.KEY_SUFFIXES and to_table != key:
+                            roles_by_value.append((ident, coverage, column.name in tkeys.unique_columns))
                 plausible = plausible or up_the_hierarchy
                 if not (is_declared or score >= 0.75 or plausible):
                     continue
-                candidates[ident] = JoinFinding(*ident, declared=is_declared, name_score=score, role_tokens=role,
-                                                to_calendar=to_calendar, coverage=coverage,
-                                                from_unique=column.name in tkeys.unique_columns,
-                                                to_alternate=(to_table, to_column) in alternates,
-                                                self_role=own_role and not up_the_hierarchy and not is_declared)
+                (as_text if to_text else candidates)[ident] = JoinFinding(
+                    *ident, declared=is_declared, name_score=score, role_tokens=role, to_calendar=to_calendar,
+                    coverage=coverage, from_unique=column.name in tkeys.unique_columns,
+                    to_alternate=(to_table, to_column) in alternates,
+                    self_role=own_role and not up_the_hierarchy and not is_declared, glued=glued)
+
+    # A number against a same-named number kept as text, only where nothing else is named for the column: an order's
+    # CUSTOMER_ID is the customers' ID, never the same number kept again as text on a CRM copy.
+    named_for = {(f.from_table, f.from_column) for f in candidates.values() if f.declared or f.name_score >= 0.75}
+    for ident, f in as_text.items():
+        if (f.from_table, f.from_column) not in named_for:
+            candidates[ident] = f
 
     # A second role of a table the row already points at by name: a bill of materials' component beside its
     # assembly, both products. Its values found it; the row's named link says which table its rows are about. Only
@@ -579,7 +639,10 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 from_unique=len(froms) == 1 and froms[0] in keys[key].unique_columns, also=list(zip(froms[1:], tos[1:])))
         found.history = count
 
-    ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.history, -f.name_score, -f.coverage, f.ident))
+    # A UUID's candidates after the rest: a table's uuid held, with gaps, on many others names each its own rows, and
+    # testing them first would leave the named keys untested at the cap.
+    ranked = sorted(candidates.values(), key=lambda f: (-f.declared, -f.history, (f.to_table, f.to_column) in identifiers,
+                                                        -f.name_score, -f.coverage, f.ident))
     tested = ranked[:max_tests]
     placeholder_of = {key: cal.placeholders for key, cal in calendars.items()}
     journal_of(warehouse).step(f"Testing {len(tested)} possible joins between tables against the data")
@@ -649,6 +712,13 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             f.trust = "rejected"
             f.evidence.append(Evidence(kind="strays", weight=-1.0, detail=(
                 f"not every {f.from_column} is one of the table's own members")))
+        elif f.glued:
+            # Named only by the end of a table's glued name (SUPERHERO for HERO_ID): whole-number keys of two tables
+            # meet by chance, so the admin confirms it; until then it is used only where nothing better links. The
+            # warehouse's queries joining it so do not vouch for it: answers using the proposed link are among them.
+            f.trust = "proposed"
+            f.evidence.append(Evidence(kind="glued_name", weight=0.3, detail=(
+                f"the end of {inventory.tables[f.to_table].name}'s name is what {f.from_column} names")))
         elif f.match_rate >= VERIFIED:
             f.trust = "verified"
             if f.second_role:
@@ -791,11 +861,15 @@ def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, 
     known = (len(columns) == 1 and columns[0] in tkeys.unique_columns) or (
         sorted(columns) == sorted(tkeys.primary_key) and bool(tkeys.primary_key)) or any(
         sorted(columns) == sorted(alt) for alt in tkeys.alternate_keys)
-    if known or f.to_calendar or f.to_table in calendars:
-        return
     target = inventory.tables[f.to_table]
+    # A number against a code kept as text is compared without leading zeros: a unique code '01' beside '1'
+    # still finds two rows for 1.
+    as_number = len(columns) == 1 and target.type_of(columns[0]) == "text" \
+        and inventory.tables[f.from_table].type_of(f.from_column) == "integer"
+    if known and not as_number or f.to_calendar or f.to_table in calendars:
+        return
     what = f"the link check {target.name} ({', '.join(columns)})"
-    most = attempt(warehouse, what, lambda: _most_per_key(warehouse, target, columns), None)
+    most = attempt(warehouse, what, lambda: _most_per_key(warehouse, target, columns, unpadded=as_number), None)
     if most is None:
         f.target_checked = False
         return
@@ -808,16 +882,18 @@ def _measure_target(warehouse: Warehouse, inventory: Inventory, keys: dict[str, 
 
 
 def _most_per_key(warehouse: Warehouse, table: InvTable, columns: list[str],
-                  kept: list[tuple[str, str, list]] | None = None) -> int:
+                  kept: list[tuple[str, str, list]] | None = None, *, unpadded: bool = False) -> int:
     """The most rows one value of ``columns`` holds in ``table`` (keys with no value left out), among the
-    rows ``kept`` keeps (a member's current version)."""
+    rows ``kept`` keeps (a member's current version); ``unpadded``: values read without leading zeros, as a
+    number pointing at them reads them."""
     d = warehouse.dialect
     cols = [exp.column(D.ident(c, d)) for c in dict.fromkeys(columns)]
     where = [exp.not_(exp.Is(this=c.copy(), expression=exp.Null())) for c in cols] + [
         condition_sql(name, op, values, d) for name, op, values in kept or []]
     inner = (exp.select(exp.Count(this=exp.Star()).as_("n")).from_(exp.to_table("__TGT__"))
              .where(exp.and_(*where))
-             .group_by(*[c.copy() for c in cols]))
+             .group_by(*[exp.Coalesce(this=D.unpadded(c.copy(), d), expressions=[exp.Literal.string("0")])
+                         if unpadded else c.copy() for c in cols]))     # '00' unpadded is '' (NULL on Oracle): zero
     query = exp.select(exp.Max(this=exp.column("n"))).from_(inner.subquery("x"))
     sql = query.sql(dialect=d).replace("__TGT__", D.table_sql(table.database, table.schema, table.name, d), 1)
     return int(warehouse.query(sql).rows[0][0] or 0)
@@ -866,7 +942,7 @@ def _of_its_own_table(column: str, table: str) -> bool:
 def _names_its_table(column: str, table: str) -> bool:
     """CUSTOMER_ID, or BOOKING_NUMBER, on the table it is named for."""
     core, own = names.core_column(column), names.core_table(table)
-    while len(core) > 1 and core[-1] in _NUMBER_WORDS:
+    while len(core) > 1 and core[-1] in _NUMBER_WORDS | _IDENTIFIER_WORDS:
         core = core[:-1]
     return bool(core) and len(core) == len(own) and all(names.same_word(a, b) for a, b in zip(core, own))
 
@@ -888,6 +964,54 @@ def _shares_a_word(column: str, table: str) -> bool:
     head = right[-1]
     joined = {"".join(left[i:j]) for i in range(len(left)) for j in range(i + 2, len(left) + 1)}
     return any(names.same_word(a, head) for a in left) or any(names.same_word(w, head) for w in joined)
+
+
+def _glued(column: str, table: str, holder: InvTable, named_elsewhere: Callable[[str], bool]) -> bool:
+    """SUPERHERO's heroes, SUPERPOWER's powers: a table named in one glued word whose last part, three letters or more,
+    is what the column names (HASHTAGS' tags, EBOOKS' books; never LEADS for an ad). Read so only on a table that
+    pairs the things its name says, a key for each (HERO_POWER: HERO_ID and POWER_ID), never on one that only holds
+    them (a wish list's items), and only where no other table is named by the word (an ORDER_ID is the orders' or the
+    order headers', never the WORKORDER's); the values decide the rest."""
+    own = names.core_table(holder.name)
+    keyed = [names.core_column(bare(holder, c.name)) for c in holder.columns
+             if names.tokens(c.name) and names.tokens(c.name)[-1] in names.KEY_SUFFIXES]
+    if len(own) < 2 or not all(any(len(k) == 1 and names.same_word(w, k[0]) for k in keyed) for w in own):
+        return False
+    target = names.core_table(table)
+    if len(target) != 1:
+        return False       # SHOP_CARTITEM: an application's table named in two words, no glued one
+    head = target[0]
+    words = [names.singular(t) for w in names.tokens(column) for t in names.unglued(w)
+             if t not in names.KEY_SUFFIXES and not t.isdigit() and t not in _GENERIC_WORDS]
+    # The word three letters or more, glued after something: SUPER+HERO, HASH+TAG, E+BOOK, never LE+AD.
+    return any(len(a) >= 3 and len(head) > len(a) and head.endswith(a)
+               and any(names.same_word(a, w) for w in own) and not named_elsewhere(a) for a in words)
+
+
+def _kept_copy(table: str) -> bool:
+    """STG_CUSTOMER: a load's staging table, keeping the customers as the load brought them, not as the orders point
+    at them. STG is the one such word a table's name is read without (names.core_table), so the one that lets the
+    table pass for the customers. (A copy beside the live table of its name, as CUSTOMERS_BAK beside CUSTOMERS, is
+    never a target at all; RAW_MATERIALS and BOOK_COPIES are what a business keeps.)"""
+    return "stg" in names.tokens(table)
+
+
+def _key_names_table(key: str, table: str) -> bool:
+    """TEAM_API_ID on the teams, PLAYER_API_ID on the players: a key whose name says its table, then more."""
+    whole, own = names.tokens(key), names.core_table(table)
+    return len(whole) > len(own) and all(names.same_word(a, b) for a, b in zip(whole, own))
+
+
+def _names_in_full(column: str, table: str, key: str) -> bool:
+    """HOME_TEAM_API_ID for the teams' TEAM_API_ID, setCode for the sets' code: another unique column of a table
+    named in full, after a role, where the name says the table (the key's own name, or the table's before it). A
+    name that says no table names no table's column: a POSTAL_CODE is no warehouse's CODE, a SUPPLIER_EXTERNAL_ID no
+    customer's EXTERNAL_ID, a CREATED_BY_UUID no table's UUID."""
+    words, whole = names.tokens(column), names.tokens(key)
+    tails = [[*names.core_table(table), *whole]]
+    if _key_names_table(key, table):
+        tails.append(whole)        # the key names its table (TEAM_API_ID on the teams); EXTERNAL_ID names nothing
+    return len(words) > len(whole) and any(names.ends_with(words, tail) for tail in tails)
 
 
 def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:

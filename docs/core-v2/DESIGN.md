@@ -349,7 +349,23 @@ no fact rows), audit timestamps, mixed units.
 1. Declared foreign keys (enforced or not).
 2. Name evidence, in any style: `customer_id → customers.id`,
    `CUST_KEY → DIM_CUSTOMER.CUST_KEY`, `CustomerKey → DimCustomer.CustomerKey`,
-   same-named columns where one side is unique.
+   same-named columns where one side is unique. A table's other unique key (a
+   code beside its row number, or a uuid or guid of the table's own, bare or
+   naming the table, on the one table that name is unique in: an application's
+   database keeps a uuid on every table, each its own rows', and a profile's
+   `user_uuid` is its user's) is pointed at by the same name; by a name that
+   says the table, after a role: the table's own name before the key
+   (`setCode → sets.code`) or a key that names its table (`home_team_api_id →
+   teams.team_api_id`), never a bare one (`supplier_external_id`,
+   `created_by_uuid`); or, a code, by values every row finds. Such a uuid is never
+   pointed at by values alone. A table named in one glued word (`superhero`,
+   not `shop_cartitem`) is named by its last part, of three letters or more
+   (`hero_id → superhero.id`, `tag_id → hashtags.id`, `book_id → ebooks.id`,
+   never `ad_id → leads.id`), only from a table pairing the things its name says
+   (`hero_power`: a hero and a power), where no other table is named by the
+   word, and only proposed, whatever the warehouse's queries say (answers using
+   the link are among them): names alone agree, and whole numbers meet by
+   chance.
 3. Value containment: column A's distinct values mostly found in column B,
    where B is unique, types compatible and A's range within B's. Pre-filtered
    from profiles so only plausible pairs are tested. Values alone must use most
@@ -365,7 +381,15 @@ no fact rows), audit timestamps, mixed units.
    bear out (Azure's Query Store does not say who ran a query, so QueryBot's own
    answers are in it). Joins to subqueries (Learn's own tests) are not counted.
 5. A code kept as text against a whole-number key ('0007' and 7, names agreeing),
-   compared without leading zeros on every warehouse; a document and its line
+   and a number against the same-named number kept as text on the table the
+   name says (`player_api_id` on the players, a fact's `customer_id` on
+   `dim_customer`), where nothing else is named for the column and both hold
+   30 values or more: an order's `customer_id` is the customers' `id`, never
+   its copy kept as text on a master or CRM table nor on a load's staging
+   table (`stg_customer`) at all, and five status numbers fit any lookup's or
+   help desk's codes. Both are compared
+   without leading zeros on every warehouse (a number that two codes answer
+   to, '01' and '1', is a link that would count twice); a document and its line
    named alike in another table, as one link of two columns.
 6. AI-proposed (labels step), tested like the rest.
 

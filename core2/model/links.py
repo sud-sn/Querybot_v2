@@ -143,7 +143,8 @@ def view(model: SemanticModel) -> dict[str, Any]:
 # What Learn found about a link, said to the admin beside how sure it is: names, the database, the data, the AI.
 _WHY = {"declared_fk": "the database declares it", "name_match": "the names agree",
         "query_history": "the warehouse's own queries join it so", "ai_opinion": "the AI reads it so",
-        "second_role": "the row already points at that table by name"}
+        "second_role": "the row already points at that table by name",
+        "glued_name": "the end of that table's name says it"}
 
 
 def _why(j: Join) -> list[str]:

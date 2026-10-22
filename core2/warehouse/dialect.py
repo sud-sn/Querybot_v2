@@ -503,6 +503,11 @@ _UNPADDED = {"snowflake": "LTRIM(TRIM(__X__), '0')", "duckdb": "LTRIM(TRIM(__X__
              "tsql": "SUBSTRING(LTRIM(RTRIM(__X__)), PATINDEX('%[^0]%', LTRIM(RTRIM(__X__)) + '.'), 4000)"}
 
 
+def unpadded(text: exp.Expression, dialect: str) -> exp.Expression:
+    """A code kept as text read without its leading zeros ('0007' as '7'), as same_number compares it."""
+    return _fill(_UNPADDED[dialect], dialect, text)
+
+
 def same_number(text: exp.Expression, number: exp.Expression, dialect: str) -> exp.Expr:
     """A code kept as text ('0007') against a whole-number key (7).
 
@@ -510,7 +515,7 @@ def same_number(text: exp.Expression, number: exp.Expression, dialect: str) -> e
     matches nothing, where a cast would stop the whole query, and no warehouse has a
     safe cast that all of them read alike.
     """
-    left, right = _fill(_UNPADDED[dialect], dialect, text), _fill(_UNPADDED[dialect], dialect, as_text(number, dialect))
+    left, right = unpadded(text, dialect), unpadded(as_text(number, dialect), dialect)
     if dialect == "tsql":
         left = exp.Collate(this=left, expression=exp.Var(this="DATABASE_DEFAULT"))
         right = exp.Collate(this=right, expression=exp.Var(this="DATABASE_DEFAULT"))
