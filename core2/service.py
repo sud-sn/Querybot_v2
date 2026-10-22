@@ -3424,17 +3424,18 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         if scrub is None and indexing else None, industry=industry_of(account_id),
         waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client),
         general_knowledge=general_knowledge_enabled(state),
-        direct=direct_enabled(state),
+        direct=direct_enabled(state, account_id),
         sees_query=portal_role(portal_user) == CREATOR if portal_user else False,
         beyond=beyond_writer(account_id, client, question=scrub(question) if scrub else question,
                              question_id=question_id)), None
 
 
-def direct_enabled(state: dict[str, Any] | None) -> bool:
-    """The admin's switch for the safety net (Settings, core2/direct.py): off until an admin turns it on."""
-    from core2.direct import enabled
+def direct_enabled(state: dict[str, Any] | None, account_id: str) -> bool:
+    """The admin's switch for the safety net (Settings, core2/direct.py): off until an admin turns it on, and never
+    on for a workspace under compliance, whatever was stored."""
+    from core2.direct import allowed_for, enabled
 
-    return enabled(state)
+    return enabled(state) and allowed_for(account_id)
 
 
 def general_knowledge_enabled(state: dict[str, Any] | None) -> bool:

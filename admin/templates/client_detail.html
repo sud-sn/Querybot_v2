@@ -405,6 +405,7 @@
             </span>
           </label>
         </div>
+        {% if direct_queries_allowed %}
         <div class="form-group" style="margin-top:.25rem">
           <input type="hidden" name="direct_queries_shown" value="1">
           <label class="form-switch">
@@ -416,6 +417,7 @@
             </span>
           </label>
         </div>
+        {% endif %}
         <div class="form-grid" style="margin-top:.25rem">
           <div class="form-group">
             <label>SQL accuracy target</label>

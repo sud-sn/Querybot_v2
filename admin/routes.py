@@ -2532,7 +2532,8 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "teams_platforms": store.list_platforms("teams"),
         "llm_audit_forced": _audit_forced(account_id),
         "general_knowledge_enabled": _general_knowledge_enabled(client),
-        "direct_queries_enabled": _direct_queries_enabled(client),
+        "direct_queries_allowed": _direct_queries_allowed(account_id),
+        "direct_queries_enabled": _direct_queries_enabled(client) and _direct_queries_allowed(account_id),
         "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
         **_channel_view(request, client),
     })
@@ -2901,13 +2902,21 @@ async def client_update(
         state_data = json.loads(client.get("state_data") or "{}")
         state_data["general_knowledge_enabled"] = bool(form.get("general_knowledge"))
         store.update_client_state(account_id, client.get("state") or "configured", state_data)
-    # The safety net (core2/direct.py): stored as the admin set it; off until an admin turns it on.
-    if form.get("direct_queries_shown"):
+    # The safety net (core2/direct.py): stored as the admin set it; off until an admin turns it on. A workspace under
+    # compliance has no switch, and a posted one is not stored.
+    if form.get("direct_queries_shown") and _direct_queries_allowed(account_id):
         client = store.get_client(account_id) or {}
         state_data = json.loads(client.get("state_data") or "{}")
         state_data["direct_queries_enabled"] = bool(form.get("direct_queries"))
         store.update_client_state(account_id, client.get("state") or "configured", state_data)
     return RedirectResponse(f"/admin/clients/{account_id}?saved=1", status_code=303)
+
+
+def _direct_queries_allowed(account_id: str) -> bool:
+    """May this workspace have the safety net at all? Not under compliance (core2/direct.py::allowed_for)."""
+    from core2.direct import allowed_for
+
+    return allowed_for(account_id)
 
 
 def _direct_queries_enabled(client: dict | None) -> bool:

@@ -297,6 +297,88 @@ def test_a_name_given_as_its_placeholder_is_put_back(forum):
     assert "'Notes on topic 7'" in checked.tree.sql(dialect="duckdb")
 
 
+# ── a workspace under compliance has no safety net at all, until a person has reviewed it ──
+
+@pytest.fixture
+def workspaces(tmp_path, monkeypatch):
+    path = str(tmp_path / "querybot.db")
+    monkeypatch.setenv("QUERYBOT_DB_PATH", path)
+    monkeypatch.setenv("DB_PATH", path)
+    import store
+    from admin import routes
+
+    for module in {id(m): m for m in (store, routes.store)}.values():
+        for namespace in (module.crypto.__dict__, module.config_store.decrypt.__globals__):
+            monkeypatch.setitem(namespace, "KEY_FILE", tmp_path / ".key")
+    store.init_db()
+
+    def workspace(mode: str | None) -> str:
+        account = f"acct{random.randrange(16 ** 8):08x}"
+        store.upsert_client(account, "Test Ltd")
+        if mode is not None:
+            store.save_compliance_profile(account, mode=mode, industry="standard")
+        return account
+
+    return store, workspace
+
+
+def _settings(store, account, pairs):
+    import asyncio
+    from unittest.mock import patch
+
+    import admin.routes as routes
+    from starlette.datastructures import FormData
+
+    async def form():
+        return FormData(pairs)
+
+    request = type("R", (), {"form": staticmethod(form)})()
+    with patch.object(routes, "_is_auth", return_value=True):
+        asyncio.run(routes.client_update(request, account, client_name="", db_config_id="", llm_provider="",
+                                         llm_model="", query_limit_monthly="", token_limit_monthly="",
+                                         enable_llm_audit="", portal_only=None, teams_platform_config_id=None))
+    return json.loads((store.get_client(account) or {}).get("state_data") or "{}")
+
+
+def _settings_page(account):
+    import asyncio
+    from unittest.mock import patch
+
+    import admin.routes as routes
+    from starlette.requests import Request
+
+    request = Request({"type": "http", "method": "GET", "path": f"/admin/clients/{account}", "headers": [],
+                       "query_string": b"", "session": {}})
+    with patch.object(routes, "_is_auth", return_value=True):
+        return asyncio.run(routes.client_detail(request, account)).body.decode("utf-8")
+
+
+def test_a_workspace_under_compliance_has_no_safety_net(workspaces):
+    from core2.service import direct_enabled
+
+    store, workspace = workspaces
+    standard, regulated, unset = workspace("standard"), workspace("regulated"), workspace(None)
+    assert DQ.allowed_for(standard) and not DQ.allowed_for(regulated) and not DQ.allowed_for(unset)
+    on = {DQ.SWITCH: True}
+    # The chat never reads the switch there, whatever was stored before the workspace came under compliance.
+    assert direct_enabled(on, standard) and not direct_enabled(on, regulated) and not direct_enabled(on, unset)
+    # Settings shows the switch only where it may be turned on, and a posted one is not stored elsewhere.
+    assert 'name="direct_queries"' in _settings_page(standard)
+    assert 'name="direct_queries"' not in _settings_page(regulated)
+    assert _settings(store, standard, [("direct_queries_shown", "1"), ("direct_queries", "1")]).get(DQ.SWITCH) is True
+    assert DQ.SWITCH not in _settings(store, regulated, [("direct_queries_shown", "1"), ("direct_queries", "1")])
+
+
+def test_the_compliance_check_failing_is_never_a_yes(monkeypatch):
+    from core.compliance import policy_engine
+
+    def broken(account_id):
+        raise RuntimeError("no store")
+
+    monkeypatch.setattr(policy_engine, "under_compliance", broken)
+    assert DQ.allowed_for("any") is False
+
+
 def test_the_switch_is_off_until_an_admin_turns_it_on():
     assert DQ.enabled({}) is False
     assert DQ.enabled(None) is False

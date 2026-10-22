@@ -22,7 +22,7 @@ shape no plan holds ("the schools whose test takers outnumber their enrolment", 
   is shown to creators only. Every part of the request the planner listed must be among the parts the query gives.
 
 A workspace switch turns it on (Settings). It is off in every workspace until an admin turns it on: no workspace
-starts getting queries the AI wrote without an admin choosing it.
+starts getting queries the AI wrote without an admin choosing it. A workspace under compliance has no switch at all.
 """
 
 from __future__ import annotations
@@ -63,6 +63,20 @@ def enabled(state: dict[str, Any] | None) -> bool:
     """The admin's switch for direct queries (Settings): off until an admin turns it on."""
     flag = (state or {}).get(SWITCH) if isinstance(state, dict) else None
     return flag is not None and bool(flag) and str(flag).lower() not in ("0", "false", "no", "off")
+
+
+def allowed_for(account_id: str) -> bool:
+    """May the workspace have direct queries at all? Not under compliance (regulated, never set up, or any mode but
+    standard) until a person has reviewed this module: there Settings shows no switch, and a switch stored before is
+    never read. Unknown is no."""
+    try:
+        from core.compliance.policy_engine import under_compliance
+
+        return not under_compliance(account_id)
+    except Exception:  # noqa: BLE001 - the compliance check failing is never a yes
+        log.warning("core2: could not tell whether %s is under compliance; no direct queries", account_id,
+                    exc_info=True)
+        return False
 
 
 # ── the approved model, as the AI may use it ─────────────────────────────────────────────────────────────────────
