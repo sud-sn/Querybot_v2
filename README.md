@@ -231,8 +231,14 @@ Governed executor ── read-only check, time limit, the person's tables, row r
 Your databases (read-only)        AI service (gets names and the question, returns a plan)
 ```
 
-- The AI never writes SQL. It returns a structured plan; code checks every name in it against the model Learn
-  built, compiles SQL for the database's dialect, and runs it read-only.
+- The AI returns a structured plan, not SQL; code checks every name in it against the model Learn built, compiles
+  SQL for the database's dialect, and runs it read-only.
+- One exception, off unless an admin turns it on in Settings ("Answer with a direct query when no analysis fits"):
+  when no plan can express a question, the AI writes one query from the approved tables, links and metrics only.
+  Code checks it before it runs (one read-only SELECT; only the tables and fields the person may see; only approved
+  links; nothing added up twice; default filters and a row limit put on by code), and it runs through the same
+  governed executor. The answer is marked "Direct query", only Creators see the query, and it cannot be added to a
+  dashboard or a schedule. A query that breaks a rule never runs.
 - Every answer shows the period, the dates and every condition it applied, and "How it was counted" shows the query.
 - More: [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/core-v2/DESIGN.md](docs/core-v2/DESIGN.md).
 

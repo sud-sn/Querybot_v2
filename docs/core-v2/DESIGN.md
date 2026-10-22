@@ -653,8 +653,17 @@ compiler.
 The old pipeline is gone, so nothing answers in its place. A data question the
 plan cannot express (`kind: "unsupported"`, a field or figure the plan cannot
 name, or a plan that cannot be compiled) gets a real reply saying what the data
-holds, with the nearest questions it can answer (core2/answer/beyond.py). The AI
-never writes SQL.
+holds (core2/answer/beyond.py), unless the workspace's admin has turned on
+"Answer with a direct query when no analysis fits" (off by default,
+`direct_queries_enabled`). With it on, the AI writes one query from the approved
+tables, links and metrics only (core2/direct.py), and code checks it before it
+runs: one read-only SELECT; only the tables and fields the reader may see; only
+approved links, each by all its columns; nothing added up twice through a link;
+default filters and a row limit put on by code. It runs through the same
+governed executor as every other query. The answer is labelled "Direct query",
+says what it left out of the question, shows its SQL to Creators only, and has
+no plan, so it cannot be pinned to a dashboard or scheduled. A query that breaks
+a rule never runs, and the reply is the same as with the switch off.
 
 ---
 

@@ -2532,6 +2532,7 @@ async def client_detail(request: Request, account_id: str, active_tab: str = "ov
         "teams_platforms": store.list_platforms("teams"),
         "llm_audit_forced": _audit_forced(account_id),
         "general_knowledge_enabled": _general_knowledge_enabled(client),
+        "direct_queries_enabled": _direct_queries_enabled(client),
         "active_tab":      _CLIENT_TABS.get(active_tab, "overview"),
         **_channel_view(request, client),
     })
@@ -2900,7 +2901,24 @@ async def client_update(
         state_data = json.loads(client.get("state_data") or "{}")
         state_data["general_knowledge_enabled"] = bool(form.get("general_knowledge"))
         store.update_client_state(account_id, client.get("state") or "configured", state_data)
+    # The safety net (core2/direct.py): stored as the admin set it; off until an admin turns it on.
+    if form.get("direct_queries_shown"):
+        client = store.get_client(account_id) or {}
+        state_data = json.loads(client.get("state_data") or "{}")
+        state_data["direct_queries_enabled"] = bool(form.get("direct_queries"))
+        store.update_client_state(account_id, client.get("state") or "configured", state_data)
     return RedirectResponse(f"/admin/clients/{account_id}?saved=1", status_code=303)
+
+
+def _direct_queries_enabled(client: dict | None) -> bool:
+    """The workspace's switch for the safety net, as the chat reads it: off until an admin turns it on."""
+    from core2.direct import enabled
+
+    try:
+        state = json.loads((client or {}).get("state_data") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    return enabled(state)
 
 
 def _general_knowledge_enabled(client: dict | None) -> bool:

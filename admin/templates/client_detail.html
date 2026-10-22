@@ -405,6 +405,17 @@
             </span>
           </label>
         </div>
+        <div class="form-group" style="margin-top:.25rem">
+          <input type="hidden" name="direct_queries_shown" value="1">
+          <label class="form-switch">
+            <input type="checkbox" name="direct_queries" value="1" {% if direct_queries_enabled %}checked{% endif %}>
+            <span class="form-switch-track" aria-hidden="true"></span>
+            <span class="form-switch-copy">
+              <span class="form-switch-title">Answer with a direct query when no analysis fits</span>
+              <span class="form-switch-description">When a question needs a shape Solviz's analyses do not hold, the AI writes one query from the approved tables, links and metrics, and Solviz checks it before it runs: read only, only the tables and fields the reader may see, only approved links, nothing counted twice, default filters and row rules applied. The answer is marked &ldquo;Direct query&rdquo;; creators can see the query. Only names of tables and fields are sent, never the data. Off until you turn it on.</span>
+            </span>
+          </label>
+        </div>
         <div class="form-grid" style="margin-top:.25rem">
           <div class="form-group">
             <label>SQL accuracy target</label>

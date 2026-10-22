@@ -100,6 +100,11 @@ class Services:
     # The workspace's AI sorting a question the data cannot answer (business in general, something else, or data it
     # does not hold), audited as its own call; None: such a question is said to be beyond the data.
     beyond: Complete | None = None
+    # The admin's switch for the safety net (core2/direct.py): a question the plan cannot express is answered by a
+    # query the AI writes from the approved model, checked by code before it runs. Off until an admin turns it on.
+    direct: bool = False
+    # The reader may see such a query's SQL: creators only.
+    sees_query: bool = False
 
 
 @dataclass
@@ -273,13 +278,67 @@ def _describe(question: str, plan: Plan, services: Services, *, question_id: str
     return frame
 
 
+def _direct(question: str, why: str, tried: Plan | None, services: Services, session: Session | None,
+            masked: Masked | None, matches: list[ValueMatch], *, question_id: str = "") -> dict[str, Any] | None:
+    """A question the plan could not express, answered by one query the AI writes from the approved model and code
+    checks before it runs (core2/direct.py). None, and the refusal stands, when the admin's switch is off, the AI
+    cannot write one, the query breaks a rule, it fails, or it leaves out a part of the request."""
+    if not services.direct:
+        return None
+    from core2 import direct as DQ
+
+    started = time.perf_counter()
+    values = dict(masked.values) if masked is not None else {}
+    placeholder = {normalise(str(v)): k for k, v in values.items()}
+    named = []
+    for m in matches:
+        attribute = services.model.attributes.get(m.attribute)
+        column = services.model.columns.get(attribute.column) if attribute is not None else None
+        if column is None or about_people(services.model, m.attribute):
+            continue
+        shown = placeholder.get(normalise(str(m.value)), m.value if services.values_allowed else None)
+        if shown is not None:
+            named.append(f"{services.model.tables[column.table].name}.{column.name} = '{shown}'")
+    try:
+        view = DQ.approved(services.model, services.warehouse.dialect, services.allowed_tables)
+        written = DQ.write(_as_the_ai_sees(question, services, masked), view, services.complete,
+                           today=services.today, why=why, values_allowed=services.values_allowed, matched=named)
+        if isinstance(written, str):
+            log.info("core2: no direct query for %r: %s", question, written)
+            return None
+        checked = DQ.check(written.sql, view, values=values)
+        sql = checked.tree.sql(dialect=view.dialect)
+        result = Guarded(services.warehouse).query(sql, max_rows=DQ.ROW_CAP)
+    except DQ.NotSafe as exc:
+        log.warning("core2: the direct query for %r broke a rule and was not run: %s", question, exc)
+        return None
+    except QueryFailed as exc:
+        log.warning("core2: the direct query for %r could not run: %s", question, exc.cause)
+        return None
+    except Exception as exc:  # noqa: BLE001 - the safety net never stands in the way of the refusal
+        log.warning("core2: the direct query for %r failed: %s", question, exc, exc_info=True)
+        return None
+    missing = DQ.covers(list(tried.asked) if tried is not None else [], written, sql, list(result.columns))
+    if missing:
+        log.info("core2: the direct query for %r leaves out %s; not shown", question, missing)
+        return None
+    payload = DQ.answer(question, view, checked, result, sees_query=services.sees_query, question_id=question_id,
+                        data_source=services.data_source, started=started, notes=DQ.left_out_notes(view, checked))
+    if session is not None:
+        _keep(session, Turn(question, None, masked, title=question))
+    return payload
+
+
 def _beyond(question: str, why: str, tried: Plan | None, services: Services, session: Session | None,
-            masked: Masked | None, *, chat: bool = False) -> dict[str, Any]:
+            masked: Masked | None, *, chat: bool = False,
+            direct: Callable[[], dict[str, Any] | None] | None = None) -> dict[str, Any]:
     """A question the data cannot answer, answered as a person would (core2/answer/beyond.py): business in general from
     the AI's general knowledge, labelled, where the admin allows it; anything else declined with questions to try;
     data the workspace does not hold said, with what it does hold, the nearest questions and a button asking the
     admin for it. Kept in the conversation as unanswered, as a refusal is. ``chat``: the planner read it as no
-    question about the data ("bye!", "tell me a joke"), so it is never said to be data the workspace lacks."""
+    question about the data ("bye!", "tell me a joke"), so it is never said to be data the workspace lacks.
+    ``direct``: a question about the data is first tried as a direct query (core2/direct.py); its answer, when it
+    gives one, is the reply."""
     lang = "fr" if beyond.french(question) else "en"
     said = describe(services.model, [], today=services.today, allowed=services.allowed_tables,
                     values=services.values_allowed)
@@ -301,6 +360,9 @@ def _beyond(question: str, why: str, tried: Plan | None, services: Services, ses
         text = beyond.decline(question, lang=lang) if found.kind == beyond.OFF_TOPIC else beyond.general_off(lang=lang)
         return _refused(question, text, tried, services, why, session, masked, unsupported=True, kind=found.kind,
                         follow_up_suggestions=chips)
+    answered = direct() if direct is not None else None
+    if answered is not None:
+        return answered
     holds = describe_holds(said.sections)
     # "Your data does not hold monthly recurring revenue" where a field of that name is there (Learn kept it as each
     # subscription's property): never said, of what the reader may see.
@@ -1022,8 +1084,12 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         return _describe(question, plan, services, question_id=question_id, masked=outcome.masked)
     if plan.kind == "unsupported":
         why = " ".join(plan.notes) or "nothing in this data measures it"
-        # After a repair round, the plan that was tried first says what was looked at.
-        return _beyond(question, why, outcome.tried or plan, services, session, outcome.masked)
+        tried = outcome.tried or plan
+        # After a repair round, the plan that was tried first says what was looked at. A question about the data
+        # that no plan holds is tried as a direct query first (never one about business in general, or chat).
+        return _beyond(question, why, tried, services, session, outcome.masked,
+                       direct=lambda: _direct(question, why, tried, services, session, outcome.masked, matches,
+                                              question_id=question_id))
     if plan.kind == "clarify" and plan.clarify is not None:
         # Kept in the conversation: the reply ("the first one") answers this question.
         _keep(session, Turn(question, plan, outcome.masked))
@@ -1085,6 +1151,11 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         payload = _compute(question, plan, services, ctx, question_id=question_id, started=start, shown=shown,
                            periods=periods, notes=True)
     except ResolveError as exc:
+        if exc.kind in ("unsupported", "unknown") and from_ai:
+            direct = _direct(question, exc.message, plan, services, session, outcome.masked, matches,
+                             question_id=question_id)
+            if direct is not None:
+                return direct
         if exc.kind != "ambiguous":
             template = _REFUSALS.get(exc.kind, "{message}.")
             stopped = exc.message + (f" ({', '.join(exc.options)})" if exc.kind == "unconfirmed" and exc.options
@@ -1145,6 +1216,10 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
                         trust={"sql": exc.sql})
     except (CompileError, ValueError) as exc:
         log.warning("core2 could not compile a plan for %r: %s", question, exc)
+        direct = _direct(question, str(exc), plan, services, session, outcome.masked, matches,
+                         question_id=question_id) if from_ai else None
+        if direct is not None:
+            return direct
         return _refused(question, f"I cannot answer that from this data yet: {exc}.", plan, services, str(exc),
                         session, outcome.masked, unsupported=True)
     if plan.intent == "drivers":
@@ -3298,6 +3373,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
                      question_id: str = "") -> tuple[Services | None, dict[str, Any] | None]:
     """The services a portal answer runs on, or the frame that says why there are none."""
     import store
+    from core.portal_roles import CREATOR, portal_role
     from core.schema import load_known_tables
     from core.value_index import value_index_enabled
     from core2.bootstrap.ai import beyond_writer, metric_writer, workspace_planner
@@ -3348,8 +3424,17 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         if scrub is None and indexing else None, industry=industry_of(account_id),
         waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client),
         general_knowledge=general_knowledge_enabled(state),
+        direct=direct_enabled(state),
+        sees_query=portal_role(portal_user) == CREATOR if portal_user else False,
         beyond=beyond_writer(account_id, client, question=scrub(question) if scrub else question,
                              question_id=question_id)), None
+
+
+def direct_enabled(state: dict[str, Any] | None) -> bool:
+    """The admin's switch for the safety net (Settings, core2/direct.py): off until an admin turns it on."""
+    from core2.direct import enabled
+
+    return enabled(state)
 
 
 def general_knowledge_enabled(state: dict[str, Any] | None) -> bool:

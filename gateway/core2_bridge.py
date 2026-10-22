@@ -334,6 +334,8 @@ def _pin(account_id: str, portal_user: dict | None, question: str, payload: dict
         return ""
     if payload.get("own_metrics_used"):
         return ""           # a tile is drawn again outside the chat, where the reader's own metric is not
+    if payload.get("direct_query"):
+        return ""           # a query the AI wrote for one question (core2/direct.py): no plan to draw a tile again by
     db_config_id = int((store.get_client(account_id) or {}).get("db_config_id") or 0)
     chart = payload.get("chart") or {}
     chart_type = str(chart.get("chart_type") or ("kpi" if payload.get("kpi") else "table"))
