@@ -227,6 +227,12 @@ def missing(question: str, plan: Plan, payload: dict[str, Any], model: Any, *,
         elif part.kind == "ranking":
             if plan.limit is None and not plan.sort and plan.within is None and ref not in body:
                 gaps.append(Gap(part.words, part.kind, "not_in_plan"))
+        elif part.kind == "condition" and ref in groups and plan.limit is not None and ref not in _plain(
+                json.dumps([f.model_dump(mode="json") for f in _conditions(plan)])):
+            # A condition planned as the answer's grouping holds only when every member is a row of its own:
+            # "between San Diego and Santa Barbara, which county has the most" with the top county of all shown
+            # answered for Los Angeles.
+            gaps.append(Gap(part.words, part.kind, "not_applied"))
         elif ref not in body and ref not in ("time", "compare", "limit", "chart"):
             gaps.append(Gap(part.words, part.kind, "not_in_plan"))
     if before is not None and before.kind == "query" and not SWAPS.search(question) and (
@@ -245,7 +251,7 @@ def missing(question: str, plan: Plan, payload: dict[str, Any], model: Any, *,
     held = {_plain(v) for f in _conditions(plan) for v in f.values}
     grouped = {_plain(g) for g in [*plan.group_by, *plan.via.keys()]}
     for m in named:
-        if _plain(m.attribute) in grouped:
+        if _plain(m.attribute) in grouped and plan.limit is None:
             continue                        # "compare North and South": a row each of the grouping shown
         if _plain(m.value) not in held and not any(g.kind == "condition" and _close(_plain(g.words), _plain(m.text))
                                                     for g in gaps):

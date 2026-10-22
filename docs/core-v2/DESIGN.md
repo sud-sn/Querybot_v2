@@ -650,9 +650,11 @@ compiler.
   complete periods only; forecast periods are labelled in the series' grain.
 
 ### 9.4 Fallback
-A question the plan cannot express (`kind: "unsupported"`) falls back to today's
-pipeline when the switch allows it (§12.2), labelled as such. core2 itself never
-asks the AI for SQL in v2.0.
+The old pipeline is gone, so nothing answers in its place. A data question the
+plan cannot express (`kind: "unsupported"`, a field or figure the plan cannot
+name, or a plan that cannot be compiled) gets a real reply saying what the data
+holds, with the nearest questions it can answer (core2/answer/beyond.py). The AI
+never writes SQL.
 
 ---
 

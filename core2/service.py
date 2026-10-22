@@ -967,8 +967,11 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         # "at Riverside") that names one member beyond doubt; ordinary words never narrow the answer. Every
         # name written, quoted or not, is still withheld from the AI where member values may not reach it.
         found = _visible(services.index.quoted(question), model, services.allowed_tables)
+        # "Virtual = F", "DOC = 31": the value of the field named before the sign, for that field only.
+        assigned = _visible(_assigned(model, services.index, question), model, services.allowed_tables)
+        found = [*(m for m in found if not any(a.start < m.end and m.start < a.end for a in assigned)), *assigned]
         unquoted_named = [m for m in _visible(services.index.written_names(question, not_names=_own_names(model),
-                                                                           prefer=lambda f: _a_things_own_name(model, f)),
+                                                                           prefer=lambda f: _one_reading(model, question, f)),
                                               model, services.allowed_tables)
                           if not any(f.start < m.end and m.start < f.end for f in found)]
         found = sorted([*found, *unquoted_named], key=lambda m: (m.start, m.attribute))
@@ -1057,6 +1060,7 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     plan = _one_month_named(plan, question)
     plan, unquoted, no_such = _quoted_filters(plan, question, model, _grounded(matches, session), services.index)
     plan = _quoted_lost(plan, question, model, services.index)
+    plan = _quoted_as_written(plan, question, model, services.index)
     unknown_left_out: list[tuple[str, str]] = []
     plan, missing = _members_named(plan, model, services.index, unknown_left_out)
     bare = plan
@@ -1090,11 +1094,25 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
                             outcome.masked, unsupported=exc.kind == "unsupported",
                             **({"follow_up_suggestions": [{"label": q, "question": q} for q in instead]} if instead
                                else {}))
-        # Two fair readings (two links, two dates): each one worked out first. The same figure either way is
-        # answered and said so; different figures are asked about, each one's figure beside its name.
-        figures = _each_reading(question, plan, exc, services, ctx, question_id=question_id) if exc.field else {}
+        # Two fair readings (two links, two dates): the one the question's own words name ("posts owned by an elder
+        # user": the owner, not the last editor) is answered. Else each one is worked out first: the same figure
+        # either way is answered and said so; different figures are asked about, each one's figure beside its name.
+        said = _reading_said(question, exc.options) if exc.field and exc.field != "time.date" else None
+        before = list(shown), list(periods)       # what a reading tried and dropped leaves behind is put back
+        if said is not None:
+            try:
+                chosen = _completed(plan, exc.field or "", said, model)
+                payload = _compute(question, chosen, services, ctx, question_id=question_id, started=start,
+                                   shown=shown, periods=periods, notes=True)
+                plan = chosen
+            except Exception as again:  # noqa: BLE001 - asked about, as before
+                log.info("core2: could not answer %r by the reading its words name: %s", question, again)
+                said = None
+                shown[:], periods[:] = before
+        figures = _each_reading(question, plan, exc, services, ctx, question_id=question_id) \
+            if exc.field and said is None else {}
         same = _same_either_way(figures, plan)
-        answered = None
+        answered = payload if said is not None else None
         if same is not None:
             either = _completed(plan, exc.field or "", same, model)
             try:
@@ -1102,6 +1120,7 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
                                     shown=shown, periods=periods, notes=True)
             except Exception as again:  # noqa: BLE001 - asked about, as before
                 log.info("core2: could not answer %r by its one reading: %s", question, again)
+                shown[:], periods[:] = before
         if answered is None:
             _keep(session, Turn(question, plan, outcome.masked))     # the reply names the role this asks for
             if exc.field:
@@ -1111,8 +1130,9 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
             if figures:
                 _with_numbers(asked, figures)
             return asked
-        plan, payload = either, answered
-        _said_same_either_way(payload, exc.message, figures)
+        if said is None:
+            plan, payload = either, answered
+            _said_same_either_way(payload, exc.message, figures)
     except QueryFailed as exc:     # a refused or failed query is told, never raised to the socket
         log.warning("core2 query failed for %r: %s", question, exc.cause)
         cause = exc.cause
@@ -2105,6 +2125,34 @@ def _one_step_down(question: str, plan: Plan, payload: dict[str, Any], services:
     payload["_dig"] = deeper          # the step itself, offered with no AI (taken off before the answer is shown)
 
 
+_READING_WORD = re.compile(r"[a-z]+")
+_READING_SKIP = {"to", "of", "the", "by", "through", "a", "an", "and", "via", "on", "for"}
+
+
+def _stem(word: str) -> str:
+    """A word without its ending, as the name of a link and a question both write it: "owned", "owner" -> own;
+    "edited", "editor" -> edit; "shipped", "ship" -> ship."""
+    if len(word) > 4:
+        word = re.sub(r"(?:ing|ers|ors|er|or|ed|es|s)$", "", word)
+        if len(word) > 3 and word[-1] == word[-2]:
+            word = word[:-1]
+    return word
+
+
+def _reading_said(question: str, options: list[str]) -> str | None:
+    """Of the ways a field can be reached ("Last editor user", "Owner user"), the one the question's words name: each
+    word of its name that the others do not share is a word of the question, in any form ("posts owned by an elder
+    user"). None unless exactly one is."""
+    words = lambda text: {_stem(w) for w in _READING_WORD.findall(text.casefold()) if w not in _READING_SKIP}  # noqa: E731
+    named = {o: words(o) for o in options}
+    if len(named) < 2:
+        return None
+    shared = set.intersection(*named.values())
+    asked = words(question)
+    said = [o for o, w in named.items() if w - shared and (w - shared) <= asked]
+    return said[0] if len(said) == 1 else None
+
+
 def _completed(plan: Plan, field: str, option: str, model: SemanticModel) -> Plan:
     """A plan waiting for the link or the date the reader names, completed with ``option``."""
     if field == "time.date":
@@ -2507,6 +2555,108 @@ def _a_things_own_name(model: SemanticModel, found: list[ValueMatch]) -> ValueMa
     return own[0]
 
 
+_ASSIGNED = re.compile(r"([A-Za-z_][\w ]{0,60}?)\s*=\s*(?:'([^'\n]+)'|\"([^\"\n]+)\"|([^\s;,)'\"?!]+))")
+
+
+def _assigned(model: SemanticModel, index: MemberIndex, question: str) -> list[ValueMatch]:
+    """Members written as a field's value ("Virtual = F", "DOC = 31", "status = 'Open'"): the field named before
+    the sign, by its column's own name, its business name or its slug; read as if quoted, for that field only."""
+    found: list[ValueMatch] = []
+    for m in _ASSIGNED.finditer(question or ""):
+        group = next(i for i in range(2, 5) if m.group(i) is not None)
+        value, start, end = m.group(group), m.start(group), m.end(group)
+        if group == 4:
+            value = value.rstrip(".")          # the sentence's own full stop ("DOC = 31."), never the code's
+            end = start + len(value)
+        words = normalise(m.group(1)).split()
+        said = {" ".join(words[-n:]) for n in range(1, min(3, len(words)) + 1)}
+        for slug, a in model.attributes.items():
+            column = model.columns.get(a.column)
+            names = {normalise(n) for n in (column.name.replace("_", " ") if column else "", a.business_name,
+                                             slug.rsplit(".", 1)[-1].replace("_", " ")) if n}
+            if names & said:
+                # The value as written, exactly: a code is never part of another ("31" of "131").
+                stored = next((v for attr, v in index._entries(normalise(value)) if attr == slug), None)
+                if stored is not None:
+                    found.append(ValueMatch(value, start, end, slug, stored))
+    return found
+
+
+_SPAN_WORD = re.compile(r"[a-z0-9]+")
+_BESIDE_SKIP = {"of", "the", "in", "at", "for", "from", "a", "an", "and", "or", "de", "du", "des", "la", "le", "les"}
+
+
+def _one_reading(model: SemanticModel, question: str, found: list[ValueMatch]) -> ValueMatch | None:
+    """Of a name several fields hold, the one the question means, or None when it stays unclear:
+
+    * a thing's own name ("Ontario" the region, not the sales team called after it);
+    * one field repeated on the tables of what happened (a school's district, kept again on its test scores and
+      its meal counts): the thing's own copy, where each table is linked to the thing;
+    * the field written beside the name ("Alameda County", "the city of Fremont");
+    * the plain field over one that qualifies it (the city, not the mailing city);
+    * the field the question names elsewhere ("between San Diego and Santa Barbara, which county ...").
+    """
+    own = _a_things_own_name(model, found)
+    if own is not None:
+        return own
+    cands = [m for m in found if m.attribute in model.attributes]
+    if not cands or len({normalise(str(m.value)) for m in cands}) != 1:
+        return None
+
+    def name(m: ValueMatch) -> str:
+        a = model.attributes[m.attribute]
+        return normalise(a.business_name or m.attribute.rsplit(".", 1)[-1].replace("_", " "))
+
+    near_tables: dict[str, set[str]] = {}
+    for j in (getattr(model, "joins", None) or {}).values():
+        near_tables.setdefault(j.from_table, set()).add(j.to_table)
+        near_tables.setdefault(j.to_table, set()).add(j.from_table)
+
+    def reached(table: str) -> set[str]:
+        """The tables linked to ``table``, through any number of links."""
+        seen, todo = {table}, [table]
+        while todo:
+            for t in near_tables.get(todo.pop(), ()):
+                if t not in seen:
+                    seen.add(t)
+                    todo.append(t)
+        return seen
+
+    fields: dict[str, list[ValueMatch]] = {}
+    for m in cands:
+        fields.setdefault(name(m), []).append(m)
+    readings: dict[str, ValueMatch] = {}
+    for field_name, ms in fields.items():
+        held = [m for m in ms if model.attributes[m.attribute].entity in model.entities]
+        if len(ms) == 1:
+            readings[field_name] = ms[0]
+        elif len({model.attributes[m.attribute].entity for m in held}) == 1:
+            thing = model.entities[model.attributes[held[0].attribute].entity]  # type: ignore[index]
+            copies = [m for m in ms if m not in held]
+            tied = reached(thing.table)
+            if all(model.columns[model.attributes[m.attribute].column].table in tied for m in copies):
+                readings[field_name] = held[0]
+                continue
+            return None                     # one name, unlinked tables: which is meant is unclear
+        else:
+            return None
+    if len(readings) == 1:
+        return next(iter(readings.values()))
+    start, end = cands[0].start, cands[0].end
+    words = lambda text: [w for w in _SPAN_WORD.findall(text.casefold()) if w not in _BESIDE_SKIP]  # noqa: E731
+    beside = set(words(question[end:])[:2]) | set(words(question[:start])[-2:])
+    tokens = {f: set(f.split()) for f in readings}
+    near = [f for f in readings if tokens[f] & beside]
+    if len(near) == 1:
+        return readings[near[0]]
+    plain = [f for f in readings if not any(tokens[g] < tokens[f] for g in readings if g != f)]
+    if len(plain) == 1:
+        return readings[plain[0]]
+    rest = normalise(question[:start] + " " + question[end:])
+    named = [f for f in plain if re.search(rf"\b{re.escape(f)}\b", rest)]
+    return readings[named[0]] if len(named) == 1 else None
+
+
 def _own_names(model: SemanticModel) -> frozenset[str]:
     """The names of the model's own figures, groupings and fields ("Net Amount", "Store"), and their words for
     them: written in a question they name what is counted or grouped, never a member to narrow to."""
@@ -2628,6 +2778,44 @@ def _quoted_lost(plan: Plan, question: str, model: SemanticModel, index: MemberI
             continue
         added.append(Filter(field=next(iter(fields)), op="eq", values=[text]))
     return plan.model_copy(update={"filters": [*plan.filters, *added]}) if added else plan
+
+
+_END_MARKS = "?!.;:"
+
+
+def _quoted_as_written(plan: Plan, question: str, model: SemanticModel, index: MemberIndex) -> Plan:
+    """A quoted value filters as the reader wrote it, its last mark kept: "the post titled 'Open source tools for
+    visualizing data?'" was filtered on the title without its question mark, and found no post. Where the field's
+    members are read, the one stored is taken; where they are not (a free-text title), either way is matched:
+    whether the mark is the title's own or the sentence's, only the data knows."""
+    if plan.kind != "query" or not plan.filters:
+        return plan
+    quoted = [question[a:b].strip() for a, b in quoted_spans(question)]
+    marked = {q.rstrip(_END_MARKS).strip().casefold(): q for q in quoted if q.rstrip(_END_MARKS) != q}
+    if not marked:
+        return plan
+    filters, changed = [], False
+    for f in plan.filters:
+        found = find_slug(model, f.field) if f.op in ("eq", "in") else None
+        attribute = found[1] if found is not None and isinstance(found[1], Attribute) else None
+        if attribute is None:
+            filters.append(f)
+            continue
+        read = attribute.slug in index.attributes
+        values = list(f.values)
+        for i, v in enumerate(f.values):
+            written = marked.get(str(v).strip().casefold()) if isinstance(v, str) else None
+            if written is None or written in values:
+                continue
+            if not read:
+                values.append(written)
+            elif index.stored(attribute.slug, v) is None and index.stored(attribute.slug, written) is not None:
+                values[i] = index.stored(attribute.slug, written)
+        if values != list(f.values):
+            changed = True
+            f = f.model_copy(update={"op": "in" if len(values) > 1 else f.op, "values": values})
+        filters.append(f)
+    return plan.model_copy(update={"filters": filters}) if changed else plan
 
 
 def _whole_names(plan: Plan, matches: list[ValueMatch]) -> Plan:

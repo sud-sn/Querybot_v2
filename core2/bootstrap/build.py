@@ -813,6 +813,8 @@ def _entities_and_attributes(model: SemanticModel, f: Findings, ck: dict[tuple[s
                 continue
             if not _attribute_worthy(column, col, kind, table.name):
                 continue
+            if _a_sparse_copy(key, col, f.joins, entity_of, model):
+                continue
             how = _attribute_kind(column, col, kind)
             if how is None:
                 continue
@@ -933,6 +935,29 @@ def _two_part_name(model: SemanticModel, key: str, business: str, parts: tuple[s
 # Columns that describe the load, not the business: never offered as groupings.
 _TECHNICAL = {"etl", "ext", "src", "sys", "dw", "dwh", "hash", "checksum", "rowid", "guid", "uuid", "az", "rowguid",
               "msrepl"}
+
+
+def _a_sparse_copy(key: str, col: Column, joins: list[JoinFinding], entity_of: dict[str, str],
+                   model: SemanticModel) -> bool:
+    """A name kept again, on a few rows only, beside the link to what it names: a post's OWNER_DISPLAY_NAME beside
+    its OWNER_USER_ID, empty on nearly every post (filled where the user is gone). The owner's name is the user's,
+    through the link; read from the copy, "posts by Harvey" found none. The words before the name are the link's
+    own (OWNER and OWNER_USER_ID): an order's COUPON_NAME, empty on most orders, is no copy of its customer's
+    NAME."""
+    p = col.profile
+    if col.data_type != "text" or p is None or not p.rows or p.non_null > 0.1 * p.rows:
+        return False
+    words = names.tokens(col.name)
+    for j in joins:
+        entity = model.entities.get(entity_of.get(j.to_table, "")) if j.from_table == key else None
+        label = model.columns.get(entity.label_column or "") if entity is not None else None
+        tail = names.tokens(label.name) if label is not None else []
+        if not tail or len(words) <= len(tail) or words[-len(tail):] != tail:
+            continue
+        lead, link = words[:-len(tail)], names.tokens(j.from_column)
+        if link[:len(lead)] == lead:
+            return True
+    return False
 
 
 def _attribute_worthy(column: InvColumn, col: Column, kind: str, table: str = "") -> bool:

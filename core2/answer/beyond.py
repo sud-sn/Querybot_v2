@@ -158,9 +158,22 @@ _FRENCH = re.compile(r"\b(?:comment|puis-je|peut-on|est-il|je|tu|vous|tableau|do
                      r"fera|demain|temps|ventes|magasins?)\b", re.IGNORECASE)
 
 
+_QUOTES = re.compile(r""""[^"\n]*"|“[^”\n]*”|«[^»\n]*»|(?<![\w])'[^'\n]*'(?![\w])""")
+# Words only English writes, to set against the French ones: "comment" and "temps" are English words too ("gave a
+# comment to a post").
+_ENGLISH = re.compile(r"\b(?:the|is|was|were|are|what|which|who|how|of|to|and|with|for|that|this|did|does|my|by|"
+                      r"from|in|at|show|list|give)\b", re.IGNORECASE)
+
+
 def french(question: str) -> bool:
-    """Is the question written in French?"""
-    return bool(_FRENCH.search(question or ""))
+    """Is the question written in French? More of its words French than English; names in quotes count for
+    neither (« ventes de "The Corner Shop" »), nor an English word written with a capital inside the sentence: it
+    is a name's (« ventes pour The Corner Shop and Co »)."""
+    text = _QUOTES.sub(" ", question or "")
+    found = len(_FRENCH.findall(text))
+    english = sum(1 for m in _ENGLISH.finditer(text)
+                  if m.group(0).islower() or not text[:m.start()].strip() or text[:m.start()].rstrip()[-1] in ".?!:;")
+    return found > 0 and found > english
 
 
 def about_solviz(*, lang: str) -> str:

@@ -68,6 +68,102 @@ def _filled(*series: list[float | None]) -> list[tuple[float, ...]]:
     return [vals for vals in zip(*series) if all(v is not None and math.isfinite(v) for v in vals)]  # type: ignore[misc]
 
 
+WINDOW = 256        # the rows a quick look reads first
+
+
+class _Quick:
+    """A quick look at the sample, every column at once, for the relations tried on three columns at a time
+    (A = X x Y, A = B - C, A = X / Y, A = (X - Y) / X): which cannot hold, as _share would read it: the first
+    hundred rows on which all three hold something mostly disagree, or fewer than AGREE of all of them agree. A
+    relation is ruled out here only where _share would say it does not hold, so nothing is found or missed that
+    reading every row would not find or miss; what is left is read by _share as before. The first rows are read
+    first; a column empty on them (a match table whose first seasons have no player positions) is followed down
+    the sample to its own first hundred. A table with a hundred figures has half a million such triples: read row
+    by row, Learn never finished it."""
+
+    def __init__(self, rows: dict[str, list[float | None]], columns: list[str]):
+        import numpy as np
+
+        self._np = np
+        self._at = {c: i for i, c in enumerate(columns)}
+        self._size = max((len(rows[c]) for c in columns), default=0)
+        self._values = np.full((len(columns), self._size), np.nan)
+        for i, c in enumerate(columns):
+            self._values[i, :len(rows[c])] = [np.nan if v is None else v for v in rows[c]]
+        with np.errstate(invalid="ignore", over="ignore"):
+            self._held = np.isfinite(self._values)
+            self._some = self._held & (self._values != 0)
+            self._near = np.maximum(0.011, 0.005 * np.abs(self._values))     # as _close allows, from A
+        self._ruled: dict[tuple[str, str, str, float], object] = {}
+
+    def _verdicts(self, how: str, i: int, j: int, scale: float, width: int, rows) -> tuple[object, object]:
+        """For the amounts ``rows``, read on the first ``width`` rows: whether the relation certainly fails, and
+        whether those rows settle it (they hold the first hundred where all three hold something, or are all)."""
+        np = self._np
+        vx, vy = self._values[i, :width], self._values[j, :width]
+        both = self._held[i, :width] & self._held[j, :width]
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            if how == "product":
+                worked, read = vx * vy, self._some[rows, :width] & both
+            elif how == "difference":
+                worked, read = vx - vy, self._held[rows, :width] & both
+            elif how == "ratio":
+                worked, read = scale * (vx / vy), self._some[rows, :width] & (both & (vy != 0))
+            else:
+                worked, read = scale * ((vx - vy) / vx), self._some[rows, :width] & (both & (vx != 0))
+        seen = np.cumsum(read, axis=1)
+        filled = seen[:, -1] if width else np.zeros(len(rows), dtype=int)
+        r, c = np.nonzero(read & (seen <= 100))
+        with np.errstate(invalid="ignore", over="ignore"):
+            agree = np.abs(self._values[rows[r], c] - worked[c]) <= self._near[rows[r], c]
+        hits = np.bincount(r, weights=agree, minlength=len(rows))
+        head = np.minimum(filled, 100)
+        fails = (head < 20) | (hits < 0.8 * head)
+        settled = (filled >= 100) | (width >= self._size)
+        return fails & settled, settled
+
+    def _share(self, how: str, i: int, j: int, scale: float, rows) -> object:
+        """For the amounts ``rows``, the share of every row of the sample on which the relation holds, of those on
+        which all three hold something: as _share counts it once its first hundred agree."""
+        np = self._np
+        vx, vy = self._values[i], self._values[j]
+        both = self._held[i] & self._held[j]
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            if how == "product":
+                worked, read = vx * vy, self._some[rows] & both
+            elif how == "difference":
+                worked, read = vx - vy, self._held[rows] & both
+            elif how == "ratio":
+                worked, read = scale * (vx / vy), self._some[rows] & (both & (vy != 0))
+            else:
+                worked, read = scale * ((vx - vy) / vx), self._some[rows] & (both & (vx != 0))
+            agree = read & (np.abs(self._values[rows] - worked) <= self._near[rows])
+        return np.count_nonzero(agree, axis=1) / np.maximum(np.count_nonzero(read, axis=1), 1)
+
+    def ruled_out(self, how: str, a: str, x: str, y: str, scale: float = 1.0) -> bool:
+        """Whether A = X x Y ("product", read where A is not nought), A = X - Y ("difference"), A = scale x X / Y
+        ("ratio") or A = scale x (X - Y) / X ("margin"), each of the last two read where A is not nought and what
+        it divides by is not, certainly fails the test _share opens with."""
+        np = self._np
+        if a not in self._at or x not in self._at or y not in self._at:
+            return False
+        key = (how, x, y, scale)
+        ruled = self._ruled.get(key)
+        if ruled is None:
+            i, j = self._at[x], self._at[y]
+            every = np.arange(len(self._at))
+            ruled, settled = self._verdicts(how, i, j, scale, min(WINDOW, self._size), every)
+            if not settled.all():  # type: ignore[union-attr]
+                open_ = every[~settled]  # type: ignore[operator]
+                ruled[open_] = self._verdicts(how, i, j, scale, self._size, open_)[0]  # type: ignore[index]
+            left = every[~ruled]  # type: ignore[operator]
+            if len(left):
+                # The first hundred agree: what every row says decides, as _share counts it.
+                ruled[left] = self._share(how, i, j, scale, left) < AGREE  # type: ignore[index]
+            self._ruled[key] = ruled
+        return bool(ruled[self._at[a]])  # type: ignore[index]
+
+
 def _varies(values: list[float | None]) -> bool:
     seen = {v for v in values if v is not None}
     return len(seen) > 1
@@ -315,8 +411,9 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
     # A product: AMOUNT = QUANTITY x PRICE. The price is the factor that is not a whole count, or the one
     # whose name says it is per unit.
     varying = [c for c in of if _varies(rows[c])]
+    quick = _Quick(rows, varying)
     for amount, (x, y) in ((a, pair) for a in varying for pair in combinations([c for c in varying if c != a], 2)):
-        if amount in judged:
+        if amount in judged or quick.ruled_out("product", amount, x, y):
             continue
         share = _share([(a, b * c) for a, b, c in _filled(rows[amount], rows[x], rows[y]) if a])
         if share < AGREE:
@@ -341,6 +438,8 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
         if x in judged or not values or _whole(values) or max(abs(v) for v in values) > 1000:
             continue
         for a, b in permutations([c for c in others if c != x], 2):
+            if all(quick.ruled_out(shape, x, a, b, scale) for scale in (1.0, 100.0) for shape in ("ratio", "margin")):
+                continue
             # Read where X holds something: a quantity that is nought on most rows is "nought divided by
             # anything" there, which says nothing about what X is (an allocated quantity, mostly empty).
             filled = [row for row in _filled(rows[x], rows[a], rows[b]) if row[0]]
@@ -373,6 +472,8 @@ def _check_table(table: str, found: list[MeasureFinding], rows: dict[str, list[f
     differences: dict[tuple[str, str, str], float] = {}
     for a in money:
         for b, c in permutations([x for x in money if x != a], 2):
+            if quick.ruled_out("difference", a, b, c):
+                continue
             filled = _filled(rows[a], rows[b], rows[c])
             # Each of the three mostly not nought: a rejected quantity, nought on most rows, is no "line amount
             # less the same amount in another currency" because the two are equal where nothing is converted.

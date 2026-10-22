@@ -120,6 +120,12 @@ _COUNT_LEAD = {"number", "num", "nbr", "nb", "no", "count", "cnt", "total", "tot
 _STEP_WORDS = {"to", "by", "of", "into", "under"}
 # A table's own number beside its key: BOOKING_NUMBER beside BOOKING_ID.
 _NUMBER_WORDS = {"number", "nr"}
+# A row's number and nothing more (Id, ID, RowId, PK): every table numbers its rows 1, 2, 3 under such a name, so two
+# of them hold the same values without one pointing at the other.
+_ROW_NUMBER = {"id", "key", "pk", "sk", "row", "rowid", "uuid", "guid", "oid"}
+# Words that, last in a name, say a kind of thing: POST_HISTORY_TYPE_ID is a history type's number, not a post's.
+_KIND_WORDS = {"type", "typ", "kind", "status", "sts", "state", "category", "cat", "class", "cls", "level", "lvl",
+               "group", "grp", "reason", "mode", "method", "stage"}
 # A copy of a table, kept beside it: DEVICES_BAK, ORDERS_OLD, CUSTOMERS_20240101.
 _COPY_WORDS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp", "archive", "archived", "arch",
                "prev", "previous", "save", "saved"}
@@ -170,6 +176,14 @@ def _a_step_up(word: str) -> bool:
         len(h) >= len(word) and names.same_word(word, h) for h in _HIERARCHY)
 
 
+def row_number(column: str) -> bool:
+    """Is the name a row's number and nothing more ("Id", "ROW_ID")? It says no table: on the table's own key, two
+    such names alike say nothing of one pointing at the other. Repeated on its table (a lab result's ID, one patient
+    to many results), it is the number of something else, and a key of that name may be it."""
+    words = names.tokens(column)
+    return bool(words) and all(w in _ROW_NUMBER for w in words)
+
+
 def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, list[str]]:
     """How strongly the names say ``from_column`` points at ``to_table.to_column``, and the role words left over."""
     if names.opaque(from_column) or names.opaque(to_column) and names.opaque(to_table):
@@ -192,8 +206,10 @@ def name_score(from_column: str, to_table: str, to_column: str) -> tuple[float, 
     keyed = bool(words) and words[-1] in names.KEY_SUFFIXES
     for target, score in ((k, 0.8), (u, 0.75)):
         # The role after the name: ABC_CLASS_VOLUME_KEY points at ABC_CLASS as its "volume" role. Only a key
-        # says so: RENTAL_DURATION and VISITS_INCLUDED are figures about rentals and visits.
-        if keyed and target and len(a) > len(target) and all(names.same_word(x, y) for x, y in zip(a, target)):
+        # says so: RENTAL_DURATION and VISITS_INCLUDED are figures about rentals and visits. A kind after the name
+        # is a thing of its own: POST_HISTORY_TYPE_ID numbers a type of history entry, never a post.
+        if keyed and target and len(a) > len(target) and all(names.same_word(x, y) for x, y in zip(a, target)) \
+                and a[-1] not in _KIND_WORDS:
             return score, a[len(target):]
     return 0.0, []
 
@@ -405,8 +421,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
             a = profiles[key].columns[column.name]
             own_key = column.name in tkeys.primary_key and len(tkeys.primary_key) == 1
             plain = bare(table, column.name)
-            if own_key and _names_its_table(plain, table.name):
-                continue   # CUSTOMER_ID on CUSTOMERS identifies the row; it points nowhere
+            if own_key and (_names_its_table(plain, table.name) or row_number(plain)):
+                continue   # CUSTOMER_ID on CUSTOMERS, or its plain Id, identifies the row; it points nowhere
             column_words = names.tokens(plain)
             # A step up named by its words alone: REPORTS_TO, PARENT, MANAGED_BY. No key word after them, but no
             # other reading either.
