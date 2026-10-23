@@ -480,6 +480,14 @@
    not fired -- the two breakpoints are not the same thing and are not being
    made to agree here. */
 @media (hover: none) { .chart-drag-handle { display: none; } }
+/* A finger, not a pointer: on a phone the header's buttons and the filter pills are 44px tall, and a tile's period
+   note goes under its name, which kept "Net amount ..." to two words beside "1 Jun 2026 - 14 Jun 2026 vs ...". */
+@media (max-width: 640px) {
+  .dash-header-actions .btn, .dash-pick { min-height: 44px; }
+  .dash-header-actions .btn-icon { min-width: 44px; }
+  .chart-card:not(.is-kpi) .chart-card-header { flex-wrap: wrap; row-gap: 2px; }
+  .chart-card:not(.is-kpi) .chart-card-note { order: 3; flex-basis: 100%; text-align: left; white-space: normal; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   #chart-modal { animation: none; }

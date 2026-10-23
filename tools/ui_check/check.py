@@ -1,6 +1,7 @@
 """The UI check: the product in a real browser, at desktop and phone width, on invented data.
 
     python tools/ui_check/check.py [--out DIR] [--port 8790] [--server-python PATH] [--chromium PATH]
+                                   [--theme light|dark] [--questions N] [--views desktop,phone,wide]
 
 It starts tools/ui_check/serve.py (a fresh copy of the product on invented data), signs in to the
 reader portal and the admin console in headless Chromium, asks the chat a set of questions that
@@ -75,11 +76,15 @@ def _wait_up(url: str, seconds: float) -> None:
 class Page:
     """One browser page with what it logs collected, and the checks run on what it shows."""
 
-    def __init__(self, browser, name: str, size: tuple[int, int], out: Path, problems: list[dict]):
+    def __init__(self, browser, name: str, size: tuple[int, int], out: Path, problems: list[dict],
+                 theme: str = "light"):
         self.name, self.out, self.problems = name, out, problems
         mobile = size[0] < 600
-        self.page = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=mobile,
-                                        has_touch=mobile).new_page()
+        context = browser.new_context(viewport={"width": size[0], "height": size[1]}, is_mobile=mobile,
+                                      has_touch=mobile, color_scheme=theme)
+        # The reader's own choice of theme, as the portal keeps it, so both themes are seen whatever the default.
+        context.add_init_script(f"try {{ localStorage.setItem('qb.theme', '{theme}'); }} catch (e) {{}}")
+        self.page = context.new_page()
         self.errors: list[str] = []
         # A failed request is logged with its address; the console's own line for it says only "404".
         self.page.on("console", lambda m: self.errors.append(m.text[:300])
@@ -134,7 +139,8 @@ class Page:
                    + '[role=button], [role=tab]')]
                  .filter(e => e.offsetParent !== null)
                  .map(e => [e, e.getBoundingClientRect()])
-                 .filter(([, r]) => r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth)
+                 // A visually hidden field (1px, its label is what is tapped) is no target of its own.
+                 .filter(([, r]) => r.width > 2 && r.height > 2 && r.right > 0 && r.left < window.innerWidth)
                  .filter(([, r]) => r.height < 44 || r.width < 44)
                  .filter(([e]) => !e.closest('.chart-canvas, [data-chart], table'))
                  .map(([e, r]) => `${e.tagName.toLowerCase()}.${(e.className || '').toString().split(' ')[0]}`
@@ -175,15 +181,19 @@ def _pin(page, card, problems: list[dict], view: str) -> None:
                          "detail": page.inner_text("#dashboardPickerError")[:200]})
 
 
-def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[dict]]:
+def run(base: str, out: Path, chromium: str | None, theme: str = "light",
+        questions: int | None = None, views: list[str] | None = None) -> tuple[list[dict], list[dict]]:
     from playwright.sync_api import sync_playwright
 
     problems: list[dict] = []
     report: list[dict] = []
+    asked = QUESTIONS[:questions] if questions is not None else QUESTIONS
     with sync_playwright() as pw:
         browser = pw.chromium.launch(**({"executable_path": chromium} if chromium else {}))
         for view, size in VIEWPORTS.items():
-            p = Page(browser, view, size, out, problems)
+            if views and view not in views:
+                continue
+            p = Page(browser, view if theme == "light" else f"{view}-{theme}", size, out, problems, theme)
             page = p.page
             page.goto(base + f"/portal/login?workspace={READER[0]}", wait_until="networkidle")
             report.append({"page": "a workspace's sign-in link", "view": view, **p.shot("00b_portal_login_link")})
@@ -197,7 +207,7 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             page.goto(base + "/portal/chat", wait_until="networkidle")
             page.wait_for_timeout(1200)
             report.append({"page": "chat", "view": view, **p.shot("01_chat_start")})
-            for i, question in enumerate(QUESTIONS, start=2):
+            for i, question in enumerate(asked, start=2):
                 before = page.locator(".msg.msg-bot").count()
                 page.fill("#input", question)
                 page.keyboard.press("Enter")
@@ -253,6 +263,10 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                                        **p.shot(f"{i:02d}b_drill_menu", element=card)})
                         page.evaluate("() => _closeDrillMenu()")
             report.append({"page": "chat, whole conversation", "view": view, **p.shot("90_chat_full", full=True)})
+            for path in ("/portal/home", "/portal/notifications", "/portal/settings"):
+                page.goto(base + path, wait_until="networkidle")
+                page.wait_for_timeout(1200)
+                report.append({"page": path, "view": view, **p.shot("94" + path.replace("/", "_"), full=True)})
             for path in ("/portal/dashboard", "/portal/kb"):
                 page.goto(base + path, wait_until="networkidle")
                 page.wait_for_timeout(1500)
@@ -312,7 +326,7 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
                     page.wait_for_timeout(2500)
                     report.append({"page": "a pinned dashboard", "view": view, **p.shot("96_dashboard_open", full=True)})
 
-            a = Page(browser, view, size, out, problems)
+            a = Page(browser, view if theme == "light" else f"{view}-{theme}", size, out, problems, theme)
             a.page.goto(base + "/admin/login", wait_until="networkidle")
             report.append({"page": "admin sign-in", "view": view, **a.shot("50_admin_login")})
             a.page.fill("input[name=password]", ADMIN_PASSWORD)
@@ -322,10 +336,17 @@ def run(base: str, out: Path, chromium: str | None) -> tuple[list[dict], list[di
             for path in ("/admin", workspace, workspace + "/setup", workspace + "/learned", workspace + "/knowledge", workspace + "/dates", workspace + "/kb",
                          workspace + "/relationships", workspace + "/graph", workspace + "/date-roles", workspace + "/metrics", workspace + "/measures",
                          workspace + "/measures/edit", workspace + "/requests", workspace + "/requests?status=accepted",
-                         workspace + "/users",
+                         workspace + "/users", workspace + "/groups", "GROUP", workspace + "/row-access",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
                          workspace + "/billing", workspace + "/queries", "/admin/system", "/admin/clients",
                          "/admin/clients/new", "/admin/databases", "/admin/platforms"):
+                if path == "GROUP":
+                    # A group's own page: the first group the list shows.
+                    card = a.page.locator("a.gr-card")
+                    if not card.count():
+                        problems.append({"where": f"{view} groups", "problem": "no group card", "detail": ""})
+                        continue
+                    path = card.first.get_attribute("href")
                 a.page.goto(base + path, wait_until="networkidle")
                 a.page.wait_for_timeout(800)
                 if path.endswith("/graph") and not a.page.evaluate(
@@ -354,6 +375,9 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--server-python", default=sys.executable)
     ap.add_argument("--chromium", default=None, help="a Chromium binary, when Playwright's own is not installed")
+    ap.add_argument("--theme", default="light", choices=("light", "dark"), help="the colour theme the pages are seen in")
+    ap.add_argument("--questions", type=int, default=None, help="ask only the first N chat questions")
+    ap.add_argument("--views", default="", help="the viewports to capture, comma-separated (desktop,phone,wide)")
     args = ap.parse_args()
     out = Path(args.out).resolve()
     shutil.rmtree(out, ignore_errors=True)
@@ -364,7 +388,8 @@ def main() -> int:
     base = f"http://127.0.0.1:{args.port}"
     try:
         _wait_up(base + "/portal/login", 240)
-        report, problems = run(base, out, args.chromium)
+        report, problems = run(base, out, args.chromium, args.theme, args.questions,
+                               [v for v in args.views.split(",") if v] or None)
     finally:
         server.terminate()
         try:

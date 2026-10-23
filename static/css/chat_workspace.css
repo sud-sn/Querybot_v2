@@ -615,6 +615,7 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
   .chat-workspace-main .chat-composer { padding: 9px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
   .chat-inner:has(#welcomeState:not([style*="display: none"])) .chat-composer { padding: 0; }
   .chat-workspace-main .chat-input-bar { min-height: 54px; }
+  .chat-workspace-main .chat-input { min-height: 44px; }
   .chat-inner .suggestions { grid-template-columns: 1fr; gap: 8px; }
   .suggestion-chip { min-height: 72px; }
   .chat-workspace-main .msg-content { max-width: calc(100% - 42px); }

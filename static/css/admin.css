@@ -827,6 +827,8 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
 .shell .metric-label { text-transform: none; letter-spacing: 0; font-size: var(--font-sm); font-weight: var(--weight-medium);
   color: var(--text-secondary); }
 .shell .metric-value { font-family: var(--font-display); font-size: var(--font-3xl); line-height: 1.1; }
+/* A workspace's seven counters in one row on a laptop: at 150px a card the seventh sat alone on a second row. */
+.shell .metrics.metrics-one-row { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); }
 
 /* Buttons are pills; fields take the item radius. */
 .shell .btn { border-radius: var(--radius-pill); }

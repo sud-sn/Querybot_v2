@@ -168,7 +168,9 @@ a.home-figure:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 }
 .home-figure-change.is-good { background: var(--success-soft); color: var(--success); }
 .home-figure-change.is-bad  { background: var(--danger-soft); color: var(--danger); }
-.home-figure-vs { margin-top: -2px; color: var(--text-muted); font-size: var(--font-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "vs Jun 2024 - May 2025" is what the change is measured against: it wraps on a narrow card rather than lose its
+   year. */
+.home-figure-vs { margin-top: -2px; color: var(--text-muted); font-size: var(--font-xs); overflow-wrap: anywhere; }
 .home-figure .kpi-spark { height: 36px; margin-top: auto; }
 .home-figure.is-loading { gap: 12px; }
 .home-skel {

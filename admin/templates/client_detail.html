@@ -119,7 +119,7 @@
 
 {# The counters belong to the Overview, not to every pane of the workspace. #}
 {% if active_tab == 'overview' %}
-<div class="metrics">
+<div class="metrics metrics-one-row">
   <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
   <div class="metric"><div class="metric-label">This month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
   <div class="metric"><div class="metric-label">Success rate</div><div class="metric-value">{% if stats.total %}{{ ((stats.succeeded or 0)/stats.total*100)|round(1) }}%{% else %}—{% endif %}</div></div>
