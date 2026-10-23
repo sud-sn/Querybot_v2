@@ -6,8 +6,9 @@ listed in full, each with its columns, how many rows it matched and its conditio
 link's condition, columns and name can be changed (or a link added, or turned off), a
 table's name, kind, default date and always-leave-out rows set, each checked against
 the data first. A change is an admin decision: it holds from the next answer and
-through the next Learn, and a learned link that is changed is turned off rather than
-edited, so the next Learn cannot bring it back.
+through the next Learn. A learned link given other columns is turned off rather than
+edited, so the next Learn cannot bring it back; its condition or role is changed on
+the link itself (tests/test_a_links_role_is_named_and_taken_away_on_the_link_itself.py).
 
 Each save starts at the page's own route and ends at a question answered with it.
 """
@@ -125,14 +126,14 @@ def test_a_condition_saved_on_a_link_is_used_by_the_next_answer(page):
 def test_a_link_changed_to_other_columns_turns_the_learned_one_off(page):
     client, account, store, _ = page
     model = _model(store, account)
-    link = _link(model, "returns", "customers")
-    body = {"key": link.key, "from": link.from_table, "to": link.to_table, "role": "Returned by",
-            "pairs": [{"from": f, "to": t} for f, t in zip(link.from_columns, link.to_columns)]}
+    link = _link(model, "returns", "order_lines")
+    body = {"key": link.key, "from": link.from_table, "to": link.to_table, "role": "Same product",
+            "pairs": [{"from": _column(model, "returns", "product_id"), "to": _column(model, "order_lines", "product_id")}]}
     saved = client.post(f"/admin/clients/{account}/relationships/save-link", json=body).json()
     assert saved["ok"] and saved["key"] != link.key
     after = _model(store, account)
     assert after.joins[link.key].trust == "rejected"
-    assert after.joins[saved["key"]].trust == "admin" and after.joins[saved["key"]].role == "Returned by"
+    assert after.joins[saved["key"]].trust == "admin" and after.joins[saved["key"]].role == "Same product"
     # Taken back out, the admin's own link goes and the learned one stays off until turned on.
     assert client.post(f"/admin/clients/{account}/relationships/turn-off-link", json={"key": saved["key"]}).json()["ok"]
     assert saved["key"] not in _model(store, account).joins

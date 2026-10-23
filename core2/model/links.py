@@ -243,8 +243,13 @@ def as_join(model: SemanticModel, spec: LinkSpec, checked: dict[str, Any] | None
 
 
 def same_link(j: Join, spec: LinkSpec) -> bool:
+    return same_columns(j, spec) and (j.role or "") == spec.role
+
+
+def same_columns(j: Join, spec: LinkSpec) -> bool:
+    """The same link whatever it is called: the same tables, joined on the same columns."""
     return (j.from_table == spec.from_table and j.to_table == spec.to_table
-            and list(zip(j.from_columns, j.to_columns)) == spec.pairs and (j.role or "") == spec.role)
+            and list(zip(j.from_columns, j.to_columns)) == spec.pairs)
 
 
 # ── checked against the data ─────────────────────────────────────────────────

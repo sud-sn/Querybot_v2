@@ -107,8 +107,9 @@ async def relationships_check_link(request: Request, account_id: str):
 
 @router.post("/clients/{account_id}/relationships/save-link")
 async def relationships_save_link(request: Request, account_id: str):
-    """Save a link: a changed condition, name or confirmation on the same link, or a link of the admin's own
-    (a learned one it replaces is turned off, so the next Learn keeps the decision)."""
+    """Save a link: a changed condition, role, name or confirmation on the same link (the same tables on the same
+    columns, the role given, changed or taken away kept as a decision on it, its conditions with it), or a link of
+    the admin's own on other columns (a learned one it replaces is turned off, so the next Learn keeps the decision)."""
     if not _is_auth(request):
         return _refused("Signed out.", 401)
     client, model = _workspace(account_id)
@@ -125,7 +126,7 @@ async def relationships_save_link(request: Request, account_id: str):
     db_id = client.get("db_config_id")
     existing = model.joins.get(str(data.get("key") or ""))
     conditions = [c.model_dump(mode="json") for c in spec.conditions]
-    if existing is not None and links.same_link(existing, spec):
+    if existing is not None and links.same_columns(existing, spec):
         key = existing.key
         new_conditions = [c.model_dump(mode="json") for c in existing.conditions] != conditions
         # The two kinds a question may follow (many to one, one to one) an admin may choose between. A link the
@@ -155,6 +156,9 @@ async def relationships_save_link(request: Request, account_id: str):
             store.set_core2_override(account_id, db_id, target("join", key), "cardinality", spec.cardinality)
         if existing.keep_unmatched != spec.keep_unmatched:
             store.set_core2_override(account_id, db_id, target("join", key), "keep_unmatched", spec.keep_unmatched)
+        if (existing.role or "") != (spec.role or ""):
+            # A role named, renamed or taken away (a plain link again): the same link, called otherwise.
+            store.set_core2_override(account_id, db_id, target("join", key), "role", spec.role or None)
         if existing.trust not in ("admin",):
             store.set_core2_override(account_id, db_id, target("join", key), "trust", "admin")
         out: dict[str, Any] = {"ok": True, "key": key}
@@ -163,7 +167,7 @@ async def relationships_save_link(request: Request, account_id: str):
             out["words"] = measured.get("words") or []
         return JSONResponse(out)
     key = links.key_for(model, spec)
-    if key in model.joins and existing is None:
+    if existing is None and (key in model.joins or any(links.same_columns(j, spec) for j in model.joins.values())):
         return _refused("These tables are already linked on these columns: pick that link to change it.")
     warehouse = _warehouse(account_id, client)
     checked = links.check_link(model, spec, warehouse) if warehouse is not None else {}
