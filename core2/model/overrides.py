@@ -25,7 +25,7 @@ ALLOWED = {
              "target_checked"},
     "date_role": {"name", "kind", "is_default", "synonyms"},
     "measure": {"business_name", "description", "synonyms", "additivity", "time_aggregation", "format", "hidden",
-                "filters", "default_date", "expr", "table", "better"},
+                "filters", "default_date", "expr", "table", "better", "empty_periods"},
     "entity": {"business_name", "label_column", "code_column", "synonyms"},
     "attribute": {"business_name", "synonyms"},
     "settings": {"fiscal_year_start_month"},      # one object: settings:workspace

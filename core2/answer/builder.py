@@ -62,8 +62,11 @@ def _gaps(logical: Logical, cols: "_Columns", raw: list[dict], truncated: bool) 
     missing = [d for d in logical.expected if d not in present]
     if not missing:
         return ""
-    grain = periods[0].grain or "month"
+    return f"No data {_stretches(logical, missing, periods[0].grain or 'month')}: shown as a gap, not as zero."
 
+
+def _stretches(logical: Logical, missing: list[dt.date], grain: str) -> str:
+    """The periods named as stretches: "from Aug 2022 to Sep 2025", "for Mar 2025, May 2025 and Jul 2025"."""
     def name(d: dt.date) -> str:
         return period_label(d, grain, fiscal_start=logical.fiscal_start)
 
@@ -76,11 +79,55 @@ def _gaps(logical: Logical, cols: "_Columns", raw: list[dict], truncated: bool) 
         else:
             runs.append([d])
     if len(runs) == 1 and len(runs[0]) > 1:
-        return f"No data from {name(runs[0][0])} to {name(runs[0][-1])}: shown as a gap, not as zero."
+        return f"from {name(runs[0][0])} to {name(runs[0][-1])}"
     said = [name(r[0]) if len(r) == 1 else f"{name(r[0])} to {name(r[-1])}" for r in runs]
-    text = said[0] if len(said) == 1 else f"{', '.join(said[:-1])} and {said[-1]}" if len(said) <= 3 \
-        else f"{', '.join(said[:3])} and {len(said) - 3} more stretches"
-    return f"No data for {text}: shown as a gap, not as zero."
+    rest = len(said) - 3
+    text = said[0] if len(said) == 1 else f"{', '.join(said[:-1])} and {said[-1]}" if len(said) <= 4 \
+        else f"{', '.join(said[:3])} and {rest} more stretches"
+    return f"for {text}"
+
+
+def _zero_filled(logical: Logical, cols: "_Columns", rows: list[tuple],
+                 truncated: bool) -> tuple[list[tuple], list[dt.date]]:
+    """A series whose metric counts a period with no rows as zero (Measure.empty_periods, as dbt's fill_nulls_with
+    over a time spine): a row of 0 for each period it should hold and has none; and those periods.
+
+    Only a plain series -- one period and its figures, each of a metric that adds up and says so -- and never where
+    rows were left out on purpose (a top N, a condition on the totals, a cut list) or compared with another period.
+    """
+    periods, measures = cols.of("period"), cols.of("measure")
+    if not logical.expected or len(periods) != 1 or not measures or not rows or truncated or logical.limit \
+            or logical.having or logical.compare is not None \
+            or any(c.role not in ("period", "measure") for c in cols.columns):
+        return rows, []
+    from core2.model.authoring import adds_up
+
+    outs = {o.name: o for o in logical.measures}
+    for column in measures:
+        out = outs.get(column.name)
+        m = out.measure if out is not None else None
+        if m is None or m.empty_periods != "zero" or m.additivity != "additive" or not adds_up(m.expr):
+            return rows, []
+    at = cols.index[periods[0].name]
+    present = {_day(r[at]) for r in rows}
+    if None in present:
+        return rows, []
+    missing = [d for d in logical.expected if d not in present]
+    if not missing:
+        return rows, []
+    first = rows[0][at]
+
+    def spelled(d: dt.date) -> Any:              # the rows' own spelling of a period's first day
+        if isinstance(first, dt.datetime):
+            return dt.datetime(d.year, d.month, d.day)
+        if isinstance(first, str):
+            return d.isoformat() + first[10:]
+        return d
+
+    figures = {cols.index[c.name] for c in measures}
+    width = max(len(r) for r in rows)
+    filled = [tuple(spelled(d) if i == at else 0 if i in figures else None for i in range(width)) for d in missing]
+    return sorted([*rows, *filled], key=lambda r: _day(r[at]) or dt.date.min), missing
 
 
 def _day(value: Any) -> dt.date | None:
@@ -649,6 +696,7 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     if len(rows) > logical.max_rows:
         truncated, rows = True, rows[:logical.max_rows]
     cols = _Columns(compiled, columns, unit=logical.unit_group)
+    rows, zeroed = _zero_filled(logical, cols, list(rows), truncated)
     shown = cols.columns
     records = [{c.name: _cell(c, row[cols.index[c.name]], logical) for c in shown} for row in rows]
     raw = [{c.name: row[cols.index[c.name]] for c in shown} for row in rows]
@@ -719,6 +767,10 @@ def build_answer(question: str, logical: Logical, compiled: Compiled, columns: l
     gaps = _gaps(logical, cols, raw, truncated)
     if gaps:
         caveats.append(gaps)
+    if zeroed:
+        grain = cols.of("period")[0].grain or "month"
+        caveats.append(f"No rows {_stretches(logical, zeroed, grain)}: counted as zero, as this metric counts a "
+                       "period with nothing in it.")
 
     units = _units(cols, raw, logical.unit_order)
     headline = _headline(logical, cols, raw, records, partial, units, truncated=truncated)

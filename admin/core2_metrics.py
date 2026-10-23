@@ -141,7 +141,10 @@ def _draft(model, data: dict[str, Any], *, key: str = "draft"):
                    expr=read.expr, additivity=additivity, time_aggregation=time_aggregation, format=fmt,
                    default_date=default_date or None, filters=conditions, kind="metric", provenance="admin",
                    status="approved", tested=True, hidden=bool(data.get("draft")),
-                   better=data.get("better") if data.get("better") in ("higher", "lower", "neither") else "higher")
+                   better=data.get("better") if data.get("better") in ("higher", "lower", "neither") else "higher",
+                   # A month with nothing in it is a zero only for a figure that adds up: an average has no value.
+                   empty_periods="zero" if data.get("empty_periods") == "zero" and additivity == "additive"
+                   and authoring.adds_up(read.expr) else "gap")
 
 
 @router.post("/clients/{account_id}/measures/api/read")
@@ -260,13 +263,14 @@ async def measure_save(request: Request, account_id: str):
                "filters": [f.model_dump(mode="json") for f in draft.filters], "business_name": draft.business_name,
                "synonyms": draft.synonyms, "description": draft.description, "format": draft.format,
                "additivity": draft.additivity, "time_aggregation": draft.time_aggregation,
-               "default_date": draft.default_date, "hidden": draft.hidden, "better": draft.better}
+               "default_date": draft.default_date, "hidden": draft.hidden, "better": draft.better,
+               "empty_periods": draft.empty_periods}
     now = {"expr": existing.expr.model_dump(mode="json"), "table": existing.table,
            "filters": [f.model_dump(mode="json") for f in existing.filters], "business_name": existing.business_name,
            "synonyms": existing.synonyms, "description": existing.description, "format": existing.format,
            "additivity": existing.additivity, "time_aggregation": existing.time_aggregation,
            "default_date": existing.default_date, "hidden": existing.hidden,
-           "better": existing.better}
+           "better": existing.better, "empty_periods": existing.empty_periods}
     for field, value in changes.items():
         if value != now[field]:
             store.set_core2_override(account_id, db_id, target("measure", key), field, value)

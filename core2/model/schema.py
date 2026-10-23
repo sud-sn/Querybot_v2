@@ -344,6 +344,9 @@ class Measure(Belief):
     # Which way is good news: "higher" (sales), "lower" (costs, days to deliver, returns), or "neither" (a count
     # of stores): its tiles and the chat's numbers colour a change by it.
     better: Literal["higher", "lower", "neither"] = "higher"
+    # A period with no rows: "gap" (no data then; shown as a gap, never as zero) or "zero" (nothing happened then: 0,
+    # as dbt's fill_nulls_with over a time spine). An admin's call, kept only for a figure that adds up.
+    empty_periods: Literal["gap", "zero"] = "gap"
     tested: bool = False
     hidden: bool = False
     # The business metric it was proposed as (core2/kpis.py: "bank.approval_rate"), kept once an admin accepts it:

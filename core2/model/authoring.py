@@ -744,18 +744,30 @@ def _same_name(model: SemanticModel, m: Any, others: list[Any]) -> str:
     return f"Same name as a metric on {where}. {taken} Rename one so readers can tell them apart."
 
 
+def adds_up(expr: Any) -> bool:
+    """A sum or a count, and sums and differences of them: a figure whose period with no rows is 0. Never an
+    average, a ratio, a smallest or largest, or one defined elsewhere (Measure.empty_periods)."""
+    from core2.model.schema import AggExpr, OpExpr
+
+    if isinstance(expr, AggExpr):
+        return expr.agg in ("sum", "count", "count_distinct")
+    if isinstance(expr, OpExpr):
+        return expr.op in ("add", "subtract") and bool(expr.args) and all(adds_up(a) for a in expr.args)
+    return False
+
+
 def editor_state(model: SemanticModel, m: Any | None) -> dict[str, Any]:
     """A metric as the editor shows it: its formula as text, conditions, names and behaviour."""
     if m is None:
         return {"key": "", "formula": "", "conditions": [], "name": "", "synonyms": [], "description": "",
                 "format": "number", "over_time": "", "default_date": "", "hidden": False, "table": "",
-                "better": "higher"}
+                "better": "higher", "empty_periods": "gap"}
     return {"key": m.key, "formula": to_text(model, m.expr),
             "conditions": [{"column": f.column, "op": f.op, "values": list(f.values)} for f in m.filters],
             "name": m.business_name, "synonyms": sorted({w for ws in m.synonyms.values() for w in ws}),
             "description": m.description, "format": m.format, "over_time": over_time(m.additivity, m.time_aggregation),
             "default_date": m.default_date or "", "hidden": m.hidden, "table": m.table,
-            "better": m.better}
+            "better": m.better, "empty_periods": m.empty_periods}
 
 
 def parts(model: SemanticModel, expr: MeasureExpr) -> list[dict[str, str]]:
