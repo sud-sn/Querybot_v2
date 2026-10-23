@@ -191,6 +191,12 @@ def best_path(model: SemanticModel, start: str, goal: str, *, through: str | Non
         # match; an order's only customer link, its bill-to, is ranked like any other.
         plain = {(j.from_table, j.to_table) for p in paths for j in p.joins if not j.role}
         paths = [p for p in paths if not any(j.role and (j.from_table, j.to_table) in plain for j in p.joins)] or paths
+        # Two links with a role between the same tables and none without (an invoice's bill-to and payer customer,
+        # from its lines): which one is the question's to say, as for two direct links, whichever matches better. (A
+        # route through the same tables with other links is one with other roles: the plain ones went above.)
+        others = [p for p in paths[1:] if p.tables == paths[0].tables and roles(p) != roles(paths[0])]
+        if others:
+            raise Ambiguous([paths[0], *others])
         tied = [p for p in paths if p.score[:4] == paths[0].score[:4]]
         if len(tied) > 1:
             plain = [p for p in tied if not roles(p)]
@@ -321,6 +327,12 @@ def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through
     paths = _and_self_links(model, start, goal, through=through)
     named = {r for p in paths for r in roles(p)}
     chosen = {r for r in named if _words(r) == wanted}
+    parts = [part.strip() for part in role.split(",") if part.strip()]
+    if not chosen and len(parts) > 1:
+        # A choice offered by two roles ("Original order, Payer customer"): the route carrying each of them.
+        found = [{tuple(j.key for j in p.joins) for p in with_role(model, start, goal, part, through=through)}
+                 for part in parts]
+        return [p for p in paths if all(tuple(j.key for j in p.joins) in keys for keys in found)]
     if not chosen and wanted:
         chosen = {r for r in named if party(r) == party(role)}
         if len(chosen) > 1:

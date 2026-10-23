@@ -605,11 +605,15 @@ class _PartBuilder:
             except P.Ambiguous as exc:
                 # The choice is offered by role ("Bill-to", "Ship-to"), or by the table a route passes ("through
                 # Customer", "through Supplier"): what the plan's via names (_via).
+                # Each by the roles that set it apart: the order's bill-to or its payer, not the order every route
+                # passes ("Sales order, Bill to customer"), which no choice could name.
                 options = []
+                shared = set.intersection(*(set(P.roles(p)) for p in exc.options))
                 for p in exc.options:
-                    apart = P.distinct(p, exc.options) if not P.roles(p) else None
-                    options.append(", ".join(P.roles(p)) or (f"through {self.model.tables[apart].business_name}"
-                                                            if apart else p.describe(self.model)))
+                    own = [r for r in P.roles(p) if r not in shared] or P.roles(p)
+                    apart = P.distinct(p, exc.options) if not own else None
+                    options.append(", ".join(own) or (f"through {self.model.tables[apart].business_name}"
+                                                      if apart else p.describe(self.model)))
                 raise ResolveError("ambiguous", f"{label or self.model.tables[table].business_name} can be "
                                    "reached more than one way", options) from None
             repeating = [j for j in (path.joins if path else []) if self._repeats(j)]

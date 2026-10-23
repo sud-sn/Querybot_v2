@@ -434,7 +434,10 @@ From a base table F to the table holding the attribute A:
 3. A path through a link with a role beside a plain link between the same
    tables (an invoice's payer customer beside its customer, from its lines) is
    taken only when the question names the role, as a direct one is; an order's
-   only customer link, its bill-to, is ranked like any other.
+   only customer link, its bill-to, is ranked like any other. Two links with a
+   role between the same tables and none without (an invoice's bill-to and
+   payer customer, from its lines) are asked about, as two direct ones are,
+   however each matches; routes through different tables are ranked.
 4. Then higher trust, then higher match rate, then fewer steps, then the
    lexicographically smallest join key (deterministic, and reported).
 5. When two valid paths mean different things (the invoice's profit centre
