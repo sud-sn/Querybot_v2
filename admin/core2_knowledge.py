@@ -9,13 +9,19 @@ against the data first) and the month the fiscal year starts in.
 Each change is an admin decision (core2.model.overrides): it holds from the next answer
 and through the next Learn. Today's knowledge-base files and date roles stay under
 Settings → Diagnostics for the earlier pipeline.
+
+The Knowledge base page also holds the workspace's own instructions for the AI: plain words
+about the data and how this business counts, given to the planner with every question
+(core2/plan/planner.py: instructions_text), as Databricks Genie's general instructions are.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -49,7 +55,49 @@ async def knowledge_page(request: Request, account_id: str, table: str = ""):
         chosen = table if table in model.tables else next(
             (t["key"] for t in listed if t["kind"] in ("fact", "snapshot") and not t["hidden"]), listed[0]["key"])
         data = {"tables": listed, "table": knowledge.table_view(model, chosen)}
-    return _resp(request, "client_knowledge.html", {"client": client, "data": data})
+    from core2.plan.planner import INSTRUCTIONS_LIMIT
+    from core2.service import question_scrubber, workspace_instructions
+
+    from core.value_index import value_index_enabled
+
+    state = store.get_client_state(account_id) or {}
+    scrubbed = question_scrubber(account_id) is not None
+    return _resp(request, "client_knowledge.html", {
+        "client": client, "data": data,
+        "instructions": {"text": workspace_instructions(account_id, state), "limit": INSTRUCTIONS_LIMIT,
+                         "by": state.get("ai_instructions_by") or "", "at": state.get("ai_instructions_at") or "",
+                         "scrubbed": scrubbed, "values_kept": scrubbed or not value_index_enabled(state)},
+        "saved": request.query_params.get("saved"), "error": request.query_params.get("error")})
+
+
+@router.post("/clients/{account_id}/knowledge/instructions")
+async def knowledge_instructions(request: Request, account_id: str):
+    """The workspace's own instructions for the AI: kept as written, refused past the limit, never cut."""
+    if not _is_auth(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    client = store.get_client(account_id)
+    if not client:
+        return RedirectResponse("/admin/clients", status_code=303)
+    from admin.core2_setup_check import _by
+    from core2.plan.planner import INSTRUCTIONS_LIMIT
+
+    form = await request.form()
+    text = str(form.get("instructions") or "").replace("\r\n", "\n").strip()
+    back = f"/admin/clients/{account_id}/knowledge"
+    if len(text) > INSTRUCTIONS_LIMIT:
+        said = f"Keep the instructions to {INSTRUCTIONS_LIMIT:,} characters: these are {len(text):,}. Nothing was changed."
+        return RedirectResponse(f"{back}?error={quote(said)}#ai-instructions", status_code=303)
+    client = store.get_client(account_id) or client     # read again: a change made while the form was read is kept
+    try:
+        state = json.loads(client.get("state_data") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    state.update(ai_instructions=text, ai_instructions_by=_by(request),
+                 ai_instructions_at=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M"))
+    store.update_client_state(account_id, client.get("state") or "configured", state)
+    log.info("core2: the AI instructions of %s were %s (%d characters)", account_id,
+             "changed" if text else "cleared", len(text))
+    return RedirectResponse(f"{back}?saved=instructions#ai-instructions", status_code=303)
 
 
 @router.post("/clients/{account_id}/knowledge/api/field")

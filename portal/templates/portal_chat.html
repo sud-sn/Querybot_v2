@@ -3504,7 +3504,10 @@ function _answerBadgesHtml(msg) {
   const badges = (Array.isArray(answer.badges) ? answer.badges : []).filter(b => b && b.text);
   const dates = msg.dates || {};
   const others = Array.isArray(dates.others) ? dates.others : [];
-  const items = badges.map(b => b.kind === 'period'
+  // An answer an admin verified says so first (core2/verified.py): asked again, it is given as they checked it.
+  const items = badges.map(b => b.kind === 'verified'
+    ? `<span class="badge badge-success" data-badge="verified">${qbIcon('check-circle', 13)}${escHtml(_inLang(b, 'text'))}</span>`
+    : b.kind === 'period'
     ? `<span class="badge badge-brand">${qbIcon('calendar', 13)}${escHtml(_inLang(b, 'text'))}</span>`
     : b.kind === 'date' && (others.length || dates.fix) ? _dateChoiceHtml(b, dates, others)
     : `<span class="badge">${escHtml(_inLang(b, 'text'))}</span>`);

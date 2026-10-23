@@ -1,0 +1,109 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, badge %}
+{% block title %}Verified answers — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Verified answers", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* The questions an admin checked, given again as checked; and the questions asked most, offered to check. */
+.vf-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.vf-head p{margin:0 0 16px;color:var(--text-muted);max-width:720px;font-size:var(--font-base);line-height:1.55}
+.vf-section{margin:0 0 22px}
+.vf-section > h2{margin:0 0 4px;font-size:var(--font-md);color:var(--text-strong)}
+.vf-section > p{margin:0 0 10px;font-size:var(--font-sm);color:var(--text-muted);max-width:680px}
+.vf-list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.vf-q{border:1px solid var(--grid-line);border-left-width:4px;border-left-color:var(--success-line);border-radius:12px;
+  background:var(--surface);padding:12px 16px;min-width:0;display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.vf-q.look{border-left-color:var(--warning-line)}
+.vf-q.offer{border-left-color:var(--grid-line)}
+.vf-q > div{min-width:0;flex:1 1 320px}
+.vf-q h3{margin:0;font-size:var(--font-md);color:var(--text-strong);overflow-wrap:anywhere}
+.vf-meta{margin:3px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+.vf-said{margin:6px 0 0;font-size:var(--font-sm);color:var(--text-muted);overflow-wrap:anywhere}
+.vf-look{margin:6px 0 0;font-size:var(--font-sm);color:var(--text)}
+.vf-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.vf-actions form{margin:0}
+.vf-empty{padding:14px 16px;border:1px dashed var(--grid-line);border-radius:12px;color:var(--text-muted);font-size:var(--font-sm)}
+</style>
+{% endblock %}
+{% block content %}
+{% set base = "/admin/clients/" ~ client.account_id ~ "/verified" %}
+<div class="vf-head">
+  <h1>Verified answers</h1>
+  <p>An answer you checked is given again as checked. When a reader asks the same question, in the same words
+    however they are written, Solviz answers it the way you verified, with no AI reading it afresh, on the data of
+    the day they ask. The answer says who verified it. A question worded differently is read as usual.</p>
+  <p>Only an answer to a question asked on its own can be verified: not a follow-up, a suggestion clicked or an
+    answer under a reader's standing condition. Each reader still sees only their own tables and rows: a reader
+    without a table the verified answer counts from is told it is not available to them.</p>
+</div>
+
+{% if saved == 'verified' %}{{ alert("Verified. Readers who ask this question get this answer, marked as verified.", "success") }}{% endif %}
+{% if saved == 'removed' %}{{ alert("Taken out. The question is read afresh from now on.", "success") }}{% endif %}
+{% if error %}{{ alert(error, "error") }}{% endif %}
+
+<section class="vf-section" aria-labelledby="vf-kept">
+  <h2 id="vf-kept">Verified</h2>
+  {% if kept %}
+  <ul class="vf-list">
+    {% for v in kept %}
+    <li class="vf-q{% if v.needs_look %} look{% endif %}">
+      <div>
+        <h3>{{ v.question }}</h3>
+        <p class="vf-meta">Verified by {{ v.by or "an admin" }}, {{ (v.at or "")[:16] }} UTC ·
+          {% if v.uses %}given {{ v.uses }} time{{ "" if v.uses == 1 else "s" }}{% if v.last_used_at %}, last {{ v.last_used_at[:16] }} UTC{% endif %}{% else %}not asked since{% endif %}</p>
+        {% if v.headline %}<p class="vf-said">When verified, it answered: {{ v.headline }}</p>{% endif %}
+        {% if v.needs_look %}
+        <p class="vf-look">{{ badge("Needs a look", "amber") }} The data no longer answers it the way it was verified
+          (a metric or field it used was changed or taken out), so readers get a fresh reading.
+          {% if v.fresh %}Check the fresh answer and verify it in its place.{% endif %}</p>
+        {% if v.fresh_said %}<p class="vf-said">The fresh answer: {{ v.fresh_said }}</p>{% endif %}
+        {% endif %}
+      </div>
+      <div class="vf-actions">
+        {% if v.needs_look and v.fresh %}
+        <form method="post" action="{{ base }}"><input type="hidden" name="question_id" value="{{ v.fresh }}">
+          <button type="submit" class="btn btn-secondary btn-sm">Verify the fresh answer</button></form>
+        {% endif %}
+        <form method="post" action="{{ base }}/{{ v.id }}/remove">
+          <button type="submit" class="btn btn-ghost btn-sm" aria-label="Take out the verified answer: {{ v.question }}">Take out</button></form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="vf-empty">Nothing verified yet. Verify an answer from the
+    <a href="/admin/clients/{{ client.account_id }}/queries">question log</a>, or one of the questions asked most, below.</div>
+  {% endif %}
+</section>
+
+<section class="vf-section" aria-labelledby="vf-offered">
+  <h2 id="vf-offered">Asked most, not verified yet</h2>
+  <p>The questions readers asked twice or more in the last 30 days, with the latest answer. Verify it if it is right.</p>
+  {% if offered %}
+  <ul class="vf-list">
+    {% for o in offered %}
+    <li class="vf-q offer">
+      <div>
+        <h3>{{ o.question }}</h3>
+        <p class="vf-meta">Asked {{ o.times }} times</p>
+        {% if o.headline %}<p class="vf-said">Solviz answered: {{ o.headline }}</p>{% endif %}
+      </div>
+      <div class="vf-actions">
+        <form method="post" action="{{ base }}"><input type="hidden" name="question_id" value="{{ o.question_id }}">
+          <button type="submit" class="btn btn-secondary btn-sm">Verify</button></form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="vf-empty">No question was asked twice in the last 30 days that is not verified already.</div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1384,6 +1384,8 @@ def _run_migrations() -> None:
         # v32: regulated execution stores protected (never raw) rows and policy version.
         ("answer_trace", "result_rows",                "TEXT NOT NULL DEFAULT '[]'"),
         ("core2_answer", "question_id",                "TEXT NOT NULL DEFAULT ''"),
+        # An answer read from the question's own words alone, so an admin may verify it (core2/verified.py).
+        ("core2_answer", "verifiable",                 "INTEGER NOT NULL DEFAULT 0"),
         ("core2_build", "import_report",               "TEXT NOT NULL DEFAULT ''"),
         ("core2_build", "log",                         "TEXT NOT NULL DEFAULT ''"),
         ("core2_build", "runner",                      "TEXT NOT NULL DEFAULT ''"),
@@ -1789,6 +1791,23 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (account_id, db_config_id)
         );
 
+        -- An answer an admin checked (core2/verified.py): asked again in the same words, it is answered from
+        -- this plan with no AI reading it afresh. One per question (its words' key) in a workspace.
+        CREATE TABLE IF NOT EXISTS core2_verified (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id     TEXT NOT NULL,
+            question       TEXT NOT NULL,
+            question_key   TEXT NOT NULL,
+            plan_json      TEXT NOT NULL,
+            headline       TEXT NOT NULL DEFAULT '',
+            verified_by    TEXT NOT NULL DEFAULT '',
+            verified_at    TEXT NOT NULL,
+            uses           INTEGER NOT NULL DEFAULT 0,
+            last_used_at   TEXT,
+            needs_look_at  TEXT,
+            UNIQUE (account_id, question_key)
+        );
+
         CREATE TABLE IF NOT EXISTS core2_learn_table (
             account_id     TEXT NOT NULL,
             db_config_id   INTEGER NOT NULL DEFAULT 0,
@@ -1814,6 +1833,7 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             duration_ms    INTEGER NOT NULL DEFAULT 0,
             model_version  INTEGER NOT NULL DEFAULT 0,
             question_id    TEXT NOT NULL DEFAULT '',
+            verifiable     INTEGER NOT NULL DEFAULT 0,
             created_at     TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_core2_answer_account ON core2_answer (account_id, created_at);

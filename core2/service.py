@@ -100,6 +100,15 @@ class Services:
     # The workspace's AI sorting a question the data cannot answer (business in general, something else, or data it
     # does not hold), audited as its own call; None: such a question is said to be beyond the data.
     beyond: Complete | None = None
+    # The answer an admin verified for a question (core2/verified.py), found by its words: asked again as a new
+    # question, it is answered from that plan with no AI reading it afresh. And what became of it: given (True), or
+    # set aside because the data no longer answers its plan (False). None: every question is read by the AI.
+    verified: Callable[[str], Any] | None = None
+    verified_seen: Callable[[int, bool], None] | None = None
+    # The workspace admins' own instructions for the AI (Data > Knowledge base), as they may be sent: given to the
+    # planner with every question, in the fixed part of its prompt.
+    instructions: str = ""
+    instructions_name_members: bool = False     # ... and they name a stored member (said, for the egress log)
 
 
 @dataclass
@@ -917,6 +926,71 @@ def _answer_question(question: str, services: Services, session: Session, *, que
     return payload
 
 
+def _verified_plan(question: str, services: Services, model: SemanticModel) -> tuple[Any, Plan] | None:
+    """The plan an admin verified for this question (core2/verified.py), checked against the model it will run on.
+    None when there is none -- or when the data no longer answers it: set aside, and the admin told it needs a look,
+    the question is read afresh."""
+    if services.verified is None:
+        return None
+    try:
+        found = services.verified(question)
+    except Exception as exc:  # noqa: BLE001 - a lookup that fails reads the question afresh
+        log.warning("core2: the verified answers could not be read: %s", exc)
+        return None
+    if found is None:
+        return None
+    from core2.plan.planner import check
+
+    try:
+        plan = Plan.model_validate(found.plan).model_copy(update={"follow_up": "new"})
+        problems = check(plan, model, services.today)[0]
+    except Exception as exc:  # noqa: BLE001 - a plan that no longer reads is one the data no longer answers
+        problems = [str(exc)]
+    if problems:
+        log.warning("core2: verified answer %s no longer checks out; read afresh: %s", found.id,
+                    "; ".join(problems)[:300])
+        _verified_seen(services, found.id, False)
+        return None
+    return found, plan
+
+
+_A_YEAR = re.compile(r"(?<![\d$€£.,])((?:19|20)\d{2})(?![\d%])")
+_A_FISCAL_YEAR = re.compile(r"\bFY\s?'?(\d{2}|\d{4})\b", re.IGNORECASE)
+_A_DAY = re.compile(r"(\d{4})-\d{2}-\d{2}")
+
+
+def _years_named(question: str) -> set[int]:
+    """The years a question's words name: "in 2025", "Q1 2026", "FY26" (a fiscal year spans two calendar years)."""
+    years = {int(y) for y in _A_YEAR.findall(question or "")}
+    for y in _A_FISCAL_YEAR.findall(question or ""):
+        year = int(y) if len(y) == 4 else 2000 + int(y)
+        years |= {year - 1, year, year + 1}
+    return years
+
+
+def _dates_the_words_do_not_name(plan: Plan, question: str) -> bool:
+    """A plan holding a day in a year the question does not name: "since January" planned as from 1 Jan of this
+    year, "in March" as this March, "since March vs 2024" as from March of this year. Verified, it would answer
+    from that day for good. A number that only looks like a year ("the top 2000 customers") names none it holds."""
+    named = _years_named(question)
+    windows = [plan.time.window, *([plan.time.compare.window] if plan.time.compare and plan.time.compare.window
+                                   else [])]
+    days = [d for w in windows if w is not None for d in (w.start, w.end) if d is not None]
+    if any(d.year not in named for d in days):
+        return True
+    return any(int(m.group(1)) not in named for f in plan.filters for v in f.values
+               for m in [_A_DAY.fullmatch(str(v))] if m)
+
+
+def _verified_seen(services: Services, verified_id: int, answered: bool) -> None:
+    if services.verified_seen is None:
+        return
+    try:
+        services.verified_seen(verified_id, answered)
+    except Exception as exc:  # noqa: BLE001 - the count is a courtesy; the answer stands without it
+        log.warning("core2: the use of verified answer %s could not be kept: %s", verified_id, exc)
+
+
 def _answer_once(question: str, services: Services, session: Session, *, question_id: str = "",
                  forced: str | None = None, planned: Plan | None = None, feedback: str = "") -> dict[str, Any]:
     """One reading of the question, answered (see _answer_question). ``feedback``: what the check of a first
@@ -924,6 +998,9 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     start = time.perf_counter()
     model = services.model
     from_ai = False
+    trusted: tuple[Any, Plan] | None = None     # the admin's verified answer this question is given from
+    fresh = False                               # the question is read by its own words (no chip, reply or plan)
+    own_words = False                           # ... as a new question, nothing of the conversation taken in
     pending, session.pending = session.pending, None
     if pending is not None and pending.field == END:
         end = choose(question, pending.options)
@@ -999,6 +1076,18 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         matches = found
         if reading.kind != "new" and pointed:
             matches = sorted([*found, *pointed], key=lambda m: m.start)
+        # A new question an admin verified is given the plan they checked, with no AI reading it afresh; a
+        # follow-up reads the answer above, so it never is.
+        own_words = reading.kind == "new" and not pointed
+        trusted = _verified_plan(question, services, model) if own_words else None
+        fresh = True
+        # A figure the conversation defined ("gross profit = ...") may come into a new question's plan: then the
+        # plan is not the question's words alone.
+        own_words = own_words and not session.own and not any(
+            t.plan is not None and t.plan.derived for t in session.turns[-HISTORY:])
+    if trusted is not None:
+        outcome = Outcome(trusted[1])
+    elif fresh:
         # A new question is planned on its own: nothing of the answer before it can leak in.
         from_ai = True
         outcome = plan_question(model, question, services.complete, today=services.today,
@@ -1008,7 +1097,8 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
                                 defined=[d for t in session.turns[-HISTORY:] if t.plan is not None for d in t.plan.derived],
                                 reading=reading.kind if reading.kind in ("refine", "new") else None,
                                 on_screen=list(seen.shown) if seen is not None and reading.kind != "new" else None,
-                                routes=_routes(services), feedback=feedback)
+                                routes=_routes(services), feedback=feedback, instructions=services.instructions,
+                                instructions_name_members=services.instructions_name_members)
         following = seen is not None and seen.plan is not None and seen.plan.kind == "query"
     plan = outcome.plan
     if plan.kind == "smalltalk":
@@ -1219,6 +1309,12 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
     standing_filters = [f for s in applied for f in s.filters]
     looked = _look(plan, payload, services, ctx, empty=empty, carried=carried, standing=standing_filters)
     payload["plan"] = plan.model_dump(mode="json", exclude_defaults=True)
+    if own_words and from_ai and trusted is None and not applied and plan.kind == "query" \
+            and not _dates_the_words_do_not_name(plan, question):
+        # An admin may verify this answer (core2/verified.py): its plan is the question's own words read afresh --
+        # no answer above, no reader's standing condition, no figure the conversation defined, no date the AI
+        # fixed for a word like "since January" -- so it means the same for whoever asks it again.
+        payload["verifiable"] = True
     chips = [*offered(plan, model), *_instead(plan, model, outcome), *asks.other_readings(plan, model, question),
              *_named_unquoted(payload, plan, model, unquoted_named)]
     read_as = asks.badges(plan, model, outcome.picked)
@@ -1267,6 +1363,15 @@ def _answer_once(question: str, services: Services, session: Session, *, questio
         if kept:
             payload["following"]["kept"] = kept
     _standing_said(payload, services, session, applied, aside)
+    if trusted is not None and isinstance(payload.get("answer"), dict):
+        # Said first on the answer: an admin checked it. Counted, for the admin's list.
+        from core2.verified import badge
+
+        found = trusted[0]
+        answer = payload["answer"]
+        answer["badges"] = [badge(found), *(answer.get("badges") or [])]
+        payload.setdefault("trust", {})["verified"] = {"by": found.by, "at": found.at, "question": found.question}
+        _verified_seen(services, found.id, True)
     # The conversation keeps the plan as asked: a standing condition is put on again at each answer, so one
     # removed is gone from the follow-ups too.
     _keep(session, Turn(question, S.without(plan, applied, bare), outcome.masked, shown, periods,
@@ -3488,7 +3593,53 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         waiting=lambda: waiting_metrics(account_id, tables), question_map=_question_map(account_id, client),
         general_knowledge=general_knowledge_enabled(state),
         beyond=beyond_writer(account_id, client, question=scrub(question) if scrub else question,
-                             question_id=question_id)), None
+                             question_id=question_id),
+        verified=_verified_lookup(account_id),
+        verified_seen=lambda verified_id, answered: store.verified_seen(account_id, verified_id, answered),
+        **_instructions_for(workspace_instructions(account_id, state), scrub, index,
+                            values_allowed=scrub is None and indexing)), None
+
+
+def workspace_instructions(account_id: str, state: dict[str, Any] | None = None) -> str:
+    """The admins' own instructions for the AI, as they wrote them (Data > Knowledge base); "" for none."""
+    from core2.plan.planner import INSTRUCTIONS_LIMIT
+
+    if state is None:
+        import store
+
+        state = store.get_client_state(account_id) or {}
+    text = state.get("ai_instructions") if isinstance(state, dict) else ""
+    return str(text or "").strip()[:INSTRUCTIONS_LIMIT]
+
+
+def _instructions_for(text: str, scrub: Callable[[str], str] | None, index: MemberIndex | None = None, *,
+                      values_allowed: bool = True) -> dict[str, Any]:
+    """The instructions as the AI may be given them (Services fields): in a workspace whose questions are scrubbed,
+    scrubbed the same way (an admin's words can name a person too); where member values are kept from the AI,
+    every stored member they name as "<a member>" ("exclude customer 'Acme Corp'" sends no customer's name). Where
+    values may be sent, whether they name a stored member, so the heading says so and the AI egress log counts it."""
+    if not text:
+        return {"instructions": "", "instructions_name_members": False}
+    if scrub:
+        text = scrub(text)
+    found = sorted(index.match(text), key=lambda m: -m.start) if index is not None else []
+    if not values_allowed:
+        for m in found:
+            text = text[:m.start] + "<a member>" + text[m.end:]
+        return {"instructions": text, "instructions_name_members": False}
+    return {"instructions": text, "instructions_name_members": bool(found)}
+
+
+def _verified_lookup(account_id: str) -> Callable[[str], Any]:
+    """The answers the workspace's admins verified, found by a question's words (core2/verified.py)."""
+    import store
+    from core2.verified import Verified
+
+    def find(question: str) -> Verified | None:
+        found = store.find_verified(account_id, question)
+        return Verified(found["id"], found["question"], found["plan"], found["by"], found["at"]) if found else None
+
+    return find
 
 
 def general_knowledge_enabled(state: dict[str, Any] | None) -> bool:
@@ -3634,9 +3785,11 @@ def _answers_may_reach_ai(account_id: str, question: str, component: str) -> boo
 
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
-                  question_id: str = "", progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+                  question_id: str = "", progress: Callable[[dict[str, Any]], None] | None = None,
+                  use_verified: bool = True) -> dict[str, Any]:
     """The new core's answer in the web portal (compare mode, or core2 mode). ``progress`` is shown a described
-    dashboard's card as its tiles land."""
+    dashboard's card as its tiles land. ``use_verified`` False: the question is read afresh even where an admin
+    verified its answer (the answers check measures the reading, never an admin's replay)."""
     from core.portal_roles import can, refusal
     from core2 import dashboards
 
@@ -3646,6 +3799,8 @@ def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | 
     services, refused = _portal_services(account_id, question, portal_user, question_id)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
+    if not use_verified:
+        services = replace(services, verified=None, verified_seen=None)
     if progress is not None:
         services = replace(services, progress=progress)
     services = _with_profile_standing(services, account_id, portal_user)

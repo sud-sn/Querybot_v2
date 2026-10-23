@@ -1,5 +1,5 @@
 {% extends "client_base.html" %}
-{% from "macros.html" import breadcrumb, empty_state %}
+{% from "macros.html" import breadcrumb, empty_state, alert %}
 {% from "icons.html" import ic %}
 {% block title %}Knowledge base — {{ client.client_name or client.account_id[:16] }}{% endblock %}
 {% block breadcrumb %}
@@ -14,6 +14,13 @@
 <style>
 /* The approved Knowledge base screen: what each table and field means, in the admin's words. */
 .kb-head{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+.kb-ai{padding:14px 16px;margin-bottom:16px}
+.kb-ai h2{margin:0 0 4px;font-size:var(--font-md);color:var(--text-strong)}
+.kb-ai p{margin:0 0 10px;font-size:var(--font-sm);color:var(--text-muted);max-width:760px;line-height:1.5}
+.kb-ai-form{display:grid;gap:8px}
+.kb-ai-form textarea{width:100%;min-height:96px;resize:vertical;font-family:var(--font-ui);line-height:1.5}
+.kb-ai-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.kb-ai-meta{font-size:var(--font-xs);color:var(--text-muted)}
 .kb-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
 .kb-head p{margin:0;color:var(--text-muted);max-width:600px;font-size:var(--font-base)}
 .kb{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
@@ -110,6 +117,45 @@ table.kb-l tr.kb-editing td{background:var(--primary-soft)}
       names for fields and their values.</p>
   </div>
 </div>
+
+{% if saved == 'instructions' %}{{ alert("Instructions saved. They are given with the next question.", "success") }}{% endif %}
+{% if error %}{{ alert(error, "error") }}{% endif %}
+{# The workspace's own instructions for the AI (core2/plan/planner.py: instructions_text), as Databricks Genie's general
+   instructions are: plain words about the data, given with every question. #}
+<section class="kb-card kb-ai" id="ai-instructions" aria-labelledby="kb-ai-h">
+  <div class="kb-ai-top">
+    <div>
+      <h2 id="kb-ai-h">Instructions for the AI</h2>
+      <p>What this business means by its words and how it counts, in plain sentences: "Sales means net amount
+        unless a question says gross." "An active customer bought in the last 90 days." They are sent to the AI
+        with every question this workspace asks{% if instructions.scrubbed %}, with personal data taken out as the
+        questions are{% endif %}. Write no passwords or people's details. They never widen what a reader may see,
+        and a field or metric is used only if it is in the knowledge base. Data stewards and workspace admins can
+        change them.</p>
+      {% if instructions.values_kept %}<p>This workspace keeps data values from the AI: a customer, product or other
+        name from the data is sent as &ldquo;a member&rdquo; where Solviz knows it. Write each rule without naming
+        one.</p>{% endif %}
+    </div>
+  </div>
+  <form method="post" action="/admin/clients/{{ client.account_id }}/knowledge/instructions" class="kb-ai-form">
+    <textarea class="form-input" name="instructions" id="kb-ai-text" rows="5" maxlength="{{ instructions.limit }}"
+      aria-label="Instructions for the AI" aria-describedby="kb-ai-count" placeholder="Sales means net amount unless a question says gross.">{{ instructions.text }}</textarea>
+    <div class="kb-ai-foot">
+      <span class="kb-ai-meta" id="kb-ai-count" aria-live="polite" data-limit="{{ '{:,}'.format(instructions.limit) }}">{{ instructions.text | length }} of {{ "{:,}".format(instructions.limit) }} characters{% if instructions.at %} · last changed by {{ instructions.by or "an admin" }}, {{ instructions.at }} UTC{% endif %}</span>
+      <button type="submit" class="btn btn-primary btn-sm">Save instructions</button>
+    </div>
+  </form>
+</section>
+<script>
+(function () {
+  var box = document.getElementById("kb-ai-text"), count = document.getElementById("kb-ai-count");
+  if (!box || !count) return;
+  var tail = count.textContent.replace(/^[^·]*/, "");
+  box.addEventListener("input", function () {
+    count.textContent = box.value.length + " of " + count.dataset.limit + " characters" + (tail ? " " + tail : "");
+  });
+})();
+</script>
 
 {% if not data %}
 <div class="card">{{ empty_state("book", "Solviz has not learned this database yet",

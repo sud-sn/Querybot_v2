@@ -188,10 +188,10 @@ RULES: list[tuple[re.Pattern, str, bool]] = [(re.compile(p), role, scoped) for p
     (rf"^/clients/{_A}/(users|groups|pending-users|admins|row-access)(/.*)?$", WORKSPACE, True),
     (rf"^/api/clients/{_A}/pending-users(/.*)?$", WORKSPACE, True),
     # A workspace's data: what QueryBot learned, metrics, dates, relationships, the knowledge base, the readers'
-    # requests, the question log and the support pages about them: data stewards.
+    # requests, the question log, verified answers and the support pages about them: data stewards.
     (rf"^/clients/{_A}(/(learned|answers-check|knowledge|relationships|dates|measures|metrics|requests|date-roles"
      r"|date-contexts|kb|glossary|meanings|drafts|learning-queue|semantic-feedback|model-health|mapping|domains|graph|evals|traces"
-     r"|queries|readiness|health-score|schema|schema-tree|api|reports|value-index)(/.*)?)?/?$", STEWARD, True),
+     r"|queries|verified|readiness|health-score|schema|schema-tree|api|reports|value-index)(/.*)?)?/?$", STEWARD, True),
     (rf"^/api/clients/{_A}/(learning-queue|readiness|metrics|synonym-proposals|domains)(/.*)?$", STEWARD, True),
 ]]
 

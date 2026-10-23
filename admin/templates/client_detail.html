@@ -87,6 +87,7 @@
 @media(max-width:640px){.agent-analysis-grid{grid-template-columns:1fr}}
 .q-cost-pop{position:fixed;inset:0;margin:auto;height:fit-content;width:min(26rem,calc(100vw - 2rem));padding:1rem 1.1rem;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--text);box-shadow:var(--shadow-lg)}
 .q-cost-pop::backdrop{background:color-mix(in srgb, var(--shadow-tint) 18%, transparent)}
+.q-verify{display:inline;margin:0 0 0 4px}
 .q-cost-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
 .q-cost-q{margin:.35rem 0 .5rem;color:var(--text-muted);font-size:var(--font-sm)}
 .q-cost-total{font-size:var(--font-xl, 1.5rem);font-weight:var(--weight-bold);margin-bottom:.4rem}
@@ -593,6 +594,14 @@
         </td>
         <td style="max-width:200px">
           {% if q.success %}<span class="badge badge-green">OK</span>
+          {% if q.question_id %}
+          {# A checked answer is given again as checked (Questions > Verified answers); only an answer the new core
+             gave can be verified, and the page says so for any other. #}
+          <form method="post" action="/admin/clients/{{ client.account_id }}/verified" class="q-verify">
+            <input type="hidden" name="question_id" value="{{ q.question_id }}">
+            <button type="submit" class="btn btn-ghost btn-xs" title="Readers who ask this question get this answer, marked as verified">Verify</button>
+          </form>
+          {% endif %}
           {% else %}
           <span class="badge badge-red error-code-badge" title="Click to see why this failed" onclick="toggleError(this)">{{ q.error_code or "FAIL" }}</span>
           {% if q.rca %}

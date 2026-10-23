@@ -254,14 +254,16 @@ def set_query_engine(account_id: str, engine: str) -> None:
 
 def log_core2_answer(account_id: str, *, user_id: str, mode: str, question: str, status: str, headline: str,
                      sql: str, row_count: int, plan: dict[str, Any] | None, duration_ms: int,
-                     model_version: int, question_id: str = "") -> None:
+                     model_version: int, question_id: str = "", verifiable: bool = False) -> None:
+    """One new-core answer. ``verifiable``: read from the question's own words alone (core2/service.py), so an admin
+    may verify it."""
     with get_db() as conn:
         conn.execute(
             """INSERT INTO core2_answer (account_id, user_id, mode, question, status, headline, sql, row_count,
-                                         plan_json, duration_ms, model_version, question_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                         plan_json, duration_ms, model_version, question_id, verifiable)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (account_id, user_id, mode, question[:2000], status, headline[:2000], sql, row_count,
-             json.dumps(plan or {}), duration_ms, model_version, question_id))
+             json.dumps(plan or {}), duration_ms, model_version, question_id, 1 if verifiable else 0))
 
 
 def get_core2_answer_plan(account_id: str, question_id: str) -> dict[str, Any] | None:
@@ -734,3 +736,139 @@ def core2_test_question_workspaces() -> list[tuple[str, int]]:
     with get_db() as conn:
         rows = conn.execute("SELECT DISTINCT account_id, db_config_id FROM core2_test_question").fetchall()
     return [(str(r["account_id"]), int(r["db_config_id"])) for r in rows]
+
+
+# ── Verified answers (core2/verified.py) ──────────────────────────────────────
+
+def _verified_row(row) -> dict[str, Any]:
+    try:
+        plan = json.loads(row["plan_json"] or "{}")
+    except (TypeError, ValueError):
+        plan = {}
+    return {"id": int(row["id"]), "question": row["question"], "plan": plan if isinstance(plan, dict) else {},
+            "headline": row["headline"] or "", "by": row["verified_by"], "at": row["verified_at"],
+            "uses": int(row["uses"] or 0),
+            "last_used_at": row["last_used_at"], "needs_look": bool(row["needs_look_at"])}
+
+
+def verify_answer(account_id: str, question: str, plan: dict[str, Any], *, by: str, headline: str = "") -> int:
+    """Keep ``plan`` as the checked answer to ``question``; the same question verified again takes the new plan
+    (and is looked at again) and keeps the words it was first verified in. ``headline`` is what the answer said
+    when it was verified, for the admin's page only: a verified question is answered on the data of the day it is
+    asked. Its id."""
+    from core2.verified import key
+
+    words = key(question)
+    if not words:
+        raise ValueError("a question with no words cannot be verified")
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO core2_verified (account_id, question, question_key, plan_json, headline, verified_by,
+                                           verified_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(account_id, question_key) DO UPDATE SET plan_json=excluded.plan_json,
+                   headline=excluded.headline, verified_by=excluded.verified_by,
+                   verified_at=excluded.verified_at, needs_look_at=NULL""",
+            (account_id, str(question).strip()[:2000], words, json.dumps(plan or {}), str(headline or "")[:500],
+             str(by or "")[:200], _now()))
+        row = conn.execute("SELECT id FROM core2_verified WHERE account_id=? AND question_key=?",
+                           (account_id, words)).fetchone()
+    return int(row["id"])
+
+
+def list_verified(account_id: str) -> list[dict[str, Any]]:
+    """A workspace's verified answers, those to look at first, then the most used."""
+    with get_db() as conn:
+        rows = conn.execute("""SELECT * FROM core2_verified WHERE account_id=?
+                               ORDER BY needs_look_at IS NULL, uses DESC, id DESC""", (account_id,)).fetchall()
+    return [_verified_row(r) for r in rows]
+
+
+def find_verified(account_id: str, question: str) -> dict[str, Any] | None:
+    """The verified answer to the same question, in its words however written; None when there is none."""
+    from core2.verified import key
+
+    words = key(question)
+    if not words:
+        return None
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM core2_verified WHERE account_id=? AND question_key=?",
+                           (account_id, words)).fetchone()
+    return _verified_row(row) if row else None
+
+
+def remove_verified(account_id: str, verified_id: int) -> bool:
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM core2_verified WHERE account_id=? AND id=?", (account_id, int(verified_id)))
+    return cur.rowcount > 0
+
+
+def verified_seen(account_id: str, verified_id: int, answered: bool) -> None:
+    """A verified answer given again (counted), or set aside because the data no longer answers its plan (it
+    needs a look)."""
+    with get_db() as conn:
+        if answered:
+            conn.execute("UPDATE core2_verified SET uses=uses+1, last_used_at=? WHERE account_id=? AND id=?",
+                         (_now(), account_id, int(verified_id)))
+        else:
+            conn.execute("UPDATE core2_verified SET needs_look_at=? WHERE account_id=? AND id=?",
+                         (_now(), account_id, int(verified_id)))
+
+
+def core2_answered(account_id: str, question_id: str) -> dict[str, Any] | None:
+    """The answer a question id names in this workspace that an admin may verify -- its words and plan -- or None:
+    a refusal, a question back, another workspace's, or one not read from the question's own words alone (a
+    follow-up, a chip, a reader's standing condition, a date fixed for "since January")."""
+    if not question_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute("""SELECT question, headline, plan_json FROM core2_answer
+                              WHERE account_id=? AND question_id=? AND status='answered' AND verifiable=1
+                              ORDER BY id DESC LIMIT 1""", (account_id, question_id)).fetchone()
+    if not row:
+        return None
+    try:
+        plan = json.loads(row["plan_json"] or "{}")
+    except (TypeError, ValueError):
+        return None
+    return {"question": row["question"], "headline": row["headline"] or "", "plan": plan} \
+        if isinstance(plan, dict) and plan else None
+
+
+def latest_answer_to(account_id: str, question: str, *, scan: int = 2000) -> str:
+    """The question id of the latest answer to the same question (its words however written), or "": for a
+    verified answer the data no longer answers, the fresh reading an admin can verify in its place."""
+    from core2.verified import key
+
+    words = key(question)
+    if not words:
+        return ""
+    with get_db() as conn:
+        rows = conn.execute("""SELECT question, question_id FROM core2_answer
+                               WHERE account_id=? AND status='answered' AND verifiable=1 AND question_id<>''
+                               ORDER BY id DESC LIMIT ?""", (account_id, int(scan))).fetchall()
+    return next((r["question_id"] for r in rows if key(r["question"]) == words), "")
+
+
+def verified_candidates(account_id: str, *, days: int = 30, least: int = 2, most: int = 10) -> list[dict[str, Any]]:
+    """The questions answered most in the last ``days`` (``least`` times or more) that nobody has verified: each
+    with how often, and the latest answer to verify it from (its id and what it said)."""
+    from core2.verified import key
+
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        rows = conn.execute("""SELECT question, question_id, headline FROM core2_answer
+                               WHERE account_id=? AND status='answered' AND verifiable=1 AND created_at>=?
+                               AND question_id<>'' ORDER BY id DESC LIMIT 5000""", (account_id, since)).fetchall()
+        kept = {r["question_key"] for r in conn.execute(
+            "SELECT question_key FROM core2_verified WHERE account_id=?", (account_id,)).fetchall()}
+    seen: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        words = key(row["question"])
+        if not words or words in kept:
+            continue
+        entry = seen.setdefault(words, {"question": row["question"], "question_id": row["question_id"],
+                                        "headline": row["headline"] or "", "times": 0})
+        entry["times"] += 1
+    offered = [e for e in seen.values() if e["times"] >= least]
+    return sorted(offered, key=lambda e: -e["times"])[:most]

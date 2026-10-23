@@ -10,7 +10,7 @@
    Data holds the new core's semantic layer an admin corrects: Setup, what Solviz
    learned, the knowledge base, relationships, dates and metrics, and the changes
    readers asked for (Requests). Questions is the log, the
-   answers readers flagged and usage. The AI egress log sits with its policy under
+   answers an admin verified, the answers readers flagged and usage. The AI egress log sits with its policy under
    Compliance. Settings is one page with the danger zone at its foot.
 
    Matching is on the path segment AFTER the account id, not a substring of the
@@ -23,7 +23,7 @@
 
 {% set _is_overview   = (_seg == '') %}
 {% set _is_data       = _seg in ['setup', 'learned', 'answers-check', 'knowledge', 'relationships', 'dates', 'measures', 'askable', 'requests'] %}
-{% set _is_questions  = _seg in ['queries', 'learning-queue', 'billing'] %}
+{% set _is_questions  = _seg in ['queries', 'verified', 'learning-queue', 'billing'] %}
 {% set _is_people     = _seg in ['users', 'groups', 'row-access', 'pending-users', 'admins'] %}
 {% set _is_compliance = _seg in ['compliance', 'egress'] %}
 {# Diagnostics is for support, reached from Settings: today's pipeline's own
@@ -50,7 +50,8 @@
                   ('relationships', 'Relationships'), ('dates', 'Dates'), ('measures', 'Metrics'),
                   ('askable', 'What readers can ask'), ('requests', 'Requests')] %}
 {% elif _is_questions %}
-  {% set _menu = [('queries', 'Questions'), ('learning-queue', 'Flagged answers'), ('billing', 'Usage & billing')] %}
+  {% set _menu = [('queries', 'Questions'), ('verified', 'Verified answers'), ('learning-queue', 'Flagged answers'),
+                  ('billing', 'Usage & billing')] %}
 {% elif _is_people %}
   {% set _menu = [('users', 'Users'), ('groups', 'Groups'), ('row-access', 'Row access'), ('pending-users', 'Access requests'),
                   ('admins', 'Admins')] %}

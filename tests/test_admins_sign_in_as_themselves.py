@@ -291,7 +291,7 @@ class TestInvitations:
 # The pages under /admin/clients/<id>/ a data steward works on (the plan's table), and what a workspace admin
 # adds. Anything else about a workspace is a super admin's.
 STEWARD_AREAS = {"", "learned", "answers-check", "knowledge", "relationships", "dates", "measures", "metrics", "requests",
-                 "date-roles", "date-contexts", "kb", "glossary", "meanings", "drafts", "learning-queue",
+                 "date-roles", "date-contexts", "kb", "glossary", "meanings", "drafts", "learning-queue", "verified",
                  "semantic-feedback", "model-health", "mapping", "domains", "graph", "evals", "traces", "queries",
                  "readiness", "health-score", "schema", "schema-tree", "api", "reports", "value-index",
                  "synonym-proposals"}

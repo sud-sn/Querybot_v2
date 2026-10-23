@@ -235,6 +235,9 @@ _VALUE_BEARING_MARKERS: tuple[tuple[str, str], ...] = (
     ("THE ANSWER AS SHOWN", "answer_rows"),
     # core2/answer/overview.py::material -- the data's tables as described: their spans, sizes and left-out values.
     ("THE DATA AS DESCRIBED", "data_description"),
+    # core2/plan/planner.py::instructions_text -- the admins' instructions, when they name a member as stored.
+    ("WORKSPACE INSTRUCTIONS (written by this workspace's admins about its data and its words; they name members "
+     "as stored", "admin_instruction_values"),
     # core2/answer/notes.py::_given -- facts worked out from the answer's rows.
     ("Facts:\n- [", "answer_facts"),
     # core2/bootstrap/labels.py::table_brief -- a column's common values and its range, for Learn to name it.
@@ -250,6 +253,9 @@ _CONTENT_MARKERS: tuple[tuple[str, str], ...] = (
     ("Session context", "conversation_history"),
     ("Example queries", "few_shot"),
     ("Entity graph", "entity_graph"),
+    # core2/plan/planner.py::instructions_text -- the workspace admins' own instructions for the AI, as they wrote
+    # them (scrubbed under compliance). Their words, not the warehouse's rows.
+    ("WORKSPACE INSTRUCTIONS (written by this workspace's admins", "admin_instructions"),
 )
 
 

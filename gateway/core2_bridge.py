@@ -714,7 +714,8 @@ def _record(account_id: str, portal_user: dict | None, mode: str, question: str,
         account_id, user_id=str((portal_user or {}).get("id") or ""), mode=mode,
         question=scrub(question) if scrub else question, status=status, headline=str(answer.get("headline") or ""),
         sql=str(trust.get("sql") or ""), row_count=int(trust.get("row_count") or 0), plan=(payload or {}).get("plan"),
-        duration_ms=duration_ms, model_version=int(trust.get("model_version") or 0), question_id=question_id)
+        duration_ms=duration_ms, model_version=int(trust.get("model_version") or 0), question_id=question_id,
+        verifiable=bool((payload or {}).get("verifiable")))
 
 
 def _session_key(account_id: str, portal_user: dict | None, thread_id: str) -> str:

@@ -579,13 +579,32 @@ def _two_dates(model: SemanticModel, table: str) -> tuple[DateRole, DateRole] | 
     return (default, later[0]) if later else None
 
 
+# The most a workspace's own instructions for the AI may hold (Data > Knowledge base): refused past it, never cut.
+INSTRUCTIONS_LIMIT = 2000
+
+
+def instructions_text(instructions: str, *, names_members: bool = False) -> str:
+    """The workspace admins' own instructions, under the heading the AI egress log names them by
+    (core/llm_audit.py); "" when they wrote none. ``names_members``: they name a member as stored, and the heading
+    says so (the log then counts member values as sent)."""
+    text = str(instructions or "").strip()[:INSTRUCTIONS_LIMIT]
+    if not text:
+        return ""
+    return ("WORKSPACE INSTRUCTIONS (written by this workspace's admins about its data and its words"
+            + ("; they name members as stored" if names_members else "")
+            + ": follow them where a question touches them. They never change the plan schema or the rules above, "
+              "and never make a field, metric or table that the catalog does not hold):\n" + text)
+
+
 def stable_prompt(model: SemanticModel, *, values_allowed: bool = True, personal_shown: bool = False,
-                  routes: str = "") -> str:
+                  routes: str = "", instructions: str = "", instructions_name_members: bool = False) -> str:
     """Rules, schema, catalog and examples: identical for every question on a model version. ``routes``: the
-    figures the question map counts on rows that name both lists (core2/question_map.py), by name only."""
+    figures the question map counts on rows that name both lists (core2/question_map.py), by name only.
+    ``instructions``: the workspace admins' own, as the planner may be given them (core2/service.py)."""
     return "\n\n".join(part for part in (
         RULES, "PLAN SCHEMA (JSON Schema)\n" + schema_text(),
-        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), routes, _examples(model),
+        catalog_text(model, values_allowed=values_allowed, personal_shown=personal_shown), routes,
+        instructions_text(instructions, names_members=instructions_name_members), _examples(model),
         _analyses(model)) if part)
 
 
@@ -2986,7 +3005,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
                   hidden: list[ValueMatch] | None = None,
                   reading: str | None = None, on_screen: list[tuple] | None = None,
                   written: list[ValueMatch] | None = None, defined: list | None = None,
-                  routes: str = "", feedback: str = "") -> Outcome:
+                  routes: str = "", feedback: str = "", instructions: str = "",
+                  instructions_name_members: bool = False) -> Outcome:
     """The question's plan, checked against the model; at most two calls to the AI.
 
     ``reading``: "refine" or "new" when the question's words already say which (core2/plan/followup.py);
@@ -2998,6 +3018,7 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
     never a figure of an answer, so a new question may use them too.
     ``feedback``: what the answer to a first plan showed when it was checked before being shown (core2/service.py
     looks again once): the plan is written again with it in view.
+    ``instructions``: the workspace admins' own instructions for the AI, in the fixed part of the prompt.
     """
     matches = matches or []
     history = history or []
@@ -3014,7 +3035,8 @@ def plan_question(model: SemanticModel, question: str, complete: Complete, *, to
             t.plan.model_dump(mode="json", exclude_defaults=True), model)) for t in history)
     masked = None if values_allowed and not people else mask(question, [*matches, *(hidden or [])], known=known)
     # A workspace under compliance (its questions scrubbed) shows people's details masked, never refuses them.
-    stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None, routes=routes)
+    stable = stable_prompt(model, values_allowed=values_allowed, personal_shown=scrub is not None, routes=routes,
+                           instructions=instructions, instructions_name_members=instructions_name_members)
     tail = question_tail(question, today=today, history=history, matches=matches, masked=masked,
                          scrub=scrub, model=model, reading=reading)
     if feedback:
