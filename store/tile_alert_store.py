@@ -114,6 +114,28 @@ def alerts_for_tile(dashboard_id: int, chart_id: int, user_id: int, account_id: 
     return [dict(r) for r in rows]
 
 
+def alerts_telling(account_id: str, user_id: int) -> list[dict]:
+    """Every alert in the workspace that tells ``user_id`` -- the ones they made, then the ones others made for them
+    or their groups -- with its tile's title, its dashboard's name and whether it is crossed for them now. Whether
+    they may still open the dashboard is the caller's to check."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT a.*, o.name AS owner_name, s.state, c.title AS tile_title, d.name AS dashboard_name
+                 FROM tile_alert a JOIN portal_user o ON o.id=a.owner_id
+                 JOIN pinned_chart c ON c.id=a.chart_id AND c.account_id=a.account_id
+                 JOIN dashboard_artifact d ON d.id=a.dashboard_id AND d.account_id=a.account_id
+                 LEFT JOIN tile_alert_state s ON s.alert_id=a.id AND s.user_id=?
+                WHERE a.account_id=?
+                  AND (a.owner_id=?
+                       OR EXISTS (SELECT 1 FROM tile_alert_recipient r WHERE r.alert_id=a.id
+                                     AND ((r.subject_type='user' AND r.subject_id=?)
+                                       OR (r.subject_type='group' AND r.subject_id IN (SELECT group_id
+                                                FROM user_group_member WHERE user_id=?)))))
+                ORDER BY CASE WHEN a.owner_id=? THEN 0 ELSE 1 END, a.id DESC""",
+            (int(user_id), str(account_id), int(user_id), int(user_id), int(user_id), int(user_id))).fetchall()
+    return [dict(r) for r in rows]
+
+
 def tile_marks(dashboard_id: int, user_id: int, account_id: str) -> dict[int, dict]:
     """For a dashboard's tiles, what its bell shows ``user_id``: {chart id: {"on": True, "firing": bool}}."""
     with get_db() as conn:

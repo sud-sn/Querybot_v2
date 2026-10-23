@@ -2076,6 +2076,32 @@
             drill: Boolean(opts && opts.drill)};
   }
 
+  // A legend wider than its chart wraps onto a second or third row rather than paging "1/2" behind arrows a phone
+  // reader must tap through to learn what the other line is: the plot and the caption under the legend move down by
+  // the rows it took. Only a one-row legend across the top is changed; one longer than three rows keeps its pager.
+  function wrapLegend(option, width) {
+    const legend = option.legend;
+    if (!legend || Array.isArray(legend) || legend.type !== 'scroll' || legend.orient === 'vertical'
+        || legend.top !== 0 || !(width > 0)) return option;
+    const names = (legend.data || []).map(d => String(d && typeof d === 'object' ? d.name : d));
+    const glyph = 6.8;                                  // the 12px UI face, on average
+    const room = width - (legend.left || 0) - (legend.right || 0);
+    let rows = 1;
+    let run = 0;
+    names.forEach(name => {
+      const item = (legend.itemWidth || 10) + 5 + name.length * glyph;
+      if (run > 0 && run + item > room) { rows += 1; run = 0; }
+      run += item + (legend.itemGap || 16);
+    });
+    if (rows === 1 || rows > 3) return option;
+    const extra = (rows - 1) * 20;
+    const lower = part => (part && typeof part.top === 'number' ? Object.assign({}, part, {top: part.top + extra}) : part);
+    option.legend = Object.assign({}, legend, {type: 'plain'});
+    if (Array.isArray(option.grid)) option.grid = option.grid.map(lower); else if (option.grid) option.grid = lower(option.grid);
+    if (Array.isArray(option.title)) option.title = option.title.map(lower); else if (option.title) option.title = lower(option.title);
+    return option;
+  }
+
   // A horizontal ranking needs a readable row per category. In a fixed-height
   // card twenty categories got 12px each against an 11px label, and the axis
   // hid every other name. The chart grows to fit instead -- a chart whose
@@ -2136,6 +2162,7 @@
       // Drawn again before the box settled: this chart is gone.
       if (chart.isDisposed && chart.isDisposed()) return;
       const option = buildOption(payload, layoutFor(el, opts));
+      wrapLegend(option, el.clientWidth || 0);
       fitToBox(option, el, opts);
       chart.resize();
       chart.setOption(option, true);
@@ -2186,6 +2213,7 @@
     const el = chart.getDom();
     el._qbDrawn = {payload, opts};
     const option = buildOption(payload, layoutFor(el, opts));
+    wrapLegend(option, el.clientWidth || 0);
     fitToBox(option, el, opts);
     // A box that changed with it (a pie is drawn taller than bars) is taken first: sized afterwards, by the
     // observer, the chart would be laid out again at once and its move cut short.
@@ -2274,6 +2302,7 @@
     albersUsa: ALBERS_USA,
     _geo: geoStore,
     buildOption,
+    wrapLegend,
     paletteFor,
     pickOf,
     render,

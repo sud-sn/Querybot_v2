@@ -216,7 +216,7 @@ class TestTheOtherTabTitles:
         title = self._title("portal_notifications.html", "fr",
                             user={"id": 1, "name": "A", "role": "analyst"},
                             alerts=[], reports=[], subscriptions={})
-        assert title == "Mes notifications — Portail Solviz"
+        assert title == "Notifications — Portail Solviz"
 
     def test_the_semantic_layer_page_reuses_the_nav_label(self):
         """One id for the nav item and the tab, so they cannot drift apart."""

@@ -47,7 +47,7 @@ from admin import ai_providers
 from core import web_security
 from store.db import get_db as _get_db
 from store.database import DATABASE_URL, get_saved_pg_url
-from store.config_store import get_db_config
+from store.config_store import DB_LABEL, get_db_config
 from core.pipeline_context import save_state
 from core.process_secrets import env_secret_or_random
 from core.release import kb_build_record, kb_rebuild_needed, product_version
@@ -117,6 +117,8 @@ def _jinja_from_json(value, default=None):
         return default if default is not None else []
 
 templates.env.filters["from_json"] = _jinja_from_json
+# A connection's kind as people say it: "Azure SQL", never "azure_sql".
+templates.env.filters["db_label"] = lambda kind: DB_LABEL.get(str(kind or "").lower(), kind)
 # Every /static/ link carries a hash of the file it names (core/static_assets.py).
 templates.env.globals["asset"] = asset_url
 templates.env.globals["product_version"] = product_version

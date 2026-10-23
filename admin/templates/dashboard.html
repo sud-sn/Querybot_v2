@@ -118,7 +118,7 @@
         {% for c in clients %}
         <tr>
           <td>
-            <div class="font-bold">{{ c.client_name or "—" }}</div>
+            {% if c.client_name %}<div class="font-bold">{{ c.client_name }}</div>{% else %}<div class="font-bold text-muted">Unnamed workspace</div>{% endif %}
             <div class="text-xs text-muted text-mono">{{ c.account_id[:22] }}…</div>
           </td>
           <td><span class="badge badge-blue">{{ c.platform_type or "portal" }}</span></td>

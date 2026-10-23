@@ -34,6 +34,20 @@
   <section class="card" aria-labelledby="noticeAlertsTitle">
     <div class="card-header"><h2 id="noticeAlertsTitle">{{ t('ui.notif.your_alerts') }}</h2></div>
     <div class="card-body">
+      {% for a in tile_alerts or [] %}
+        <div class="reader-row">
+          <div class="reader-row-text">
+            <div class="reader-row-name">{{ t('ui.notif.tile_on', tile=a.tile, dashboard=a.dashboard) }}</div>
+            <div class="reader-row-meta">
+              {{ t('ui.notif.tells_when', when=a.when) }}
+              &middot; {{ t('ui.notif.checked_daily' if a.daily else 'ui.notif.checked_hourly') }}
+              {% if a.owner %}&middot; {{ t('ui.notif.set_by', name=a.owner) }}{% endif %}
+              &middot; {% if not a.active %}{{ t('ui.notif.paused') }}{% elif a.firing %}<span class="badge badge-warning">{{ t('ui.notif.crossed') }}</span>{% else %}{{ t('ui.notif.not_crossed') }}{% endif %}
+            </div>
+          </div>
+          <a class="btn btn-secondary btn-sm" href="/portal/dashboard?dashboard_id={{ a.dashboard_id }}">{{ t('ui.notif.open_dashboard') }}</a>
+        </div>
+      {% endfor %}
       {% if alerts %}
         {% for a in alerts %}
           <div class="reader-row">
@@ -55,7 +69,7 @@
             </form>
           </div>
         {% endfor %}
-      {% else %}
+      {% elif not tile_alerts %}
         <p class="reader-empty">{{ t('ui.notif.no_alerts') }}</p>
       {% endif %}
     </div>

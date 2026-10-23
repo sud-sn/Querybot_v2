@@ -171,6 +171,23 @@ def answering_status(client: dict[str, Any]) -> tuple[str, str]:
 templates.env.globals["answering_status"] = answering_status
 
 
+def learned_version(client: dict[str, Any]) -> dict[str, Any] | None:
+    """The model questions are answered from now -- its version and when Learn built it -- or None before the first
+    Learn. The workspace's Overview says this, not whether the old knowledge-base files exist."""
+    account_id, db_id = str(client.get("account_id") or ""), client.get("db_config_id")
+    if not account_id or not db_id:
+        return None
+    try:
+        versions = store.list_core2_model_versions(account_id, db_id)
+    except Exception as exc:  # noqa: BLE001 - the card is a courtesy; the page stands without it
+        log.warning("core2: the learned version of %s could not be read: %s", account_id, exc)
+        return None
+    return versions[0] if versions else None
+
+
+templates.env.globals["learned_version"] = learned_version
+
+
 def learn_after_first_discovery(account_id: str) -> bool:
     """A workspace's first discovery is followed by its first Learn; True when Learn was started.
 

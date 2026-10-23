@@ -429,7 +429,7 @@ body:has(.chat-page) .main{max-width:none!important;padding:0!important;overflow
 .dashboard-picker-name-row{display:flex;align-items:center;gap:var(--space-2);min-width:0}
 .dashboard-picker-name-row input{flex:1;min-width:0}
 .dashboard-picker-numbers{margin:0;font-size:var(--font-sm);color:var(--text-muted)}
-.dashboard-picker-kind{margin-left:auto;flex:none;font-size:var(--font-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px var(--space-2)}
+.dashboard-picker-kind{margin-left:auto;flex:none;font-size:var(--font-xs);font-weight:var(--weight-medium);color:var(--text-muted);background:var(--surface-alt);border-radius:var(--radius-pill);padding:3px var(--space-2)}
 .dashboard-picker-body{padding:0 24px var(--space-4);overflow:auto;flex:1;min-height:0}
 /* Existing or new: the design's segmented control, the choice raised on its pill track. */
 .dashboard-picker-switch{display:flex;gap:2px;margin-bottom:var(--space-3);padding:3px;background:var(--surface-alt);border:1px solid var(--line-subtle);border-radius:var(--radius-pill)}
@@ -730,7 +730,7 @@ body:has(.chat-page) .main { background: var(--bg); }
 .answer-actions [data-open-how][aria-expanded="true"] svg { transform: rotate(90deg); }
 .answer-how > summary { display: none; }
 .answer-how { margin: 0; }
-.answer-how-notes { margin: 0 0 8px; padding-left: 18px; color: var(--text); }
+.answer-how-notes { margin: 12px 14px 4px; padding-left: 18px; color: var(--text); }
 .answer-how-notes li { margin: 2px 0; }
 .answer-next { display: flex; flex-wrap: wrap; gap: 8px; }
 .clarify-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm); }
@@ -1039,7 +1039,7 @@ body:has(.chat-page) .main { background: var(--bg); }
       </div>
       <div class="dashboard-picker-new" id="dashboardNewPanel" role="tabpanel" aria-labelledby="dashboardNewMode" hidden>
         <label>{{ t('ui.pin.name_label') }}<input id="dashboardNewName" maxlength="120" placeholder="{{ t('ui.pin.name_placeholder') }}"></label>
-        <label>{{ t('ui.pin.description_label') }} <span style="font-weight:var(--weight-medium);color:var(--text-muted)">{{ t('ui.pin.optional') }}</span><input id="dashboardNewDescription" maxlength="500" placeholder="{{ t('ui.pin.description_placeholder') }}"></label>
+        <label><span>{{ t('ui.pin.description_label') }} <span style="font-weight:var(--weight-medium);color:var(--text-muted)">{{ t('ui.pin.optional') }}</span></span><input id="dashboardNewDescription" maxlength="500" placeholder="{{ t('ui.pin.description_placeholder') }}"></label>
         <label>{{ t('ui.pin.visibility_label') }}<select id="dashboardNewVisibility"><option value="personal">{{ t('ui.pin.visibility_personal') }}</option><option value="team">{{ t('ui.pin.visibility_team') }}</option></select></label>
       </div>
       <div class="dashboard-picker-error" id="dashboardPickerError" role="alert" aria-live="assertive"></div>
@@ -3928,6 +3928,9 @@ function _placeAnswerSummary(questionId, text) {
 // How it was counted: the answer's notes in words, what was considered, then
 // the technical record (rows, time, source, SQL) for whoever wants to check.
 function _answerHowHtml(msg, env) {
+  // A database as the admin pages name it (store/config_store.py DB_LABEL), never its code in capitals.
+  const _DB_LABELS = {snowflake: 'Snowflake', oracle: 'Oracle', azure_sql: 'Azure SQL', postgres: 'PostgreSQL',
+                      excel: t('ui.chat.trust.excel')};
   const trust = msg.trust || {};
   const confidence = msg.confidence || trust.confidence || {};
   const resultScope = msg.result_scope || (msg.analysis_contract && msg.analysis_contract.result_scope) || {};
@@ -3979,7 +3982,7 @@ function _answerHowHtml(msg, env) {
   const facts = [
     [t('ui.chat.trust.rows'), String(trust.row_count ?? '')],
     [t('ui.chat.trust.runtime'), trust.duration_label || ''],
-    [t('ui.chat.trust.data_source'), String(trust.data_source || '').toUpperCase()],
+    [t('ui.chat.trust.data_source'), _DB_LABELS[String(trust.data_source || '').toLowerCase()] || String(trust.data_source || '')],
     [t('ui.chat.trust.schema_mode'), trust.schema || env.schemaLabel || ''],
     [t('ui.chat.trust.result_scope'), trust.scope_badge || resultScope.badge || ''],
   ].filter(([, v]) => v).map(([k, v]) => `<div class="trust-item"><div class="trust-k">${escHtml(k)}</div><div class="trust-v">${escHtml(v)}</div></div>`).join('');
@@ -4509,7 +4512,9 @@ function appendAssistantResponse(msg, opts = {}){
     const fbDone   = div.querySelector('.feedback-done');
     const fbReason = div.querySelector('.feedback-reason');
     const fbComment= div.querySelector('.feedback-comment');
-    const _postFeedback = async (rating) => {
+    // quiet: the first press of a thumbs down, recorded at once; the line under the buttons says so, and the toast
+    // waits for the note (or a thumbs up).
+    const _postFeedback = async (rating, quiet = false) => {
       const payload = {
         rating,
         reason_code:   fbReason?.value  || 'other',
@@ -4531,7 +4536,7 @@ function appendAssistantResponse(msg, opts = {}){
           fbDown?.setAttribute('aria-pressed', rating === -1 ? 'true' : 'false');
           if (fbPanel && rating === 1) fbPanel.classList.remove('open');
           if (fbDone) { fbDone.textContent = data.message || t('ui.chat.feedback.thanks'); fbDone.style.display = ''; }
-          toast(data.message || t('ui.chat.toast.feedback_saved'));
+          if (!quiet) toast(data.message || t('ui.chat.toast.feedback_saved'));
         } else {
           toast(data.detail || t('ui.chat.toast.feedback_failed'));
         }
@@ -4542,7 +4547,7 @@ function appendAssistantResponse(msg, opts = {}){
     // clicks and walks away still leaves the signal. save_feedback upserts on
     // (question_id, user_id), so the reason enriches this row, not a second one.
     fbDown?.addEventListener('click', () => {
-      _postFeedback(-1);
+      _postFeedback(-1, true);
       if (fbPanel) fbPanel.classList.add('open');
     });
     fbSubmit?.addEventListener('click', () => _postFeedback(-1));

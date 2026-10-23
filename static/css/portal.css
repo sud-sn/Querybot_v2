@@ -531,10 +531,10 @@ body:not(:has(.portal-app-shell)) .main {
 /* A number's trend (graphics.html kpi_spark): the chat's answers, Home's figures and a dashboard's number tiles
    draw the same line; each page gives it its height. */
 .kpi-spark { display: block; width: 100%; overflow: visible; }
-.kpi-spark path { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+.kpi-spark path { fill: none; stroke: var(--data-1); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
   vector-effect: non-scaling-stroke; }
 .kpi-spark .kpi-spark-tail { stroke-dasharray: 3 3; }
-.kpi-spark .kpi-spark-area { fill: color-mix(in srgb, var(--primary) 10%, transparent); stroke: none; }
+.kpi-spark .kpi-spark-area { fill: color-mix(in srgb, var(--data-1) 10%, transparent); stroke: none; }
 
 /* A dashboard as a card (Home, the dashboards page): its first tab in miniature (graphics.html miniature), its
    name, and how many tiles it has and whose it is. */
@@ -564,8 +564,8 @@ body:not(:has(.portal-app-shell)) .main {
 .board-mini { display: block; width: 100%; height: 100%; }
 .mini-box { fill: var(--surface-raised); stroke: var(--line-subtle); stroke-width: .6; }
 .mini-ink { fill: var(--text-faint); }
-.mini-line { fill: none; stroke: var(--primary); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
-.mini-bar { fill: color-mix(in srgb, var(--primary) 55%, var(--surface-raised)); }
+.mini-line { fill: none; stroke: var(--data-1); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+.mini-bar { fill: color-mix(in srgb, var(--data-1) 55%, var(--surface-raised)); }
 .mini-rule { fill: var(--line-subtle); }
 .board-name { padding-inline: 4px; color: var(--text-strong); font-size: var(--font-md); font-weight: var(--weight-bold);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

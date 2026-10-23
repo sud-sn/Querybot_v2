@@ -2474,8 +2474,34 @@ async def change_pw_submit(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# My Notifications — view fired alerts, manage report subscriptions
+# Notifications — what the reader was told, their alerts, report subscriptions
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _tile_alerts_of(user: dict, lang: str) -> list[dict]:
+    """The alerts on dashboard tiles that tell the reader, on the tiles of dashboards they may still open, as
+    Notifications lists them: the tile, its dashboard, when it tells them, how often, crossed now or not."""
+    from core import tile_alerts
+    from store import tile_alert_store
+
+    tiles_seen: dict[int, set[int]] = {}
+    listed = []
+    for alert in tile_alert_store.alerts_telling(user["account_id"], user["id"]):
+        board_id = int(alert["dashboard_id"])
+        if board_id not in tiles_seen:
+            board = store.get_dashboard_for_view(board_id, user["id"], user["account_id"])
+            tiles_seen[board_id] = {int(c["id"]) for c in store.list_dashboard_charts_for_view(
+                board_id, user["id"], user["account_id"])} if board else set()
+        if int(alert["chart_id"]) not in tiles_seen[board_id]:
+            continue
+        listed.append({
+            "tile": alert.get("tile_title") or "", "dashboard": alert.get("dashboard_name") or "",
+            "dashboard_id": board_id, "when": tile_alerts.describe(alert, alert.get("value_format") or "", lang),
+            "daily": int(alert["check_minutes"]) >= 1440, "active": bool(alert["is_active"]),
+            "firing": bool(alert["is_active"]) and alert.get("state") == tile_alert_store.FIRING,
+            "owner": "" if int(alert["owner_id"]) == int(user["id"]) else (alert.get("owner_name") or ""),
+        })
+    return listed
+
 
 @router.get("/notifications", response_class=HTMLResponse)
 async def notifications_page(request: Request):
@@ -2491,6 +2517,7 @@ async def notifications_page(request: Request):
         a for a in list_alerts()
         if a.get("account_id") == account_id and a.get("user_id") == str(user["id"])
     ]
+    tile_alerts = _tile_alerts_of(user, _request_language(request))
     reports = report_store.list_reports(account_id)
     my_reports = [r for r in reports if r.get("created_by_user_id") == user["id"]]
     my_subscriptions = {
@@ -2503,6 +2530,7 @@ async def notifications_page(request: Request):
         "user": user,
         "notices": notices,
         "alerts": my_alerts,
+        "tile_alerts": tile_alerts,
         "reports": reports,
         "my_reports": my_reports,
         "subscriptions": my_subscriptions,
@@ -4456,9 +4484,12 @@ async def portal_answer_feedback(request: Request, question_id: str):
 
     # Said as it is: a thumbs-down puts the answer, with the note, before the workspace's admin (Questions →
     # Flagged answers), who can correct what Solviz learned. Nothing learns from it by itself.
+    # The first press records the flag at once and asks why; "with your note" only once there is one.
+    noted = bool(comment) or (reason_code or "other") != "other"
     message = (
         "Thanks — glad that was helpful!" if rating == 1
-        else "Thanks — the answer is flagged for your admin to check, with your note."
+        else "Thanks — the answer is flagged for your admin to check, with your note." if noted
+        else "Flagged for your admin to check. Say what was wrong below, if you like."
     )
     return JSONResponse({"ok": True, "message": message, "rating": rating})
 

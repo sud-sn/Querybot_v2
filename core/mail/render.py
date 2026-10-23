@@ -13,7 +13,8 @@ from typing import Optional
 
 from core.brand import PRODUCT_NAME
 
-INK, MUTED, PRIMARY, LINE, PAPER = "#1b2433", "#5b6676", "#1f4fd1", "#e1e6ee", "#f3f5f9"
+# PRIMARY is the product's own indigo (static/css/tokens.css --primary): an email's button wears the portal's colour.
+INK, MUTED, PRIMARY, LINE, PAPER = "#1b2433", "#5b6676", "#4F54D6", "#e1e6ee", "#f3f5f9"
 
 
 def esc(text) -> str:

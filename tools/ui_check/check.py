@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -146,7 +147,28 @@ class Page:
                  .map(([e, r]) => `${e.tagName.toLowerCase()}.${(e.className || '').toString().split(' ')[0]}`
                                   + ` ${Math.round(r.width)}x${Math.round(r.height)}`)
                  .slice(0, 40)""")
+        # An open dialog sits in the middle of the window and fits in it, its buttons in view.
+        dialogs = self.page.evaluate(
+            """() => [...document.querySelectorAll('dialog[open]')].map(d => {
+                 const r = d.getBoundingClientRect();
+                 // Its main button, as it stands before any scrolling: under the dialog's edge is out of view.
+                 const go = [...d.querySelectorAll('.btn-primary, [type=submit]')].filter(b => b.offsetParent !== null).pop();
+                 const g = go ? go.getBoundingClientRect() : null;
+                 return {name: d.id || d.className, off: Math.round(Math.abs((r.left + r.right) / 2 - innerWidth / 2)),
+                         below: Math.round(r.bottom - innerHeight), above: Math.round(-r.top),
+                         hidden_button: g ? Math.round(g.bottom - Math.min(r.bottom, innerHeight)) : 0};
+               })""")
         errors, self.errors = self.errors, []
+        for d in dialogs:
+            if d["off"] > 8:
+                self.problems.append({"where": where, "problem": "dialog off centre",
+                                      "detail": f"{d['name']} {d['off']}px to one side"})
+            if d["hidden_button"] > 1:
+                self.problems.append({"where": where, "problem": "dialog buttons out of view",
+                                      "detail": f"{d['name']}: its main button is {d['hidden_button']}px below the fold"})
+            if d["below"] > 1 or d["above"] > 1:
+                self.problems.append({"where": where, "problem": "dialog taller than the window",
+                                      "detail": f"{d['name']} {max(d['below'], d['above'])}px cut off"})
         for e in errors:
             self.problems.append({"where": where, "problem": "console error", "detail": e})
         if overflow > 1:
@@ -163,13 +185,66 @@ class Page:
         return {"errors": errors, "overflow_px": overflow, "overlaps": overlaps, "small_targets": small}
 
 
-def _pin(page, card, problems: list[dict], view: str) -> None:
+def _opened(p: "Page", report: list[dict], view: str, label: str, page_name: str, open_js: str = "",
+            click: str = "", close: str = "Escape", element=None) -> None:
+    """Open what a click opens (a dialog, a menu, a panel), picture it, close it again. Missing: nothing pictured."""
+    page = p.page
+    try:
+        if click:
+            target = page.locator(click)
+            if not target.count():
+                return
+            target.first.click()
+        elif open_js and not page.evaluate(open_js):
+            return
+        page.wait_for_timeout(600)
+        report.append({"page": page_name, "view": view, **p.shot(label, element=element)})
+    except Exception as exc:  # noqa: BLE001 - one control that will not open never stops the run
+        p.problems.append({"where": f"{p.name} {label}", "problem": "did not open", "detail": str(exc)[:200]})
+    finally:
+        if close == "Escape":
+            page.keyboard.press("Escape")
+        elif close:
+            page.evaluate(close)
+        page.wait_for_timeout(300)
+
+
+def _mail(p: "Page", base: str, report: list[dict], view: str, out: Path) -> None:
+    """The email a schedule sends, at this view's width, and (on a laptop) its PDF, page by page."""
+    page = p.page
+    page.goto(base + "/__ui_check/email", wait_until="networkidle")
+    page.wait_for_timeout(800)
+    report.append({"page": "the scheduled email", "view": view, **p.shot("99_email", full=True)})
+    if view != "desktop":
+        return
+    try:
+        with urllib.request.urlopen(base + "/__ui_check/pdf", timeout=240) as r:
+            data = r.read()
+    except Exception as exc:  # noqa: BLE001
+        p.problems.append({"where": f"{p.name} pdf", "problem": "no PDF", "detail": str(exc)[:200]})
+        return
+    (out / f"{p.name}_99_dashboard.pdf").write_bytes(data)
+    try:
+        import pymupdf
+    except ImportError:
+        return
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        for i, pdf_page in enumerate(doc):
+            name = f"{p.name}_99_pdf_page{i + 1}.png"
+            pdf_page.get_pixmap(dpi=72).save(str(out / name))
+            report.append({"page": "the PDF a schedule attaches", "view": view, "shot": name})
+
+
+def _pin(p: "Page", card, report: list[dict], view: str) -> None:
     """Add the answer to a new dashboard, as a reader would: the dashboard page then shows its tile."""
+    page, problems = p.page, p.problems
     button = card.locator('[data-pin="chart"]')
     if not button.count():
         problems.append({"where": f"{view} chat", "problem": "no Add to dashboard", "detail": "comparison answer"})
         return
     button.first.click()
+    page.wait_for_timeout(500)
+    report.append({"page": "add an answer to a dashboard", "view": view, **p.shot("02p_pin_dialog")})
     page.click("#dashboardNewMode")
     page.fill("#dashboardNewName", "Store comparison")
     page.click("#dashboardPickerSubmit")
@@ -229,8 +304,14 @@ def run(base: str, out: Path, chromium: str | None, theme: str = "light",
                 card = page.locator(".msg.msg-bot").last
                 report.append({"page": "answer", "view": view, "question": question,
                                **p.shot(f"{i:02d}_{_slug(question)}", element=card)})
+                if i == 3:
+                    # What an answer shows when asked how it was counted, and the form behind a thumbs down.
+                    _opened(p, report, view, f"{i:02d}c_how_counted", "how it was counted",
+                            click=".msg.msg-bot:last-child [data-open-how]", close="", element=card)
+                    _opened(p, report, view, f"{i:02d}d_not_helpful", "not helpful",
+                            click=".msg.msg-bot:last-child [data-feedback=down]", element=card)
                 if question.startswith("Compare") and view == "desktop":
-                    _pin(page, card, problems, view)
+                    _pin(p, card, report, view)
                 if question.startswith("Monthly") and card.locator("[data-expand]").count():
                     # Expand: the answer grows where it is, to the conversation's width; pressed again, back.
                     card.locator("[data-expand]").first.click()
@@ -267,6 +348,13 @@ def run(base: str, out: Path, chromium: str | None, theme: str = "light",
                 page.goto(base + path, wait_until="networkidle")
                 page.wait_for_timeout(1200)
                 report.append({"page": path, "view": view, **p.shot("94" + path.replace("/", "_"), full=True)})
+                if path == "/portal/settings":
+                    for tab in page.locator("[role=tab][data-tab]").all()[1:]:
+                        name = tab.get_attribute("data-tab") or "tab"
+                        tab.click()
+                        page.wait_for_timeout(600)
+                        report.append({"page": f"settings, {name}", "view": view,
+                                       **p.shot(f"94_settings_{_slug(name)}", full=True)})
             for path in ("/portal/dashboard", "/portal/kb"):
                 page.goto(base + path, wait_until="networkidle")
                 page.wait_for_timeout(1500)
@@ -325,6 +413,21 @@ def run(base: str, out: Path, chromium: str | None, theme: str = "light",
                     page.wait_for_load_state("networkidle")
                     page.wait_for_timeout(2500)
                     report.append({"page": "a pinned dashboard", "view": view, **p.shot("96_dashboard_open", full=True)})
+                    _opened(p, report, view, "96a_share", "share a dashboard", click="#dashShareButton")
+                    _opened(p, report, view, "96b_more_menu", "the dashboard's menu", click="#dashMoreButton",
+                            close="document.getElementById('dashMoreButton').click()")
+                    _opened(p, report, view, "96c_schedule", "email a dashboard on a schedule",
+                            open_js="() => { document.getElementById('dashMoreButton').click();"
+                                    " const b = document.getElementById('dashScheduleButton');"
+                                    " if (!b) return false; b.click(); return true; }")
+                    _opened(p, report, view, "96d_about", "about a dashboard",
+                            open_js="() => { const d = document.getElementById('dashAboutDialog');"
+                                    " if (!d) return false; d.showModal(); return true; }")
+                    _opened(p, report, view, "96e_alert", "an alert on a tile", click=".dash-alert-button")
+                    _opened(p, report, view, "96f_dates", "the dashboard's dates", click=".dash-pick")
+                    _opened(p, report, view, "96g_edit", "a dashboard being edited", click="#dashEditToggle",
+                            close="document.getElementById('dashEditToggle').click()")
+                    _mail(p, base, report, view, out)
 
             a = Page(browser, view if theme == "light" else f"{view}-{theme}", size, out, problems, theme)
             a.page.goto(base + "/admin/login", wait_until="networkidle")
@@ -363,8 +466,22 @@ def run(base: str, out: Path, chromium: str | None, theme: str = "light",
                 if target and a.page.locator(target).count():
                     a.page.locator(target).first.click()
                     a.page.wait_for_timeout(500)
-                report.append({"page": path, "view": view, **a.shot("51" + path.replace("/", "_").replace("?", "_").replace("=", "-"),
-                                                                   full=True)})
+                label = "51" + path.replace("/", "_").replace("?", "_").replace("=", "-")
+                report.append({"page": path, "view": view, **a.shot(label, full=True)})
+                # What the page's buttons open: the dialogs and forms an admin fills in.
+                dialogs = {"/groups": [("new_group", "[data-new-group]")],
+                           "/users": [("add_person", "#addPersonBtn"), ("their_groups", "[data-edit-groups]")],
+                           "/row-access": [("add_rule", "[data-new]")]}
+                for end, opens in dialogs.items():
+                    if path.endswith(end):
+                        for name, selector in opens:
+                            _opened(a, report, view, f"{label}_{name}", f"{path}: {name}", click=selector)
+                if re.search(r"/groups/\d+$", path):
+                    _opened(a, report, view, f"{label}_add_people", "a group: add people", click="[data-open-picker]",
+                            close="")
+                    _opened(a, report, view, f"{label}_rename", "a group: rename",
+                            open_js="() => { const d = document.getElementById('gp-rename');"
+                                    " if (!d) return false; d.showModal(); return true; }")
         browser.close()
     return report, problems
 
@@ -383,8 +500,9 @@ def main() -> int:
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     log = (out / "server.log").open("w")
+    env = {**os.environ, **({"QUERYBOT_CHROMIUM_PATH": args.chromium} if args.chromium else {})}
     server = subprocess.Popen([args.server_python, str(HERE / "serve.py"), str(out / "run"), str(args.port)],
-                              cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT)
+                              cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT, env=env)
     base = f"http://127.0.0.1:{args.port}"
     try:
         _wait_up(base + "/portal/login", 240)

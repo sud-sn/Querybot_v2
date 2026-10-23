@@ -965,6 +965,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Votre rôle ne le permet pas. Demandez-le à un administrateur de cet espace si vous en avez besoin.",
     },
     "ui.enum.source.governed_query": {"en": "Governed query", "fr": "Requête gouvernée"},
+    # The kind every dashboard source is kept as (store/db.py's default).
+    "ui.enum.source.governed_sql": {"en": "Governed query", "fr": "Requête gouvernée"},
     "ui.enum.source.metric": {"en": "Metric", "fr": "Métrique"},
     "ui.enum.source.report": {"en": "Report", "fr": "Rapport"},
 
@@ -4646,6 +4648,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.trust.rows": {"en": "Rows", "fr": "Lignes"},
     "ui.chat.trust.runtime": {"en": "Runtime", "fr": "Durée"},
     "ui.chat.trust.data_source": {"en": "Data source", "fr": "Source de données"},
+    # A workbook uploaded as a data source, named as the admin pages name it (store/config_store.py DB_LABEL).
+    "ui.chat.trust.excel": {"en": "Excel workbook", "fr": "Classeur Excel"},
     "ui.chat.trust.schema_mode": {"en": "Schema mode", "fr": "Mode de schéma"},
     "ui.chat.trust.result_scope": {"en": "Result scope", "fr": "Portée du résultat"},
     "ui.chat.trust.execution": {"en": "Execution", "fr": "Exécution"},
@@ -5593,7 +5597,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.report.create": {"en": "Create report", "fr": "Créer le rapport"},
 
     # ── The notifications page ───────────────────────────────────────────────
-    "ui.notif.title": {"en": "My Notifications", "fr": "Mes notifications"},
+    "ui.notif.title": {"en": "Notifications", "fr": "Notifications"},
     "ui.notif.intro": {
         "en": "Alerts you've set up on results, and reports you can subscribe to for a scheduled digest.",
         "fr": "Les alertes que vous avez créées sur des résultats, et les rapports auxquels vous pouvez vous abonner pour un envoi programmé.",
@@ -5616,9 +5620,19 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Cette action est irréversible. Les abonnements à ce rapport prendront fin.",
     },
     "ui.notif.no_alerts": {
-        "en": "No alerts set up yet — ask a question in Chat, then use \"Alert me on changes\" on the result.",
-        "fr": "Aucune alerte pour l'instant — posez une question dans le chat, puis utilisez « M'alerter en cas de changement » sur le résultat.",
+        "en": "No alerts yet. On a dashboard, press the bell on a number tile to be told when it crosses a line you set.",
+        "fr": "Aucune alerte pour l'instant. Sur un tableau de bord, appuyez sur la cloche d'une tuile chiffrée pour être prévenu quand elle franchit le seuil choisi.",
     },
+    # An alert on a dashboard's number tile, as Notifications lists it.
+    "ui.notif.tile_on": {"en": "{tile} on {dashboard}", "fr": "{tile} sur {dashboard}"},
+    "ui.notif.tells_when": {"en": "Tells you when it {when}", "fr": "Vous prévient quand la valeur {when}"},
+    "ui.notif.checked_hourly": {"en": "Checked every hour", "fr": "Vérifiée toutes les heures"},
+    "ui.notif.checked_daily": {"en": "Checked every day", "fr": "Vérifiée tous les jours"},
+    "ui.notif.set_by": {"en": "Set by {name}", "fr": "Créée par {name}"},
+    "ui.notif.crossed": {"en": "Crossed now", "fr": "Seuil franchi"},
+    "ui.notif.not_crossed": {"en": "Not crossed", "fr": "Seuil non franchi"},
+    "ui.notif.paused": {"en": "Paused", "fr": "En pause"},
+    "ui.notif.open_dashboard": {"en": "Open", "fr": "Ouvrir"},
     "ui.notif.my_reports": {"en": "My reports", "fr": "Mes rapports"},
     "ui.notif.new_report": {"en": "New report", "fr": "Nouveau rapport"},
     "ui.notif.describe_in_chat": {
@@ -5639,8 +5653,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.notif.day_label": {"en": "Day (weekly only)", "fr": "Jour (hebdomadaire uniquement)"},
     "ui.notif.hour_label": {"en": "Hour (server local time)", "fr": "Heure (heure locale du serveur)"},
     "ui.notif.no_reports": {
-        "en": "No reports have been set up for this account yet — ask your admin to create one.",
-        "fr": "Aucun rapport n'a encore été créé pour ce compte — demandez à votre administrateur d'en créer un.",
+        "en": "No reports in this workspace yet. Each report made here, yours included, is listed here to subscribe to.",
+        "fr": "Aucun rapport dans cet espace pour l'instant. Chaque rapport créé ici, les vôtres compris, apparaît ici pour vous y abonner.",
     },
 
     # Alert and subscription states. The VALUE is the wire enum in each case.
@@ -5998,7 +6012,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.home.board.from": {"en": "from {name}", "fr": "de {name}"},
     "ui.title.sign_in": {"en": "Sign In", "fr": "Connexion"},
     "ui.title.change_password": {"en": "Change Password", "fr": "Changer le mot de passe"},
-    "ui.title.notifications": {"en": "My Notifications", "fr": "Mes notifications"},
+    "ui.title.notifications": {"en": "Notifications", "fr": "Notifications"},
     "ui.title.new_report": {"en": "New Report", "fr": "Nouveau rapport"},
 
     # ── The chat page ────────────────────────────────────────────────────────

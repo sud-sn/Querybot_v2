@@ -715,9 +715,9 @@ body:has(.chat-page) .main { padding: 0; overflow: hidden; }
 .start-chg.bad { background: var(--danger-soft); color: var(--danger-strong); }
 .start-chg.flat { background: var(--surface-2); color: var(--text-muted); }
 .start-spark { flex: none; width: 72px; height: 22px; }
-.start-spark .l, .start-spark .t { fill: none; stroke: var(--primary); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.start-spark .l, .start-spark .t { fill: none; stroke: var(--data-1); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .start-spark .t { stroke-dasharray: 3 3; }
-.start-spark .a { fill: var(--primary-soft); stroke: none; }
+.start-spark .a { fill: color-mix(in srgb, var(--data-1) 12%, transparent); stroke: none; }
 .start-why { color: var(--text-muted); font-size: var(--font-2xs); }
 .start-card.is-skeleton { min-height: 112px; border-style: dashed; cursor: default; }
 .start-card.is-skeleton:hover { border-color: var(--line-subtle); box-shadow: none; transform: none; }

@@ -131,7 +131,8 @@
 .ask-dialog-head h2{font-family:var(--font-display);font-size:var(--font-xl);font-weight:var(--weight-bold);letter-spacing:-.01em;color:var(--text-strong);margin:0}
 .ask-dialog label{display:block;font-size:var(--font-xs);font-weight:var(--weight-bold);color:var(--text-soft);margin-bottom:.3rem}
 .ask-hint{font-size:var(--font-2xs);color:var(--text-muted);margin:.25rem 0 0}
-.ask-actions{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap}
+/* The buttons stay in view at the foot of a long form (a list of codes on a phone): it scrolls under them. */
+.ask-actions{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap;position:sticky;bottom:-22px;z-index:1;background:var(--surface-raised);padding:12px 0 22px;margin-bottom:-22px;border-top:1px solid var(--line-subtle)}
 .ask-error{color:var(--danger);font-size:var(--font-sm);margin:0}
 @media(max-width:900px){.ask-layout{grid-template-columns:1fr}.ask-bar{flex-direction:column}}
 @media(max-width:600px){

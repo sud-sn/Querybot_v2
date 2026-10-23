@@ -1,5 +1,5 @@
 """
-Portal "My Notifications" page (portal/routes.py: notifications_page,
+Portal "Notifications" page (portal/routes.py: notifications_page,
 notifications_delete_alert, notifications_subscribe, notifications_unsubscribe).
 
 Real SQLite (store.init_db()) for report/subscription data; core.alert_engine
@@ -211,8 +211,8 @@ class PortalNotificationsTemplateTests(unittest.TestCase):
                           user=user, **ctx)
 
         rendered_empty = rendered(alerts=[], reports=[], subscriptions={}, saved=None, error=None)
-        self.assertIn("No alerts set up yet", rendered_empty)
-        self.assertIn("No reports have been set up", rendered_empty)
+        self.assertIn("No alerts yet", rendered_empty)
+        self.assertIn("No reports in this workspace yet", rendered_empty)
 
         alerts = [{
             "id": "a1", "question": "Revenue drop?", "metric_col": "Revenue",

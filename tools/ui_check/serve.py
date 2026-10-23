@@ -80,7 +80,7 @@ class _Connection(DuckDBWarehouse):
         return None
 
 
-qbw.QueryBotWarehouse = lambda db_type, credentials: _Connection(built.con)
+qbw.QueryBotWarehouse = lambda db_type, credentials, **_: _Connection(built.con)
 
 import core.schema as schema_module  # noqa: E402
 
@@ -287,9 +287,61 @@ def summary_writer(account_id, client, *, question="", question_id=""):
 
 ai.summary_writer = summary_writer
 
+
+
+# ── the email and the PDF a schedule sends, as pages the check can picture ────
+def _mail_pages(app) -> None:
+    """/__ui_check/email: the scheduled email the reader would get for their first dashboard (its charts inline, as
+    the mail client shows them); /__ui_check/pdf: the PDF attached to it. For the UI check alone, on this copy."""
+    import base64
+
+    from fastapi.responses import HTMLResponse, Response
+
+    async def snapshot(pdf: bool):
+        from core.dashboard_snapshot import Drawer, take
+
+        riley = store.get_user_by_email(RETAIL, READER[0])
+        boards = store.list_dashboards(RETAIL, int(riley["id"]))
+        if not boards:
+            return None
+        board = store.get_dashboard_for_view(int(boards[0]["id"]), int(riley["id"]), RETAIL)
+        async with Drawer() as drawer:
+            return await take(board, riley, drawer=drawer, pdf=pdf)
+
+    @app.get("/__ui_check/email", response_class=HTMLResponse)
+    async def email_page():
+        from core.i18n import t
+        from core.mail import render
+
+        snap = await snapshot(False)
+        if snap is None:
+            return HTMLResponse("no dashboard yet", status_code=404)
+        title = t("email.schedule.subject", lang="en", name=snap.name, date="23 Oct 2026")
+        html = render.dashboard(snap, link=f"http://127.0.0.1:{PORT}/portal/dashboard", title=title,
+                                note="The numbers for Monday's review.", note_from="Adi Admin",
+                                why=t("email.schedule.why", lang="en", owner="Adi Admin", name=snap.name,
+                                      when="every Monday at 08:00"),
+                                unsubscribe=f"http://127.0.0.1:{PORT}/unsubscribe", lang="en")
+        for tile in snap.charts():
+            if tile.image:
+                html = html.replace(f"cid:{render.tile_cid(tile)}",
+                                    "data:image/png;base64," + base64.b64encode(tile.image).decode())
+        return HTMLResponse(html)
+
+    @app.get("/__ui_check/pdf")
+    async def pdf_file():
+        snap = await snapshot(True)
+        if snap is None or not snap.pdf:
+            return Response(b"", status_code=404)
+        return Response(snap.pdf, media_type="application/pdf")
+
+
 if __name__ == "__main__":
     import uvicorn
 
+    from main import app
+
+    _mail_pages(app)
     print(json.dumps({"inventory": inv_account, "retail": RETAIL, "admin_password": ADMIN_PASSWORD,
                       "reader": READER}), flush=True)
-    uvicorn.run("main:app", host="127.0.0.1", port=PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

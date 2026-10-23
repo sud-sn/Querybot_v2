@@ -17,7 +17,7 @@
 .overview-card{background:var(--surface-raised);border:1px solid var(--line-subtle);border-radius:var(--radius-card);padding:18px 20px}
 .overview-card h2{font-family:var(--font-display);font-size:var(--font-lg);font-weight:var(--weight-bold);letter-spacing:-.01em;color:var(--text-strong);margin-bottom:.75rem}
 .bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem}
-.bar-label{font-size:var(--font-sm);color:var(--text-soft);width:120px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-label{font-size:var(--font-sm);color:var(--text-soft);flex:0 1 45%;min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-wrap{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;height:14px;overflow:hidden}
 .bar-fill{height:100%;border-radius:999px;background:var(--brand-gradient)}
 .bar-val{font-size:var(--font-xs);color:var(--text-muted);width:50px;text-align:right;flex-shrink:0}
@@ -120,27 +120,21 @@
 {# The counters belong to the Overview, not to every pane of the workspace. #}
 {% if active_tab == 'overview' %}
 <div class="metrics metrics-one-row">
+  {# One size and one ink for every counter; amber only on a limit nearly reached. #}
   <div class="metric"><div class="metric-label">Total queries</div><div class="metric-value">{{ stats.total or 0 }}</div></div>
-  <div class="metric"><div class="metric-label">This month</div><div class="metric-value" style="color:var(--blue)">{{ monthly_count }}</div></div>
+  <div class="metric"><div class="metric-label">This month</div><div class="metric-value">{{ monthly_count }}</div></div>
   <div class="metric"><div class="metric-label">Success rate</div><div class="metric-value">{% if stats.total %}{{ ((stats.succeeded or 0)/stats.total*100)|round(1) }}%{% else %}—{% endif %}</div></div>
-  <div class="metric"><div class="metric-label">Cost (USD)</div><div class="metric-value" style="color:var(--blue)">${{ "%.4f"|format(stats.total_cost_usd or 0) }}</div></div>
-  <div class="metric"><div class="metric-label">Avg response</div><div class="metric-value" style="font-size:var(--font-xl)">{% if stats.avg_duration_ms %}{{ stats.avg_duration_ms|round(0)|int }}ms{% else %}—{% endif %}</div></div>
+  <div class="metric"><div class="metric-label">Cost (USD)</div><div class="metric-value">${{ "%.4f"|format(stats.total_cost_usd or 0) }}</div></div>
+  <div class="metric"><div class="metric-label">Avg response</div><div class="metric-value">{% if stats.avg_duration_ms %}{{ stats.avg_duration_ms|round(0)|int }}<span class="metric-unit">ms</span>{% else %}—{% endif %}</div></div>
   <div class="metric">
     <div class="metric-label">Query limit</div>
-    <div class="metric-value" style="font-size:var(--font-xl)">
-      <span style="color:{% if limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ monthly_count }}</span>
-      <span style="font-size:var(--font-base);color:var(--text-muted)">/ {{ client.query_limit_monthly or 500 }}</span>
-    </div>
+    <div class="metric-value"><span{% if limit_pct >= 80 %} style="color:var(--amber)"{% endif %}>{{ monthly_count }}</span><span class="metric-unit">/ {{ client.query_limit_monthly or 500 }}</span></div>
   </div>
   <div class="metric">
     <div class="metric-label">Token limit</div>
-    <div class="metric-value" style="font-size:var(--font-xl)">
-      {% if token_status.unlimited %}
-      <span style="color:var(--green)">Unlimited</span>
-      {% else %}
-      <span style="color:{% if token_status.limit_pct >= 80 %}var(--amber){% else %}var(--green){% endif %}">{{ "{:,}".format(token_status.remaining or 0) }}</span>
-      <span style="font-size:var(--font-base);color:var(--text-muted)"> left</span>
-      {% endif %}
+    <div class="metric-value">
+      {% if token_status.unlimited %}<span class="metric-unit metric-unit-only">Unlimited</span>
+      {% else %}<span{% if token_status.limit_pct >= 80 %} style="color:var(--amber)"{% endif %}>{{ "{:,}".format(token_status.remaining or 0) }}</span><span class="metric-unit">left</span>{% endif %}
     </div>
   </div>
 </div>
@@ -189,7 +183,7 @@
         {% set max_cnt = top_questions[0][1] %}
         {% for q, cnt in top_questions[:5] %}
         <div class="bar-row">
-          <span class="bar-label" title="{{ q }}">{{ q[:28] }}{% if q|length > 28 %}…{% endif %}</span>
+          <span class="bar-label" title="{{ q }}">{{ q }}</span>
           <div class="bar-wrap"><div class="bar-fill" style="width:{{ (cnt/max_cnt*100)|round(0)|int }}%"></div></div>
           <span class="bar-val">{{ cnt }}x</span>
         </div>
@@ -198,6 +192,18 @@
     </div>
 
     <div class="overview-card">
+      {% set _learned = learned_version(client) if learned_version is defined else none %}
+      {% if _learned %}
+      <h2>What Solviz learned</h2>
+        <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
+          {{ ic("check-circle", 18, "text-success") }}
+          <div>
+            <div style="font-weight:var(--weight-bold);font-size:var(--font-base)">Version {{ _learned.version }}, learned {{ (_learned.built_at or '')[:16] }} UTC</div>
+            <div style="font-size:var(--font-xs);color:var(--text-muted)">Every question in this workspace is answered from it.</div>
+          </div>
+        </div>
+      <a href="/admin/clients/{{ client.account_id }}/learned" class="btn btn-secondary btn-sm" style="margin-top:.25rem">Open What Solviz learned</a>
+      {% else %}
       <h2>Knowledge Base</h2>
       {% if kb_file_count > 0 %}
         <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.75rem">
@@ -225,6 +231,7 @@
         <p style="font-size:var(--font-base);color:var(--text-muted)">No schema yet. Open the Schema &amp; KB Setup page to run discovery.</p>
       {% endif %}
       <a href="/admin/clients/{{ client.account_id }}/kb" class="btn btn-secondary btn-sm" style="margin-top:.25rem">View &amp; Edit KB files</a>
+      {% endif %}
     </div>
 
     <div class="overview-card">

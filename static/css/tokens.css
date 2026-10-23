@@ -116,6 +116,9 @@
   --primary:       #4F54D6;
   --primary-hover: #3A3EB8;
   --primary-soft:  #EEEFFD;
+  /* The first colour of the default chart palette (chart-palettes.js), for the marks drawn in CSS -- sparklines,
+     miniature bars -- so a Home card's little trend wears the colour of the charts beside it, not the brand's. */
+  --data-1:        #2a78d6;
   /* The primary as a fill (buttons, the send button, a checked switch)
      under its own name: in the light theme it is the primary itself; in
      the dark one the primary turns light to read as ink and the fill

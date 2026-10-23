@@ -218,7 +218,7 @@ class TestTheNotificationsPage:
     def test_the_empty_states_are_french(self):
         markup = visible(_page("portal_notifications.html", "fr"))
         assert "Aucune alerte pour l'instant" in markup
-        assert "Aucun rapport n'a encore été créé pour ce compte" in markup
+        assert "Aucun rapport dans cet espace pour l'instant" in markup
 
     def test_an_alert_condition_is_a_label_not_a_wire_value(self):
         """It rendered `{{ a.condition }}` -- "change_pct" on screen."""

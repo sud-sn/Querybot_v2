@@ -277,6 +277,8 @@ class TestNothingObviousWasLeftBehind:
             # shown to a reader.
             "History load failed:", "Thread restore failed:",
             "Chart render failed",
+            # A database product's own name (store/config_store.py DB_LABEL): the same in every language.
+            "Azure SQL",
             # A CSS selector and two inline handlers, none of them copy.
             "button, textarea",
             "openHistoryThread(this.dataset.threadId, this)",

@@ -32,7 +32,9 @@
 .gr-facts{display:flex;flex-wrap:wrap;gap:6px 14px;padding-top:10px;border-top:1px solid var(--grid-line);font-size:var(--font-sm);color:var(--text)}
 .gr-facts span{display:inline-flex;align-items:center;gap:5px}
 .gr-facts .qb-icon{color:var(--text-muted)}
+/* base.css zeroes every margin: a dialog is centred by margin:auto, or it opens in the top left corner. */
 .gr-dialog{border:1px solid var(--line-subtle);border-radius:var(--radius-card);padding:22px 24px;width:min(92vw,460px);
+  margin:auto;inset:0;max-height:calc(100dvh - 32px);overflow:auto;animation:qb-modalIn .22s var(--ease-out);
   background:var(--surface-raised);color:var(--text);box-shadow:var(--shadow-lg, var(--shadow))}
 .gr-dialog::backdrop{background:var(--scrim);backdrop-filter:blur(4px)}
 .gr-dialog h2{margin:0 0 4px;font-family:var(--font-display);font-size:var(--font-xl);color:var(--text-strong)}

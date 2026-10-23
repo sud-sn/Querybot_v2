@@ -129,6 +129,19 @@ class TestPortalFeedbackApi(unittest.TestCase):
 
         self.assertIn("flagged for your admin", data["message"].lower())
 
+    def test_with_your_note_only_once_there_is_one(self):
+        """The first press of a thumbs down records the flag and asks why; the thanks for a note waits for it."""
+        def said(body):
+            with (
+                patch("portal.routes._get_portal_user", return_value=_GOOD_USER),
+                patch("portal.routes.store.get_client",  return_value=_CLIENT_ON),
+                patch("store.learning_store.save_feedback", return_value={}),
+            ):
+                return json.loads(self._call(_make_request(body)).body)["message"].lower()
+
+        self.assertNotIn("with your note", said({"rating": -1}))
+        self.assertIn("with your note", said({"rating": -1, "comment": "The April figure is wrong"}))
+
     # ── Auth / feature-flag guards ─────────────────────────────────────────────
 
     def test_unauthenticated_raises_401(self):

@@ -70,8 +70,10 @@
 .gp-table input{accent-color:var(--primary)}
 .gp-table:has(input:checked){background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 40%,transparent)}
 .gp-empty{font-size:var(--font-sm);color:var(--text-muted);margin:0}
+/* base.css zeroes every margin: a dialog is centred by margin:auto, or it opens in the top left corner. */
 .gp-dialog{border:1px solid var(--line-subtle);border-radius:var(--radius-card);padding:22px 24px;width:min(92vw,460px);
-  background:var(--surface-raised);color:var(--text)}
+  margin:auto;inset:0;max-height:calc(100dvh - 32px);overflow:auto;animation:qb-modalIn .22s var(--ease-out);
+  background:var(--surface-raised);color:var(--text);box-shadow:var(--shadow-lg)}
 .gp-dialog::backdrop{background:var(--scrim);backdrop-filter:blur(4px)}
 .gp-dialog h2{margin:0 0 12px;font-family:var(--font-display);font-size:var(--font-xl);color:var(--text-strong)}
 .gp-dialog .form-group{margin-bottom:12px}

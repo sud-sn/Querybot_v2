@@ -1,6 +1,6 @@
 {% extends "portal_base.html" %}
 {% from "icons.html" import ic %}
-{% from "macros.html" import breadcrumb, alert %}
+{% from "macros.html" import breadcrumb, alert, brand_motion, wordmark %}
 {% from "graphics.html" import miniature, kpi_spark %}
 {% block title %}{{ t('ui.shell.dashboard') }} — {{ t('ui.title.suffix') }}{% endblock %}
 {% block breadcrumb %}
@@ -106,8 +106,10 @@
       {% if dashboard_artifact.refresh_schedule and dashboard_artifact.refresh_schedule != 'manual' %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.refresh', schedule=enum_label('schedule', dashboard_artifact.refresh_schedule)|lower) }}</span>{% endif %}
       {% if not _editable %}<span aria-hidden="true">·</span><span>{{ t('ui.dash.read_only') }}</span>{% endif %}
     </div>
-    {# Drawn for an email or a PDF: when and for whom, and what it was drawn under, in place of the controls. #}
+    {# Drawn for an email or a PDF: when and for whom, and what it was drawn under, in place of the controls; the
+       product's mark in their corner, as a printed report carries its maker's. #}
     {% if snapshot is defined and snapshot %}
+    <div class="dash-snapshot-brand">{{ brand_motion('dash-snapshot-mark', 'idle', 'sm') }}{{ wordmark() }}</div>
     <div class="dash-snapshot-meta">{{ snapshot.drawn }}{% if dashboard_tabs|length > 1 %} · <strong>{{ selected_tab }}</strong>{% endif %}{% for part in dash_filter_parts or [] %} · {{ part.name }}: <strong>{{ part.value }}</strong>{% endfor %}</div>
     {% endif %}
   </div>

@@ -18,7 +18,7 @@
   <label for="billing-month">Month</label>
   <input type="month" id="billing-month" name="month" value="{{ month }}" class="form-input">
   <button type="submit" class="btn btn-secondary btn-sm">Show</button>
-  {% if month %}<a href="?" class="btn btn-ghost btn-sm">All time</a>{% endif %}
+  {% if month %}<a href="?" class="btn btn-ghost btn-sm">All time</a>{% else %}<span class="text-sm text-muted">Showing all time: pick a month to narrow it</span>{% endif %}
 </form>
 
 {% if stats.unpriced_calls %}

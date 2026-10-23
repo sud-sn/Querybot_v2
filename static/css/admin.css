@@ -803,6 +803,10 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
 }
 .shell .page-header p,
 .shell .page-header-body p { color: var(--text-secondary); font-size: var(--font-base); }
+/* Inside a workspace its name is the page's title: each of its pages is named a size down, as Metrics,
+   Dates and Relationships are, so People, Groups, Setup and Usage do not shout over the workspace. */
+.shell .ws-head ~ .page .page-header h1,
+.shell .ws-head ~ .page .page-header-body h1 { font-size: var(--font-2xl); line-height: 1.2; }
 
 /* A card: the card radius, no grey head, no shadow; its name in the display face, in sentence case. */
 .shell .card { border-color: var(--line-subtle); border-radius: var(--radius-card); background: var(--surface-raised); box-shadow: none; }
@@ -827,6 +831,11 @@ body:not(.page-bleed) .shell-main > .page { flex: 1 0 auto; }
 .shell .metric-label { text-transform: none; letter-spacing: 0; font-size: var(--font-sm); font-weight: var(--weight-medium);
   color: var(--text-secondary); }
 .shell .metric-value { font-family: var(--font-display); font-size: var(--font-3xl); line-height: 1.1; }
+/* A counter's unit (ms, "/ 500", "left") sits small beside its number; a counter that is a word ("Unlimited") is
+   written at a size that fits the card. */
+.shell .metric-unit { margin-left: 4px; font-family: var(--font-ui); font-size: var(--font-base);
+  font-weight: var(--weight-medium); color: var(--text-muted); }
+.shell .metric-unit-only { margin-left: 0; font-size: var(--font-xl); color: var(--text-secondary); }
 /* A workspace's seven counters in one row on a laptop: at 150px a card the seventh sat alone on a second row. */
 .shell .metrics.metrics-one-row { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); }
 

@@ -256,7 +256,8 @@
 /* Share, and About this dashboard: the shared native dialog's shape. */
 /* The design's dialog, as qbConfirm's (base.css .qb-dialog): the card radius, a quiet edge, its title in the
    display face; it rises in over a blurred page. */
-.dash-dialog { width: min(520px, calc(100vw - 32px)); margin: auto; padding: 0; border: 1px solid var(--line-subtle);
+.dash-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+  margin: auto; padding: 0; border: 1px solid var(--line-subtle);
   border-radius: var(--radius-card); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-lg);
   animation: qb-modalIn .22s var(--ease-out); }
 .dash-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(4px); }
@@ -286,8 +287,10 @@
 .dash-share-detail { font-size: var(--font-xs); color: var(--text-muted); }
 .dash-share-link input { flex: 1; min-width: 0; }
 .dash-share-link .btn { display: inline-flex; align-items: center; gap: 6px; }
+/* The buttons stay in view at the foot of a dialog taller than the window (an email schedule's form): the form
+   scrolls under them. */
 .dash-dialog-foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 12px; padding: 14px 24px 20px;
-  border-top: 1px solid var(--line-subtle); }
+  border-top: 1px solid var(--line-subtle); position: sticky; bottom: 0; z-index: 1; background: var(--surface-raised); }
 @media (prefers-reduced-motion: reduce) { .dash-dialog { animation: none; } }
 .dash-dialog .artifact-details { grid-template-columns: 1fr; margin: 4px 20px 12px; }
 .dash-dialog > .artifact-detail { margin: 0 20px 20px; }
@@ -583,6 +586,8 @@
 .is-snapshot .dash-header-meta { display: none !important; }
 .is-snapshot .chart-card, .is-snapshot .chart-card * { animation: none !important; transition: none !important; }
 .dash-snapshot-meta { margin-top: 4px; font-size: var(--font-sm); color: var(--text-muted); }
+.dash-snapshot-brand { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: 6px; color: var(--text-strong); }
+.dash-header:has(.dash-snapshot-brand) { position: relative; }
 .dash-snapshot-meta strong { color: var(--text); font-weight: var(--weight-semibold); }
 
 /* ── Emailed on a schedule: the list of a dashboard's schedules, and the form to add or change one ── */

@@ -111,7 +111,7 @@
         {% set hs = c.health_score %}
         <tr>
           <td>
-            <div class="font-bold">{{ c.client_name or "—" }}</div>
+            {% if c.client_name %}<div class="font-bold">{{ c.client_name }}</div>{% else %}<div class="font-bold text-muted">Unnamed workspace</div>{% endif %}
             <div class="text-xs text-muted text-mono">{{ c.account_id[:26] }}{% if c.account_id|length > 26 %}…{% endif %}</div>
           </td>
           <td><span class="badge badge-blue">{{ c.platform_type or "portal" }}</span></td>

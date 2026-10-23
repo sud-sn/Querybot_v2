@@ -165,7 +165,7 @@
       {{ state }}
     </span>
     {% if db_cfg %}
-    <span class="text-xs text-muted text-mono">{{ db_cfg.db_type }} · {{ db_cfg.name }}</span>
+    <span class="text-xs text-muted">{{ db_cfg.db_type | db_label }} · {{ db_cfg.name }}</span>
     {% endif %}
   </div>
 </div>
@@ -203,7 +203,7 @@
     <div>
       <div class="step-title">Database connection</div>
       <div style="font-size:var(--font-sm);color:var(--text-muted)">
-        Assign a database in the client Settings tab first
+        {% if db_cfg %}The database this workspace reads; another is chosen in Settings{% else %}Assign a database in the client Settings tab first{% endif %}
       </div>
     </div>
     {% if not db_cfg %}
@@ -214,7 +214,7 @@
   <div class="step-body">
     {% if db_cfg %}
     <p style="font-size:var(--font-base);color:var(--green);font-weight:var(--weight-semibold)">
-      ✓ Connected to <strong>{{ db_cfg.name }}</strong> ({{ db_cfg.db_type }})
+      ✓ Connected to <strong>{{ db_cfg.name }}</strong> ({{ db_cfg.db_type | db_label }})
     </p>
     {% else %}
     <p style="font-size:var(--font-base);color:var(--text-muted)">

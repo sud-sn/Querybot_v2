@@ -132,6 +132,16 @@ a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-v
   box-shadow: 0 10px 22px -14px color-mix(in srgb, var(--primary-fill) 90%, transparent);
 }
 .btn-secondary { /* the .btn defaults */ }
+/* A file field's own button wears the secondary pill, not the browser's grey box. */
+input[type="file"] { font-size: var(--font-sm); color: var(--text-secondary); }
+input[type="file"]::file-selector-button {
+  min-height: 36px; margin-right: 10px; padding: 8px 13px;
+  border: 1px solid var(--line-control); border-radius: var(--radius-pill);
+  background: var(--surface-raised); color: var(--text);
+  font: inherit; font-weight: var(--weight-semibold); cursor: pointer;
+  transition: background var(--t-fast);
+}
+input[type="file"]::file-selector-button:hover { background: var(--hover-on-surface); }
 .btn-ghost {
   --btn-bg: transparent; --btn-ink: var(--text-secondary); --btn-line: transparent;
   --btn-bg-hover: var(--hover-on-surface); --btn-ink-hover: var(--text);
@@ -759,6 +769,9 @@ select.form-input.form-input-sm:not([multiple]) { padding-right: 28px; backgroun
   margin-bottom: 1.4rem;
 }
 .page-header-body { flex: 1; min-width: 0; }
+/* A header whose title sits straight in it (no body) keeps its line under the title, not pushed to the far right. */
+.page-header > h1 { flex-basis: 100%; }
+.page-header:has(> h1) { row-gap: 4px; }
 .page-header h1,
 .page-header-body h1 {
   font-size: var(--font-2xl);

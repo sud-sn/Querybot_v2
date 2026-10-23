@@ -191,7 +191,8 @@ def test_no_dark_surface_survives_in_a_light_only_product(tok):
               "--text-strong", "--text", "--text-secondary", "--text-muted",
               "--text-faint", "--line-control", "--border-strong"}
     for name, value in tok.items():
-        if name in CHROME or name.startswith(("--gray-", "--accent-", "--syntax-",
+        # --data-* are chart marks (a sparkline's line), inks like --entity-*, never a surface.
+        if name in CHROME or name.startswith(("--gray-", "--accent-", "--syntax-", "--data-",
                                               "--entity-", "--primary", "--blue",
                                               "--success", "--danger", "--warning",
                                               "--info", "--green", "--red",
