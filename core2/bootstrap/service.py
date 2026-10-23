@@ -24,7 +24,7 @@ from core2.bootstrap.build import BuildOptions, build_model
 from core2.bootstrap.inventory import Inventory, from_schema_json
 from core2.bootstrap.profiler import ProfileOptions, TableProfile, profile_from_json, profile_json
 from core2.model.overrides import apply_overrides
-from core2.model.schema import SemanticModel
+from core2.model.schema import Join, SemanticModel
 
 if TYPE_CHECKING:
     from core2.model.imports import Report
@@ -551,6 +551,7 @@ def load_model(account_id: str, db_id: int | None, version: int | None = None) -
     model = SemanticModel.model_validate_json(row["model_json"])
     model.version = row["version"]
     good_news(model)
+    own_links(model)
     from core2.bootstrap.build import numbered_documents, numbered_documents_kept
 
     made = numbered_documents(model)        # a model learned before Learn numbered the documents of a lines table
@@ -567,6 +568,36 @@ def good_news(model: SemanticModel) -> None:
     for m in model.measures.values():
         if m.provenance == "profile" and m.kind in ("column", "count") and m.better == "higher":
             m.better = names.better(m.business_name)  # type: ignore[assignment]
+
+
+def own_links(model: SemanticModel) -> None:
+    """The one link named for its target alone keeps no role (core2/bootstrap/joins._name_roles), for a model learned
+    before Learn left it so: beside a payer customer, the plain customer link was named "Customer" too, and a link
+    with a role is never taken unasked ("Customer can be reached more than one way"). Before the admin's decisions,
+    which keep theirs; an admin's own link is left as it is."""
+    from core2.bootstrap import names
+    from core2.bootstrap.joins import named_for_alone
+
+    columns: dict[str, list[str]] = {}
+    for c in model.columns.values():
+        columns.setdefault(c.table, []).append(c.name)
+    groups: dict[tuple[str, str], list[Join]] = {}
+    for j in model.joins.values():
+        if j.provenance != "admin" and not j.to_calendar and j.from_table != j.to_table:
+            groups.setdefault((j.from_table, j.to_table), []).append(j)
+    for (start, goal), group in groups.items():
+        if len(group) < 2:
+            continue
+        prefix = names.column_prefix(columns.get(start, []), model.tables[start].name)
+        own = []
+        for j in group:
+            name = model.columns[j.from_columns[0]].name    # read as Learn reads it, without its table's initials
+            if prefix and name.lower().startswith(prefix + "_"):
+                name = name[len(prefix) + 1:]
+            if len(j.from_columns) == 1 and named_for_alone(name, model.tables[goal].name):
+                own.append(j)
+        if len(own) == 1 and all(j.role for j in group if j is not own[0]):
+            own[0].role = None
 
 
 def stats(model: SemanticModel) -> dict[str, Any]:

@@ -595,6 +595,8 @@ class _PartBuilder:
             repeating = {j.key for j in chosen[0].joins if self._repeats(j)}
             if repeating:
                 raise ResolveError("unsupported", self._counted_twice(table, label, repeating))
+            if chosen[0].others:
+                self._other_routes(table, chosen[0], label)
             return self._walk(table, chosen[0])
         skip: set[str] = set()
         while True:

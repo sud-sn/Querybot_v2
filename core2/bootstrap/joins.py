@@ -154,6 +154,22 @@ def _of_staff(table: InvTable) -> bool:
     return bool({names.singular(w) for w in names.tokens(table.name)} & _STAFF_TABLES)
 
 
+# The tables of parties to a sale or a contract: a PYR before one of them is its payer, before an order a prior year.
+_PARTY_TABLES = {"customer", "cust", "cus", "client", "clnt", "account", "acct", "vendor", "vndr", "supplier", "supp",
+                 "member", "party", "payer", "payor", "counterparty", "cpty", "company", "organisation", "organization",
+                 "org", "partner", "insurer", "guarantor", "borrower", "lender", "broker", "buyer", "consumer",
+                 "subscriber", "dealer", "reseller", "distributor", "merchant", "holder", "owner"}
+# A ledger's accounts are no parties: a budget's PYR account is last year's.
+_LEDGER_WORDS = {"gl", "ledger", "coa", "chart", "nominal", "budget", "journal", "forecast"}
+
+
+def _of_parties(target: InvTable, source: InvTable) -> bool:
+    if any(w in _LEDGER_WORDS for t in (target, source) for w in names.core_table(t.name)):
+        return False
+    return any(w in _PARTY_TABLES or names.EXPANSIONS.get(w) in _PARTY_TABLES
+               for w in names.core_table(target.name)) or _of_people(target)
+
+
 def _of_people(table: InvTable) -> bool:
     """The employees, the staff, the sales reps: a table whose rows are people."""
     return personal.about_people(table) or bool(
@@ -339,6 +355,7 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
     # Of those, the unique columns only their values' shape makes keys (a UUID beside the row number): pointed at
     # only by name, since every table of an application's database may keep one.
     identifiers: set[tuple[str, str]] = set()
+    place_codes: set[tuple[str, str]] = set()   # a unique code of a place on a table of other things (PRV_CD)
     copies = _copies(inventory)
     # Which tables hold a column of each name: a code of one length named alike in two tables (a prescriber's NPI
     # on the prescribers and on the prescriptions) is the code of the one it is unique in, whatever its last word.
@@ -397,6 +414,8 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
                 if profiles[key].rows < 20 or not _names_its_table(unique, table.name):
                     if any(other != key and _names_its_table(unique, t.name) for other, t in inventory.tables.items()):
                         continue   # FILM_ID unique on a film's one category row is still the film's key
+                    if keyed and _where_its_rows_are(table, unique, primary):
+                        place_codes.add((key, unique))     # where each warehouse is: tried, and judged once tested
                     alternates.add((key, unique))
             if kind == "text" and (p.avg_len or 0) > 24 and not identifier_text(p):
                 continue   # names and descriptions are not what keys point at; a UUID is a key
@@ -737,6 +756,18 @@ def discover_joins(warehouse: Warehouse, inventory: Inventory, profiles: dict[st
         else:
             f.trust = "rejected"
 
+    # Six warehouses, each in its own province, the sales pointing at them by WHS_KEY: their PRV_CD says where a
+    # warehouse is, unique by accident, and nothing points at a warehouse by it. A table nothing else points at (a
+    # tax rate for each province) is read by its place code, which stays; so does one the database declares.
+    held = {f.to_table for f in tested if f.trust != "rejected" and (f.to_table, f.to_column) not in place_codes}
+    for f in tested:
+        if (f.to_table, f.to_column) in place_codes and f.to_table in held and f.trust != "rejected" \
+                and not f.declared:
+            f.trust = "rejected"
+            f.evidence.append(Evidence(kind="place_code", weight=-1.0, detail=(
+                f"{f.to_column} says where each of {inventory.tables[f.to_table].name}'s rows is, and they are "
+                "pointed at by a key of their own")))
+
     # One target per column: the best-supported one. A tie between value-only
     # candidates is not decided here.
     by_column: dict[tuple[str, tuple[str, ...]], list[JoinFinding]] = {}
@@ -1014,13 +1045,72 @@ def _names_in_full(column: str, table: str, key: str) -> bool:
     return len(words) > len(whole) and any(names.ends_with(words, tail) for tail in tails)
 
 
+# A place, or the money a row is kept in, by the word a code is named for, exactly: an ST is a status or a store as
+# often as a state, a DIST a distance or a distributor, a PROV a provider.
+_PLACES = [{"province", "prv"}, {"state"}, {"country", "ctry", "cntry", "nation"}, {"region", "rgn"},
+           {"city", "cty"}, {"county", "cnty"}, {"district"}, {"territory", "terr"},
+           {"zip", "zipcode", "postal", "postcode", "pstl"}, {"currency", "ccy", "cur", "curr", "crncy"}]
+# A table of places, whichever it keeps: a geography's state code is its own.
+_PLACE_TABLES = {"geography", "geo", "location", "loc", "locality", "place", "area", "address", "st"}
+# What a table calls its own members besides its key: WHS_CD, WHS_NM on the warehouses.
+_OWN_NAME = {"nm", "name", "desc", "dsc", "title", "label"}
+
+
+def _where_its_rows_are(table: InvTable, column: str, primary: list[str]) -> bool:
+    """PRV_CD on the warehouses: a code of a place (or a currency) on a table of other things, each with a code or a
+    name of its own (WHS_CD, WHS_NM), and not named for any place. Unique there because each warehouse is in a
+    province of its own, it says where a warehouse is, never which, once the warehouses are pointed at by a key of
+    their own (judged when the links are tested). On the provinces, a geography, a DIM_CCY, the ZIPCODES or a table
+    with nothing of its own to call its rows (one exchange rate for each currency) it is the table's own; a
+    category's, a type's or a country's ISO code names no place."""
+    words = names.core_column(bare(table, column))
+    head = words[-1] if words else ""
+    place = next((p for p in _PLACES if head in p or names.EXPANSIONS.get(head) in p), None)
+    if place is None:
+        return False
+    own = names.core_table(table.name)
+    if any(w in place or w in _PLACE_TABLES or names.EXPANSIONS.get(w) in place
+           or any(len(p) > 5 and w.startswith(p) for p in place) for w in own):   # POSTALCODES, not CURRENT_
+        return False
+
+    def its_own(other: str) -> bool:
+        # A code or a name of what each row is (DESK_NM on the trading desks, a bare NAME or CODE); a desk's RATE is no
+        # name of it.
+        plain = bare(table, other)
+        last = names.tokens(plain)[-1:]
+        said = names.core_column(plain)
+        if said and said[-1] in _OWN_NAME:
+            said = said[:-1]
+        return bool(last) and last[0] in names.KEY_SUFFIXES | _OWN_NAME and (not said or names.ends_with(own, said))
+
+    return any(c.name != column and [c.name] != primary and its_own(c.name) for c in table.columns)
+
+
+def named_for_alone(column: str, target: str) -> bool:
+    """CUST_KEY or CUSTOMER_ID to the customers: a column (read without its table's initials) named for the table it
+    points at, and nothing more."""
+    if names.opaque(column) or names.opaque(target):
+        return False
+    words, own = names.core_column(column), names.core_table(target)
+    return len(words) == len(own) and all(names.same_word(a, b) for a, b in zip(words, own))
+
+
 def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
-    """A role name when a table joins the same target more than one way, or under another name."""
+    """A role name when a table joins the same target more than one way, or under another name. The one link named
+    for its target alone (CUST_KEY to the customers, beside a PYR_CUST_KEY) is the table's own: it keeps no role, so
+    a question about the customer takes it, and the payer customer is asked for by name."""
     by_pair: dict[tuple[str, str], list[JoinFinding]] = {}
     for f in joins:
         by_pair.setdefault((f.from_table, f.to_table), []).append(f)
     for group in by_pair.values():
+        cut_short: list[tuple[JoinFinding, str]] = []   # a party read in whole words, and the role cut short
+        own_link = [f for f in group if not (f.role_tokens or f.to_calendar or f.also or f.from_table == f.to_table)
+                    and named_for_alone(bare(inventory.tables[f.from_table], f.from_column),
+                                        inventory.tables[f.to_table].name)]
         for f in group:
+            if len(own_link) == 1 and f is own_link[0] and all(
+                    g.role_tokens or not names.opaque(g.from_column) for g in group if g is not f):
+                continue
             words = list(f.role_tokens)
             own = False         # the column names the role itself (MANAGER_ID on employees: the manager)
             if not words and (len(group) > 1 or f.from_table == f.to_table) and not names.opaque(f.from_column):
@@ -1030,14 +1120,26 @@ def _name_roles(joins: list[JoinFinding], inventory: Inventory) -> None:
                 continue
             # INV on the inventory is the inventory, never an invoice.
             words[:1] = [names.table_word(inventory.tables[f.from_table].name, words[0]) or words[0]]
-            # Read in the company of the noun: "CFM DLY" before a date is a confirmed delivery.
-            text = names.read_tokens([*words, "dt"]).rsplit(" ", 1)[0] if f.to_calendar else names.read_tokens(words)
-            if f.to_calendar:
-                noun = "date"
-            else:
-                target = inventory.tables[f.to_table].name
-                noun = "" if names.opaque(target) else " ".join(
-                    names.EXPANSIONS.get(w, w) for w in names.core_table(target))
-            if noun and not own and not text.endswith(noun):
-                text = f"{text} {noun}"
-            f.role = text[:1].upper() + text[1:]
+            f.role = _role_text(f, words, own, inventory)
+            if words[0] in names.PARTY_WORDS and _of_parties(inventory.tables[f.to_table],
+                                                             inventory.tables[f.from_table]) and (
+                    len(words) == 1 or named_for_alone("_".join(words[1:]), inventory.tables[f.to_table].name)):
+                cut_short.append((f, f.role))
+                f.role = _role_text(f, [names.PARTY_WORDS[words[0]], *words[1:]], own, inventory)
+        for f, short in cut_short:
+            if sum(g.role == f.role for g in group) > 1:
+                f.role = short     # a PYR customer beside a PAYER customer: each keeps a name of its own
+
+
+def _role_text(f: JoinFinding, words: list[str], own: bool, inventory: Inventory) -> str:
+    """The role ``words`` say, with the noun of what the link points at: "Ship to customer", "Delivery date"."""
+    # Read in the company of the noun: "CFM DLY" before a date is a confirmed delivery.
+    text = names.read_tokens([*words, "dt"]).rsplit(" ", 1)[0] if f.to_calendar else names.read_tokens(words)
+    if f.to_calendar:
+        noun = "date"
+    else:
+        target = inventory.tables[f.to_table].name
+        noun = "" if names.opaque(target) else " ".join(names.EXPANSIONS.get(w, w) for w in names.core_table(target))
+    if noun and not own and not text.endswith(noun):
+        text = f"{text} {noun}"
+    return text[:1].upper() + text[1:]

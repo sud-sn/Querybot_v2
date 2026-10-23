@@ -70,6 +70,10 @@ EXPANSIONS = {
     "whs": "warehouse", "wh": "warehouse", "wk": "week", "wknd": "weekend", "yr": "year",
 }
 
+# A party a column names just before the table it points at, cut short: a PYR customer is the payer (read so there
+# alone: on its own a PYR is a prior year). A role Learn named before it read them so ("Pyr customer") is the same.
+PARTY_WORDS = {"pyr": "payer", "payr": "payer", "ult": "ultimate", "ownr": "owner"}
+
 
 def tokens(name: str) -> list[str]:
     """``CustOrderDT_KEY2`` -> ``["cust", "order", "dt", "key", "2"]``."""

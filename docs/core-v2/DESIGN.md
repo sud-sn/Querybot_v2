@@ -155,7 +155,9 @@ All objects carry `evidence: list[Evidence]`, `confidence: float (0..1)`,
   (`many_to_one | one_to_one | one_to_many | many_to_many`), match_rate (share of
   non-null, non-placeholder from-rows that find a match), null_rate,
   orphan_rows, to_unique, max_fanout, role (business name of the role when the
-  same pair of tables is joined more than one way), `trust`
+  same pair of tables is joined more than one way: `Payer customer`, `Ship to
+  customer`; none on the one link named for its target alone, `cust_key` to
+  the customers, which is the table's own and taken unasked), `trust`
   (`admin | declared | verified | proposed | rejected`).
 * **Calendar**: table, key column, date column, attribute map (canonical
   attribute → column key, each verified against the date), first/last date,
@@ -358,7 +360,21 @@ no fact rows), audit timestamps, mixed units.
    (`setCode → sets.code`) or a key that names its table (`home_team_api_id →
    teams.team_api_id`), never a bare one (`supplier_external_id`,
    `created_by_uuid`); or, a code, by values every row finds. Such a uuid is never
-   pointed at by values alone. A table named in one glued word (`superhero`,
+   pointed at by values alone. A unique code named for a place or a currency
+   (province, state, country, region, city, postal code, currency; `prv`,
+   `cntry`, `ccy`, never `prov`, as often a provider) is no target on a table of
+   other things, each with a code or a name of its own (`whs_cd`, `whs_nm`),
+   pointed at by a key of their own (the sales' `whs_key`), unless the table is
+   named for a place or the database declares the link: six warehouses in six
+   provinces make their `prv_cd` unique by accident, and the customers' `prv_cd`
+   is where a customer is, no link to a warehouse. It still is on the provinces,
+   a geography, a `dim_ccy`, the `zipcodes`, a nation's `country_cd`, a table
+   with nothing else to call its rows (one exchange rate a currency) or that
+   nothing else points at (a tax rate a province), and a lookup's own code
+   (`category_cd`, `typ_cd`, a country's `iso_cd`) always is. The rule reads the
+   shape, not the business: a table of tax rates by province that invoice lines
+   also point at by its own key is read like the warehouses, and an admin adds
+   the province link back on the relationships page. A table named in one glued word (`superhero`,
    not `shop_cartitem`) is named by its last part, of three letters or more
    (`hero_id → superhero.id`, `tag_id → hashtags.id`, `book_id → ebooks.id`,
    never `ad_id → leads.id`), only from a table pairing the things its name says
@@ -415,9 +431,13 @@ From a base table F to the table holding the attribute A:
    asks).
 2. The measure table's own key first: a direct edge from F wins over any longer
    path.
-3. Then higher trust, then higher match rate, then fewer steps, then the
+3. A path through a link with a role beside a plain link between the same
+   tables (an invoice's payer customer beside its customer, from its lines) is
+   taken only when the question names the role, as a direct one is; an order's
+   only customer link, its bill-to, is ranked like any other.
+4. Then higher trust, then higher match rate, then fewer steps, then the
    lexicographically smallest join key (deterministic, and reported).
-4. When two valid paths mean different things (the invoice's profit centre
+5. When two valid paths mean different things (the invoice's profit centre
    vs the customer's profit centre), the chosen one is named in the answer and
    the catalog lists the other as a qualified attribute the user can ask for
    ("by the customer's profit centre").

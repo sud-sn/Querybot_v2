@@ -185,7 +185,12 @@ def best_path(model: SemanticModel, start: str, goal: str, *, through: str | Non
         # No link of its own: two longer routes as good as each other (the same trust, match and steps) may reach
         # different members. A route of links without a role is the table's own when it is the only one; routes
         # that all carry roles are asked about, as two direct links are; of several without, the first is taken
-        # (its key decides, so always the same one) and carries the others, for the answer to name.
+        # (its key decides, so always the same one) and carries the others, for the answer to name. A route through a
+        # link with a role beside a plain one between the same tables (an invoice line's payer customer, through its
+        # invoice, beside its customer) is taken only when asked for, as a direct one is, however well its values
+        # match; an order's only customer link, its bill-to, is ranked like any other.
+        plain = {(j.from_table, j.to_table) for p in paths for j in p.joins if not j.role}
+        paths = [p for p in paths if not any(j.role and (j.from_table, j.to_table) in plain for j in p.joins)] or paths
         tied = [p for p in paths if p.score[:4] == paths[0].score[:4]]
         if len(tied) > 1:
             plain = [p for p in tied if not roles(p)]
@@ -302,15 +307,36 @@ def with_role(model: SemanticModel, start: str, goal: str, role: str, *, through
     Spelling is forgiven ("ship-to customer"), and so is a role written without its
     target's noun ("Ship to" for "Ship to customer") when only one role starts so. A table's link to
     itself is followed by its role ("Manager" of an employee).
+
+    A role kept by a question asked before Learn named the links in whole words is still found: "Pyr
+    customer" is the "Payer customer", and "Customer", the name Learn once gave the plain link beside a
+    payer customer, goes the way a question naming no role does, from the invoice or from its lines.
     """
+    from core2.bootstrap import names
+
+    def party(text: str) -> tuple[str, ...]:
+        return tuple(names.PARTY_WORDS.get(w, w) for w in _words(text))
+
     wanted = _words(role)
     paths = _and_self_links(model, start, goal, through=through)
     named = {r for p in paths for r in roles(p)}
     chosen = {r for r in named if _words(r) == wanted}
     if not chosen and wanted:
+        chosen = {r for r in named if party(r) == party(role)}
+        if len(chosen) > 1:
+            return []
+    if not chosen and wanted:
         chosen = {r for r in named if _words(r)[:len(wanted)] == wanted}
         if len(chosen) > 1:
             return []          # "Ship" could be either: the reader is asked, never guessed for
+    if not chosen and wanted and start != goal and wanted in (
+            _words(model.tables[goal].business_name),
+            _words(names.read_tokens(names.core_table(model.tables[goal].name)))):
+        try:
+            path = best_path(model, start, goal, through=through)
+        except Ambiguous:
+            return []
+        return [path] if path is not None and not roles(path) else []
     return [p for p in paths if chosen & set(roles(p))]
 
 
