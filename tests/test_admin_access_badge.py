@@ -38,11 +38,13 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-# Routes whose pages render the Access secondary nav, and therefore the badge.
+# Routes whose pages render the Access secondary nav, and therefore the badge, with the module that holds each.
 _ACCESS_NAV_ROUTES = (
-    '@router.get("/clients/{account_id}/users"',
-    '@router.get("/clients/{account_id}/groups"',
-    '@router.get("/clients/{account_id}/pending-users")',
+    ("admin/routes.py", '@router.get("/clients/{account_id}/users"'),
+    ("admin/groups.py", '@router.get("/clients/{account_id}/groups"'),
+    ("admin/groups.py", '@router.get("/clients/{account_id}/groups/{group_id}"'),
+    ("admin/row_access.py", '@router.get("/clients/{account_id}/row-access"'),
+    ("admin/routes.py", '@router.get("/clients/{account_id}/pending-users")'),
 )
 
 
@@ -65,9 +67,9 @@ def test_the_badge_poller_targets_the_nav_that_actually_ships():
 def test_every_route_that_renders_the_access_nav_passes_pending_count():
     """A missing keyword argument leaves no runtime trace: the template's
     `{% if pending_count is defined %}` guard just silently renders nothing."""
-    source = _read("admin/routes.py")
     missing = []
-    for decorator in _ACCESS_NAV_ROUTES:
+    for module, decorator in _ACCESS_NAV_ROUTES:
+        source = _read(module)
         start = source.index(decorator)
         # Scan to the next route decorator, i.e. this handler's body.
         nxt = source.find("\n@router.", start + 1)

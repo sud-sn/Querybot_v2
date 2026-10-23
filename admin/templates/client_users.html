@@ -135,7 +135,7 @@
       <thead>
         <tr>
           <th>Person</th>
-          <th>Group</th>
+          <th>Groups</th>
           <th>Role</th>
           <th>Sign-in</th>
           {% if regulated %}<th>People's data</th>{% endif %}
@@ -149,7 +149,7 @@
         <tr class="{% if not u.is_active %}row-inactive{% endif %}"
             data-name="{{ (u.name or '')|lower }}" data-email="{{ (u.email or '')|lower }}"
             data-active="{{ 1 if u.is_active else 0 }}" data-temp="{{ 1 if (u.is_temp_pw and u.is_active) else 0 }}"
-            data-group="{{ u.group_id or 'none' }}" data-cleared="{{ 1 if _state == 'signed' else 0 }}">
+            data-groups="{{ (u.group_ids or [])|join(' ') or 'none' }}" data-cleared="{{ 1 if _state == 'signed' else 0 }}">
           <td data-label="Person">
             <div class="pp-person">
               <span class="pp-avatar" aria-hidden="true">{{ ((u.name or u.email or '?')|trim)[:1]|upper }}</span>
@@ -159,17 +159,13 @@
               </span>
             </div>
           </td>
-          <td data-label="Group">
-            <form method="post" action="/admin/clients/{{ client.account_id }}/users/{{ u.id }}/update"
-                  class="inline-form" data-no-loading>
-              <select name="group_id" class="form-input form-input-sm select-xs" onchange="this.form.submit()"
-                      aria-label="Group for {{ u.name or u.email }}">
-                <option value="">no group</option>
-                {% for g in groups %}
-                <option value="{{ g.id }}" {% if g.id == u.group_id %}selected{% endif %}>{{ g.name }}</option>
-                {% endfor %}
-              </select>
-            </form>
+          <td data-label="Groups">
+            <div class="pp-groups">
+              {% for g in u.groups or [] %}<a class="badge badge-brand pp-group-link" href="/admin/clients/{{ client.account_id }}/groups/{{ g.id }}">{{ g.name }}</a>{% else %}<span class="pp-sub" style="margin:0">No group</span>{% endfor %}
+              {% if groups %}<button type="button" class="pp-group-edit" data-edit-groups="{{ u.id }}"
+                data-user-name="{{ u.name or u.email }}" data-group-ids="{{ (u.group_ids or [])|join(' ') }}"
+                aria-label="Choose the groups of {{ u.name or u.email }}">{{ ic("pencil", 12) }}<span class="sr-only">Change</span></button>{% endif %}
+            </div>
           </td>
           <td data-label="Role">
             {# What they can do in the portal, and whether they see every table (else their group's). #}
@@ -314,14 +310,17 @@
     </div>
     <div class="form-grid">
       <div class="form-group">
-        <label for="cu_group">Group</label>
-        <select id="cu_group" name="group_id">
-          <option value="">— no group yet —</option>
+        <span class="form-label" id="cu_groups_label">Groups</span>
+        {% if groups %}
+        <div class="pp-group-ticks" role="group" aria-labelledby="cu_groups_label">
           {% for g in groups %}
-          <option value="{{ g.id }}">{{ g.name }}</option>
+          <label class="checkbox-line"><input type="checkbox" name="group_ids" value="{{ g.id }}"> {{ g.name }}</label>
           {% endfor %}
-        </select>
-        <p class="form-note">People with no group have no table access.</p>
+        </div>
+        {% else %}
+        <p class="form-note" style="margin-top:0"><a href="/admin/clients/{{ client.account_id }}/groups">Make a group</a> first to put people in one.</p>
+        {% endif %}
+        <p class="form-note">They read the tables of every group they are in; with no group, none.</p>
       </div>
       <div class="form-group">
         <label for="cu_tables">Tables</label>
@@ -438,6 +437,27 @@
     </div>
   </form>
 </dialog>
+
+{# ── A person's groups ── #}
+{% if groups %}
+<dialog id="groupsDialog" class="pp-dialog" aria-labelledby="groupsDialogTitle">
+  <form method="post" id="groupsDialogForm">
+    <h3 id="groupsDialogTitle">Groups</h3>
+    <p class="text-sm text-muted" id="groupsDialogWho"></p>
+    <div class="pp-group-ticks" role="group" aria-label="The groups they are in">
+      {% for g in groups %}
+      <label class="checkbox-line"><input type="checkbox" name="group_ids" value="{{ g.id }}"> {{ g.name }}
+        <span class="text-muted">· {{ g.member_count }} {{ 'person' if g.member_count == 1 else 'people' }}</span></label>
+      {% endfor %}
+    </div>
+    <p class="form-note">Each group gives them its tables and row rules, and what is shared with it, from their next question.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" data-close-dialog>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save groups</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 
 {# ── Reset dialog ── #}
 <dialog id="resetDialog" class="pp-dialog reset-dialog" aria-labelledby="resetDialogTitle">
@@ -603,6 +623,14 @@
 .pp-tables { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 1px 7px; border: 1px solid var(--border);
   border-radius: 999px; background: none; font: inherit; font-size: var(--font-xs); color: var(--text-muted); cursor: pointer; }
 .pp-tables.every { border-color: var(--warning); color: var(--warning); }
+.pp-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 260px; }
+/* A group is the shared badge (base.css), as a link to its page. */
+.pp-group-link { text-decoration: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.pp-group-link:hover { text-decoration: underline; }
+.pp-group-edit { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-muted); cursor: pointer; }
+.pp-group-edit:hover { color: var(--text); border-color: var(--text-muted); }
+.pp-group-ticks { display: grid; gap: 6px; max-height: 240px; overflow: auto; padding: 2px 0; }
 .pp-tables:hover { color: var(--text); border-color: var(--text-muted); }
 .pp-clear-choice { border: 0; padding: 0; margin: .25rem 0 .75rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .pp-clear-choice label { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
@@ -679,6 +707,7 @@
 .temp-pw-meta { display: flex; align-items: center; gap: 6px; font-size: var(--font-xs); color: var(--text-muted); flex-wrap: wrap; }
 /* ── Narrow screens: each person a card ── */
 @media (max-width: 760px) {
+  .pp-table select, #ppGroup { min-height: 44px; }
   .pp-table thead { display: none; }
   .pp-table, .pp-table tbody { display: block; width: 100%; }
   .pp-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 12px;
@@ -691,6 +720,8 @@
   .pp-actions-cell { width: 100%; }
   .row-actions { justify-content: flex-start; gap: 6px; }
   .row-actions .btn-icon { min-width: 44px; min-height: 44px; }
+  .pp-group-edit { width: 44px; height: 44px; }
+  .pp-groups { max-width: none; }
   .select-xs { max-width: 100%; }
 }
 </style>
@@ -772,6 +803,19 @@
     }
   });
 
+  /* A person's groups: one dialog, ticked for whoever's pencil opened it. */
+  var groupsDialog = document.getElementById('groupsDialog');
+  document.querySelectorAll('[data-edit-groups]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var form = document.getElementById('groupsDialogForm');
+      var mine = (b.getAttribute('data-group-ids') || '').split(' ').filter(Boolean);
+      form.action = '/admin/clients/' + encodeURIComponent(accountId) + '/users/' + b.getAttribute('data-edit-groups') + '/groups';
+      form.querySelectorAll('input[name="group_ids"]').forEach(function (box) { box.checked = mine.indexOf(box.value) >= 0; });
+      document.getElementById('groupsDialogWho').textContent = b.getAttribute('data-user-name');
+      open(groupsDialog);
+    });
+  });
+
   /* Find someone: by name or email, by sign-in, by clearance, by group. */
   var rows = Array.prototype.slice.call(document.querySelectorAll('#ppRows tr'));
   var search = document.getElementById('ppSearch');
@@ -784,7 +828,7 @@
     rows.forEach(function (row) {
       var d = row.dataset;
       var ok = (!words || d.name.indexOf(words) >= 0 || d.email.indexOf(words) >= 0)
-        && (!group || !group.value || d.group === group.value)
+        && (!group || !group.value || (' ' + d.groups + ' ').indexOf(' ' + group.value + ' ') >= 0)
         && (filter === 'all' || (filter === 'active' && d.active === '1') || (filter === 'inactive' && d.active === '0')
             || (filter === 'temp' && d.temp === '1') || (filter === 'cleared' && d.cleared === '1')
             || (filter === 'not-cleared' && d.cleared === '0'));

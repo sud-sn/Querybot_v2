@@ -159,7 +159,7 @@ def test_a_platform_user_approved_into_a_group_clears_their_rows(two_workspaces)
                      ("teams-first@platform.internal", "teams-first", first.id))
     _, pending = store.upsert_pending_user(here.account_id, "teams", "teams-first", "First", "{}")
     store.approve_pending_user(int(pending["id"]), here.account_id, here.west)
-    assert store.get_user(first.id)["group_id"] == here.west
+    assert store.get_user(first.id)["group_ids"] == [here.east, here.west], "approved into one more group"
     assert _kept(here) == EVERYONE - {"first"}
 
 

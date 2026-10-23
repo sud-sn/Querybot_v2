@@ -4478,68 +4478,7 @@ async def compliance_break_glass(request: Request, account_id: str):
     )
 
 
-@router.get("/clients/{account_id}/groups", response_class=HTMLResponse)
-async def groups_page(request: Request, account_id: str):
-    if not _is_auth(request):
-        return RedirectResponse("/admin/login", status_code=303)
-    client     = store.get_client(account_id)
-    if not client:
-        return RedirectResponse("/admin/clients", status_code=303)
-    groups     = store.list_groups(account_id)
-    state_data = json.loads(client.get("state_data") or "{}")
-    schema_dir = state_data.get("schema_dir", "")
-    # Load all discovered table names for the assignment checkboxes
-    all_tables = sorted(store.load_schema_tables(schema_dir)) if schema_dir else []
-    # Attach current table list to each group
-    for g in groups:
-        g["tables"] = store.get_group_tables(g["id"])
-    return _resp(request, "client_groups.html", {
-        "client":     client,
-        "groups":     groups,
-        "all_tables": all_tables,
-        "pending_count": store.get_pending_user_count(account_id),
-        "saved":      request.query_params.get("saved"),
-        "error":      request.query_params.get("error"),
-    })
-
-
-@router.post("/clients/{account_id}/groups/create")
-async def group_create(
-    request:     Request,
-    account_id:  str,
-    name:        str = Form(...),
-    description: str = Form(""),
-):
-    if not _is_auth(request):
-        return RedirectResponse("/admin/login", status_code=303)
-    if not name.strip():
-        return RedirectResponse(f"/admin/clients/{account_id}/groups?error=Name+required", status_code=303)
-    store.create_group(account_id, name.strip(), description.strip())
-    return RedirectResponse(f"/admin/clients/{account_id}/groups?saved=1", status_code=303)
-
-
-@router.post("/clients/{account_id}/groups/{group_id}/tables")
-async def group_save_tables(
-    request:    Request,
-    account_id: str,
-    group_id:   int,
-):
-    if not _is_auth(request):
-        return RedirectResponse("/admin/login", status_code=303)
-    _workspace_group(account_id, group_id)
-    form   = await request.form()
-    tables = [v for k, v in form.multi_items() if k == "tables"]
-    store.set_group_tables(group_id, account_id, tables)
-    return RedirectResponse(f"/admin/clients/{account_id}/groups?saved=1", status_code=303)
-
-
-@router.post("/clients/{account_id}/groups/{group_id}/delete")
-async def group_delete(request: Request, account_id: str, group_id: int):
-    if not _is_auth(request):
-        return RedirectResponse("/admin/login", status_code=303)
-    _workspace_group(account_id, group_id)
-    store.delete_group(group_id)
-    return RedirectResponse(f"/admin/clients/{account_id}/groups", status_code=303)
+# The Groups pages (the list, a group's own page, its members) are admin/groups.py.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4700,6 +4639,15 @@ async def user_create(
             status_code=303)
     if group_id:
         _workspace_group(account_id, int(group_id))
+    # The Add person form ticks any number of groups (group_ids); a script may still send one group_id.
+    try:
+        group_ids = [int(v) for k, v in (await request.form()).multi_items() if k == "group_ids" and str(v).isdigit()]
+    except Exception:  # noqa: BLE001 - a call with no form body names no groups
+        group_ids = []
+    for gid in group_ids:
+        _workspace_group(account_id, gid)
+    if group_id and int(group_id) not in group_ids:
+        group_ids.insert(0, int(group_id))
     # People's data, in a workspace under compliance: masked for them unless they are cleared now, with the
     # attestation they signed. Clearing is the Compliance page's to grant (a Super admin's, admin/access.py).
     attestation = None
@@ -4733,11 +4681,13 @@ async def user_create(
     # does not go on knowing it.
     temporary = not explicit_pw or must_change == "1"
     try:
-        gid  = int(group_id) if group_id else None
+        gid  = group_ids[0] if group_ids else None
         uid, plain_pw = store.create_user(
             account_id, name.strip(), email.strip(), gid, role,
             password=explicit_pw or None, must_change=temporary, portal_role=portal_role,
         )
+        if len(group_ids) > 1:
+            store.set_user_groups(uid, account_id, group_ids)
     except Exception as e:
         # Logged, not shown: the text of a database error is not for the page.
         log.error("Creating a portal user for %s failed: %s", account_id, e, exc_info=True)
@@ -12668,6 +12618,8 @@ async def admin_pending_users_approve(
     group_id_raw = str(form.get("group_id", "")).strip()
     reviewer_note = str(form.get("reviewer_note", "")).strip()[:500]
     group_id     = int(group_id_raw) if group_id_raw.isdigit() else None
+    if group_id is not None:
+        _workspace_group(account_id, group_id)
 
     pending = store.get_pending_user(pending_id, account_id)
     if not pending:
@@ -13397,6 +13349,7 @@ from admin import core2_questions as _core2_questions  # noqa: E402,F401
 from admin import core2_setup_check as _core2_setup_check  # noqa: E402,F401
 from admin import core2_answers_check as _core2_answers_check  # noqa: E402,F401
 from admin import row_access as _row_access  # noqa: E402,F401
+from admin import groups as _groups  # noqa: E402,F401
 from admin import channels as _channels  # noqa: E402,F401
 from admin import ai_calls as _ai_calls  # noqa: E402,F401
 from admin import email_routes as _email_routes  # noqa: E402,F401

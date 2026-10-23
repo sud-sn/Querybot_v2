@@ -142,9 +142,16 @@ def _field_label(rule: dict[str, Any], fields: list[dict[str, Any]]) -> str:
 
 
 def _binds(rule: dict[str, Any], person: dict[str, Any]) -> bool:
+    """Does the rule name this person: everyone, their role, a group they are in (any of them), or them?"""
+    from types import SimpleNamespace
+
+    from core.compliance.policy_engine import in_group, person_groups
+
     kind, whom = rule.get("subject_type"), str(rule.get("subject_id") or "")
+    if kind == "group":
+        ids, names = person_groups(person)
+        return in_group(whom, SimpleNamespace(groups=ids, group_names=names))
     return (kind == "everyone" or (kind == "role" and whom == str(person.get("role") or ""))
-            or (kind == "group" and whom == str(person.get("group_id") or ""))
             or (kind == "user" and whom == str(person.get("id"))))
 
 
@@ -166,6 +173,7 @@ def summary(rules: list[dict[str, Any]], people: list[dict[str, Any]], fields: l
         if not person.get("is_active", 1):
             continue
         own = store.user_attributes(person)
+        groups = {str(g["id"]): g["name"] for g in person.get("groups") or []}
         bound = [r for r in rules if r.get("enabled", 1) and _binds(r, person)]
         lines, missing = [], []
         by_field: dict[str, list[str]] = {}
@@ -181,6 +189,9 @@ def summary(rules: list[dict[str, Any]], people: list[dict[str, Any]], fields: l
                     sees = f"their own {key.replace('_', ' ')} (none set: no rows)"
                 else:
                     sees = "only " + (", ".join(value) if isinstance(value, list) else str(value))
+            if rule.get("subject_type") == "group":
+                # Which of their groups gives them these rows: a person in several sees each one's.
+                sees += f" ({groups.get(str(rule.get('subject_id')), rule.get('subject_id'))})"
             by_field.setdefault(label, []).append(sees)
         for label, ways in by_field.items():
             lines.append(f"{label}: every row" if "every row" in ways else f"{label}: " + "; or ".join(ways))
@@ -202,11 +213,17 @@ async def row_access_page(request: Request, account_id: str):
     people = store.list_users(account_id)
     group_names = {str(g["id"]): g["name"] for g in groups}
     person_names = {str(p["id"]): p.get("name") or p.get("email") or "" for p in people}
+    sizes = {str(g["id"]): int(g.get("member_count") or 0) for g in groups}
     cards = [{**rule, "who": _who(rule, group_names, person_names), "on": _field_label(rule, fields),
-              "sees": _sees(rule)} for rule in rules]
+              "sees": _sees(rule), "members": sizes.get(str(rule.get("subject_id"))) if rule.get("subject_type") ==
+              "group" else None} for rule in rules]
     keys = _attribute_keys(rules)
+    # Opened from a group's page ("Add a row rule for this group"): the form opens for that group.
+    who, whom = request.query_params.get("who", ""), request.query_params.get("whom", "")
+    opened = {"who": who, "whom": whom} if who == "group" and whom in group_names else None
     return _resp(request, "client_row_access.html", {
         "client": client, "learned": model is not None, "fields": fields, "rules": cards, "groups": groups,
+        "open": opened, "pending_count": store.get_pending_user_count(account_id),
         "people": [{"id": p["id"], "name": p.get("name") or p.get("email"), "email": p.get("email"),
                     "group": p.get("group_name") or "", "role": ROLES.get(str(p.get("role") or ""), p.get("role")),
                     "values": store.user_attributes(p), "active": bool(p.get("is_active", 1))} for p in people],

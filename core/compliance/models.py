@@ -20,7 +20,8 @@ class ResourceRef:
 class PolicyContext:
     account_id: str
     user_id: str = ""
-    groups: list[str] = field(default_factory=list)
+    groups: list[str] = field(default_factory=list)          # the ids of every group the person is in
+    group_names: list[str] = field(default_factory=list)     # and their names, for a rule reading "their groups"
     purpose_id: str = ""
     channel: str = "portal"
     action: str = "query_execution"

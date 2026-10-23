@@ -1577,6 +1577,7 @@ def _run_migrations() -> None:
         _ensure_alert_tables(conn)
         _ensure_what_changed_table(conn)
         _ensure_profile_tables(conn)
+        _ensure_group_member_table(conn)
         for table, column, col_def in migrations:
             try:
                 # SAVEPOINT per migration: in PostgreSQL a failed statement
@@ -1602,6 +1603,7 @@ def _run_migrations() -> None:
         _post_migration_indexes(conn)
         _backfill_temporary_password_expiry(conn)
         _retire_platform_placeholder_passwords(conn)
+        _backfill_group_members(conn)
 
 
 def _retire_platform_placeholder_passwords(conn) -> None:
@@ -2285,6 +2287,35 @@ def _ensure_sign_in_attempt_table(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_sign_in_attempt_scope ON sign_in_attempt(scope);
         """
+    )
+
+
+def _ensure_group_member_table(conn: sqlite3.Connection) -> None:
+    """Who is in which group: a person in as many groups as they are put in (store/user_store.py). A group's row
+    rules, tables, shared dashboards, scheduled emails and alerts reach each of its members. portal_user.group_id
+    is kept as the first group a person joined, for what reads one group."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_group_member (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id    INTEGER NOT NULL REFERENCES user_group(id) ON DELETE CASCADE,
+            user_id     INTEGER NOT NULL REFERENCES portal_user(id) ON DELETE CASCADE,
+            account_id  TEXT    NOT NULL,
+            added_at    TEXT    DEFAULT (datetime('now')),
+            UNIQUE(group_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_group_member_user ON user_group_member(user_id, group_id);
+        """
+    )
+
+
+def _backfill_group_members(conn) -> None:
+    """A person whose group was set before groups had members of their own is a member of it. Each change to a
+    person's groups keeps their group_id one of them (or none), so this adds nobody taken out since."""
+    conn.execute(
+        "INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) "
+        "SELECT u.group_id, u.id, u.account_id FROM portal_user u JOIN user_group g ON g.id=u.group_id "
+        "WHERE u.group_id IS NOT NULL ORDER BY u.id"
     )
 
 

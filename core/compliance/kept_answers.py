@@ -111,18 +111,22 @@ def narrowed_since(account_id: str, user: Any, trace: dict[str, Any]) -> bool:
         # kept answer.
         person = user
         if user.get("id") not in (None, "") and "role" not in user:
-            person = {**(store.get_user(int(user["id"])) or {}), **user}
-        subject = SimpleNamespace(
-            role=str(person.get("role") or "system"), user_id=str(person.get("id") or ""),
-            groups=[str(person[k]) for k in ("group_id", "group_name") if person.get(k) not in (None, "")])
+            # Their own record, never another workspace's person of the same number.
+            stored = store.get_user(int(user["id"])) or {}
+            person = {**(stored if str(stored.get("account_id") or "") == str(account_id) else {}), **user}
+        from core.compliance.policy_engine import person_groups
+
+        groups, group_names = person_groups(person)
+        subject = SimpleNamespace(role=str(person.get("role") or "system"), user_id=str(person.get("id") or ""),
+                                  groups=groups, group_names=group_names)
         version = int(store.get_compliance_profile(account_id).get("active_policy_version") or 0)
         changed = [str(p.get("updated_at") or p.get("created_at") or "")[:19]
                    for p in store.list_row_policies(account_id, version or None)
                    if _policy_subject_matches(p, subject)]
         if user.get("id") not in (None, ""):
             with store.get_db() as conn:
-                row = conn.execute("SELECT access_changed_at FROM portal_user WHERE id=?",
-                                   (int(user["id"]),)).fetchone()
+                row = conn.execute("SELECT access_changed_at FROM portal_user WHERE id=? AND account_id=?",
+                                   (int(user["id"]), account_id)).fetchone()
             if row is not None:
                 changed.append(str(row["access_changed_at"] or "")[:19])
     except Exception as exc:  # noqa: BLE001 - an answer that cannot be checked again is not shown

@@ -70,6 +70,7 @@ from store.sign_in_throttle import (
 )
 from store.user_store import (
     create_group, list_groups, get_group, update_group, delete_group, search_people_and_groups,
+    group_members, add_group_members, remove_group_member, set_user_groups, user_groups,
     set_group_tables, get_group_tables,
     create_user, get_user, get_user_by_email, get_user_by_zoom_id, get_user_by_platform_id,
     list_users, update_user, change_password, reset_user_password,
@@ -261,6 +262,7 @@ __all__ = [
     "log_llm_call","get_llm_call","get_recent_llm_calls","purge_old_llm_calls","purge_old_kb_egress",
     "get_llm_trust_summary","RESULT_LLM_COMPONENTS","get_kb_table_doc_audit",
     "create_group","list_groups","get_group","update_group","delete_group","search_people_and_groups",
+    "group_members","add_group_members","remove_group_member","set_user_groups","user_groups",
     "set_group_tables","get_group_tables",
     "create_user","get_user","get_user_by_email","get_user_by_zoom_id","get_user_by_platform_id",
     "list_users","update_user","change_password","reset_user_password",

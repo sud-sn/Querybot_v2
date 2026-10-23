@@ -87,8 +87,9 @@ def alert_people(alert: dict) -> list[dict]:
                 WHERE u.account_id=? AND u.is_active=1 AND (
                       u.id=?
                    OR u.id IN (SELECT subject_id FROM tile_alert_recipient WHERE alert_id=? AND subject_type='user')
-                   OR u.group_id IN (SELECT subject_id FROM tile_alert_recipient
-                                      WHERE alert_id=? AND subject_type='group'))
+                   OR u.id IN (SELECT gm.user_id FROM user_group_member gm
+                                WHERE gm.group_id IN (SELECT subject_id FROM tile_alert_recipient
+                                                       WHERE alert_id=? AND subject_type='group')))
                 ORDER BY u.id""",
             (str(alert["account_id"]), int(alert["owner_id"]), int(alert["id"]), int(alert["id"]))).fetchall()
     return [dict(r) for r in rows]
@@ -105,8 +106,8 @@ def alerts_for_tile(dashboard_id: int, chart_id: int, user_id: int, account_id: 
                   AND (a.owner_id=?
                        OR EXISTS (SELECT 1 FROM tile_alert_recipient r WHERE r.alert_id=a.id
                                      AND ((r.subject_type='user' AND r.subject_id=?)
-                                       OR (r.subject_type='group' AND r.subject_id=(SELECT group_id FROM portal_user
-                                                                                   WHERE id=?)))))
+                                       OR (r.subject_type='group' AND r.subject_id IN (SELECT group_id
+                                                FROM user_group_member WHERE user_id=?)))))
                 ORDER BY CASE WHEN a.owner_id=? THEN 0 ELSE 1 END, a.id DESC""",
             (int(user_id), str(account_id), int(dashboard_id), int(chart_id), int(user_id), int(user_id), int(user_id),
              int(user_id))).fetchall()
@@ -124,8 +125,8 @@ def tile_marks(dashboard_id: int, user_id: int, account_id: str) -> dict[int, di
                   AND (a.owner_id=?
                        OR EXISTS (SELECT 1 FROM tile_alert_recipient r WHERE r.alert_id=a.id
                                      AND ((r.subject_type='user' AND r.subject_id=?)
-                                       OR (r.subject_type='group' AND r.subject_id=(SELECT group_id FROM portal_user
-                                                                                   WHERE id=?)))))
+                                       OR (r.subject_type='group' AND r.subject_id IN (SELECT group_id
+                                                FROM user_group_member WHERE user_id=?)))))
                 GROUP BY a.chart_id""",
             (int(user_id), str(account_id), int(dashboard_id), int(user_id), int(user_id), int(user_id))).fetchall()
     return {int(r["chart_id"]): {"on": True, "firing": bool(r["firing"])} for r in rows}

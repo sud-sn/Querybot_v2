@@ -63,11 +63,28 @@ def generate_temp_password() -> str:
 # Groups
 # ══════════════════════════════════════════════════════════════════════════════
 
+# A person is in every group they are put in (user_group_member): each group's tables, row rules, shared
+# dashboards, scheduled emails and alerts reach each of its members. portal_user.group_id is kept as the first
+# group they joined (none once they are in none), for what reads a single group.
+
+def _group_named(conn, account_id: str, name: str, *, besides: Optional[int] = None) -> None:
+    """Refuse a name that is empty or another group's in the workspace (whatever its case and spaces)."""
+    if not name.strip():
+        raise ValueError("Give the group a name.")
+    taken = conn.execute(
+        "SELECT id FROM user_group WHERE account_id=? AND lower(trim(name))=? AND id<>?",
+        (account_id, name.strip().lower(), int(besides or 0)),
+    ).fetchone()
+    if taken:
+        raise ValueError(f"There is already a group named “{name.strip()}”.")
+
+
 def create_group(account_id: str, name: str, description: str = "") -> int:
     with get_db() as conn:
+        _group_named(conn, account_id, name)
         cur = conn.execute(
             "INSERT INTO user_group (account_id, name, description) VALUES (?,?,?)",
-            (account_id, name, description)
+            (account_id, name.strip(), (description or "").strip())
         )
         gid = cur.lastrowid
     log.info("Created group '%s' (id=%d) for client %s", name, gid, account_id)
@@ -77,12 +94,153 @@ def create_group(account_id: str, name: str, description: str = "") -> int:
 def list_groups(account_id: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT g.*, COUNT(u.id) AS member_count FROM user_group g "
-            "LEFT JOIN portal_user u ON u.group_id = g.id "
-            "WHERE g.account_id = ? GROUP BY g.id ORDER BY g.name",
+            "SELECT g.*, (SELECT COUNT(*) FROM user_group_member m WHERE m.group_id=g.id) AS member_count "
+            "FROM user_group g WHERE g.account_id = ? ORDER BY g.name",
             (account_id,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def group_members(group_id: int) -> list[dict]:
+    """A group's members by name, each with their other groups: everyone in it, active or not."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT u.id, u.account_id, u.name, u.email, u.role, u.portal_role, u.is_active, m.added_at "
+            "FROM user_group_member m JOIN portal_user u ON u.id=m.user_id "
+            "JOIN user_group g ON g.id=m.group_id AND g.account_id=u.account_id "
+            "WHERE m.group_id=? ORDER BY lower(u.name), u.id",
+            (int(group_id),)
+        ).fetchall()
+        return _with_groups(conn, [dict(r) for r in rows])
+
+
+def _with_groups(conn, users: list[dict]) -> list[dict]:
+    """Each person with their groups, in the order they joined them: ``groups`` [{"id", "name"}], ``group_ids``,
+    and ``group_name`` (the names, joined)."""
+    ids = [int(u["id"]) for u in users if u.get("id") is not None]
+    found: dict[int, list[dict]] = {}
+    for start in range(0, len(ids), 500):
+        part = ids[start:start + 500]
+        rows = conn.execute(
+            f"SELECT m.user_id, g.id, g.name FROM user_group_member m JOIN user_group g ON g.id=m.group_id "
+            f"JOIN portal_user u ON u.id=m.user_id AND u.account_id=g.account_id "
+            f"WHERE m.user_id IN ({','.join('?' for _ in part)}) ORDER BY m.user_id, m.id",
+            tuple(part),
+        ).fetchall()
+        for r in rows:
+            found.setdefault(int(r["user_id"]), []).append({"id": int(r["id"]), "name": r["name"]})
+    for user in users:
+        groups = found.get(int(user["id"]), []) if user.get("id") is not None else []
+        user["groups"] = groups
+        user["group_ids"] = [g["id"] for g in groups]
+        user["group_name"] = ", ".join(g["name"] for g in groups)
+    return users
+
+
+def _first_group(conn, user_id: int) -> None:
+    """Keep the person's group_id the first group they are still in, or none."""
+    conn.execute(
+        "UPDATE portal_user SET group_id=(SELECT m.group_id FROM user_group_member m WHERE m.user_id=? "
+        "ORDER BY m.id LIMIT 1) WHERE id=?",
+        (int(user_id), int(user_id)),
+    )
+
+
+def _changed_access(conn, user_ids) -> None:
+    """What these people may see changed: rows their dashboards kept go, and an answer kept from before is asked
+    again (core/compliance/kept_answers.narrowed_since)."""
+    from store.dashboard_store import forget_kept_rows
+
+    for user_id in user_ids:
+        conn.execute("UPDATE portal_user SET access_changed_at=datetime('now'), updated_at=datetime('now') "
+                     "WHERE id=?", (int(user_id),))
+        forget_kept_rows(conn, user_id=int(user_id))
+
+
+def _own_group(conn, account_id: str, group_id) -> None:
+    """Refuse a group of another workspace: a person is only ever put in their own workspace's groups."""
+    if group_id is None:
+        return
+    found = conn.execute("SELECT id FROM user_group WHERE id=? AND account_id=?",
+                         (int(group_id), account_id)).fetchone()
+    if not found:
+        raise ValueError("That group is not one of this workspace's.")
+
+
+def _workspace_people(conn, account_id: str, user_ids) -> list[int]:
+    wanted = list(dict.fromkeys(int(u) for u in user_ids))
+    if not wanted:
+        return []
+    rows = conn.execute(
+        f"SELECT id FROM portal_user WHERE account_id=? AND id IN ({','.join('?' for _ in wanted)})",
+        (account_id, *wanted),
+    ).fetchall()
+    if len(rows) != len(wanted):
+        raise ValueError("Only people of this workspace can be put in its groups.")
+    return wanted
+
+
+def add_group_members(group_id: int, account_id: str, user_ids) -> int:
+    """Put people of the group's workspace in it; how many were not in it already. Refuses anyone else."""
+    with get_db() as conn:
+        _own_group(conn, account_id, group_id)
+        added = []
+        for user_id in _workspace_people(conn, account_id, user_ids):
+            cur = conn.execute("INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) "
+                               "VALUES (?,?,?)", (int(group_id), user_id, account_id))
+            if cur.rowcount:
+                added.append(user_id)
+                _first_group(conn, user_id)
+        _changed_access(conn, added)
+    return len(added)
+
+
+def remove_group_member(group_id: int, account_id: str, user_id: int) -> bool:
+    """Take a person out of a group; False when they were not in it."""
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM user_group_member WHERE group_id=? AND user_id=? AND account_id=?",
+                           (int(group_id), int(user_id), account_id))
+        if not cur.rowcount:
+            return False
+        _first_group(conn, user_id)
+        _changed_access(conn, [user_id])
+    return True
+
+
+def set_user_groups(user_id: int, account_id: str, group_ids) -> list[int]:
+    """Put a person in exactly these groups of their workspace, keeping the order they joined the ones they stay
+    in; the groups they are in now."""
+    wanted = list(dict.fromkeys(int(g) for g in group_ids))
+    with get_db() as conn:
+        if wanted:
+            rows = conn.execute(
+                f"SELECT id FROM user_group WHERE account_id=? AND id IN ({','.join('?' for _ in wanted)})",
+                (account_id, *wanted),
+            ).fetchall()
+            if len(rows) != len(wanted):
+                raise ValueError("That group is not one of this workspace's.")
+        _workspace_people(conn, account_id, [user_id])
+        now = [int(r["group_id"]) for r in conn.execute(
+            "SELECT group_id FROM user_group_member WHERE user_id=? ORDER BY id", (int(user_id),)).fetchall()]
+        if set(now) == set(wanted):
+            return now
+        for gid in now:
+            if gid not in wanted:
+                conn.execute("DELETE FROM user_group_member WHERE group_id=? AND user_id=?", (gid, int(user_id)))
+        for gid in wanted:
+            if gid not in now:
+                conn.execute("INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) "
+                             "VALUES (?,?,?)", (gid, int(user_id), account_id))
+        _first_group(conn, user_id)
+        _changed_access(conn, [user_id])
+        return [int(r["group_id"]) for r in conn.execute(
+            "SELECT group_id FROM user_group_member WHERE user_id=? ORDER BY id", (int(user_id),)).fetchall()]
+
+
+def user_groups(user_id: int) -> list[dict]:
+    """The groups a person is in, in the order they joined them: [{"id", "name"}]."""
+    with get_db() as conn:
+        return _with_groups(conn, [{"id": int(user_id)}])[0]["groups"]
 
 
 def search_people_and_groups(account_id: str, text: str, *, exclude_user_id: Optional[int] = None,
@@ -102,18 +260,20 @@ def search_people_and_groups(account_id: str, text: str, *, exclude_user_id: Opt
     within, starting = f"%{escaped}%", f"{escaped}%"
     with get_db() as conn:
         people = conn.execute(
-            """SELECT u.id, u.name, g.name AS group_name,
+            """SELECT u.id, u.name,
                       CASE WHEN lower(u.name) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END AS later
-                 FROM portal_user u LEFT JOIN user_group g ON g.id=u.group_id
+                 FROM portal_user u
                 WHERE u.account_id=? AND u.is_active=1 AND lower(u.name) LIKE ? ESCAPE '\\'
                   AND u.password_hash NOT LIKE ? AND u.password_hash <> ? AND u.id <> ?
                 ORDER BY later, lower(u.name), u.id LIMIT ?""",
             (starting, account_id, within, f"{UNUSABLE}%", LEGACY_PLATFORM_PLACEHOLDER,
              int(exclude_user_id or 0), int(limit)),
         ).fetchall()
+        people = _with_groups(conn, [dict(r) for r in people])
         groups = conn.execute(
             """SELECT g.id, g.name,
-                      (SELECT COUNT(*) FROM portal_user m WHERE m.group_id=g.id AND m.is_active=1) AS members,
+                      (SELECT COUNT(*) FROM user_group_member gm JOIN portal_user m ON m.id=gm.user_id
+                        WHERE gm.group_id=g.id AND m.is_active=1) AS members,
                       CASE WHEN lower(g.name) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END AS later
                  FROM user_group g
                 WHERE g.account_id=? AND lower(g.name) LIKE ? ESCAPE '\\'
@@ -135,20 +295,40 @@ def get_group(group_id: int) -> Optional[dict]:
 
 
 def update_group(group_id: int, name: str, description: str) -> None:
+    """Rename a group or change what it says it is; refuses an empty name or another group's."""
     with get_db() as conn:
+        group = conn.execute("SELECT account_id FROM user_group WHERE id=?", (int(group_id),)).fetchone()
+        if not group:
+            raise ValueError("That group is not there any more.")
+        _group_named(conn, group["account_id"], name, besides=int(group_id))
+        renamed = conn.execute("SELECT name FROM user_group WHERE id=?", (int(group_id),)).fetchone()["name"] \
+            != name.strip()
         conn.execute(
             "UPDATE user_group SET name=?, description=? WHERE id=?",
-            (name, description, group_id)
+            (name.strip(), (description or "").strip(), group_id)
         )
+        if renamed:
+            # A rule reading "their groups" reads the names, and a rule written by hand may name it: what its
+            # members may see changed with the name.
+            _changed_access(conn, [int(r["user_id"]) for r in conn.execute(
+                "SELECT user_id FROM user_group_member WHERE group_id=?", (int(group_id),)).fetchall()])
 
 
 def delete_group(group_id: int) -> None:
     from store.dashboard_store import forget_kept_rows
 
     with get_db() as conn:
-        # Its members lose its tables: what their dashboards kept under them goes first, while they are members.
+        # Its members lose its tables and rules: what their dashboards kept under them goes first, while they are
+        # members.
+        members = [int(r["user_id"]) for r in conn.execute(
+            "SELECT user_id FROM user_group_member WHERE group_id=?", (int(group_id),)).fetchall()]
         forget_kept_rows(conn, group_id=group_id)
+        conn.execute("DELETE FROM user_group_member WHERE group_id=?", (int(group_id),))
+        conn.execute("UPDATE portal_user SET group_id=NULL WHERE group_id=?", (int(group_id),))
         conn.execute("DELETE FROM user_group WHERE id=?", (group_id,))
+        for user_id in members:
+            _first_group(conn, user_id)
+            conn.execute("UPDATE portal_user SET access_changed_at=datetime('now') WHERE id=?", (user_id,))
 
 
 # ── Group table access ────────────────────────────────────────────────────────
@@ -213,6 +393,7 @@ def create_user(
     pw_hash = _hash_pw(plain)
     expires = _expiry(TEMP_PASSWORD_HOURS) if is_temp else None
     with get_db() as conn:
+        _own_group(conn, account_id, group_id)
         cur = conn.execute("""
             INSERT INTO portal_user
                 (account_id, group_id, name, email, password_hash, role, is_temp_pw,
@@ -221,6 +402,9 @@ def create_user(
         """, (account_id, group_id, name, email.lower().strip(), pw_hash, role, is_temp,
               expires, _portal_role(portal_role)))
         uid = cur.lastrowid
+        if group_id is not None:
+            conn.execute("INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) VALUES (?,?,?)",
+                         (int(group_id), int(uid), account_id))
     log.info("Created user '%s' (id=%d) for client %s (temp_pw=%s)",
              email, uid, account_id, bool(is_temp))
     return uid, plain
@@ -229,34 +413,28 @@ def create_user(
 def get_user(user_id: int) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT u.*, g.name AS group_name FROM portal_user u "
-            "LEFT JOIN user_group g ON g.id = u.group_id "
-            "WHERE u.id=?", (user_id,)
+            "SELECT u.* FROM portal_user u WHERE u.id=?", (user_id,)
         ).fetchone()
-    return dict(row) if row else None
+        return _with_groups(conn, [dict(row)])[0] if row else None
 
 
 def get_user_by_email(account_id: str, email: str) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT u.*, g.name AS group_name FROM portal_user u "
-            "LEFT JOIN user_group g ON g.id = u.group_id "
-            "WHERE u.account_id=? AND u.email=? AND u.is_active=1",
+            "SELECT u.* FROM portal_user u WHERE u.account_id=? AND u.email=? AND u.is_active=1",
             (account_id, email.lower().strip())
         ).fetchone()
-    return dict(row) if row else None
+        return _with_groups(conn, [dict(row)])[0] if row else None
 
 
 def get_user_by_zoom_id(zoom_user_id: str) -> Optional[dict]:
     """Look up portal user by their Zoom userId from webhook payload."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT u.*, g.name AS group_name FROM portal_user u "
-            "LEFT JOIN user_group g ON g.id = u.group_id "
-            "WHERE u.zoom_user_id=? AND u.is_active=1",
+            "SELECT u.* FROM portal_user u WHERE u.zoom_user_id=? AND u.is_active=1",
             (zoom_user_id,)
         ).fetchone()
-    return dict(row) if row else None
+        return _with_groups(conn, [dict(row)])[0] if row else None
 
 
 def get_user_by_platform_id(account_id: str, platform_user_id: str) -> Optional[dict]:
@@ -270,23 +448,19 @@ def get_user_by_platform_id(account_id: str, platform_user_id: str) -> Optional[
         return None
     with get_db() as conn:
         row = conn.execute(
-            "SELECT u.*, g.name AS group_name FROM portal_user u "
-            "LEFT JOIN user_group g ON g.id = u.group_id "
-            "WHERE u.account_id=? AND u.zoom_user_id=? AND u.is_active=1",
+            "SELECT u.* FROM portal_user u WHERE u.account_id=? AND u.zoom_user_id=? AND u.is_active=1",
             (account_id, platform_user_id),
         ).fetchone()
-    return dict(row) if row else None
+        return _with_groups(conn, [dict(row)])[0] if row else None
 
 
 def list_users(account_id: str) -> list[dict]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT u.*, g.name AS group_name FROM portal_user u "
-            "LEFT JOIN user_group g ON g.id = u.group_id "
-            "WHERE u.account_id=? ORDER BY u.name",
+            "SELECT u.* FROM portal_user u WHERE u.account_id=? ORDER BY u.name",
             (account_id,)
         ).fetchall()
-    return [dict(r) for r in rows]
+        return _with_groups(conn, [dict(r) for r in rows])
 
 
 def _portal_role(value: str) -> str:
@@ -305,6 +479,8 @@ def update_user(
     is_active: Optional[int] = None,
     portal_role: Optional[str] = None,
 ) -> None:
+    """Change a person's name, role, standing or reader role; ``group_id`` makes that group their only one (as
+    a person had one group before; set_user_groups puts them in several)."""
     fields, params = [], []
     if portal_role is not None:
         fields.append("portal_role=?"); params.append(_portal_role(portal_role))
@@ -329,7 +505,14 @@ def update_user(
     from store.dashboard_store import forget_kept_rows
 
     with get_db() as conn:
+        if group_id is not None:
+            owner = conn.execute("SELECT account_id FROM portal_user WHERE id=?", (user_id,)).fetchone()
+            _own_group(conn, owner["account_id"] if owner else "", group_id)
         conn.execute(f"UPDATE portal_user SET {','.join(fields)} WHERE id=?", params)
+        if group_id is not None:
+            conn.execute("DELETE FROM user_group_member WHERE user_id=? AND group_id<>?", (user_id, int(group_id)))
+            conn.execute("INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) "
+                         "SELECT ?, id, account_id FROM portal_user WHERE id=?", (int(group_id), user_id))
         # A new group or role, or a deactivation, changes what they may see.
         if group_id is not None or role is not None or is_active is not None:
             forget_kept_rows(conn, user_id=user_id)
@@ -397,6 +580,7 @@ def delete_user(user_id: int) -> None:
     with get_db() as conn:
         forget_kept_rows(conn, user_id=user_id)
         forget_people(conn, [int(user_id)])
+        conn.execute("DELETE FROM user_group_member WHERE user_id=?", (int(user_id),))
         conn.execute("DELETE FROM portal_user WHERE id=?", (user_id,))
 
 
@@ -496,9 +680,12 @@ def get_allowed_tables(user: dict) -> Optional[set[str]]:
 
     tables: set[str] = set()
 
-    # Group tables
-    if user.get("group_id"):
-        for t in get_group_tables(user["group_id"]):
+    # The tables of every group they are in
+    group_ids = user.get("group_ids")
+    if group_ids is None and user.get("id") is not None:
+        group_ids = [g["id"] for g in user_groups(int(user["id"]))]
+    for group_id in group_ids or ([user["group_id"]] if user.get("group_id") else []):
+        for t in get_group_tables(group_id):
             tables.add(t.upper())
 
     # Individual overrides
@@ -756,6 +943,7 @@ def approve_pending_user(
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
+        _own_group(conn, account_id, group_id)
         pending = conn.execute(
             "SELECT * FROM pending_platform_user WHERE id=? AND account_id=?",
             (pending_id, account_id),
@@ -792,15 +980,19 @@ def approve_pending_user(
         ).fetchone()
         portal_user_id = portal_user_row["id"] if portal_user_row else None
 
-        # Update group_id if we just hit the IGNORE path (user existed)
+        # Approved into a group: a member of it, whether new or there already (the IGNORE path).
         if portal_user_row and group_id:
             from store.dashboard_store import forget_kept_rows
 
+            conn.execute("INSERT OR IGNORE INTO user_group_member (group_id, user_id, account_id) VALUES (?,?,?)",
+                         (int(group_id), int(portal_user_id), account_id))
+            _first_group(conn, portal_user_id)
             conn.execute(
-                "UPDATE portal_user SET group_id=?, updated_at=?, access_changed_at=datetime('now') WHERE id=?",
-                (group_id, now, portal_user_id),
+                "UPDATE portal_user SET updated_at=?, access_changed_at=datetime('now') WHERE id=?",
+                (now, portal_user_id),
             )
             forget_kept_rows(conn, user_id=portal_user_id)
+            portal_user_row = conn.execute("SELECT * FROM portal_user WHERE id=?", (portal_user_id,)).fetchone()
 
         conn.execute(
             """UPDATE pending_platform_user SET

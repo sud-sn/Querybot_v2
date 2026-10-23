@@ -26,6 +26,10 @@
 .ra-rule strong{font-size:var(--font-sm);color:var(--text-strong);font-weight:var(--weight-semibold)}
 .ra-rule span{font-size:var(--font-sm);color:var(--text)}
 .ra-actions{display:flex;gap:6px;justify-content:flex-end}
+.ra-who-link{color:inherit;text-decoration:none}
+.ra-who-link:hover strong{color:var(--primary);text-decoration:underline}
+.ra-rule .ra-size{display:block;margin:2px 0 0}
+.ra-groups-link{align-self:center}
 .ra-form{background:var(--surface);border:1px solid var(--grid-line);border-radius:12px;box-shadow:var(--shadow-sm);padding:16px;
   display:grid;gap:14px;margin-bottom:12px}
 .ra-form[hidden]{display:none}
@@ -100,8 +104,10 @@
           {% for key, label in roles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
         </select>
         <select class="form-input" name="whom-group" aria-label="Group" hidden>
-          {% for g in groups %}<option value="{{ g.id }}">{{ g.name }}</option>{% else %}<option value="">No groups yet</option>{% endfor %}
+          {% for g in groups %}<option value="{{ g.id }}">{{ g.name }} · {{ g.member_count }} {{ 'person' if g.member_count == 1 else 'people' }}</option>{% else %}<option value="">No groups yet</option>{% endfor %}
         </select>
+        <a class="btn btn-ghost btn-sm ra-groups-link" data-group-link hidden
+           href="/admin/clients/{{ client.account_id }}/groups">{{ ic("user-group", 14) }} {{ 'Make a group' if not groups else 'Groups and their people' }}</a>
         <select class="form-input" name="whom-user" aria-label="Person" hidden>
           {% for p in people %}{% if p.active %}<option value="{{ p.id }}">{{ p.name }}{% if p.email and p.email != p.name %} · {{ p.email }}{% endif %}</option>{% endif %}{% endfor %}
         </select>
@@ -153,7 +159,7 @@
     <article class="ra-rule" data-rule="{{ r.id }}" data-spec="{{ {'who': r.subject_type, 'whom': r.subject_id, 'table': r.table_fqn,
       'field': r.condition.field, 'operator': r.condition.operator, 'source': r.condition.value_source or '',
       'values': r.condition.value or []} | tojson | forceescape }}">
-      <div><small>Who</small><strong>{{ r.who }}</strong></div>
+      <div><small>Who</small>{% if r.subject_type == "group" %}<a class="ra-who-link" href="/admin/clients/{{ client.account_id }}/groups/{{ r.subject_id }}"><strong>{{ r.who }}</strong></a>{% if r.members is not none %}<small class="ra-size">{{ r.members }} {{ 'person' if r.members == 1 else 'people' }}</small>{% endif %}{% else %}<strong>{{ r.who }}</strong>{% endif %}</div>
       <div><small>On</small><span>{{ r.on }}</span></div>
       <div><small>Sees</small><span>{{ r.sees }}</span></div>
       <div class="ra-actions">
@@ -210,7 +216,7 @@
 </section>
 {% endif %}
 
-<script type="application/json" id="ra-data">{{ {"account": client.account_id} | tojson }}</script>
+<script type="application/json" id="ra-data">{{ {"account": client.account_id, "open": open} | tojson }}</script>
 <script>
 (function () {
   'use strict';
@@ -230,6 +236,7 @@
   function showWhom() {
     var kind = form.who.value;
     ['role', 'group', 'user'].forEach(function (k) { whomFor(k).hidden = k !== kind; });
+    form.querySelector('[data-group-link]').hidden = kind !== 'group';
   }
   function fail(r) { error.textContent = (r && r.error) || 'It could not be saved.'; error.hidden = false; }
   function open(spec) {
@@ -238,7 +245,7 @@
     if (spec) {
       form.who.value = spec.who;
       if (spec.who !== 'everyone' && whomFor(spec.who)) whomFor(spec.who).value = spec.whom;
-      form.field.value = spec.table + '|' + spec.field;
+      if (spec.table) form.field.value = spec.table + '|' + spec.field;
       var own = (spec.source || '').indexOf('user.attributes.') === 0;
       form.sees.value = spec.operator === 'ALL' ? 'every' : own ? 'own' : 'values';
       if (own) form.key.value = spec.source.split('.').slice(2).join('.');
@@ -252,6 +259,9 @@
   form.who.addEventListener('change', showWhom);
   var add = document.querySelector('[data-new]');
   if (add) add.addEventListener('click', function () { open(null); });
+  // From a group's page: the form opens for that group.
+  if (data.open && add) open({who: data.open.who, whom: data.open.whom, table: '', field: '', operator: 'IN', source: 'static',
+                               values: []});
   form.querySelector('[data-cancel]').addEventListener('click', function () { form.hidden = true; });
   document.querySelectorAll('.ra-rule').forEach(function (card) {
     var spec = JSON.parse(card.getAttribute('data-spec'));

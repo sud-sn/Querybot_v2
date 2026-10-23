@@ -107,18 +107,21 @@ def schedule_recipients(schedule_id: int) -> list[dict]:
         rows = conn.execute(
             """SELECT r.subject_type, r.subject_id,
                       CASE WHEN r.subject_type='user' THEN u.name ELSE g.name END AS name,
-                      ug.name AS group_name,
-                      (SELECT COUNT(*) FROM portal_user m WHERE r.subject_type='group' AND m.group_id=r.subject_id
-                                                            AND m.is_active=1) AS members
+                      (SELECT COUNT(*) FROM user_group_member gm JOIN portal_user m ON m.id=gm.user_id
+                        WHERE r.subject_type='group' AND gm.group_id=r.subject_id AND m.is_active=1) AS members
                  FROM dashboard_schedule_recipient r
                  JOIN dashboard_schedule s ON s.id=r.schedule_id
                  LEFT JOIN portal_user u ON r.subject_type='user' AND u.id=r.subject_id AND u.account_id=s.account_id
                                         AND u.is_active=1
-                 LEFT JOIN user_group ug ON ug.id=u.group_id
                  LEFT JOIN user_group g ON r.subject_type='group' AND g.id=r.subject_id AND g.account_id=s.account_id
                 WHERE r.schedule_id=?
                 ORDER BY r.subject_type DESC, name""", (int(schedule_id),)).fetchall()
-    return [{"type": r["subject_type"], "id": int(r["subject_id"]), "name": r["name"], "group": r["group_name"] or "",
+        from store.user_store import _with_groups
+
+        groups = {int(p["id"]): p["group_name"] for p in _with_groups(
+            conn, [{"id": int(r["subject_id"])} for r in rows if r["subject_type"] == "user"])}
+    return [{"type": r["subject_type"], "id": int(r["subject_id"]), "name": r["name"],
+             "group": (groups.get(int(r["subject_id"]), "") if r["subject_type"] == "user" else "") or "",
              "members": int(r["members"] or 0)} for r in rows if r["name"]]
 
 
@@ -132,8 +135,9 @@ def schedule_people(schedule: dict) -> list[dict]:
                 WHERE u.account_id=? AND u.is_active=1 AND (
                       u.id IN (SELECT subject_id FROM dashboard_schedule_recipient
                                 WHERE schedule_id=? AND subject_type='user')
-                   OR u.group_id IN (SELECT subject_id FROM dashboard_schedule_recipient
-                                      WHERE schedule_id=? AND subject_type='group')
+                   OR u.id IN (SELECT gm.user_id FROM user_group_member gm
+                                WHERE gm.group_id IN (SELECT subject_id FROM dashboard_schedule_recipient
+                                                       WHERE schedule_id=? AND subject_type='group'))
                    OR (u.id=? AND ?=1))
                 ORDER BY u.id""",
             (account_id, int(schedule["id"]), int(schedule["id"]), int(schedule["owner_id"]),

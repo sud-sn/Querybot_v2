@@ -223,8 +223,8 @@ def notifications(user: dict, lang: str) -> list[dict]:
                 WHERE s.account_id=? AND (s.owner_id=?
                       OR EXISTS (SELECT 1 FROM dashboard_schedule_recipient r WHERE r.schedule_id=s.id
                                     AND ((r.subject_type='user' AND r.subject_id=?)
-                                      OR (r.subject_type='group' AND r.subject_id=(SELECT group_id FROM portal_user
-                                                                                   WHERE id=?)))))
+                                      OR (r.subject_type='group' AND r.subject_id IN (SELECT group_id
+                                               FROM user_group_member WHERE user_id=?)))))
                 ORDER BY CASE WHEN s.owner_id=? THEN 0 ELSE 1 END, d.name, s.id""",
             (account_id, user_id, user_id, user_id, user_id)).fetchall()
         alerts = conn.execute(
@@ -235,8 +235,8 @@ def notifications(user: dict, lang: str) -> list[dict]:
                 WHERE a.account_id=? AND (a.owner_id=?
                       OR EXISTS (SELECT 1 FROM tile_alert_recipient r WHERE r.alert_id=a.id
                                     AND ((r.subject_type='user' AND r.subject_id=?)
-                                      OR (r.subject_type='group' AND r.subject_id=(SELECT group_id FROM portal_user
-                                                                                   WHERE id=?)))))
+                                      OR (r.subject_type='group' AND r.subject_id IN (SELECT group_id
+                                               FROM user_group_member WHERE user_id=?)))))
                 ORDER BY CASE WHEN a.owner_id=? THEN 0 ELSE 1 END, d.name, a.id""",
             (account_id, user_id, user_id, user_id, user_id)).fetchall()
     for row in follows:

@@ -1391,7 +1391,7 @@ async def _render_dashboard(request: Request, user: dict, *, snapshot: dict | No
         charts = all_dashboard_charts
     allowed       = store.get_allowed_tables(user)
     client        = store.get_client(user["account_id"]) or {}
-    group_tables  = store.get_group_tables(user["group_id"]) if user.get("group_id") else []
+    group_tables  = sorted({t for g in user.get("group_ids") or [] for t in store.get_group_tables(g)})
     monthly_count = store.get_monthly_query_count(user["account_id"])
     query_status  = _query_limit_status(user["account_id"], _request_language(request))
     token_status  = store.get_monthly_token_status(user["account_id"])

@@ -209,7 +209,8 @@ def _kept_key(user: dict, model, allowed: set[str] | None, lang: str, today: dt.
     return (account_id, int(user["id"]), str(user.get("portal_role") or ""), str(user.get("role") or ""),
             int(user.get("session_version") or 0),
             int(model.version or 0), str(model.built_at or ""), tuple(sorted(allowed)) if allowed is not None else None,
-            policy, rules, own, str(user.get("group_id") or ""), lang, today.isoformat())
+            policy, rules, own, json.dumps(sorted([g["id"], g["name"]] for g in user.get("groups") or [])), lang,
+            today.isoformat())
 
 
 def _kept_for(user: dict) -> int:

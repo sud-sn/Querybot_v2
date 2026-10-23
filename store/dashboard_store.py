@@ -109,7 +109,8 @@ def _may_view(alias: str, viewer: str = "?") -> str:
     column), whose own row is joined as ``v`` (portal_user, the same workspace)."""
     return (f"({alias}.user_id={viewer} OR ({alias}.visibility='team' AND v.id IS NOT NULL) OR EXISTS ("
             f"SELECT 1 FROM dashboard_share s WHERE s.dashboard_id={alias}.id AND s.account_id={alias}.account_id"
-            f" AND ((s.subject_type='user' AND s.subject_id=v.id) OR (s.subject_type='group' AND s.subject_id=v.group_id))"
+            f" AND ((s.subject_type='user' AND s.subject_id=v.id) OR (s.subject_type='group' AND s.subject_id IN"
+            f" (SELECT gm.group_id FROM user_group_member gm WHERE gm.user_id=v.id)))"
             f" AND v.id IS NOT NULL))")
 
 
@@ -1209,7 +1210,7 @@ def forget_kept_rows(conn, *, account_id: str | None = None, user_id: int | None
         conn.execute("DELETE FROM dashboard_source_cache WHERE user_id=?", (int(user_id),))
     if group_id is not None:
         conn.execute("DELETE FROM dashboard_source_cache WHERE user_id IN "
-                     "(SELECT id FROM portal_user WHERE group_id=?)", (int(group_id),))
+                     "(SELECT user_id FROM user_group_member WHERE group_id=?)", (int(group_id),))
     if account_id:
         conn.execute("DELETE FROM dashboard_source_cache WHERE account_id=?", (account_id,))
 
@@ -1362,7 +1363,8 @@ def share_recipients(account_id: str, subject_type: str, subject_id: int, owner_
     with get_db() as conn:
         if subject_type == "group":
             rows = conn.execute(
-                """SELECT id, lang FROM portal_user WHERE account_id=? AND group_id=? AND is_active=1 AND id<>?""",
+                """SELECT u.id, u.lang FROM portal_user u JOIN user_group_member gm ON gm.user_id=u.id
+                    WHERE u.account_id=? AND gm.group_id=? AND u.is_active=1 AND u.id<>? ORDER BY u.id""",
                 (account_id, int(subject_id), int(owner_id)),
             ).fetchall()
         else:
@@ -1398,7 +1400,8 @@ def dashboard_audience(dashboard_id: int, account_id: str) -> int:
                  FROM dashboard_artifact d
                  JOIN dashboard_share s ON s.dashboard_id=d.id AND s.account_id=d.account_id
                  JOIN portal_user u ON u.account_id=d.account_id AND u.is_active=1 AND u.id<>d.user_id
-                  AND ((s.subject_type='user' AND s.subject_id=u.id) OR (s.subject_type='group' AND s.subject_id=u.group_id))
+                  AND ((s.subject_type='user' AND s.subject_id=u.id) OR (s.subject_type='group' AND s.subject_id IN
+                       (SELECT gm.group_id FROM user_group_member gm WHERE gm.user_id=u.id)))
                 WHERE d.id=? AND d.account_id=?""",
             (int(dashboard_id), account_id),
         ).fetchone()
@@ -1414,22 +1417,27 @@ def list_dashboard_shares(dashboard_id: int, owner_id: int, account_id: str) -> 
         if not owned:
             return []
         people = conn.execute(
-            """SELECT 'user' AS subject_type, u.id AS subject_id, u.name AS name, g.name AS group_name
+            """SELECT 'user' AS subject_type, u.id AS subject_id, u.name AS name
                  FROM dashboard_share s JOIN portal_user u ON u.id=s.subject_id AND u.account_id=s.account_id
-                 LEFT JOIN user_group g ON g.id=u.group_id
                 WHERE s.dashboard_id=? AND s.account_id=? AND s.subject_type='user'
                 ORDER BY s.created_at, s.id""",
             (int(dashboard_id), account_id),
         ).fetchall()
         groups = conn.execute(
             """SELECT 'group' AS subject_type, g.id AS subject_id, g.name AS name,
-                      (SELECT COUNT(*) FROM portal_user m WHERE m.group_id=g.id AND m.is_active=1) AS members
+                      (SELECT COUNT(*) FROM user_group_member gm JOIN portal_user m ON m.id=gm.user_id
+                        WHERE gm.group_id=g.id AND m.is_active=1) AS members
                  FROM dashboard_share s JOIN user_group g ON g.id=s.subject_id AND g.account_id=s.account_id
                 WHERE s.dashboard_id=? AND s.account_id=? AND s.subject_type='group'
                 ORDER BY s.created_at, s.id""",
             (int(dashboard_id), account_id),
         ).fetchall()
-    return [dict(r) for r in people] + [dict(r) for r in groups]
+        from store.user_store import _with_groups
+
+        named = [{"subject_type": p["subject_type"], "subject_id": p["subject_id"], "name": p["name"],
+                  "group_name": p["group_name"]}
+                 for p in _with_groups(conn, [{**dict(r), "id": r["subject_id"]} for r in people])]
+    return named + [dict(r) for r in groups]
 
 
 def mark_dashboard_draft(

@@ -89,11 +89,7 @@ def resolve_context(
 ) -> PolicyContext:
     user = user or {}
     role = str(user.get("role") or "system")
-    groups = []
-    if user.get("group_id") is not None:
-        groups.append(str(user["group_id"]))
-    if user.get("group_name"):
-        groups.append(str(user["group_name"]))
+    groups, group_names = person_groups(user)
 
     profile = store.get_compliance_profile(account_id)
     resolved_purpose = purpose_id
@@ -117,6 +113,7 @@ def resolve_context(
         account_id=account_id,
         user_id=str(user.get("id") or user.get("user_id") or ""),
         groups=groups,
+        group_names=group_names,
         purpose_id=resolved_purpose,
         channel=channel,
         action=action,
@@ -164,6 +161,32 @@ def _classification_for_resource(
     return None
 
 
+def person_groups(user: dict | None) -> tuple[list[str], list[str]]:
+    """The ids and the names of every group a person is in: from the record when it carries them (store.get_user),
+    else read by their id, else the one group an older record names."""
+    user = user or {}
+    groups = user.get("groups")
+    if groups is None and str(user.get("id") or "").isdigit():
+        groups = store.user_groups(int(user["id"]))
+    if groups is None:
+        groups = ([{"id": user["group_id"], "name": user.get("group_name") or ""}]
+                  if user.get("group_id") not in (None, "") else [])
+    return [str(g["id"]) for g in groups], [str(g["name"]) for g in groups if g.get("name")]
+
+
+def in_group(subject_id: str, context) -> bool:
+    """Is the person in the group a rule names? By the group's number, as Row access writes it; by its name only
+    when a rule names it by name (one written by hand), so a group named with another group's number is never
+    that group."""
+    subject_id = str(subject_id or "").strip()
+    if not subject_id:
+        return False
+    if subject_id.isdigit():
+        return subject_id in {str(g) for g in context.groups}
+    names = getattr(context, "group_names", None) or [g for g in context.groups if not str(g).isdigit()]
+    return subject_id in names
+
+
 def _subject_matches(rule: dict, context: PolicyContext) -> bool:
     subject_type = str(rule.get("subject_type") or "role")
     subject_id = str(rule.get("subject_id") or "")
@@ -172,7 +195,7 @@ def _subject_matches(rule: dict, context: PolicyContext) -> bool:
     if subject_type == "user":
         return subject_id == context.user_id
     if subject_type == "group":
-        return subject_id in context.groups
+        return in_group(subject_id, context)
     return subject_id == context.role
 
 

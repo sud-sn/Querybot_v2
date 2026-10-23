@@ -156,10 +156,14 @@ class TestAnotherWorkspacesGroups:
         routes = _routes()
         mine, theirs = _workspace(fresh_store), _workspace(fresh_store)
         their_group = fresh_store.create_group(theirs, "Theirs")
+        from admin import groups
+
         with pytest.raises(HTTPException):
-            _run(routes.group_delete(_request(), mine, their_group))
+            _run(groups.group_delete(_request(), mine, their_group))
         with pytest.raises(HTTPException):
-            _run(routes.group_save_tables(_request(), mine, their_group))
+            _run(groups.group_save_tables(_request(), mine, their_group))
+        with pytest.raises(HTTPException):
+            _run(groups.group_page(_request(), mine, their_group))
         assert fresh_store.get_group(their_group)
 
     def test_a_new_user_cannot_be_created_in_it(self, fresh_store):

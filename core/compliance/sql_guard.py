@@ -192,7 +192,8 @@ def _resolve_value(condition: dict, context: PolicyContext) -> Any:
     if source == "user.id":
         return context.user_id
     if source == "user.groups":
-        return context.groups
+        # Their groups' names, never their numbers: a group's number is no value of anyone's data.
+        return list(getattr(context, "group_names", None) or [g for g in context.groups if not str(g).isdigit()])
     if source.startswith("user.attributes."):
         return context.user_attributes.get(source.split(".", 2)[-1])
     return condition.get("value")
@@ -281,7 +282,9 @@ def _policy_subject_matches(policy: dict, context: PolicyContext) -> bool:
     if subject_type == "user":
         return str(policy.get("subject_id")) == context.user_id
     if subject_type == "group":
-        return str(policy.get("subject_id")) in context.groups
+        from core.compliance.policy_engine import in_group
+
+        return in_group(str(policy.get("subject_id")), context)
     return True
 
 
