@@ -3172,6 +3172,143 @@ def read_members(account_id: str) -> int:
     return len(_read_members((account_id, model.version), model, db_config, frozenset(listable(model))).index.names)
 
 
+# ── the data's dates as they are now ───────────────────────────────────────
+# Relative periods ("this month", "the last 7 days") count back from today, or from the day after the data ends
+# when it ended more than a week before (core2/resolve/time.anchor). Where it ends was the last day Learn read,
+# however long ago: a dashboard on a database loaded every day counted "this month" back from the day Learn ran,
+# and showed that month's figures on every day after. A date whose recorded last day is more than a week old is
+# read again from the warehouse -- its latest real day up to today, read as an answer reads the date -- under the
+# service connection, one pass over each table, in the background: one read at a time per workspace, again after
+# DATES_HOURS, or DATES_RETRY_SECONDS after a read that reached no table (a database resuming, a nightly window). A
+# request waits for the first read at most DATES_WAIT_SECONDS, and is answered from the days Learn read when it takes
+# longer (the read goes on, for the next one).
+
+DATES_HOURS = 6.0
+DATES_RETRY_SECONDS = 300.0
+DATES_WAIT_SECONDS = 5.0
+DATES_QUERY_SECONDS = 60
+DATES_MODELS = 64           # moved models kept, as many as the answering models (core2/bootstrap/service)
+
+
+@dataclass
+class _Dates:
+    days: dict[str, dt.date | None]
+    due: float                                  # when to read again (time.monotonic)
+    reading: threading.Event | None = None      # set when the read under way ends
+
+
+_DATES: dict[tuple[str, int, int], _Dates] = {}
+_MOVED: OrderedDict[tuple[str, int, int], tuple[SemanticModel, tuple, SemanticModel]] = OrderedDict()
+
+
+def _recorded_end(role: DateRole) -> dt.date | None:
+    from core2.resolve.resolver import _first_last
+
+    return _first_last(role)[1]
+
+
+def _read_dates(kept: _Dates, account_id: str, model: SemanticModel, db_config: dict[str, Any],
+                roles: list[DateRole], today: dt.date, done: threading.Event) -> None:
+    """Each role's latest real day up to today, kept as each table is read; a read that fails keeps the day Learn
+    read, and is tried again after DATES_HOURS -- or after DATES_RETRY_SECONDS when no table could be read."""
+    from core2.bootstrap.dates import _parse_day
+    from core2.compile.compiler import latest_days_sql
+    from core2.warehouse.querybot import QueryBotWarehouse
+
+    granularity = {r.key: "month" if r.granularity == "month" else "day" for r in roles}
+    read = False
+    try:
+        with QueryBotWarehouse(str(db_config.get("db_type") or ""), db_config["credentials"],
+                               timeout_seconds=DATES_QUERY_SECONDS) as warehouse:
+            for sql, keys in latest_days_sql(model, roles, warehouse.dialect, before=today + dt.timedelta(days=1)):
+                try:
+                    rows = warehouse.query(sql, max_rows=1).rows
+                except Exception as exc:  # noqa: BLE001 - the days Learn read stand for these
+                    log.warning("core2: the last days of %s in %s could not be read: %s", ", ".join(keys),
+                                account_id, exc)
+                    continue
+                read = True
+                found = {k: _parse_day(v, granularity[k]) for k, v in zip(keys, rows[0] if rows else ())}
+                for k, v in zip(keys, rows[0] if rows else ()):
+                    if v is not None and found[k] is None:
+                        log.warning("core2: the last day of %s in %s reads as no date: %r", k, account_id, v)
+                with _LOCK:
+                    kept.days.update(found)
+    except Exception as exc:  # noqa: BLE001 - answered from the days Learn read
+        log.warning("core2: the dates of %s could not be read; counting from the days Learn read: %s", account_id,
+                    exc)
+    finally:
+        with _LOCK:
+            kept.due = time.monotonic() + (DATES_HOURS * 3600 if read else DATES_RETRY_SECONDS)
+            kept.reading = None
+        done.set()
+
+
+def current_dates(account_id: str, model: SemanticModel, db_config: dict[str, Any], today: dt.date, *,
+                  wait: float = DATES_WAIT_SECONDS) -> SemanticModel:
+    """The model with each date's last day as the warehouse holds it now, where the day Learn read is more than a
+    week before ``today``: read in the background, waited for at most ``wait`` seconds the first time; the model
+    as it was until a read ends. The same model object while the days stay the same."""
+    from core2.resolve.time import STALE_AFTER
+
+    stale = [r for r in model.date_roles.values()
+             if r.last is not None and not r.quarter_column and today - (_recorded_end(r) or r.last) > STALE_AFTER]
+    if not stale:
+        return model
+    key = (account_id, int(db_config.get("id") or 0), int(model.version or 0))
+    with _LOCK:
+        kept = _DATES.get(key)
+        if kept is None or (kept.reading is None and time.monotonic() >= kept.due):
+            for other in [k for k in _DATES if k[:2] == key[:2] and k != key]:
+                _DATES.pop(other, None)      # an earlier model's days
+                _MOVED.pop(other, None)
+            done = threading.Event()
+            kept = _DATES[key] = _Dates(days=dict(kept.days) if kept else {}, due=kept.due if kept else 0.0,
+                                        reading=done)
+            threading.Thread(target=_read_dates, args=(kept, account_id, model, db_config, stale, today, done),
+                             daemon=True, name=f"core2-dates-{account_id}").start()
+        first = kept.reading if not kept.days else None
+    if first is not None and wait > 0:
+        first.wait(wait)
+    with _LOCK:
+        days = dict(kept.days)
+    moved = tuple(sorted((k, d) for k, d in days.items()
+                         if d is not None and k in model.date_roles and d != model.date_roles[k].last))
+    if not moved:
+        return model
+    with _LOCK:
+        same = _MOVED.get(key)
+        if same is not None and same[0] is model and same[1] == moved:
+            _MOVED.move_to_end(key)
+            return same[2]
+    copy = model.model_copy(update={"date_roles": {
+        **model.date_roles, **{k: model.date_roles[k].model_copy(update={"last": d}) for k, d in moved}}})
+    with _LOCK:
+        _MOVED[key] = (model, moved, copy)
+        _MOVED.move_to_end(key)
+        while len(_MOVED) > DATES_MODELS:
+            _MOVED.popitem(last=False)
+    return copy
+
+
+def current_model(account_id: str, client: dict[str, Any], *, wait: float = 0.0) -> SemanticModel | None:
+    """The answering model with its dates as they are now (current_dates), for a page that shows where the data
+    ends: never waits for a read unless asked to; the model Learn made where the workspace has no database."""
+    import store
+    from core2.bootstrap.service import answering_model
+
+    model = answering_model(account_id, client)
+    db_id = int((client or {}).get("db_config_id") or 0)
+    if model is None or not db_id:
+        return model
+    try:
+        db_config = store.get_db_config(db_id)
+        return current_dates(account_id, model, db_config, dt.date.today(), wait=wait) if db_config else model
+    except Exception as exc:  # noqa: BLE001 - the days Learn read
+        log.warning("core2: the dates of %s could not be brought up to date: %s", account_id, exc)
+        return model
+
+
 def _allowed_model_tables(model: SemanticModel, allowed: set[str] | None) -> set[str] | None:
     """The reader's allowed tables (as QueryBot names them) as model table keys."""
     if allowed is None:
@@ -3315,6 +3452,8 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     model = answering_model(account_id, client)
     if model is None:
         return None, _frame(question, NOT_LEARNED)
+    today = dt.date.today()
+    model = current_dates(account_id, model, db_config, today)
     state = store.get_client_state(account_id) or {}
     allowed = store.get_allowed_tables(portal_user) if portal_user else None
     scrub = question_scrubber(account_id, model=model)
@@ -3339,7 +3478,7 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         # The AI call log keeps the question as the AI was given it: scrubbed, where the workspace scrubs.
         complete=workspace_planner(account_id, client, question=scrub(question) if scrub else question,
                                    question_id=question_id),
-        index=index, today=dt.date.today(),
+        index=index, today=today,
         values_allowed=scrub is None and indexing, allowed_tables=tables,
         data_source=str(db_config.get("db_type") or ""), scrub=scrub,
         # A reader's own metric is written by the AI from their words, unscrubbed and beside the fields' values:

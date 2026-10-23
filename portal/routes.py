@@ -3841,10 +3841,9 @@ def _what_you_can_ask(user: dict, client: dict, state_data: dict, allowed: set[s
             return None
         from core.value_index import value_index_enabled
         from core2.answer.describe import describe
-        from core2.bootstrap.service import answering_model
-        from core2.service import _allowed_model_tables, question_scrubber
+        from core2.service import _allowed_model_tables, current_model, question_scrubber
 
-        model = answering_model(account_id, client)
+        model = current_model(account_id, client)
         if model is None:
             return None
         return describe(model, [], today=_dt.date.today(), allowed=_allowed_model_tables(model, allowed),
@@ -3859,11 +3858,10 @@ def _reader_catalog(user: dict, client: dict, state_data: dict, allowed: set[str
     account_id = user["account_id"]
     try:
         from core.value_index import value_index_enabled
-        from core2.bootstrap.service import answering_model
         from core2.model.requests import reader_view
-        from core2.service import _allowed_model_tables, question_scrubber
+        from core2.service import _allowed_model_tables, current_model, question_scrubber
 
-        model = answering_model(account_id, client)
+        model = current_model(account_id, client)
         if model is None:
             return None
         view = reader_view(model, today=_dt.date.today(), allowed=_allowed_model_tables(model, allowed),

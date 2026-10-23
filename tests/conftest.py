@@ -116,6 +116,19 @@ def _never_the_application_database():
 
 
 @pytest.fixture(autouse=True)
+def _no_dates_kept_between_tests():
+    """The days the new core read from a warehouse are kept by workspace, database and model version, which tests
+    reuse ("acct", 1, 1): one test's read is never the next one's."""
+    yield
+    import sys
+
+    service = sys.modules.get("core2.service")
+    if service is not None:
+        service._DATES.clear()
+        service._MOVED.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_language_leaks_between_tests():
     yield
     from core import i18n

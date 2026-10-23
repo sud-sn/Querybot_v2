@@ -494,12 +494,12 @@ def build(account_id: str, portal_user: dict[str, Any], *, client: dict[str, Any
     whose cards checked today are not run again; ``since``: their last visit, for what is new."""
     import store
     from core2 import question_map as Q
-    from core2.bootstrap.service import answering_model
+    from core2.service import current_model
 
     today = today or dt.date.today()
     client = client or store.get_client(account_id) or {}
     user_id = str(portal_user.get("id") or "")
-    model = answering_model(account_id, client)
+    model = current_model(account_id, client)
     if model is None:
         return {"state": "learning", "day": today.isoformat()}
     from core2.service import _allowed_model_tables

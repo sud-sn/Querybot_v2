@@ -971,6 +971,54 @@ def repeats_sql(model: SemanticModel, join: Join, dialect: str) -> str:
     return query.sql(dialect=dialect)
 
 
+def latest_days_sql(model: SemanticModel, roles: list, dialect: str, *,
+                    before: dt.date | None = None) -> list[tuple[str, list[str]]]:
+    """Queries for the last real day each date role holds now, before ``before``: [(sql, role keys)], one query
+    per table (each role's latest date in one pass over it) and one per date kept through a calendar. Each date is
+    read as an answer reads it (through its calendar, a text or a number date as the date it is), placeholder days
+    and numbers that are no date (a 13th month) left out. A year and a quarter kept as two numbers (a target's)
+    hold no day of their own and are not read."""
+    writer = _Compiler(None, model, dialect)  # type: ignore[arg-type] - a date's reach needs no logical query
+    window = Range(None, before)
+    plain: dict[str, list] = {}
+    out: list[tuple[str, list[str]]] = []
+    for role in roles:
+        if role.quarter_column or role.table not in model.tables or role.column not in model.columns:
+            continue
+        if not role.calendar:
+            # A date kept as text is read through a pattern that a value shaped like a date but none ('0000-00-00')
+            # can still fail on some databases: on its own, so it never keeps the table's other dates from being read.
+            text = text_date(model.columns[role.column])
+            plain.setdefault(f"{role.table}\x00{role.key}" if text else role.table, []).append(role)
+            continue
+        calendar, join = model.calendars.get(role.calendar), model.joins.get(role.calendar_join or "")
+        if calendar is None or join is None:
+            continue
+        use = DateUse(role, "c", "month_calendar" if calendar.grain == "month" else "day_calendar",
+                      (calendar.key_column if calendar.grain == "month" else calendar.date_column) or "", calendar)
+        query = exp.select(exp.Max(this=writer.stored_date(use))).from_(writer.table(role.table, "t")).join(
+            writer.table(role.calendar, "c"), join_type="inner", on=writer.on(Joined(
+                alias="c", table=role.calendar, on=[("t", join.from_columns[0], join.to_columns[0])])))
+        out.append((query.where(writer.range_condition(use, window)).sql(dialect=dialect), [role.key]))
+    for group, held in plain.items():
+        table = group.split("\x00")[0]
+        latest = []
+        for role in held:
+            column = model.columns[role.column]
+            mode = ("date" if column.data_type == "date" else "timestamp" if column.data_type == "timestamp"
+                    else "yyyymm" if role.granularity == "month" else "yyyymmdd")
+            use = DateUse(role, "t", mode, column.key)
+            real = writer.range_condition(use, window)
+            if mode == "yyyymmdd":
+                # A number shaped as a date only: the 13th month or the 32nd day is no date.
+                real = exp.and_(real, exp.Between(this=D.mod(writer.stored_date(use), 10000), low=_num(101),
+                                                  high=_num(1231)),
+                                exp.Between(this=D.mod(writer.stored_date(use), 100), low=_num(1), high=_num(31)))
+            latest.append(exp.Max(this=exp.Case(ifs=[exp.If(this=real, true=writer.stored_date(use))])))
+        out.append((exp.select(*latest).from_(writer.table(table, "t")).sql(dialect=dialect), [r.key for r in held]))
+    return out
+
+
 def row_conditions(model: SemanticModel, dialect: str, alias: str, filters: list) -> list[exp.Expr]:
     """Conditions on one table's rows (a link's, or a table's always-leave-out rules), written as
     every query writes them: "not X" keeps the rows with no value."""

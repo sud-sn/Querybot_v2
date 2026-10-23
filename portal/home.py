@@ -60,10 +60,9 @@ def _model(user: dict, client: dict):
     account_id = str(user["account_id"])
     if not _answers(account_id):
         return None, None
-    from core2.bootstrap.service import answering_model
-    from core2.service import _allowed_model_tables
+    from core2.service import _allowed_model_tables, current_model
 
-    model = answering_model(account_id, client)
+    model = current_model(account_id, client)
     if model is None:
         return None, None
     return model, _allowed_model_tables(model, store.get_allowed_tables(user))
