@@ -203,6 +203,7 @@ class Read:
     table: str                                       # the table it is counted on first (its base)
     columns: list[str] = field(default_factory=list)
     tables: list[str] = field(default_factory=list)  # every table whose rows it adds up or reads
+    metrics: list[str] = field(default_factory=list)  # the metrics it names
 
 
 class _Names:
@@ -221,21 +222,31 @@ class _Names:
                     self.fields.setdefault(_plain(f"{table_word} {field_word}"), []).append(c.key)
             for field_word in {field_name(c), c.name}:
                 self.bare.setdefault(_plain(field_word), []).append(c.key)
-        self.tables = {_plain(w): t.key for t in model.tables.values() if t.kind != "calendar"
-                       for w in (table_name(model, t.key), t.name, t.slug) if w}
-        self.metrics = {_plain(w): m.key for m in model.measures.values()
+        # Hidden tables' and metrics' words first, so a shown one of the same name wins: a staging copy Learn set aside
+        # is named after the table it copies, and keeps metrics of the same names.
+        self.tables = {_plain(w): t.key for t in sorted(model.tables.values(), key=lambda t: not t.hidden)
+                       if t.kind != "calendar" for w in (table_name(model, t.key), t.name, t.slug) if w}
+        self.metrics = {_plain(w): m.key for m in sorted(model.measures.values(), key=lambda m: not m.hidden)
                         for w in (m.business_name, m.slug) if w}
+
+    def _shown(self, keys: list[str]) -> list[str]:
+        """The fields a name fits, a hidden table's set aside when a shown table of the same name has it too (the
+        copy Learn hid, named after the table it copies). Any other two are still told apart by the reader."""
+        keys = list(dict.fromkeys(keys))
+        tables = [self.model.tables[self.model.columns[k].table] for k in keys]
+        shown = {_plain(table_name(self.model, t.key)) for t in tables if not t.hidden}
+        return [k for k, t in zip(keys, tables) if not (t.hidden and _plain(table_name(self.model, t.key)) in shown)]
 
     def field(self, text: str) -> str | None:
         """A field by "Table · Field", "table.column", or a name only one field has."""
         if SEP.strip() in text or "." in text:
             head, _, tail = text.replace(SEP.strip(), ".").rpartition(".")
-            found = list(dict.fromkeys(self.fields.get(_plain(f"{head} {tail}"), [])))
+            found = self._shown(self.fields.get(_plain(f"{head} {tail}"), []))
             if len(found) == 1:
                 return found[0]
             if len(found) > 1:
                 raise AuthoringError(f"{text} names more than one field")
-        found = list(dict.fromkeys(self.bare.get(_plain(text), [])))
+        found = self._shown(self.bare.get(_plain(text), []))
         if len(found) > 1:
             where = ", ".join(sorted({field_ref(self.model, k) for k in found})[:4])
             raise AuthoringError(f"{text} is a field of more than one table: write which ({where})")
@@ -260,6 +271,9 @@ def read(model: SemanticModel, text: str) -> Read:
         except AuthoringError as exc:
             target.problem = str(exc)
         target.metric = names.metrics.get(_plain(inner))
+        held = model.tables.get(model.measures[target.metric].table) if target.metric else None
+        if target.field and held is not None and held.hidden:
+            target.metric = None    # a field's name a set-aside copy's metric slug also spells is the field
         target.table = names.tables.get(_plain(inner))
         if not (target.field or target.metric or target.table or target.problem):
             raise AuthoringError(f"there is no field, metric or table called {inner}")
@@ -278,7 +292,7 @@ def read(model: SemanticModel, text: str) -> Read:
         raise AuthoringError("it reads no field: COUNT(*) needs a table, such as COUNT([Order line])")
     base = reader.tables[0]
     return Read(expr=expr, table=base, columns=list(dict.fromkeys(reader.columns)),
-                tables=list(dict.fromkeys(reader.tables)))
+                tables=list(dict.fromkeys(reader.tables)), metrics=list(dict.fromkeys(reader.metrics)))
 
 
 @dataclass
@@ -299,6 +313,7 @@ class _Reader:
         self.targets = targets
         self.columns: list[str] = []
         self.tables: list[str] = []
+        self.metrics: list[str] = []
 
     def _target(self, node: exp.Expr) -> _Target | None:
         if isinstance(node, exp.Column) and not node.table and node.name in self.targets:
@@ -338,6 +353,7 @@ class _Reader:
             if metric_key is not None:
                 metric = self.model.measures[metric_key]
                 self.tables.append(metric.table)
+                self.metrics.append(metric.key)
                 return RefExpr(measure=metric.key)
             what = f"[{target.text}]" if target is not None else node.sql()
             if target is not None and target.table and not target.field:

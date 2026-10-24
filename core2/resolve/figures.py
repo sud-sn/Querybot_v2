@@ -50,7 +50,7 @@ def worked_out(plan: "Plan", model: SemanticModel, ctx: "Context") -> tuple["Pla
         if ctx.allowed_tables is not None and not set(read.tables) <= ctx.allowed_tables:
             raise ResolveError("denied", f"{figure.name} would use data you cannot ask about")
         if any(c in model.columns and (model.columns[c].hidden or model.columns[c].sensitivity != "none")
-               for c in read.columns):
+               for c in read.columns) or any(model.measures[m].hidden for m in read.metrics if m in model.measures):
             raise ResolveError("denied", f"{figure.name} would read a personal or hidden field, which no figure "
                                "may use")
         reads.update(read.columns)

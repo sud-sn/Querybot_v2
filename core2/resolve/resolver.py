@@ -150,6 +150,31 @@ def documents_left_out(model: SemanticModel, table: str) -> list:
     return out
 
 
+def leave_out(model: SemanticModel, builder: "_PartBuilder", table: str, *, asked: bool = False,
+              notes: list[str] | None = None, seen: set[str] | None = None) -> None:
+    """The rows ``table`` leaves out by default, left out of the builder's part, and the lines of documents left
+    out by default with them: a line is out when it is cancelled and when its order is, whatever rules the lines have
+    of their own. Rows the question asks for too ("including cancelled orders", ``asked``) come back from each table
+    whose admin lets readers ask, each table on its own say; ``notes`` gets what was done, ``seen`` the tables done."""
+    part = builder.part
+    seen = set() if seen is None else seen
+    for owner in [model.tables[table], *documents_left_out(model, table)]:
+        if not owner.default_filters or owner.key in seen:
+            continue
+        seen.add(owner.key)
+        if asked and owner.readers_may_include:
+            if notes is not None:
+                notes.append(f"Including the {(owner.business_name or owner.name).lower()} rows left out by default ("
+                             + "; ".join(left_out_words(model, df) for df in owner.default_filters) + "), as asked.")
+            continue
+        alias = part.alias if owner.key == part.table else builder.reach(
+            owner.key, label=owner.business_name, filtering=owner.key != table)
+        for df in owner.default_filters:
+            part.preds.append(Pred(alias, df.column, df.op, list(df.values)))
+            if notes is not None:
+                notes.append(left_out_note(model, owner.key, df))
+
+
 def adds_up(o: OutMeasure) -> bool:
     """Do the groups' values of ``o`` add up to the whole (a sum or a count), so a share of it means something?
 
@@ -2242,25 +2267,9 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
 
     # Admin-approved default filters on the measure tables, unless the question asked for those rows too
     # ("including cancelled orders") and the admin lets readers ask.
+    # A line of a document left out by default (a cancelled booking's lines) is left out with it.
     for builder, _ in builders:
-        owner = model.tables[builder.part.table]
-        if plan.include_left_out and owner.readers_may_include and owner.default_filters:
-            notes.append(f"Including the {(owner.business_name or owner.name).lower()} rows left out by default (" +
-                         "; ".join(left_out_words(model, df) for df in owner.default_filters) + "), as asked.")
-            continue
-        for df in owner.default_filters:
-            builder.part.preds.append(Pred(builder.part.alias, df.column, df.op, list(df.values)))
-            notes.append(left_out_note(model, owner.key, df))
-        for head in [] if owner.default_filters else documents_left_out(model, owner.key):
-            # A line of a document left out by default (a cancelled booking's lines) is left out with it.
-            if plan.include_left_out and head.readers_may_include:
-                notes.append(f"Including the {(head.business_name or head.name).lower()} rows left out by default (" +
-                             "; ".join(left_out_words(model, df) for df in head.default_filters) + "), as asked.")
-                continue
-            alias = builder.reach(head.key, label=head.business_name, filtering=True)
-            for df in head.default_filters:
-                builder.part.preds.append(Pred(alias, df.column, df.op, list(df.values)))
-                notes.append(left_out_note(model, head.key, df))
+        leave_out(model, builder, builder.part.table, asked=plan.include_left_out, notes=notes)
 
     # Links an admin keeps to some rows of the table they reach, or to matched rows only.
     for builder, _ in builders:
@@ -2848,13 +2857,9 @@ def _members(plan: Plan, model: SemanticModel, ctx: Context, wanted: list, alias
                                     fiscal_start=model.settings.fiscal_year_start_month)
             part.date_ranges.append((part.date, window))
         # The same members their count counts: neither the rows nor the list's own rows left out by default.
-        for owner in (model.tables[k] for k in dict.fromkeys((base, column.table))):
-            if plan.include_left_out and owner.readers_may_include:
-                continue
-            for df in owner.default_filters:
-                part.preds.append(Pred(part.alias if owner.key == base else builder.reach(owner.key),
-                                       df.column, df.op, list(df.values)))
-                on_rows.append(left_out_note(model, owner.key, df))
+        seen: set[str] = set()
+        for owner in dict.fromkeys((base, column.table)):
+            leave_out(model, builder, owner, asked=plan.include_left_out, notes=on_rows, seen=seen)
     out_names: set[str] = set()
     groups = []
     for slug_, attr, _ in wanted:

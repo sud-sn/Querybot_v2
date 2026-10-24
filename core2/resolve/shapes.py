@@ -42,6 +42,7 @@ from core2.resolve.resolver import (
     Pred,
     ResolveError,
     hold_in_semi,
+    leave_out,
     _Aliases,
     _attribute_label,
     _date_role_for,
@@ -509,8 +510,7 @@ def _listed(plan: Plan, model: SemanticModel, ctx: Context, entity_slug: str | N
     builder = _PartBuilder(model, entity.table, aliases, ctx)
     builder._allowed(entity.table)
     part = builder.part
-    for df in model.tables[entity.table].default_filters:
-        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, entity.table)
     rest = []
     for f in plan.filters:
         found = find_slug(model, f.field)
@@ -772,8 +772,7 @@ def _absent(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
         out = _output_name("member_key", set())
         part.groups.append(PartGroup(out, reached, key, "attribute"))
         part.preds.append(Pred(reached, key, "not_null", []))
-        for df in model.tables[measure.table].default_filters:
-            part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+        leave_out(model, builder, measure.table)
         for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
             part.preds.append(Pred(part.alias, mf.column, mf.op, list(mf.values)))
         for f in filters:
@@ -943,8 +942,7 @@ def _absent_keyed(plan: Plan, model: SemanticModel, ctx: Context, counter: Measu
     act_key = "member_key"
     act.groups.append(PartGroup(act_key, at, key, "attribute"))
     act.preds.append(Pred(at, key, "not_null", []))
-    for df in model.tables[measure.table].default_filters:
-        act.preds.append(Pred(act.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, measure.table)
     for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
         act.preds.append(Pred(act.alias, mf.column, mf.op, list(mf.values)))
     for f in [*plan.filters, *without]:
@@ -1058,8 +1056,7 @@ def _absent_figures(plan: Plan, model: SemanticModel, ctx: Context, entity: Enti
     act_key = "member_key"
     act.groups.append(PartGroup(act_key, reached, key, "attribute"))
     act.preds.append(Pred(reached, key, "not_null", []))
-    for df in model.tables[measure.table].default_filters:
-        act.preds.append(Pred(act.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, measure.table)
     for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
         act.preds.append(Pred(act.alias, mf.column, mf.op, list(mf.values)))
     for f in [*rest, *without]:
@@ -1270,8 +1267,7 @@ def _events(plan: Plan, model: SemanticModel, ctx: Context, of: str, measure_slu
     part.groups.append(PartGroup(day_out, part.alias, None, "period", grain="day", date=use))
     # The days read, never the answer's own window (part.date): a gap's earlier event may be before it.
     part.date_ranges.append((use, read(window)))
-    for df in model.tables[measure.table].default_filters:
-        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, measure.table)
     for mf in [*measure.filters, *(getattr(measure.expr, "filters", None) or [])]:
         part.preds.append(Pred(part.alias, mf.column, mf.op, list(mf.values)))
     for f in plan.filters:
@@ -1587,8 +1583,7 @@ def _active(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     builder = _PartBuilder(model, table, aliases, ctx)
     builder._allowed(table)
     part = builder.part
-    for df in model.tables[table].default_filters:
-        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, table)
     for f in plan.filters:
         found_f = find_slug(model, f.field)
         if not found_f or found_f[0] not in ("attribute", "entity"):
@@ -1674,8 +1669,7 @@ def _rows_part(plan: Plan, model: SemanticModel, ctx: Context, table: str, taken
     builder = _PartBuilder(model, table, _Aliases(), ctx)
     builder._allowed(table)
     part = builder.part
-    for df in model.tables[table].default_filters:
-        part.preds.append(Pred(part.alias, df.column, df.op, list(df.values)))
+    leave_out(model, builder, table)
     for f in plan.filters:
         found_f = find_slug(model, f.field)
         if not found_f or found_f[0] not in ("attribute", "entity"):

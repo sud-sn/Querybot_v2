@@ -115,6 +115,7 @@ def write(model: SemanticModel, defined: Defined, complete: Callable[[str, str],
     used = set(read.tables) | {model.columns[f.column].table for f in conditions}
     hidden = [c for c in [*read.columns, *(f.column for f in conditions)]
               if c in model.columns and (model.columns[c].hidden or model.columns[c].sensitivity != "none")]
+    hidden += [m for m in read.metrics if m in model.measures and model.measures[m].hidden]
     if hidden or (allowed is not None and not used <= allowed):
         raise OwnMetricError("It would use data you cannot ask about.")
     from core2.model.imports import _behaviour

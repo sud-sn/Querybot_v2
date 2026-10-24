@@ -666,7 +666,7 @@ def fields_combined(plan: Plan, model: SemanticModel, question: str) -> Plan:
         return plan                  # a word that is no field's name ("sales plus returns") is not the reader's logic
     # Each field by its own name; one two tables hold (a travel fee on the booking and on its lines) is the one of
     # the table the other fields are on, or of the table the question names ("from booking lines").
-    found_keys = [list(dict.fromkeys(names.bare.get(authoring._plain(t), []))) for t in terms]  # noqa: SLF001
+    found_keys = [names._shown(names.bare.get(authoring._plain(t), [])) for t in terms]  # noqa: SLF001
     if not all(found_keys):
         return plan
     sure = {k[0] for k in found_keys if len(k) == 1}
