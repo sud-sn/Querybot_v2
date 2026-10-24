@@ -17,7 +17,16 @@ log = logging.getLogger("querybot.notification_scheduler")
 
 def run_due_notifications_once() -> None:
     """Run every due notification check. Each check is independently
-    wrapped so one failing check never blocks the others."""
+    wrapped so one failing check never blocks the others. Nobody waits for
+    them: their answers read the database as it is now, never a copy of a
+    metric kept on this server (core2/copies.py)."""
+    from core2.copies import live
+
+    with live():
+        _run_due_notifications_once()
+
+
+def _run_due_notifications_once() -> None:
     from core.alert_engine import run_due_alert_checks
     from core.report_engine import run_due_report_digests
     from core.dashboard_follow import run_due_follows
@@ -63,6 +72,13 @@ def run_due_notifications_once() -> None:
         run_due_answer_checks()
     except Exception as exc:
         log.warning("run_due_answer_checks failed: %s", exc)
+
+    try:
+        from core2.copies import run_due_copies
+
+        run_due_copies()        # each workspace's copies of metrics, made again on their schedule
+    except Exception as exc:
+        log.warning("run_due_copies failed: %s", exc)
 
     # Last: what the checks above queued goes out in the same minute.
     try:

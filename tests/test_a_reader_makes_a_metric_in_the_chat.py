@@ -204,7 +204,7 @@ def site(retail, tmp_path, monkeypatch):
     reader = {"id": 7, "account_id": account, "name": "Riley Reader", "email": "riley@example.test", "role": "analyst"}
     ai = AI(plans=[_by_month("margin_after_returns") for _ in range(4)])
 
-    def services(account_id, question, portal_user, question_id=""):
+    def services(account_id, question, portal_user, question_id="", *, use_precomputed=True):
         return _services(retail, ai), None
 
     app = FastAPI()

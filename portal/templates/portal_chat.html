@@ -3986,6 +3986,8 @@ function _answerHowHtml(msg, env) {
     [t('ui.chat.trust.rows'), String(trust.row_count ?? '')],
     [t('ui.chat.trust.runtime'), trust.duration_label || ''],
     [t('ui.chat.trust.data_source'), _DB_LABELS[String(trust.data_source || '').toLowerCase()] || String(trust.data_source || '')],
+    // Read from a copy Solviz keeps on its server (core2/precompute.py), not from the database just now.
+    [t('ui.chat.trust.copy'), trust.copy ? t('ui.chat.trust.copy_value', {name: trust.copy.name || '', when: trust.copy.made_at || ''}) : ''],
     [t('ui.chat.trust.schema_mode'), trust.schema || env.schemaLabel || ''],
     [t('ui.chat.trust.result_scope'), trust.scope_badge || resultScope.badge || ''],
   ].filter(([, v]) => v).map(([k, v]) => `<div class="trust-item"><div class="trust-k">${escHtml(k)}</div><div class="trust-v">${escHtml(v)}</div></div>`).join('');

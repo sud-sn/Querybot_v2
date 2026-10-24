@@ -441,7 +441,7 @@ def run(base: str, out: Path, chromium: str | None, theme: str = "light",
                          workspace + "/measures/edit", workspace + "/requests", workspace + "/requests?status=accepted",
                          workspace + "/users", workspace + "/groups", "GROUP", workspace + "/row-access",
                          workspace + "/settings", workspace + "/compliance", workspace + "/diagnostics",
-                         workspace + "/billing", workspace + "/queries", workspace + "/verified", "/admin/system", "/admin/clients",
+                         workspace + "/billing", workspace + "/queries", workspace + "/verified", workspace + "/copies", "/admin/system", "/admin/clients",
                          "/admin/clients/new", "/admin/databases", "/admin/platforms"):
                 if path == "GROUP":
                     # A group's own page: the first group the list shows.

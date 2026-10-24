@@ -500,6 +500,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Scheduled refresh failing since {since} UTC: this is the data from {at} UTC.",
         "fr": "L'actualisation planifiée échoue depuis le {since} UTC : ces données sont celles du {at} UTC.",
     },
+    "ui.dash.from_copy": {
+        "en": "From the copy made {when} UTC",
+        "fr": "Lu dans la copie faite le {when} UTC",
+    },
     "notify.dashboard_refresh_failed": {
         "en": "Your dashboard “{name}” could not be refreshed: {count} attempts in a row have failed "
               "since {since} UTC. It shows the data from {at} UTC until {until} UTC. The next attempt is at "
@@ -4650,6 +4654,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ui.chat.trust.data_source": {"en": "Data source", "fr": "Source de données"},
     # A workbook uploaded as a data source, named as the admin pages name it (store/config_store.py DB_LABEL).
     "ui.chat.trust.excel": {"en": "Excel workbook", "fr": "Classeur Excel"},
+    # An answer read from a copy of a metric kept on this server (core2/precompute.py): which, and when it was made.
+    "ui.chat.trust.copy": {"en": "Read from", "fr": "Lu dans"},
+    "ui.chat.trust.copy_value": {"en": "Solviz's copy of {name}, made {when} UTC",
+                                 "fr": "la copie de {name} gardée par Solviz, faite le {when} UTC"},
     "ui.chat.trust.schema_mode": {"en": "Schema mode", "fr": "Mode de schéma"},
     "ui.chat.trust.result_scope": {"en": "Result scope", "fr": "Portée du résultat"},
     "ui.chat.trust.execution": {"en": "Execution", "fr": "Exécution"},

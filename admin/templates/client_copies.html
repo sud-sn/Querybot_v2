@@ -1,0 +1,180 @@
+{% extends "client_base.html" %}
+{% from "macros.html" import breadcrumb, alert, badge %}
+{% block title %}Precomputed copies — {{ client.client_name or client.account_id[:16] }}{% endblock %}
+{% block breadcrumb %}
+{{ breadcrumb([
+    {"label": "Dashboard", "href": "/admin"},
+    {"label": "Workspaces", "href": "/admin/clients"},
+    {"label": client.client_name or client.account_id[:16], "href": "/admin/clients/" ~ client.account_id},
+    {"label": "Precomputed copies", "href": ""},
+]) }}
+{% endblock %}
+{% block head %}
+<style>
+/* Copies of metrics kept on this server (core2/precompute.py): the list, then the form that adds one. */
+.cp-head h1{margin:0 0 6px;font-size:var(--font-2xl);color:var(--text-strong)}
+.cp-head p{margin:0 0 12px;color:var(--text-muted);max-width:720px;font-size:var(--font-base);line-height:1.55}
+.cp-section{margin:0 0 24px}
+.cp-section > h2{margin:0 0 4px;font-size:var(--font-md);color:var(--text-strong)}
+.cp-section > p{margin:0 0 10px;font-size:var(--font-sm);color:var(--text-muted);max-width:680px}
+.cp-list{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.cp-item{border:1px solid var(--grid-line);border-left-width:4px;border-left-color:var(--success-line);border-radius:12px;
+  background:var(--surface);padding:12px 16px;display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.cp-item.waiting{border-left-color:var(--grid-line)}
+.cp-item.failed{border-left-color:var(--danger-line, var(--warning-line))}
+.cp-item.stale{border-left-color:var(--warning-line)}
+.cp-item > div{min-width:0;flex:1 1 320px}
+.cp-item h3{margin:0;font-size:var(--font-md);color:var(--text-strong);overflow-wrap:anywhere}
+.cp-meta{margin:3px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+.cp-why{margin:6px 0 0;font-size:var(--font-sm);color:var(--text)}
+.cp-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cp-actions form{margin:0;display:flex;gap:6px;align-items:center}
+@media (pointer: coarse){.cp-actions .form-input{min-height:44px}}
+.cp-empty{padding:14px 16px;border:1px dashed var(--grid-line);border-radius:12px;color:var(--text-muted);font-size:var(--font-sm)}
+.cp-form{border:1px solid var(--grid-line);border-radius:12px;background:var(--surface);padding:16px;display:grid;gap:14px;max-width:760px}
+.cp-form label.cp-label{display:block;font-weight:var(--weight-semibold, 600);font-size:var(--font-sm);color:var(--text-strong);margin:0 0 4px}
+.cp-form .cp-hint{margin:2px 0 0;font-size:var(--font-xs);color:var(--text-muted)}
+.cp-form select{width:100%;max-width:420px}
+.cp-fields{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0;padding:0;border:0}
+.cp-fields label{display:inline-flex;gap:6px;align-items:center;font-size:var(--font-sm);color:var(--text);min-height:32px}
+.cp-row{display:flex;flex-wrap:wrap;gap:16px}
+.cp-row > div{min-width:0;flex:1 1 200px}
+.cp-grain{display:flex;gap:14px;flex-wrap:wrap}
+.cp-grain label{display:inline-flex;gap:6px;align-items:center;font-size:var(--font-sm);min-height:32px}
+</style>
+{% endblock %}
+{% block content %}
+{% set base = "/admin/clients/" ~ client.account_id ~ "/copies" %}
+<div class="cp-head">
+  <h1>Precomputed copies</h1>
+  <p>A copy keeps a metric already added up, by the fields you choose and by day or by month, on this server.
+    Questions it holds exactly are answered from it, without a trip to the database: a dashboard opens at once, and the
+    database is spared the same sums all day. Solviz makes it on the workspace's own connection, reading only, and makes
+    it again on its schedule.</p>
+  <p>Solviz answers from a copy only when it gives exactly what the database would: the same rows, sums that add up
+    again, whole days or months. Anything else (a field the copy does not keep, the rows left out by default, the last
+    90 days from a copy by month) is asked of the database as before. Each reader's table access and masking apply as
+    always, and a reader with a row rule is always answered by the database. The answer says it was read from a copy
+    and when the copy was made.</p>
+</div>
+
+{% if saved == 'added' %}{{ alert("Copy added. It is being made now; questions it holds are answered from it once it is ready.", "success") }}{% endif %}
+{% if saved == 'making' %}{{ alert("Making the copy again now.", "success") }}{% endif %}
+{% if saved == 'schedule' %}{{ alert("Schedule changed.", "success") }}{% endif %}
+{% if saved == 'removed' %}{{ alert("Copy taken out and its file deleted. Its questions go to the database.", "success") }}{% endif %}
+{% if error %}{{ alert(error, "error") }}{% endif %}
+
+<section class="cp-section" aria-labelledby="cp-kept">
+  <h2 id="cp-kept">Copies kept</h2>
+  {% if kept %}
+  <ul class="cp-list">
+    {% for c in kept %}
+    {% set state = 'failed' if c.status == 'failed' else ('waiting' if not c.made_at else ('stale' if not c.fresh else '')) %}
+    <li class="cp-item {{ state }}">
+      <div>
+        <h3>{{ c.name }}</h3>
+        <p class="cp-meta">
+          {% if c.status == 'making' %}{{ badge("Being made", "blue") }}{% elif c.status == 'failed' %}{{ badge("Could not be made", "red") }}{% elif not c.made_at %}{{ badge("Waiting", "gray") }}{% elif not c.fresh %}{{ badge("Too old: the database answers", "amber") }}{% else %}{{ badge("Answering", "green") }}{% endif %}
+          {% if c.made_at %} Made {{ c.made_at[:16] }} UTC · {{ "{:,}".format(c.rows_kept or 0) }} row{{ "" if c.rows_kept == 1 else "s" }} · {{ ((c.size_bytes or 0) / 1048576) | round(1) }} MB · took {{ ((c.took_ms or 0) / 1000) | round(1) }} s{% endif %}
+          · made again every {{ c.every_hours }} hour{{ "" if c.every_hours == 1 else "s" }}
+          · {% if c.served %}answered {{ "{:,}".format(c.served) }} quer{{ "y" if c.served == 1 else "ies" }}{% if c.last_served_at %}, last {{ c.last_served_at[:16] }} UTC{% endif %}{% else %}no query answered from it yet{% endif %}
+        </p>
+        {% if c.error %}<p class="cp-why">{{ "Its last making failed: " if c.made_at else "" }}{{ c.error }}</p>{% endif %}
+      </div>
+      <div class="cp-actions">
+        <form method="post" action="{{ base }}/{{ c.id }}/every">
+          <label class="sr-only" for="cp-every-{{ c.id }}">Make again every</label>
+          <select id="cp-every-{{ c.id }}" class="form-input form-input-sm" name="every" onchange="this.form.submit()" aria-label="Make {{ c.name }} again every">
+            {% for h in every %}<option value="{{ h }}"{% if h == c.every_hours %} selected{% endif %}>Every {{ h }} hour{{ "" if h == 1 else "s" }}</option>{% endfor %}
+          </select>
+        </form>
+        <form method="post" action="{{ base }}/{{ c.id }}/make">
+          <button type="submit" class="btn btn-secondary btn-sm"{% if c.status == 'making' %} disabled{% endif %}>Make it now</button></form>
+        <form method="post" action="{{ base }}/{{ c.id }}/remove">
+          <button type="submit" class="btn btn-ghost btn-sm" aria-label="Take out the copy: {{ c.name }}">Take out</button></form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="cp-empty">No copy kept yet. Keep one of the metrics your dashboards show most, by the fields they are broken down by.</div>
+  {% endif %}
+</section>
+
+<section class="cp-section" aria-labelledby="cp-add">
+  <h2 id="cp-add">Keep a copy</h2>
+  {% if not learned %}
+  <div class="cp-empty">This workspace is not learned yet: a copy is kept of a learned metric.</div>
+  {% elif not offered %}
+  <div class="cp-empty">No metric can be copied: a balance read on a day (stock on hand, headcount) is never added up over days.</div>
+  {% else %}
+  <p>Each field multiplies the rows a copy holds; it can hold up to {{ "{:,}".format(max_rows) }}. A copy by month is
+    smaller, and answers months, quarters and years.</p>
+  <form method="post" action="{{ base }}" class="cp-form" id="cp-form">
+    <div>
+      <label class="cp-label" for="cp-metric">Metric</label>
+      <select id="cp-metric" class="form-input" name="metric" required>
+        {% for m in offered %}<option value="{{ m.key }}">{{ m.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <fieldset class="cp-fields" id="cp-fields" aria-describedby="cp-fields-hint">
+      <legend class="cp-label">By these fields</legend>
+    </fieldset>
+    <p class="cp-hint" id="cp-fields-hint">The fields questions break it down or filter it by. None: the metric over time only.</p>
+    <div class="cp-row">
+      <div>
+        <label class="cp-label" for="cp-date">Date</label>
+        <select id="cp-date" class="form-input" name="date"></select>
+      </div>
+      <div>
+        <span class="cp-label" id="cp-grain-label">Kept by</span>
+        <div class="cp-grain" role="radiogroup" aria-labelledby="cp-grain-label">
+          <label><input type="radio" name="grain" value="day" checked> Day</label>
+          <label><input type="radio" name="grain" value="month"> Month</label>
+        </div>
+      </div>
+      <div>
+        <label class="cp-label" for="cp-every">Made again every</label>
+        <select id="cp-every" class="form-input" name="every">
+          {% for h in every %}<option value="{{ h }}"{% if h == 6 %} selected{% endif %}>{{ h }} hour{{ "" if h == 1 else "s" }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div><button type="submit" class="btn btn-primary">Keep this copy</button></div>
+  </form>
+  <script>
+  (function () {
+    const offered = {{ offered | tojson }};
+    const metric = document.getElementById('cp-metric');
+    const fields = document.getElementById('cp-fields');
+    const date = document.getElementById('cp-date');
+    function show() {
+      const m = offered.find(o => o.key === metric.value) || offered[0];
+      fields.querySelectorAll('label').forEach(l => l.remove());
+      (m.fields || []).forEach(f => {
+        const label = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox'; box.name = 'fields'; box.value = f.slug;
+        label.appendChild(box); label.appendChild(document.createTextNode(' ' + f.name));
+        fields.appendChild(label);
+      });
+      if (!(m.fields || []).length) {
+        const none = document.createElement('label');
+        none.textContent = 'No field reaches this metric: it is kept over time only.';
+        fields.appendChild(none);
+      }
+      date.innerHTML = '';
+      (m.dates || []).forEach(d => {
+        const option = document.createElement('option');
+        option.value = d.key; option.textContent = d.name;
+        if (d.key === m.default_date) option.selected = true;
+        date.appendChild(option);
+      });
+    }
+    metric.addEventListener('change', show);
+    show();
+  })();
+  </script>
+  {% endif %}
+</section>
+{% endblock %}

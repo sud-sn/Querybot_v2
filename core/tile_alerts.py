@@ -190,10 +190,13 @@ def _draw(chart: dict, person: dict) -> dict:
     from core.i18n import activate_language, deactivate_language
     from portal.routes import _refresh_chart
 
+    from core2.copies import live
+
     db_cfg = store.get_db_config(chart["db_config_id"]) if chart.get("db_config_id") else None
     token = activate_language(str(person.get("lang") or "en"))
     try:
-        return _refresh_chart(chart, db_cfg, person)
+        with live():            # an alert is checked on the data as it is now, never on a copy made hours ago
+            return _refresh_chart(chart, db_cfg, person)
     finally:
         deactivate_language(token)
 

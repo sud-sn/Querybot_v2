@@ -26,6 +26,7 @@ class QueryResult:
     rows: list[tuple[Any, ...]]
     truncated: bool = False
     elapsed_ms: float = 0.0
+    source: str = ""        # "copy": read from a precomputed copy kept on this server (core2/precompute.py)
 
 
 class ReadOnlyViolation(ValueError):
@@ -74,9 +75,22 @@ class DuckDBWarehouse:
     log: list[str] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def query(self, sql: str, *, max_rows: int | None = None) -> QueryResult:
+    def query(self, sql: str, *, max_rows: int | None = None, local: Any = None) -> QueryResult:
         assert_read_only(sql, self.dialect)
         start = time.perf_counter()
+        if local is not None:
+            # The same rows from a precomputed copy (core2/precompute.py); no governance runs here to keep from it.
+            rows = local(max_rows if max_rows is not None else 0)
+            if rows:
+                columns = list(rows[0].keys())
+            else:
+                from core2.warehouse.governed import _columns_of
+
+                columns = _columns_of(sql, self.dialect)
+            with self._lock:
+                self.log.append(sql)
+            return QueryResult(columns, [tuple(r.values()) for r in rows], bool(getattr(rows, "truncated", False)),
+                               (time.perf_counter() - start) * 1000, source="copy")
         with self._lock:
             self.log.append(sql)
             cursor = self.connection.cursor()
@@ -118,9 +132,10 @@ class Guarded:
     def db_type(self) -> str:
         return str(self.inner.db_type)
 
-    def query(self, sql: str, *, max_rows: int | None = None) -> QueryResult:
+    def query(self, sql: str, *, max_rows: int | None = None, local: Any = None) -> QueryResult:
         try:
-            result: QueryResult = self.inner.query(sql, max_rows=max_rows)
+            result: QueryResult = self.inner.query(sql, max_rows=max_rows) if local is None else \
+                self.inner.query(sql, max_rows=max_rows, local=local)
         except QueryFailed:
             raise
         except Exception as exc:  # noqa: BLE001 - any refusal or failure, told with the SQL that met it

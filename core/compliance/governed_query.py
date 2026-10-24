@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Callable
 
 import store
 from core.compliance.models import PolicyContext, PolicyDecision
@@ -34,6 +35,9 @@ class GovernedQueryResult:
     # across rows (quartiles, histograms, correlation, cohort matrices) must
     # refuse rather than present a statistic computed over the prefix.
     truncated: bool = False
+    # "copy" when the rows came from a precomputed copy kept on this server (core2/precompute.py), every check
+    # above having been made on the database query as always; "database" otherwise.
+    source: str = "database"
 
 
 def governed_reader_for_user(
@@ -132,7 +136,11 @@ def execute_governed_query(
     allowed_tables: set[str] | None = None,
     semantic_context: dict | None = None,
     max_rows: int = 200,
+    fetch: Callable[[int], Any] | None = None,
 ) -> GovernedQueryResult:
+    """``fetch``: the same rows from a precomputed copy (core2/precompute.py), read in place of the database only
+    when no row rule applies to the query: every check, the decision log and the masking are as for the
+    database."""
     ok, reason, code = validate_sql(
         sql,
         known_tables,
@@ -171,7 +179,13 @@ def execute_governed_query(
             raise PolicyDeniedError(decision)
 
     rewritten_sql, row_obligations = inject_row_policies(sql, db_type, context)
-    raw_rows = run_query(credentials, db_type, rewritten_sql, max_rows=max_rows)
+    # A copy holds every row the query counts, for everyone: a reader whose row rule touches one of its tables is
+    # always answered by the database, under the rule.
+    source = "copy" if fetch is not None and not row_obligations else "database"
+    if source == "copy":
+        raw_rows = fetch(max_rows)
+    else:
+        raw_rows = run_query(credentials, db_type, rewritten_sql, max_rows=max_rows)
     # Read the flag off the fetch result immediately: masking and row-policy
     # transforms below return plain lists and would drop it.
     rows_truncated = bool(getattr(raw_rows, "truncated", False))
@@ -248,4 +262,5 @@ def execute_governed_query(
         analysis=analysis,
         row_obligations=row_obligations,
         truncated=rows_truncated,
+        source=source,
     )

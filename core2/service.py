@@ -707,6 +707,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     from core2 import dashboards
     from core2.plan import own_metric
 
+    _copies_taken(services)         # only the copies this answer reads are said on it (core2/precompute.py)
     if dashboards.asked_for(question) is not None:
         return _described(question, services, session)     # "build me a dashboard of ...": before planning
     if planned is None:
@@ -780,6 +781,7 @@ def answer_question(question: str, services: Services, session: Session, *, ques
     mine = [m.business_name for m in session.own.values() if m.slug in used]
     if mine:
         payload["own_metrics_used"] = mine
+    _copies_said(payload, services)
     return payload
 
 
@@ -3537,8 +3539,10 @@ NOT_LEARNED = ("This workspace is still being set up: Solviz has not learned its
 
 
 def _portal_services(account_id: str, question: str, portal_user: dict[str, Any] | None,
-                     question_id: str = "") -> tuple[Services | None, dict[str, Any] | None]:
-    """The services a portal answer runs on, or the frame that says why there are none."""
+                     question_id: str = "", *, use_precomputed: bool = True,
+                     ) -> tuple[Services | None, dict[str, Any] | None]:
+    """The services a portal answer runs on, or the frame that says why there are none. ``use_precomputed``:
+    a query one of the workspace's copies holds exactly is read from it (core2/precompute.py)."""
     import store
     from core.schema import load_known_tables
     from core.value_index import value_index_enabled
@@ -3565,6 +3569,8 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
     warehouse = GovernedWarehouse(account_id, portal_user, db_config,
                                   known_tables=load_known_tables(state.get("schema_dir", "")),
                                   allowed_tables=allowed, personal=personal_columns(model) if scrub else {})
+    if use_precomputed:
+        warehouse = _with_copies(warehouse, account_id, db_id, model)
     # The admin's "value indexing" switch, as today's pipeline reads it: off, no member
     # name is read from the warehouse or put before the AI.
     indexing = value_index_enabled(state)
@@ -3598,6 +3604,41 @@ def _portal_services(account_id: str, question: str, portal_user: dict[str, Any]
         verified_seen=lambda verified_id, answered: store.verified_seen(account_id, verified_id, answered),
         **_instructions_for(workspace_instructions(account_id, state), scrub, index,
                             values_allowed=scrub is None and indexing)), None
+
+
+def _with_copies(warehouse: Any, account_id: str, db_id: int, model: SemanticModel) -> Any:
+    """The workspace's warehouse with the copies it keeps that may answer now; as it is when there are none."""
+    import store
+    from core2 import copies
+    from core2.precompute import Precomputed
+
+    if copies.live_only():
+        return warehouse              # a scheduled email or an alert: the data as it is now
+    try:
+        kept = copies.ready(account_id, db_id, model)
+    except Exception as exc:  # noqa: BLE001 - the database answers, as before there were copies
+        log.warning("core2: the copies of %s could not be read; the database answers: %s", account_id, exc)
+        return warehouse
+    if not kept:
+        return warehouse
+    return Precomputed(warehouse, kept, seen=lambda copy_id: store.copy_seen(account_id, copy_id))
+
+
+def _copies_taken(services: Services) -> list[Any]:
+    """The copies read on this thread since last asked, ending the answer there (core2/precompute.py
+    Precomputed.taken); [] without any."""
+    taken = getattr(services.warehouse, "taken", None)
+    return taken() if callable(taken) else []
+
+
+def _copies_said(payload: dict[str, Any], services: Services) -> None:
+    """An answer read from a copy says so, and when the copy was made."""
+    mixed = bool(getattr(services.warehouse, "mixed", False))
+    used = _copies_taken(services)
+    if used:
+        from core2.precompute import said
+
+        said(payload, used, services.model, mixed=mixed)
 
 
 def workspace_instructions(account_id: str, state: dict[str, Any] | None = None) -> str:
@@ -3786,17 +3827,20 @@ def _answers_may_reach_ai(account_id: str, question: str, component: str) -> boo
 
 def portal_answer(account_id: str, question: str, portal_user: dict[str, Any] | None, *, session_key: str,
                   question_id: str = "", progress: Callable[[dict[str, Any]], None] | None = None,
-                  use_verified: bool = True) -> dict[str, Any]:
+                  use_verified: bool = True, use_precomputed: bool = True) -> dict[str, Any]:
     """The new core's answer in the web portal (compare mode, or core2 mode). ``progress`` is shown a described
     dashboard's card as its tiles land. ``use_verified`` False: the question is read afresh even where an admin
-    verified its answer (the answers check measures the reading, never an admin's replay)."""
+    verified its answer (the answers check measures the reading, never an admin's replay); ``use_precomputed``
+    False: every query goes to the database, never to a copy kept on this server (the answers check reads the
+    data as it is now)."""
     from core.portal_roles import can, refusal
     from core2 import dashboards
 
     if dashboards.asked_for(question) is not None and not can(portal_user, "create_dashboard"):
         # A dashboard made from a request is a creator's (core/portal_roles.py): refused before any AI.
         return _frame(question, refusal("create_dashboard", str((portal_user or {}).get("lang") or "en")))
-    services, refused = _portal_services(account_id, question, portal_user, question_id)
+    services, refused = _portal_services(account_id, question, portal_user, question_id,
+                                         use_precomputed=use_precomputed)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
     if not use_verified:
@@ -3931,20 +3975,23 @@ def forget_own_metric(token: str, account_id: str, user_id: str) -> bool:
 
 
 def portal_replay(account_id: str, plan_data: dict[str, Any], portal_user: dict[str, Any] | None, *,
-                  question: str = "") -> dict[str, Any]:
+                  question: str = "", use_precomputed: bool = True) -> dict[str, Any]:
     """A pinned answer drawn again: its stored plan run on today's data, as the viewer is allowed to see it.
 
     No AI is asked: the plan is the one the answer was given from, so a dashboard tile keeps the
     answer's own shape (a comparison stays a dumbbell, a total a number). A window written
-    relative to today ("last month") moves on with it.
+    relative to today ("last month") moves on with it. ``use_precomputed`` False: every query goes to the
+    database, never to a copy kept on this server (as portal_answer).
     """
-    services, refused = _portal_services(account_id, question, portal_user)
+    services, refused = _portal_services(account_id, question, portal_user, use_precomputed=use_precomputed)
     if services is None:
         return refused or _frame(question, "The new core cannot answer here yet.")
     plan = parse_plan(plan_data)
     ctx = Context(today=services.today, allowed_tables=services.allowed_tables, max_rows=MAX_ROWS,
                   personal_shown=services.scrub is not None, link_repeats=_link_check(services))
+    _copies_taken(services)
     payload = _compute(question, plan, services, ctx, question_id="", started=time.perf_counter())
+    _copies_said(payload, services)
     if getattr(services.warehouse, "released", False):
         payload["released"] = True       # as portal_answer: people's data went out as stored, to a cleared reader
     return payload

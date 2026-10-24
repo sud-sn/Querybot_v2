@@ -872,3 +872,115 @@ def verified_candidates(account_id: str, *, days: int = 30, least: int = 2, most
         entry["times"] += 1
     offered = [e for e in seen.values() if e["times"] >= least]
     return sorted(offered, key=lambda e: -e["times"])[:most]
+
+
+# ── Precomputed copies (core2/precompute.py) ────────────────────────────────
+
+def _copy_row(row: Any) -> dict[str, Any]:
+    item = dict(row)
+    try:
+        item["fields"] = json.loads(item.pop("fields_json") or "[]")
+    except ValueError:
+        item["fields"] = []
+    return item
+
+
+def add_copy(account_id: str, db_config_id: int, *, metric: str, fields: list[str], date_role: str = "",
+             grain: str = "day", every_hours: int = 6, by: str = "") -> int:
+    """Keep a copy of ``metric`` by ``fields`` and by ``grain``, made again every ``every_hours``; its id."""
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO core2_copies (account_id, db_config_id, metric, fields_json, date_role, grain, every_hours,
+                                         added_by, added_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (account_id, int(db_config_id or 0), metric, json.dumps(list(fields)), date_role or "", grain,
+             int(every_hours), str(by or "")[:200], _now()))
+        return int(cur.lastrowid)
+
+
+def list_copies(account_id: str, db_config_id: int | None = None) -> list[dict[str, Any]]:
+    """A workspace's copies (of its database, when given), the newest first."""
+    with get_db() as conn:
+        if db_config_id is None:
+            rows = conn.execute("SELECT * FROM core2_copies WHERE account_id=? ORDER BY id DESC",
+                                (account_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM core2_copies WHERE account_id=? AND db_config_id=? ORDER BY id DESC",
+                                (account_id, int(db_config_id or 0))).fetchall()
+    return [_copy_row(r) for r in rows]
+
+
+def all_copies() -> list[dict[str, Any]]:
+    """Every workspace's copies (for the scheduler)."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM core2_copies ORDER BY id").fetchall()
+    return [_copy_row(r) for r in rows]
+
+
+def get_copy(account_id: str, copy_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM core2_copies WHERE account_id=? AND id=?",
+                           (account_id, int(copy_id))).fetchone()
+    return _copy_row(row) if row else None
+
+
+def remove_copy(account_id: str, copy_id: int) -> dict[str, Any] | None:
+    """The copy taken out (its row, so its file can be deleted), or None when there was none."""
+    found = get_copy(account_id, copy_id)
+    if found is None:
+        return None
+    with get_db() as conn:
+        conn.execute("DELETE FROM core2_copies WHERE account_id=? AND id=?", (account_id, int(copy_id)))
+    return found
+
+
+def set_copy_schedule(account_id: str, copy_id: int, every_hours: int) -> bool:
+    with get_db() as conn:
+        cur = conn.execute("UPDATE core2_copies SET every_hours=? WHERE account_id=? AND id=?",
+                           (int(every_hours), account_id, int(copy_id)))
+    return cur.rowcount > 0
+
+
+def copy_making(account_id: str, copy_id: int, *, stale_hours: float = 2.0) -> bool:
+    """Mark the copy as being made by this process; False when a making of it started here is under way (one
+    started more than ``stale_hours`` ago, or by a process since stopped, is taken over)."""
+    stale = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=stale_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        cur = conn.execute(
+            """UPDATE core2_copies SET status='making', started_at=?, runner=?
+               WHERE account_id=? AND id=? AND (status!='making' OR runner!=? OR started_at IS NULL
+                                                OR started_at<?)""",
+            (_now(), core2_runner(), account_id, int(copy_id), core2_runner(), stale))
+    return cur.rowcount > 0
+
+
+def copy_made(account_id: str, copy_id: int, *, rows: int, took_ms: int, size_bytes: int, file: str,
+              fingerprint: str, model_version: int) -> str:
+    """The copy is ready; the file of its last making (to delete), or ""."""
+    before = get_copy(account_id, copy_id) or {}
+    now = _now()
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE core2_copies SET status='ready', made_at=?, tried_at=?, rows_kept=?, took_ms=?, size_bytes=?,
+                   file=?, fingerprint=?, model_version=?, error='', runner=''
+               WHERE account_id=? AND id=?""",
+            (now, now, int(rows), int(took_ms), int(size_bytes), file, fingerprint, int(model_version),
+             account_id, int(copy_id)))
+    old = str(before.get("file") or "")
+    return old if old and old != file else ""
+
+
+def copy_failed(account_id: str, copy_id: int, error: str) -> None:
+    """The copy could not be made: why, for the admin. A copy made before stays as it was (used while fresh)."""
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE core2_copies SET status=CASE WHEN file!='' THEN 'ready' ELSE 'failed' END, error=?, tried_at=?,
+                   runner=''
+               WHERE account_id=? AND id=?""", (str(error or "")[:500], _now(), account_id, int(copy_id)))
+
+
+def copy_seen(account_id: str, copy_id: int) -> None:
+    """A query answered from the copy (counted on the admin page)."""
+    with get_db() as conn:
+        conn.execute("UPDATE core2_copies SET served=served+1, last_served_at=? WHERE account_id=? AND id=?",
+                     (_now(), account_id, int(copy_id)))

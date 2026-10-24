@@ -27,6 +27,8 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import re
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -954,8 +956,29 @@ def check_references(sql: str, dialect: str) -> None:
 
 
 def compile_query(logical: Logical, model: SemanticModel, dialect: str) -> Compiled:
-    """SQL for ``dialect`` (snowflake | tsql | oracle | postgres | duckdb), read back by the dialect before it is returned."""
-    return _Compiler(logical, model, dialect).compile()
+    """SQL for ``dialect`` (snowflake | tsql | oracle | postgres | duckdb), read back by the dialect before it is returned.
+
+    The logical query each SQL was written from is remembered (the last few hundred), so a query sent to the
+    warehouse can be answered from a copy kept on this server when the copy holds exactly its rows
+    (core2/precompute.py): the same SQL is the same question, whichever answer asked it."""
+    compiled = _Compiler(logical, model, dialect).compile()
+    with _WRITTEN_LOCK:
+        _WRITTEN[compiled.sql] = (logical, model, compiled)
+        _WRITTEN.move_to_end(compiled.sql)
+        while len(_WRITTEN) > _WRITTEN_KEPT:
+            _WRITTEN.popitem(last=False)
+    return compiled
+
+
+_WRITTEN: OrderedDict[str, tuple[Logical, SemanticModel, Compiled]] = OrderedDict()
+_WRITTEN_LOCK = threading.Lock()
+_WRITTEN_KEPT = 256
+
+
+def compiled_from(sql: str) -> tuple[Logical, SemanticModel, Compiled] | None:
+    """The logical query (with its model) ``sql`` was written from by compile_query, while it is remembered."""
+    with _WRITTEN_LOCK:
+        return _WRITTEN.get(sql)
 
 
 def repeats_sql(model: SemanticModel, join: Join, dialect: str) -> str:

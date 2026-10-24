@@ -1987,6 +1987,10 @@ def _refresh_core2_tile(chart: dict, result: dict, user: dict, plan: dict, *,
         result["grouping"] = {"field": top, "values": None, "label": dashboard_view.drill_word(top)}
     rows = data.get("rows") or []
     result["row_count"] = int((payload.get("trust") or {}).get("row_count") or len(rows))
+    # Read from a copy kept on this server (core2/precompute.py): the tile says when that copy was made.
+    copied = (payload.get("trust") or {}).get("copy") or {}
+    if copied.get("made_at"):
+        result["copy_made"] = str(copied["made_at"])
     # The analyst's line under the tile (core2/answer/facts.py): what is typical, the one-off, the leader -- in the
     # viewer's language; the dashboard's summary on top is made of the strongest of them.
     reading = payload.get("reading") or {}

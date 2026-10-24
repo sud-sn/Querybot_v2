@@ -13,6 +13,7 @@ __pycache__/
 # changes" and (worse) a careless stash+pull silently restores an old
 # snapshot over the live database. See data/querybot.db removal commit.
 data/querybot.db
+data/precomputed/
 
 # Persisted runtime connection configuration may contain database credentials.
 data/pg_url

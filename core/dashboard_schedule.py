@@ -285,7 +285,10 @@ def deliver(schedule: dict, run_id: int, due_at: str, *, kind: str = "scheduled"
         log.info("Schedule %s paused: %s", schedule["id"], problem)
         return {"status": schedule_store.FAILED, "detail": problem, "queued": 0, "skipped": 0}
     people = [owner] if kind == "test" else schedule_store.schedule_people(schedule)
-    done = asyncio.run(_deliver_all(schedule, owner, people, due_at, test=kind == "test"))
+    from core2.copies import live
+
+    with live():        # the dashboard as its data is when it is sent, never a copy made hours before
+        done = asyncio.run(_deliver_all(schedule, owner, people, due_at, test=kind == "test"))
     queued, skipped = done["queued"], done["skipped"]
     if not people:
         status = schedule_store.NOTHING

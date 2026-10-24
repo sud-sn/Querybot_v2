@@ -620,7 +620,8 @@ def _ask(account_id: str, question: dict[str, Any], check_id: int) -> dict[str, 
     key = f"answers-check:{account_id}:{check_id}:{question['id']}"
     try:
         # Read afresh, never from an answer an admin verified: the check measures how Solviz reads the question.
-        return portal_answer(account_id, asked_text(question), None, session_key=key, use_verified=False)
+        return portal_answer(account_id, asked_text(question), None, session_key=key, use_verified=False,
+                             use_precomputed=False)
     finally:
         forget_session(key)          # a run's questions never push readers' conversations out of memory
 
@@ -628,7 +629,7 @@ def _ask(account_id: str, question: dict[str, Any], check_id: int) -> dict[str, 
 def _replay(account_id: str, question: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     from core2.service import portal_replay
 
-    return portal_replay(account_id, plan, None, question=asked_text(question))
+    return portal_replay(account_id, plan, None, question=asked_text(question), use_precomputed=False)
 
 
 def check_one(account_id: str, question: dict[str, Any], *, check_id: int, plan: dict[str, Any] | None = None

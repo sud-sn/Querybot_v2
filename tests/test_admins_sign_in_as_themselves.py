@@ -295,7 +295,8 @@ STEWARD_AREAS = {"", "learned", "answers-check", "knowledge", "relationships", "
                  "semantic-feedback", "model-health", "mapping", "domains", "graph", "evals", "traces", "queries",
                  "readiness", "health-score", "schema", "schema-tree", "api", "reports", "value-index",
                  "synonym-proposals"}
-WORKSPACE_AREAS = {"users", "groups", "row-access", "pending-users", "admins"}
+# Copies of a workspace's metrics kept on this server (core2/precompute.py): its figures stored here.
+WORKSPACE_AREAS = {"users", "groups", "row-access", "pending-users", "admins", "copies"}
 SUPER_ONLY = {"setup", "compliance", "egress", "egress-log", "billing", "kb-tables", "toggle-chat-ui", "reset",
               "update", "advanced", "settings", "diagnostics"}
 OPEN_TO_ALL = {"/", "/clients", "/me", "/me/setup", "/me/password", "/me/name", "/ping", "/api/status",

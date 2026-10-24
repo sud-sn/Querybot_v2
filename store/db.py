@@ -1808,6 +1808,35 @@ def _ensure_core2_tables(conn: sqlite3.Connection) -> None:
             UNIQUE (account_id, question_key)
         );
 
+        -- A copy of a metric kept on this server (core2/precompute.py): by some of its fields and by day or month,
+        -- made on the workspace's connection on its schedule. Questions it answers exactly are read from its file.
+        CREATE TABLE IF NOT EXISTS core2_copies (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id     TEXT NOT NULL,
+            db_config_id   INTEGER NOT NULL DEFAULT 0,
+            metric         TEXT NOT NULL,
+            fields_json    TEXT NOT NULL DEFAULT '[]',
+            date_role      TEXT NOT NULL DEFAULT '',
+            grain          TEXT NOT NULL DEFAULT 'day',
+            every_hours    INTEGER NOT NULL DEFAULT 6,
+            added_by       TEXT NOT NULL DEFAULT '',
+            added_at       TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'new',
+            started_at     TEXT,
+            runner         TEXT NOT NULL DEFAULT '',
+            made_at        TEXT,
+            rows_kept      INTEGER NOT NULL DEFAULT 0,
+            took_ms        INTEGER NOT NULL DEFAULT 0,
+            size_bytes     INTEGER NOT NULL DEFAULT 0,
+            file           TEXT NOT NULL DEFAULT '',
+            fingerprint    TEXT NOT NULL DEFAULT '',
+            model_version  INTEGER NOT NULL DEFAULT 0,
+            error          TEXT NOT NULL DEFAULT '',
+            tried_at       TEXT,
+            served         INTEGER NOT NULL DEFAULT 0,
+            last_served_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS core2_learn_table (
             account_id     TEXT NOT NULL,
             db_config_id   INTEGER NOT NULL DEFAULT 0,

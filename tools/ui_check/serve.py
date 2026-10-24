@@ -125,6 +125,41 @@ if fresh:
 
     model = load_model(RETAIL, store.get_client(RETAIL).get("db_config_id"))
     net = next(m for m in model.measures.values() if m.business_name == "Net amount")
+    # A copy of a metric kept on this server (core2/precompute.py), made now: the page lists it as answering.
+    from core2 import copies as metric_copies
+
+    os.environ.setdefault("QUERYBOT_COPIES_DIR", str(RUN / "copies"))
+    kept = store.add_copy(RETAIL, int(store.get_client(RETAIL).get("db_config_id") or 0), metric=net.key,
+                          fields=[s for s in ("region.name", "store.name") if s in model.attributes], grain="month",
+                          every_hours=6, by="Adi Admin")
+    # Made as the server makes it, in the workspace's own dialect (T-SQL), so its answers find it: read here
+    # through the same DuckDB the azure_sql path reads (Learn above wrote DuckDB's SQL on its own connection).
+
+    class _TsqlConnection:
+        dialect, db_type = "tsql", "azure_sql"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def query(self, sql, *, max_rows=None):
+            from core2.warehouse.runner import QueryResult
+
+            if "INFORMATION_SCHEMA.COLUMNS" in sql.upper():
+                return QueryResult(["COLLATION_NAME"], [("SQL_Latin1_General_CP1_CI_AS",)])   # SQL Server's default
+            rows = retail_wh.query(sql, max_rows or 1_000_000)
+            return QueryResult(list(rows[0]) if rows else [], [tuple(r.values()) for r in rows])
+
+    learned_on = qbw.QueryBotWarehouse
+    qbw.QueryBotWarehouse = lambda db_type, credentials, **_: _TsqlConnection()
+    try:
+        made = metric_copies.make(RETAIL, kept)
+    finally:
+        qbw.QueryBotWarehouse = learned_on
+    if not made.get("ok"):
+        print(f"ui check: the copy of net amount could not be made: {made.get('error')}", file=sys.stderr)
     ship = next(r for r in model.date_roles.values() if r.table == net.table and r.name == "Ship date")
     riley = store.get_user_by_email(RETAIL, READER[0])
     adi = store.get_user_by_email(RETAIL, "adi@example.com")

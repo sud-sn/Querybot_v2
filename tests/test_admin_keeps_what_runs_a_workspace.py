@@ -71,7 +71,7 @@ def test_six_areas():
 def test_data_keeps_the_semantic_layer_an_admin_corrects():
     assert _labels(_nav("setup"), "secondary") == [
         "Setup", "What Solviz learned", "Answers check", "Knowledge base", "Relationships", "Dates", "Metrics",
-        "What readers can ask", "Requests"]
+        "Precomputed copies", "What readers can ask", "Requests"]
 
 
 @pytest.mark.parametrize("segment", DAY_TO_DAY)

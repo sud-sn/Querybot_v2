@@ -348,6 +348,7 @@
       {% if chart.from_cache and chart.refresh_failed_at %}<div class="chart-warning">{{ t('ui.dash.refresh_failed', since=chart.refresh_failed_at[:16], at=(chart.cache_refreshed_at or '')[:16]) }}</div>{% endif %}
       {% for warning in chart.filter_warnings or [] %}<div class="chart-warning">{{ warning }}</div>{% endfor %}
       {% if chart.note_line and not chart.error and not chart.kpi %}<p class="chart-card-reading" title="{{ chart.note_line }}">{{ chart.note_line }}</p>{% endif %}
+      {% if chart.copy_made and not chart.error %}<p class="chart-card-source">{{ t('ui.dash.from_copy', when=chart.copy_made) }}</p>{% endif %}
       {% if chart.chart_json and _arranges and (not dashboard_artifact or dashboard_artifact.can_edit) %}
       <div class="dash-ctrl-row" id="chart-ctrl-{{ chart.id }}" data-chart-id="{{ chart.id }}">
         <!-- type toggles and palette swatches injected by JS -->

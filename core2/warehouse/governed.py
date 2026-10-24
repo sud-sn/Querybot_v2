@@ -51,7 +51,9 @@ class GovernedWarehouse:
     def dialect(self) -> str:
         return D.for_db_type(self.db_type)
 
-    def query(self, sql: str, *, max_rows: int | None = None) -> QueryResult:
+    def query(self, sql: str, *, max_rows: int | None = None, local: Any = None) -> QueryResult:
+        """``local``: the same rows from a precomputed copy, read in place of the database when no row rule
+        applies; every other check is made on ``sql`` as always (core/compliance/governed_query.py)."""
         from core.compliance.governed_query import execute_governed_query
         from core.compliance.policy_engine import resolve_context
 
@@ -62,14 +64,15 @@ class GovernedWarehouse:
         governed = execute_governed_query(
             self.db_config["credentials"], self.db_type, sql, context=context, known_tables=self.known_tables,
             allowed_tables=self.allowed_tables, semantic_context={"production_sql": True},
-            max_rows=max_rows or 5000)
+            max_rows=max_rows or 5000, fetch=local)
         rows = list(governed.rows or [])
         if self.personal and rows:
             rows = self._protect(rows, governed, context)
         columns = list(rows[0].keys()) if rows else _columns_of(sql, self.dialect)
         return QueryResult(columns=columns, rows=[tuple(r.get(c) for c in columns) for r in rows],
                            truncated=bool(getattr(governed, "truncated", False)),
-                           elapsed_ms=(time.perf_counter() - start) * 1000)
+                           elapsed_ms=(time.perf_counter() - start) * 1000,
+                           source="copy" if getattr(governed, "source", "") == "copy" else "")
 
 
     def _protect(self, rows: list[dict], governed: Any, context: Any) -> list[dict]:
