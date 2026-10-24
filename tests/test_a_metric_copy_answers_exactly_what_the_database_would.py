@@ -514,3 +514,59 @@ def test_a_sql_server_field_that_counts_capitals_is_never_copied():
     asked.clear()
     PC.compared_ignoring_case(model, elsewhere, collation("anything"))
     assert asked == []
+
+
+def test_a_copy_is_written_exactly_and_quickly(tmp_path):
+    """Measured on SQL Server: a copy's 32,000 rows took 41 s to write one by one. Written in bulk, every value as
+    the database handed it back: the largest decimals to the last digit, dates, empty names and none at all."""
+    import time
+
+    defn = PC.Definition(metric="m", table="t", dims=[], date_role="r", stored="date", grain="day",
+                         conditions=frozenset(), joins=frozenset(), calendar=None, leaves=[], sql="", checks=[],
+                         columns=[("d0", "text"), ("p", "date"), ("c2", "decimal"), ("c3", "integer"),
+                                  ("c4", "float"), ("c5", "timestamp")])
+    odd = [("O'Brien, \"Ltd\"", dt.datetime(2025, 3, 1, 0, 0), decimal.Decimal("12345678901234567890.1234567891"),
+            2**40, 0.1, dt.datetime(2025, 3, 1, 13, 45, 7, 120000)),
+           ("", dt.date(2025, 3, 2), decimal.Decimal("1E+3"), 0, -2.5e-7, None),
+           (None, None, None, None, None, None)]
+    rows = odd + [(f"store {i % 97}", dt.date(2024, 1, 1) + dt.timedelta(days=i % 700),
+                   decimal.Decimal(i) / 100, i, i / 3, None) for i in range(60_000)]
+    started = time.perf_counter()
+    PC.write(tmp_path / "copy.duckdb", defn, rows)
+    took = time.perf_counter() - started
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "copy.duckdb"), read_only=True)
+    try:
+        back = con.execute(f"SELECT * FROM {PC.TABLE}").fetchall()
+    finally:
+        con.close()
+    assert back[0] == ("O'Brien, \"Ltd\"", dt.date(2025, 3, 1), decimal.Decimal("12345678901234567890.1234567891"),
+                       2**40, 0.1, dt.datetime(2025, 3, 1, 13, 45, 7, 120000))
+    assert back[1] == ("", dt.date(2025, 3, 2), decimal.Decimal("1000"), 0, -2.5e-7, None)
+    assert back[2] == (None,) * 6 and len(back) == len(rows)
+    assert back[-1][2] == decimal.Decimal("599.99") and back[-1][4] == 59_999 / 3
+    assert took < 20, f"{len(rows):,} rows took {took:.1f} s to write"
+
+
+def test_a_warehouse_that_cannot_take_a_copys_rows_is_asked_as_ever(tmp_path):
+    """Copies are read through the governed warehouse; wrapped round one that cannot take their rows, the database
+    answers every question (never 'the query could not run')."""
+    _, built, model, _ = _domain("retail")
+    kept = _kept(model, DuckDBWarehouse(built.con), tmp_path, "net_amount", ["region.name"], "month")
+
+    class Plain:
+        dialect, db_type = "duckdb", "duckdb"
+
+        def __init__(self):
+            self.inner = DuckDBWarehouse(built.con)
+
+        def query(self, sql, *, max_rows=None):
+            return self.inner.query(sql, max_rows=max_rows)
+
+    plan = json.dumps({"intent": "breakdown", "measures": ["net_amount"], "group_by": ["region.name"], "time": YEAR})
+    plain = answer_question("Net sales by region in 2025", _services(model, Plain(), Recorded(plan)), Session())
+    served = answer_question("Net sales by region in 2025",
+                             _services(model, PC.Precomputed(Plain(), [kept]), Recorded(plan)), Session())
+    assert served["type"] == "assistant_response" and served["data"]["rows"] == plain["data"]["rows"]
+    assert "copy" not in (served.get("trust") or {})

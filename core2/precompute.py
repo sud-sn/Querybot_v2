@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import decimal
 import hashlib
 import json
 import logging
@@ -662,8 +663,12 @@ def read(path: Path, sql: str, max_rows: int, dialect: str) -> Any:
 
 
 def write(path: Path, defn: Definition, rows: list[tuple]) -> int:
-    """The copy's file, written beside its old one and then put in its place; its size in bytes."""
+    """The copy's file, written beside its old one and then put in its place; its size in bytes.
+
+    Written in bulk (a row at a time, 32,000 rows took 41 s): each batch as text, exactly as the database handed it
+    back, and read into the copy's own types by DuckDB, so a decimal keeps every digit."""
     import duckdb
+    import pandas as pd
 
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".making")
@@ -672,20 +677,36 @@ def write(path: Path, defn: Definition, rows: list[tuple]) -> int:
     try:
         con.execute(f"CREATE TABLE {TABLE} (" + ", ".join(
             f"{name} {_DUCK_TYPES.get(dtype, 'VARCHAR')}" for name, dtype in defn.columns) + ")")
-        placeholders = ", ".join("?" for _ in defn.columns)
-        batch: list[tuple] = []
-        for row in rows:
-            batch.append(tuple(_plain(v, dtype) for v, (_, dtype) in zip(row, defn.columns)))
-            if len(batch) >= 20_000:
-                con.executemany(f"INSERT INTO {TABLE} VALUES ({placeholders})", batch)
-                batch = []
-        if batch:
-            con.executemany(f"INSERT INTO {TABLE} VALUES ({placeholders})", batch)
+        names = [name for name, _ in defn.columns]
+        cast = ", ".join(f"CAST({name} AS {_DUCK_TYPES.get(dtype, 'VARCHAR')})" for name, dtype in defn.columns)
+        for start in range(0, len(rows), 100_000):
+            batch = pd.DataFrame([[_text(_plain(v, dtype)) for v, (_, dtype) in zip(row, defn.columns)]
+                                  for row in rows[start:start + 100_000]], columns=names, dtype=object)
+            con.register("incoming", batch)
+            con.execute(f"INSERT INTO {TABLE} SELECT {cast} FROM incoming")
+            con.unregister("incoming")
         con.execute("CHECKPOINT")
     finally:
         con.close()
     os.replace(temp, path)
     return path.stat().st_size
+
+
+def _text(value: Any) -> str | None:
+    """A value as text DuckDB reads back exactly: a decimal in plain digits (never 1E+3), a float to the last bit."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, decimal.Decimal):
+        return format(value, "f")
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, dt.datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    return str(value)
 
 
 def compared_ignoring_case(model: SemanticModel, defn: Definition, ask: Callable[[str], list[tuple]]) -> None:
@@ -796,7 +817,9 @@ class Precomputed:
 
     def __init__(self, inner: Any, copies: list[Ready], seen: Callable[[int], None] | None = None):
         self.inner = inner
-        self.copies = copies
+        self.copies = copies if _takes_rows(inner) else []
+        if copies and not self.copies:
+            log.warning("core2: %s cannot take a copy's rows; the database answers", type(inner).__name__)
         self.seen = seen
         self._here = threading.local()
 
@@ -887,6 +910,17 @@ class Precomputed:
                 except Exception as exc:  # noqa: BLE001 - a count on the admin page, never the answer
                     log.warning("core2: copy %s use not counted: %s", kept.id, exc)
         return result
+
+
+def _takes_rows(warehouse: Any) -> bool:
+    """Can ``warehouse.query`` be handed a copy's rows (``local``), as the governed warehouse can?"""
+    import inspect
+
+    try:
+        params = inspect.signature(warehouse.query).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return "local" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 class _Unreadable(RuntimeError):
