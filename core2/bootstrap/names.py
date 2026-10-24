@@ -253,10 +253,45 @@ def core_column(name: str) -> list[str]:
     return parts
 
 
+# Words written plural before the noun they describe: a "sales order", "goods receipt", "accounts payable".
+_PLURAL_BEFORE = {"sales", "goods", "accounts", "savings", "earnings", "customs"}
+# A document's header is the document it heads: its rows are the orders, never "order headers".
+_HEADER_WORDS = {"header", "headers", "hdr", "hdrs"}
+
+
+# A flag an application sets on rows it deletes or voids but keeps (IsDeleted, is_void, DEL_FLAG, DeletionInd). The
+# deletion is all its name says beside a flag's own words: a device removed, a count of voids or an item removed from a
+# cart are the business's own facts, and a void status is a status.
+_DELETED = {"deleted", "delete", "del", "deletion", "void", "voided", "removed", "purged"}
+_FLAG_WORDS = {"is", "flag", "flg", "fl", "ind", "indicator", "yn", "sw", "bit", "b", "f"}
+
+
+def deletion_flag(column: str) -> bool:
+    """IsDeleted, is_void, DEL_FLAG, DeletionInd: a column saying a row was deleted, and nothing else."""
+    words = [w for w in tokens(column) if w not in _FLAG_WORDS]
+    return len(words) == 1 and words[0] in _DELETED and not opaque(column)
+
+
 def core_table(name: str) -> list[str]:
     """Table tokens without kind affixes, singular: ``DIM_CUSTOMERS`` -> customer."""
     parts = [p for p in tokens(name) if p not in TABLE_AFFIXES and not p.isdigit()]
     return [singular(p) for p in parts] or [singular(p) for p in tokens(name)]
+
+
+def table_noun(name: str) -> list[str]:
+    """What a table's rows are, in words to show: ``SalesOrders`` -> sales order (core_table's words, but a plural
+    written before the noun it describes is kept)."""
+    parts = [p for p in tokens(name) if p not in TABLE_AFFIXES and not p.isdigit()] or tokens(name)
+    return [p if p in _PLURAL_BEFORE and i < len(parts) - 1 else singular(p) for i, p in enumerate(parts)]
+
+
+def counted_noun(noun: str) -> str:
+    """What a table's rows are, to count them: "sales order header" -> "sales order", "sales header" -> "sale"."""
+    words = noun.split()
+    if len(words) < 2 or words[-1].lower() not in _HEADER_WORDS:
+        return noun
+    last = singular(words[-2].lower())
+    return " ".join(words[:-2] + [last.capitalize() if words[-2][:1].isupper() else last])
 
 
 def ends_with(longer: list[str], tail: list[str]) -> bool:

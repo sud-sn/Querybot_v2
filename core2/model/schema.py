@@ -278,6 +278,9 @@ class DateRole(Belief):
     # The first and last quarter held, as year * 10 + quarter (20253): first and last are their first days, worked
     # out again whenever the workspace's fiscal year changes.
     quarters: tuple[int, int] | None = None
+    # The months each of those numbers holds: 3 for a quarter, 1 for a month kept as a year and a period number
+    # (FiscalYear, FiscalPeriod), whose first and last are then year * 100 + period (202703).
+    period_months: Literal[1, 3] = 3
     name: str = ""                  # "Invoice date"
     slug: str = ""
     calendar: str | None = None     # calendar table key when the column is a key into it

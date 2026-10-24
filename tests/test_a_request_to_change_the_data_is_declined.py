@@ -164,3 +164,44 @@ def test_with_an_answer_on_screen_add_a_field_goes_to_the_planner():
     assert payload.get("kind") != "changes_data" and asked, "planned as a change to the answer on screen"
     payload = answer_question("add the units sold and how many orders each one was on", services, Session())
     assert payload["kind"] == "changes_data", "with nothing on screen it is still read as a change to the data"
+
+
+@pytest.mark.parametrize("request_, shown", [
+    # Typed as people type them: a record's short name and code with no "the" ("update cust C10001 credit limit to
+    # 50k" was answered as a question about what Solviz can do), and a new value in thousands.
+    ("update cust C10001 credit limit to 50k", "Show the cust C10001 credit limit"),
+    ("set acct 1042 status to closed", "Show the acct 1042 status"),
+    ("change item 123 price to 5", "Show the item 123 price"),
+    ("cancel order SO-1001", "Show the order SO-1001"),
+    ("mark inv 1234 as paid", "Show the inv 1234"),
+    ("pls update vendor V-22 terms to net 30", "Show the vendor V-22 terms"),
+    ("raise the credit limit for acct 1042 to 60k", "Show the credit limit for acct 1042"),
+    # Found in review: the currency after the new value was shown as part of what to show.
+    ("update item 123 price to 12.50 USD", "Show the item 123 price"),
+    ("update order #42 status to shipped", "Show the order #42 status"),
+])
+def test_a_record_named_by_its_short_name_and_code_is_declined(request_, shown):
+    assert changes_data(request_) == shown
+
+
+@pytest.mark.parametrize("question", ["change in cust C10001 sales by month", "update on order SO-1001",
+                                      "close rate for rep 12", "cancelled orders for cust C10001",
+                                      "set of customers in region 3",
+                                      # A year after the record's word is a period, never its number.
+                                      "cut orders 2024 by region", "create invoice 2024 summary",
+                                      "increase orders 2025 vs 2024", "add orders 2025 to the comparison",
+                                      # Found in review: a quarter, a fiscal year, a short year or a number of days
+                                      # read as the record's code.
+                                      "cut orders q3 by region", "cut orders FY24 by region", "cut inv q1 by cust",
+                                      "increase orders q2 vs q1", "cut orders 24 by region",
+                                      "add orders q3 to the comparison", "create invoice q1 summary",
+                                      "cut invoices 30 days past due by customer", "cut orders h2 by rep",
+                                      # And in a second review: "cut" slices, and more ways to write a period or an
+                                      # amount.
+                                      "cut sku 1234 sales by week", "cut orders wk12 by store",
+                                      "cut orders m12 by region", "cut orders 2024q3 by region",
+                                      "cut orders FY24Q1 by region", "cut orders 202501 by region",
+                                      "cut invoices 120+ days past due by region",
+                                      "cut orders 100 units or more by region"])
+def test_a_question_about_a_record_by_its_code_is_a_question(question):
+    assert changes_data(question) is None

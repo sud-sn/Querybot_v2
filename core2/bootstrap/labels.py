@@ -210,7 +210,7 @@ def _apply(model: SemanticModel, table_key: str, reply: dict[str, Any]) -> None:
         elif agg == "count" and table.provenance == "ai":
             # A table of amounts, or of periods, is counted in rows, as the data's own name had it: "Number of
             # revenue rows", never "Number of revenues" (a real model's name, taken as it came).
-            noun = table.business_name.lower()
+            noun = names.counted_noun(table.business_name.lower())
             rows = measure.business_name.lower().endswith(" rows") or noun.split()[-1:] and \
                 noun.split()[-1] in AMOUNT_NOUNS
             measure.business_name = f"Number of {noun} rows" if rows else f"Number of {names.plural(noun)}"
@@ -227,7 +227,8 @@ def _apply(model: SemanticModel, table_key: str, reply: dict[str, Any]) -> None:
                 thing = named          # "Rx Number" counts Rx numbers, not "rxes"
             measure.business_name = f"Number of {names.plural(thing.lower())}"
     for role in model.date_roles.values():
-        column = model.columns[role.column]
+        # A year and a quarter (or period) number are named by the quarter's: "Fiscal period", never "Fiscal year".
+        column = model.columns[role.quarter_column or role.column]
         if role.table == table_key and role.provenance != "admin" and column.provenance == "ai" and not (
                 role.calendar_join and model.joins[role.calendar_join].role):
             role.name = column.business_name

@@ -26,7 +26,7 @@ import re
 from dataclasses import dataclass, field
 
 from core2.bootstrap import names
-from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, SemanticModel, value_names
+from core2.model.schema import AggExpr, Attribute, DateRole, Entity, Measure, OpExpr, SemanticModel, value_names
 from core2.plan.analyses import questions
 from core2.plan.catalog import definition
 from core2.plan.ir import ALL_TIMES
@@ -102,13 +102,15 @@ class _Reader:
         """Visible measures, the ones a reader most likely means first.
 
         Amounts before counts ("number of deliveries" is an admin's metric, and still a
-        count), rates and averages last; sales, values and balances before costs; an
+        count), rates and averages last; sales, values and balances before costs; one
+        Learn worked out of others (a gross profit) after the amounts it is made of; an
         admin's measure before a learned one of the same standing.
         """
         found = [m for m in self.model.measures.values()
                  if not m.hidden and m.slug and self.may(m.table) and (table is None or m.table == table)]
         return sorted(found, key=lambda m: (_counts(m), m.additivity == "non_additive",
                                             bool(_SIDE.search(m.business_name)), _lead_rank(m.business_name),
+                                            isinstance(m.expr, OpExpr) and m.kind not in ("metric", "import"),
                                             m.kind not in ("metric", "import"), m.format != "currency",
                                             m.business_name.casefold()))
 

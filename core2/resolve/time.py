@@ -36,19 +36,30 @@ def _month_add(day: dt.date, months: int) -> dt.date:
     return dt.date(index // 12, index % 12 + 1, 1)
 
 
-def quarter_start(year: int, quarter: int, fiscal_start: int = 1) -> dt.date:
+def quarter_start(year: int, quarter: int, fiscal_start: int = 1, months: int = 3, named_by: str = "end") -> dt.date:
     """The first day of a quarter kept as a year and a quarter number: a fiscal year starting in ``fiscal_start``
-    is named by the year it ends, so its first quarter starts in the year before (FY2026 Q1 from Nov 2025)."""
-    offset = (fiscal_start - 1) + 3 * (quarter - 1)
-    return dt.date(year - (1 if fiscal_start != 1 else 0) + offset // 12, offset % 12 + 1, 1)
+    named by the year it ends starts in the year before (FY2026 Q1 from Nov 2025); one named by the year it starts,
+    in that year. ``months`` 1: a month kept as a year and a period number (FY2027 period 3 is September 2026 from
+    July)."""
+    offset = (fiscal_start - 1) + months * (quarter - 1)
+    return dt.date(year - (1 if fiscal_start != 1 and named_by != "start" else 0) + offset // 12, offset % 12 + 1, 1)
 
 
-def quarter_span(quarters: tuple[int, int], fiscal: bool, fiscal_start: int | None) -> tuple[dt.date, dt.date]:
+def fiscal_named_by(model, fiscal_start: int | None) -> str:
+    """Whether the workspace's fiscal year is named by the year it starts in or the year it ends in: as its calendar
+    table says (a fiscal year column beside its dates), else by the year it ends, as most are."""
+    return next((c.fiscal_year_named_by for c in model.calendars.values()
+                 if c.fiscal_year_start_month == fiscal_start and c.fiscal_year_named_by), None) or "end"
+
+
+def quarter_span(quarters: tuple[int, int], fiscal: bool, fiscal_start: int | None,
+                 months: int = 3, named_by: str = "end") -> tuple[dt.date, dt.date]:
     """The first days of the first and last quarter held (year * 10 + quarter), by the fiscal year's quarters when
-    the numbers are the fiscal year's."""
+    the numbers are the fiscal year's; of the first and last month (year * 100 + period) with ``months`` 1."""
     start = (fiscal_start or 1) if fiscal else 1
-    return quarter_start(quarters[0] // 10, quarters[0] % 10, start), quarter_start(quarters[1] // 10,
-                                                                                    quarters[1] % 10, start)
+    base = 10 if months == 3 else 100
+    return (quarter_start(quarters[0] // base, quarters[0] % base, start, months, named_by),
+            quarter_start(quarters[1] // base, quarters[1] % base, start, months, named_by))
 
 
 def unit_start(day: dt.date, unit: str, *, fiscal_start: int | None = None) -> dt.date:

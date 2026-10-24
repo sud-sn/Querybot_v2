@@ -180,3 +180,27 @@ def test_an_admin_saves_both_in_the_editor_and_the_workspace_has_both(site):  # 
     model = site.model()
     assert not [n for n in model.notes if n.startswith("A decision")]
     assert {"In transit share", "Shipped sales"} <= {m.business_name for m in model.measures.values()}
+
+
+def test_a_division_written_with_nullif_reads_as_the_division_it_already_is(learned):
+    """Analysts guard a division by writing NULLIF(..., 0) under it; the editor refused that as a function a metric
+    does not use. A metric's division is already empty, not an error, when what it divides by is nought, so the
+    guard is read as the plain division. NULLIF anywhere else still says what it is."""
+    model, warehouse = learned
+    model = model.model_copy(deep=True)
+    guarded = authoring.read(model, "SUM([Order line · Net amount]) / NULLIF(COUNT([Order line]), 0)")
+    plain = authoring.read(model, "SUM([Order line · Net amount]) / COUNT([Order line])")
+    assert guarded.expr == plain.expr
+    margin = authoring.read(model, "(SUM([Order line · Net amount]) - SUM([Order line · Discount amount])) "
+                                   "/ NULLIF(SUM([Order line · Net amount]), 0) * 100")
+    model.measures["admin:per_line"] = Measure(key="admin:per_line", slug="per_line", business_name="Per line",
+                                               table=guarded.table, expr=guarded.expr, format="currency")
+    model.measures["admin:kept"] = Measure(key="admin:kept", slug="kept", business_name="Kept", table=margin.table,
+                                           expr=margin.expr, format="percent")
+    (row,) = _rows(model, warehouse, {"intent": "value", "measures": ["per_line", "kept"], "time": H1})
+    (per_line, kept), = warehouse.query(f"""select sum(net_amount) / count(*),
+        (sum(net_amount) - sum(discount_amount)) * 100.0 / sum(net_amount) from order_lines where {IN_H1}""").rows
+    assert float(row["per_line"]) == pytest.approx(float(per_line))
+    assert float(row["kept"]) == pytest.approx(float(kept))
+    with pytest.raises(authoring.AuthoringError, match="NULLIF"):
+        authoring.read(model, "NULLIF(SUM([Order line · Net amount]), 0)")

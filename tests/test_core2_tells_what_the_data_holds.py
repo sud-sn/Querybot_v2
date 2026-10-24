@@ -78,7 +78,8 @@ def test_the_whole_data_is_a_lead_a_section_per_subject_and_questions_that_answe
         ("Things to know", "")]
     assert said.sections[0]["body"] == "One row per order line (32,451 rows)."
     order_line = said.sections[0]["bullets"]
-    assert order_line[0].startswith("Figures: net amount, gross amount")          # sales first, costs after
+    # Sales first, the gross profit Learn works out of them next, costs after.
+    assert order_line[0].startswith("Figures: net amount, gross profit, gross amount")
     assert order_line[2] == "Dates: order date, delivered date and ship date, January 2023 to June 2026."
     assert order_line[3] == "Each row names its customer, product and store."
     # What Learn measured on the data, said before anyone counts by it.
@@ -222,7 +223,7 @@ def test_an_admins_count_does_not_lead_and_a_budget_set_ahead_asks_about_this_ye
     gross.business_name = "Net amount"                                          # two columns, one name
     said = describe(copy, [], today=TODAY)
     listed = said.sections[0]["bullets"][0]
-    assert listed.startswith("Figures: net amount, quantity") and said.examples[0].startswith("Net")
+    assert listed.startswith("Figures: net amount, gross profit, quantity") and said.examples[0].startswith("Net")
     assert listed.endswith("and number of sales lines.")
     _, finance = learn(domains.build("finance"), "descriptive")
     budget = describe(finance, [], today=TODAY)

@@ -244,7 +244,7 @@ def catalog_text(model: SemanticModel, *, values_allowed: bool = True, list_valu
         span = f"{first or '?'} to {last or '?'}" if (first or last) else "range unknown"
         grain = {"month": "monthly", "quarter": "quarterly", "timestamp": "date and time"}.get(r.granularity, "daily")
         if r.quarter_column and r.fiscal:
-            grain = "by fiscal quarter"
+            grain = "by fiscal quarter" if r.period_months == 3 else "by fiscal period (a month each)"
         lines.append(f"- {r.slug} | {r.name} | {r.kind}, {grain}, on {model.tables[r.table].business_name} | "
                      f"{span}{_synonyms(r.synonyms)}")
     lines.append("")

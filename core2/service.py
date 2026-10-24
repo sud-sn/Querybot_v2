@@ -294,6 +294,9 @@ def _beyond(question: str, why: str, tried: Plan | None, services: Services, ses
                     values=services.values_allowed)
     tables = [s["title"] for s in said.sections if s.get("label")]
     found = beyond.sort(_as_the_ai_sees(question, services, masked), why, tables, services.beyond, lang=lang)
+    if found.kind == beyond.GENERAL and beyond.names_a_period(question) and not beyond.asks_meaning(question):
+        # "aov ytd" asks for a number over a period, never what AOV means: what the data does not hold, said so.
+        found = beyond.Sorted(beyond.NOT_HERE, wanted=found.wanted)
     nearest = _nearest(services, tried) or beyond.nearest(question, found.wanted, said.examples)
     chips = [{"label": q, "question": q} for q in nearest]
     if found.kind == beyond.GENERAL and services.general_knowledge:
@@ -563,7 +566,15 @@ _CHANGE = re.compile(
     r"reject|mark|set|assign|merge|rename|reset|increase|raise|decrease|reduce|lower|cut|"
     r"augmente[rz]?|baisse[rz]?|réduis(?:ez)?|diminue[rz]?|retire[rz]?|modifie[rz]?|mets?\s+à\s+jour|mettez\s+à\s+jour|"
     r"ajoute[rz]?|crée[rz]?|annule[rz]?|clôture[rz]?|ferme[rz]?|archive[rz]?|valide[rz]?|renomme[rz]?)\b\s+"
-    r"(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)+)",
+    r"(?:(?:(?:all|every|the|these|those|this|that|our|my|tous|toutes|les|la|le|l'|ces|cette|ce)\b\s*)+"
+    # ... or a record by its short name and code, as people type it: "update cust C10001 credit limit to 50k". Never a
+    # period ("cut orders q3 by region", "cut orders FY24Q1", "cut orders 202501", "cut invoices 30 days past due"), a
+    # year ("orders 24") or an amount ("120+ days", "100 units"); and "cut" alone slices ("cut sku 1234 sales by week").
+    r"|(?<!\bcut\s)(?=(?:cust(?:omer)?|acct|account|client|inv(?:oice)?|ord(?:er)?|item|sku|prod(?:uct)?|po|so|vendor|"
+    r"supplier|emp(?:loyee)?|rec(?:ord)?)s?\s*(?:(?:#|no\.?|number)\s*\d|(?!(?:19|20)\d{2}(?:q[1-4])?\b|"
+    r"(?:q[1-4]|h[12]|p\d{1,2}|w\d{1,2}|wk\d{1,2}|m\d{1,2}|fy\s?'?\d{2,4}(?:\s?q[1-4])?|\d{6})\b"
+    r"|\d+\s*(?:\+|%|d|days?|wks?|weeks?|mos?|mths?|months?|qtrs?|quarters?|yrs?|years?|units?|pcs|items?)\b|\d+\+)"
+    r"(?:[A-Z]+-?\d|\d{3,})))))",
     re.IGNORECASE)
 _SHOW = {"en": "Show ", "fr": "Montre "}
 # A change to the answer on screen, not to the data: "drop the count and the average, and show each balance as % of
@@ -658,11 +669,13 @@ def changes_data(question: str, *, on_screen: bool = False) -> str | None:
         rest = ""                                        # "add these to the books": nothing named to show
     if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:update|change|modify|edit|mark|set|assign|rename|"
                 r"modifie|mets|mettez|renomme)", question, re.IGNORECASE):
-        rest = re.sub(r"\s+(?:to|as|en|à|comme)\s+[\w'-]+$", "", rest)      # "... to closed": the new value goes
+        rest = re.sub(r"\s+(?:to|as|en|à|comme)\s+[\w'$€£.,%-]+(?:\s+\d[\w.,%]*)?(?:\s+(?:[a-z]{3}|dollars?|euros?))?$",
+                      "", rest, flags=re.IGNORECASE)   # "... to closed": the new value goes
     if re.match(r"\s*(?:(?:please|can you|could you|pls)\s+)?(?:increase|raise|decrease|reduce|lower|cut|augment|baiss|"
                 r"rédui|diminu)", question, re.IGNORECASE):
         # "... by 10%", "... to $50,000": the change goes, the figure it would change stays
-        rest = re.sub(r"\s+(?:by|to|of|de|à)\s+[$€]?\s*[\d][\d.,\s]*\s*(?:%|percent|points?|pts|\$|€)?$", "", rest)
+        rest = re.sub(r"\s+(?:by|to|of|de|à)\s+[$€]?\s*[\d][\d.,\s]*\s*(?:%|percent|points?|pts|\$|€|k|mm?|bn)?$", "", rest,
+                      flags=re.IGNORECASE)
     french = bool(re.match(r"\s*(?:supprim|effac|retir|modifi|mets|mettez|ajout|appliqu|cré|annul|clôtur|ferm|archiv|"
                            r"valid|renomm|augment|baiss|rédui|diminu)", question, re.IGNORECASE))
     lead = (_SHOW["fr"] + "les ") if french else (_SHOW["en"] + "the ")

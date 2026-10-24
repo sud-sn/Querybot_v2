@@ -135,7 +135,11 @@ def view(model: SemanticModel) -> dict[str, Any]:
                             "text": condition_text(model, f)} for f in j.conditions],
         })
     live = [j for j in joins if j["status"] != "Turned off"]
-    return {"tables": tables, "joins": joins,
+    # Tables answers never read (a backup, a load's copy, or one an admin set aside), and why: each can be brought back.
+    aside = [{"key": t.key, "name": _table_name(model, t.key), "physical": t.name,
+              "why": next((e.detail for e in t.evidence if e.kind == "set_aside"), "set aside")}
+             for t in sorted(model.tables.values(), key=lambda t: t.name.casefold()) if t.hidden and t.kind != "calendar"]
+    return {"tables": tables, "joins": joins, "set_aside": aside,
             "counts": {"all": len(live), "review": sum(1 for j in live if j["status"] == "Suggested"),
                        "conditions": sum(1 for j in live if j["conditions"])}}
 

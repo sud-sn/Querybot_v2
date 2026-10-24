@@ -186,6 +186,12 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
   .rx-addl{min-height:44px}
   .rx-rule [data-part=values]{grid-column:1/3}
 }
+.rx-aside { margin-top: var(--space-4, 16px); }
+.rx-aside h2 { font-size: var(--text-md, 1rem); margin: 0 0 var(--space-1, 4px); }
+.rx-aside-list { list-style: none; margin: var(--space-2, 8px) 0 0; padding: 0; display: grid; gap: var(--space-2, 8px); }
+.rx-aside-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2, 8px);
+  padding: var(--space-2, 8px) 0; border-top: 1px solid var(--border); }
+.rx-aside-list li > span { min-width: 0; display: grid; gap: 2px; }
 </style>
 {% endblock %}
 {% block content %}
@@ -247,6 +253,17 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
   <thead><tr><th>Join</th><th>Matched on</th><th>Rows</th><th>Rows without a match</th><th>Role</th><th>Condition</th><th>Status</th><th class="n">Data check</th></tr></thead>
   <tbody id="rx-rows"></tbody>
 </table></div>
+
+{% if data.set_aside %}
+<section class="card rx-aside" aria-labelledby="rx-aside-h">
+  <h2 id="rx-aside-h">Set aside</h2>
+  <p class="rx-help">Answers never read these tables. Solviz sets aside backups and load copies of another table; bring one back if it holds rows of its own.</p>
+  <ul class="rx-aside-list">{% for t in data.set_aside %}
+    <li><span><b>{{ t.name }}</b> <span class="sub">{{ t.physical }}</span><span class="rx-help">{{ t.why[:1] | upper }}{{ t.why[1:] }}.</span></span>
+      <button type="button" class="btn btn-secondary btn-sm" data-use="{{ t.key }}">Use in answers</button></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
 
 <script type="application/json" id="rel-data">{{ data | tojson }}</script>
 <script type="application/json" id="rel-words">{{ {"kinds": kinds, "ops": ops} | tojson }}</script>
@@ -728,7 +745,9 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
           '> A reader can still ask for them: ' + esc(asked()) + '</label>' : '') + '</div>' +
         '<div id="rx-checked">' + checkCard() + '</div><p class="rx-error" id="rx-error" role="alert"></p></div>' +
         '<div class="ed-foot"><button type="button" class="btn btn-primary" id="rx-save">Save table</button>' +
-        '<button type="button" class="btn btn-secondary" id="rx-cancel">Cancel</button></div>';
+        '<button type="button" class="btn btn-secondary" id="rx-cancel">Cancel</button>' +
+        (t.kind === 'calendar' ? '' : '<button type="button" class="btn btn-ghost" id="rx-aside" title="Answers stop reading this table">Set aside</button>') +
+        '</div>';
       side.innerHTML = html; wire();
     }
     function compact(v) {
@@ -773,6 +792,14 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
         if (redraw === undefined) return sync();
         sync(); if (redraw) paint(); recheck();
       });
+      if ($('rx-aside')) $('rx-aside').addEventListener('click', function () {
+        var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;
+        post('save-table', {table: d.table, hidden: true}).then(function (r) {
+          b.removeAttribute('aria-busy'); b.disabled = false;
+          if (!r.ok) { $('rx-error').textContent = r.error; return; }
+          reload('table');
+        });
+      });
       $('rx-save').addEventListener('click', function () {
         var b = this; sync(); b.setAttribute('aria-busy', 'true'); b.disabled = true;
         post('save-table', {table: d.table, name: d.name, kind: d.kind, default_date: d.default_date,
@@ -789,6 +816,18 @@ code.rx-code{font-family:var(--font-mono);font-size:var(--font-xs);background:va
 
   // ── the tools above ──
   $('rx-new').addEventListener('click', function () { select('new'); side.scrollIntoView({block: 'nearest', behavior: 'smooth'}); });
+  // A table set aside (a backup, a load's copy, or one an admin set aside) is brought back into the answers.
+  document.querySelectorAll('[data-use]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      b.setAttribute('aria-busy', 'true'); b.disabled = true;
+      post('save-table', {table: b.getAttribute('data-use'), hidden: false}).then(function (r) {
+        b.removeAttribute('aria-busy'); b.disabled = false;
+        var s = $('rx-saved');
+        if (!r.ok) { s.className = 'alert alert-error'; s.textContent = r.error; return; }
+        reload('table', b.getAttribute('data-use'));
+      });
+    });
+  });
   $('rx-check-all').addEventListener('click', function () {
     var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;
     post('check-all', {}).then(function (r) {

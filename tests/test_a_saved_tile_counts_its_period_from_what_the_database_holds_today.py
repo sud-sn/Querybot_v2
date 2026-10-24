@@ -78,7 +78,6 @@ def shop(tmp_path, monkeypatch):
         return _Connection(con)
 
     monkeypatch.setattr(querybot, "QueryBotWarehouse", warehouse)
-    build_workspace(account)
 
     def run_query(credentials, db_type, sql, max_rows=200):
         cursor = con.cursor()
@@ -86,7 +85,9 @@ def shop(tmp_path, monkeypatch):
         names = [d[0] for d in cursor.description]
         return [dict(zip(names, row)) for row in cursor.fetchmany(max_rows)]
 
+    # Before Learn: its question map checks each question on the database too, never on a server named "s".
     monkeypatch.setattr(gq, "run_query", run_query)
+    build_workspace(account)
     monkeypatch.setattr(service, "_DATES", {})
     monkeypatch.setattr(service, "_MOVED", OrderedDict())
     from core2.bootstrap import ai

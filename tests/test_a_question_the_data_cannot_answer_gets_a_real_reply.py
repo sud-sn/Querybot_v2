@@ -492,3 +492,32 @@ def test_small_talk_is_declined_when_the_ai_cannot_sort_it(retail, question):
     for sorter in (down, Recorded("sure thing!")):
         said = _ask(retail, question, planner=Recorded('{"kind": "smalltalk"}'), sorter=sorter)
         assert said["kind"] in ("off_topic", "smalltalk") and "request_data" not in said, (question, said["kind"])
+
+
+@pytest.mark.parametrize("question", ["aov ytd", "aov by channel fy26", "dso last month", "avg basket size in 2025",
+                                      "nrr q3", "turnover since january", "what is the aov this year?",
+                                      # Found in review: a "what is X" read as a definition, "explain" read as one,
+                                      # and a month by its name not read as a period.
+                                      "what is dso last month?", "what is aov ytd?",
+                                      "what is the gross margin in fy25?", "what are returns last month?",
+                                      "explain the drop in sales in q3", "aov in march",
+                                      "what is the difference between sales in q1 and q2"])
+def test_a_figure_asked_for_a_period_is_never_answered_with_a_definition(retail, question):
+    """A reader typing "aov ytd" asks for a number from the data, not what AOV means: it was answered "AOV typically
+    stands for Average Order Value, which is calculated by dividing ...". A question that names a period is said to be
+    what the data does not hold (with the button to ask for it), never answered from general knowledge."""
+    aov = json.dumps({"kind": "general_knowledge", "answer": "AOV typically stands for Average Order Value, which is "
+                      "calculated by dividing total revenue by the number of orders."})
+    said = _ask(retail, question, planner=Recorded(REFUSED), sorter=Recorded(aov))
+    assert said["kind"] == "data_not_here", said["answer"]["headline"]
+    assert "typically" not in said["answer"]["headline"]
+
+
+@pytest.mark.parametrize("question", ["what does aov mean?", "what does ytd mean?", "what does TTM stand for?",
+                                      "define MTD", "what is a prior year adjustment?", "what is ytd?", "explain ytd",
+                                      "what is EBITDA?", "what's YTD?", "whats ytd",
+                                      "what is the difference between YTD and MTD", "explain YTD vs MTD",
+                                      "explain mtd and ytd"])
+def test_what_a_short_form_means_is_still_answered_from_general_knowledge(retail, question):
+    said = _ask(retail, question, planner=Recorded(REFUSED), sorter=Recorded(GENERAL))
+    assert said["kind"] == "general_knowledge"

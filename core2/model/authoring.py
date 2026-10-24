@@ -353,6 +353,12 @@ class _Reader:
 
     def combine(self, node: exp.Expr) -> MeasureExpr:
         left, right = node.this, node.expression
+        while isinstance(right, exp.Paren):
+            right = right.this
+        if isinstance(node, exp.Div) and isinstance(right, exp.Nullif) and isinstance(right.expression, exp.Literal) \
+                and not right.expression.is_string and float(right.expression.this) == 0:
+            # x / NULLIF(y, 0), as analysts guard a division: a metric's division is already empty when y is nought.
+            right = right.this
         number = next((n for n in (right, left) if isinstance(n, exp.Literal) and not n.is_string), None)
         if number is not None:
             other = left if number is right else right

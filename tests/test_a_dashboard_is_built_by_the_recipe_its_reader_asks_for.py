@@ -89,7 +89,8 @@ def test_a_recipe_given_in_part_says_what_is_missing(learned):
     _, model = learned("retail")
     pnl = recipe_book.build(model, "profit_and_loss", today=TODAY)
     assert pnl.state == "partly" and pnl.missing == ["operating costs"]
-    assert {"Net amount", "Cost amount", "Gross margin"} <= {t.title for t in pnl.tiles}
+    # The gross profit Learn worked out of the lines' net amount and cost, and its margin.
+    assert {"Net amount", "Cost amount", "Gross profit", "Gross margin %"} <= {t.title for t in pnl.tiles}
 
 
 def test_every_tile_is_planned_in_code_and_answered_with_no_ai(learned):

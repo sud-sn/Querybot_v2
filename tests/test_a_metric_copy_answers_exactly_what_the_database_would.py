@@ -549,6 +549,34 @@ def test_a_copy_is_written_exactly_and_quickly(tmp_path):
     assert took < 20, f"{len(rows):,} rows took {took:.1f} s to write"
 
 
+def test_a_value_any_driver_hands_back_is_written_as_the_database_meant_it(tmp_path):
+    """Found reviewing the bulk write: a time with its offset (Snowflake TIMESTAMP_TZ, PostgreSQL timestamptz) kept
+    its clock time and lost the offset, so 11:00+05:00 sorted after 10:00Z; a numpy float was written as
+    "np.float64(0.1)"; a yes/no for a number column and a 2 for a yes/no column stopped the whole making; bytes were
+    written as "b'abc'"."""
+    import numpy as np
+
+    defn = PC.Definition(metric="m", table="t", dims=[], date_role="r", stored="date", grain="day",
+                         conditions=frozenset(), joins=frozenset(), calendar=None, leaves=[], sql="", checks=[],
+                         columns=[("c0", "timestamp"), ("c1", "float"), ("c2", "integer"), ("c3", "boolean"),
+                                  ("c4", "text")])
+    utc, plus5 = dt.timezone.utc, dt.timezone(dt.timedelta(hours=5))
+    rows = [(dt.datetime(2025, 3, 1, 10, 0, tzinfo=utc), np.float64(0.1), True, 2, b"abc"),
+            (dt.datetime(2025, 3, 1, 11, 0, tzinfo=plus5), np.float32(0.5), False, 0, "plain")]
+    PC.write(tmp_path / "copy.duckdb", defn, rows)
+    import duckdb
+
+    con = duckdb.connect(str(tmp_path / "copy.duckdb"), read_only=True)
+    try:
+        back = con.execute(f"SELECT * FROM {PC.TABLE}").fetchall()
+        latest = con.execute(f"SELECT MAX(c0) FROM {PC.TABLE}").fetchone()[0]
+    finally:
+        con.close()
+    assert back == [(dt.datetime(2025, 3, 1, 10, 0), 0.1, 1, True, "abc"),
+                    (dt.datetime(2025, 3, 1, 6, 0), 0.5, 0, False, "plain")]
+    assert latest == dt.datetime(2025, 3, 1, 10, 0)       # 10:00 UTC is later than 11:00 at UTC+5
+
+
 def test_a_warehouse_that_cannot_take_a_copys_rows_is_asked_as_ever(tmp_path):
     """Copies are read through the governed warehouse; wrapped round one that cannot take their rows, the database
     answers every question (never 'the query could not run')."""

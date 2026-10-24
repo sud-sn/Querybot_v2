@@ -58,6 +58,17 @@ _CAPACITY = {"speed", "bandwidth", "capacity", "mbps", "gbps", "kbps", "bps", "t
 _ALLOWANCE = {"authorized", "authorised", "authd", "authzd", "allowed", "allw", "alwd", "allwd", "permitted",
               "entitled", "allowance", "quota"}
 _CURRENCY_CODES = {"usd", "cad", "eur"}
+# A rate between currencies (FxRate, ExchRate, a currency table's AverageRate): a number of one per the other, never
+# a share.
+_FX = {"fx", "exch", "exchange", "xchg", "currency", "curr", "ccy", "forex"}
+# Rates that are shares of what they count (a tax rate of 0.0825, a churn rate of 0.04); a rate per unit (a kWh rate
+# of 0.21 dollars, an hourly rate) is a price.
+_SHARE_RATES = {"tax", "vat", "discount", "disc", "dsc", "commission", "comm", "interest", "int", "apr", "conversion",
+                "conv", "churn", "retention", "return", "defect", "error", "growth", "win", "fill", "attrition",
+                "turnover", "occupancy", "utilization", "utilisation", "response", "open", "click", "bounce",
+                "completion", "success", "failure", "default", "delinquency", "vacancy", "absence", "cancellation",
+                "cancel", "approval", "rejection", "reject", "close", "hit", "yield", "renewal", "adoption",
+                "penetration", "markup", "margin", "redemption", "participation", "scrap", "shrink", "loss"}
 # A price for the whole line or document, not per unit: an amount, added up (EXTENDED_PRICE, TOTAL_PRICE, PRICE_CHARGED).
 _PRICE_TOTAL = {"extended", "ext", "total", "tot", "charged", "billed", "invoiced"}
 # What a test or an instrument read: a value of its own, averaged, never added up (RESULT_VALUE, READING).
@@ -66,6 +77,14 @@ _UNIT_VALUES = {"ea", "each", "pc", "pcs", "piece", "kg", "g", "lb", "lbs", "oz"
                 "box", "bx", "cs", "case", "pk", "pack", "pallet", "unk", "units", "unit", "dz", "doz", "gal", "ton"}
 _CURRENCIES = {"usd", "cad", "eur", "gbp", "jpy", "aud", "chf", "cny", "inr", "mxn", "brl", "sek", "nok", "dkk",
                "nzd", "zar", "sgd", "hkd"}
+# An amount in the company's own currency whatever currency its document is in: AmountMST, Amount (LCY), an amount in
+# the functional or reporting currency. "Base" says so too, where the database keeps amounts both ways (ExtAmtBase
+# beside ExtAmtDoc); alone it may be an amount a tax is worked out on (TaxBaseAmount), in the document's currency,
+# and beside a document's word (TaxBaseAmtDoc) it is.
+_ONE_CURRENCY = {"functional", "func", "reporting", "rptg", "mst", "lcy", "acy"}
+_IN_BASE = {"base", "bse"}
+_IN_DOCUMENT = {"doc", "document", "cur", "curr", "txn", "transaction", "trans", "tran", "foreign", "fcy", "orig",
+                "original"}
 
 
 @dataclass
@@ -87,6 +106,8 @@ class MeasureFinding:
     # ...or this column less a rate of itself (a line's price after its discount: price x (1 - discount)), then,
     # with ``times`` too, times that (the tax on what was charged).
     after: str | None = None
+    # A percentage kept as a share of one (0.05 for 5%): each value times this before it is averaged, in points.
+    scale: float = 1.0
 
 
 # Words a name written in one case glues after another: LINENUMBER, SHIPPRIORITY, EXTENDEDPRICE, ACCTBAL.
@@ -174,6 +195,9 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
                 f"{', '.join(documents[:2])} number documents or their lines: rows are transactions, not balances")))
             periodic = []
         named = _names_members(table, profiles[key], keys[key])
+        # Numbered and dated, and pointed at by its own lines: a document (an order's header), whatever else it links.
+        document = bool(documents) and any(c.kind == "event" and c.is_default for c in roles) and any(
+            _lines_of(keys[j.from_table], j) for j in incoming)
         if incoming and (labels or named):
             # Pointed at, and naming its members: a dimension, though it carries figures and dates of its own (a
             # product's list price, an employee's hire date) and names repeat once per version of a member.
@@ -184,7 +208,7 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             kind = "snapshot"
             evidence.append(Evidence(kind="periodic", weight=1, detail=next(
                 e.detail for e in periodic[0].evidence if e.kind == "snapshot")))
-        elif not numbers and len(outgoing) >= 2 and not _any_label(table, profiles[key], keys[key]) and (
+        elif not numbers and len(outgoing) >= 2 and not _any_label(table, profiles[key], keys[key]) and not document and (
                 len(keys[key].primary_key) != 1 or any(j.from_column == keys[key].primary_key[0] for j in outgoing)):
             kind = "bridge"
             evidence.append(Evidence(kind="bridge", weight=1, detail=f"links {len(outgoing)} tables and holds no measures"))
@@ -198,10 +222,10 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             evidence.append(Evidence(kind="measures", weight=1, detail=f"{len(numbers)} measure(s) and "
                                      f"{len(outgoing)} link(s) to other tables"))
         elif not numbers and any(c.kind == "event" and c.is_default for c in roles) and any(
-                keys[j.from_table].line_numbers and set(j.from_columns) <= set(keys[j.from_table].primary_key)
-                for j in incoming):
-            # An invoice its lines point at by their key (invoice and line number), dated by when it was made, and
-            # carrying no figure itself: a document, counted, whose date its lines are dated by.
+                _lines_of(keys[j.from_table], j) for j in incoming):
+            # An invoice its lines point at by their key (invoice and line number), or by its number beside each
+            # line's own (a line's row number, its order and its line number on the order), dated by when it was
+            # made, and carrying no figure itself: a document, counted, whose date its lines are dated by.
             kind = "fact"
             evidence.append(Evidence(kind="documents", weight=1, detail=(
                 "its lines point at it by their own key, and it is dated: documents, counted")))
@@ -214,6 +238,14 @@ def classify_tables(inventory: Inventory, profiles: dict[str, TableProfile], key
             kind = "other"
         out[key] = (kind, evidence)
     return out
+
+
+def _lines_of(tkeys: TableKeys, join: JoinFinding) -> bool:
+    """Do the rows pointing by ``join`` number their lines within what they point at: by part of their key (an
+    invoice and its line number), or beside a line number keyed with it (SalesOrderID and LineNo, under a row number)."""
+    columns = set(join.from_columns)
+    return bool(tkeys.line_numbers) and (columns <= set(tkeys.primary_key) or any(
+        columns < set(alt) and set(alt) & set(tkeys.line_numbers) for alt in tkeys.alternate_keys))
 
 
 _NUMBERED = {"no", "num", "nbr", "number"}
@@ -288,7 +320,7 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
     excluded = set(keys[key].primary_key) | {c for alt in keys[key].alternate_keys for c in alt
                                              if not (keys[key].primary_key and _words(c) & (_MONEY | _QUANTITY))}
     excluded |= {c for j in joins if j.from_table == key and j.trust != "rejected" for c in j.from_columns}
-    excluded |= {c.column for c in dates.get(key, [])}
+    excluded |= {c.column for c in dates.get(key, [])} | {c.quarter_column for c in dates.get(key, []) if c.quarter_column}
     out = []
     for column in table.columns:
         if column.name in excluded or column.data_type not in ("integer", "decimal", "float"):
@@ -296,6 +328,8 @@ def _measure_columns(inventory: Inventory, profiles: dict[str, TableProfile], ke
         p = profile.columns[column.name]
         if p.pattern in ("yyyy", "yyyymm", "yyyymmdd") or column.name in keys[key].unique_columns:
             continue
+        if names.deletion_flag(column.name) and (p.pattern == "flag01" or p.distinct <= 2):
+            continue   # IS_DELETED holding 1 or nothing: which rows were deleted, never an amount (Removed, a count)
         if p.pattern == "flag01" and not _counted(column.name):
             continue   # 0 and 1 is a flag, unless the name says it counts (NUM_OF_PHY_INV: none or one this month)
         words = _words(column.name)
@@ -323,6 +357,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                   kinds: dict[str, tuple[str, list[Evidence]]]) -> list[MeasureFinding]:
     out: list[MeasureFinding] = []
     reachable = _reachable_one_step(joins)
+    headers = _documents_of_lines(joins, keys)
+    kept_both_ways = _kept_both_ways(inventory)
     for key, (kind, _) in kinds.items():
         if kind not in ("fact", "snapshot"):
             continue
@@ -340,6 +376,8 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 label = f"Number of {names.plural(' '.join(events))}"
             m = MeasureFinding(table=key, column=name, agg="sum", additivity="additive", format="number", name=label)
             in_unit_range = p.min_num is not None and p.max_num is not None and p.min_num >= 0 and p.max_num <= 1
+            # Shares of one, a margin's below nothing too (-0.2 to 0.6 is -20% to 60%).
+            in_share_range = p.min_num is not None and p.max_num is not None and p.min_num >= -1 and p.max_num <= 1
             in_percent_range = p.min_num is not None and p.max_num is not None and p.min_num >= -100 and p.max_num <= 100
             # EXTENDED_PRICE, TOTAL_PRICE, PRICE_CHARGED: a line's or a document's price, an amount.
             rate = words & _RATE - ({"price", "prc"} if words & _PRICE_TOTAL else set())
@@ -347,10 +385,20 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                     and "amount" not in words:
                 m.agg, m.additivity, m.format = "avg", "non_additive", "percent"
                 m.evidence.append(Evidence(kind="percent", weight=1, detail=f"{label} is a percentage: averaged, never summed"))
+                if in_share_range and not column_is_whole(p):
+                    m.scale = 100.0
+                    m.evidence.append(Evidence(kind="share_of_one", weight=1, detail=(
+                        f"{label} holds shares of one ({p.min_num:g} to {p.max_num:g}): shown in points, 0.05 as 5%")))
             elif words & _READING and not words & (_QUANTITY | _MONEY - {"value", "val"}):
                 m.agg, m.additivity = "avg", "non_additive"
                 m.evidence.append(Evidence(kind="reading", weight=1,
                                            detail=f"{label} is what a test or an instrument read: averaged, never summed"))
+            elif "rate" in words and words & _SHARE_RATES and in_share_range and not column_is_whole(p) \
+                    and not words & _FX and not set(names.tokens(table.name)) & _FX:
+                # A conversion rate of 0.031, a churn rate of 0.04: shares of one, shown as 3.1% and 4%.
+                m.agg, m.additivity, m.format, m.scale = "avg", "non_additive", "percent", 100.0
+                m.evidence.append(Evidence(kind="share_of_one", weight=1, detail=(
+                    f"{label} holds shares of one ({p.min_num:g} to {p.max_num:g}): a rate shown in points")))
             elif rate or (words & _UNIT_PRICE and words & _MONEY and not words & _PRICE_TOTAL):
                 m.agg, m.additivity = "avg", "non_additive"
                 m.format = "currency" if words & _MONEY else "number"
@@ -390,14 +438,20 @@ def find_measures(inventory: Inventory, profiles: dict[str, TableProfile], keys:
                 unit = _unit_column(inventory, profiles, key, reachable, kind="unit", measured=words)
                 if unit:
                     m.unit_column, m.unit_values = unit
-            if m.format == "currency":
-                unit = _unit_column(inventory, profiles, key, {}, kind="currency")
+            # An amount is in its row's currency, or in its document's (a line's amount in the currency on its order's
+            # header): kept apart by that code. One in the company's own currency, or naming its currency
+            # (OpenAmtUSD), is one currency, whatever currency code its row or document holds.
+            one_currency = words & (_ONE_CURRENCY | _CURRENCIES) or (
+                kept_both_ways and words & _IN_BASE and not words & _IN_DOCUMENT)
+            if m.format == "currency" and not one_currency:
+                unit = _unit_column(inventory, profiles, key, headers, kind="currency")
                 if unit:
                     m.unit_column, m.unit_values = unit
             out.append(m)
 
         # Counting rows and documents.
-        noun = names.readable(" ".join(names.core_table(table.name))) if not names.opaque(table.name) else table.name
+        noun = names.counted_noun(names.readable(" ".join(names.table_noun(table.name)))) \
+            if not names.opaque(table.name) else table.name
         counted = f"{noun.lower()} rows" if periodic or noun.lower().split()[-1:] and \
             noun.lower().split()[-1] in AMOUNT_NOUNS else names.plural(noun.lower())
         out.append(MeasureFinding(table=key, column=None, agg="count", additivity="additive", format="count",
@@ -443,10 +497,33 @@ def column_is_whole(p: ColumnProfile) -> bool:
     return p.integer_share == 1.0
 
 
+def _kept_both_ways(inventory: Inventory) -> bool:
+    """Does the database keep amounts both in the company's currency and in the document's (ExtAmtBase beside
+    ExtAmtDoc, PaidAmtBase beside PaidAmtDoc)? Then "base" names the company's currency on every table."""
+    for table in inventory.tables.values():
+        doc = {tuple(w for w in names.tokens(c.name) if w not in _IN_DOCUMENT) for c in table.columns
+               if set(names.tokens(c.name)) & _IN_DOCUMENT}
+        if any(tuple(w for w in names.tokens(c.name) if w not in _IN_BASE) in doc for c in table.columns
+               if set(names.tokens(c.name)) & _IN_BASE):
+            return True
+    return False
+
+
 def _reachable_one_step(joins: list[JoinFinding]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for j in joins:
         if j.trust in ("verified", "declared") and not j.to_calendar:
+            out.setdefault(j.from_table, []).append(j.to_table)
+    return out
+
+
+def _documents_of_lines(joins: list[JoinFinding], keys: dict[str, TableKeys]) -> dict[str, list[str]]:
+    """The document each table's rows are the lines of (an order line's order): its currency is theirs. A customer's
+    or a product's currency is not the currency of what was sold to them."""
+    out: dict[str, list[str]] = {}
+    for j in joins:
+        if j.trust in ("verified", "declared") and not j.to_calendar and j.from_table in keys \
+                and _lines_of(keys[j.from_table], j):
             out.setdefault(j.from_table, []).append(j.to_table)
     return out
 
@@ -458,6 +535,7 @@ _MEASURED = {"weight", "wgt", "size", "volume", "vol", "length", "width", "heigh
 def _unit_column(inventory: Inventory, profiles: dict[str, TableProfile], key: str,
                  reachable: dict[str, list[str]], *, kind: str,
                  measured: set[str] = frozenset()) -> tuple[tuple[str, str], list[str]] | None:
+    currencies: list[tuple[tuple[str, str], list[str], bool]] = []
     for table_key in [key] + sorted(reachable.get(key, [])):
         table = inventory.tables[table_key]
         for column in table.columns:
@@ -471,5 +549,10 @@ def _unit_column(inventory: Inventory, profiles: dict[str, TableProfile], key: s
             if kind == "unit" and (words & _UNIT_WORDS or values and values <= _UNIT_VALUES):
                 return (table_key, column.name), sorted(t.value or "" for t in p.top)
             if kind == "currency" and values and values <= _CURRENCIES:
-                return (table_key, column.name), sorted(t.value or "" for t in p.top)
+                # The company's own currency (BaseCurrencyCd, always USD) says nothing of a document's.
+                said = len(values) > 1 and not words & (_IN_BASE | _ONE_CURRENCY)
+                currencies.append(((table_key, column.name), sorted(t.value or "" for t in p.top), said))
+    if currencies:
+        column, values, _ = next((c for c in currencies if c[2]), currencies[0])
+        return column, values
     return None

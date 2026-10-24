@@ -17,12 +17,13 @@ from sqlglot import exp
 
 from core2 import ids
 from core2.bootstrap import names, personal
-from core2.bootstrap.arithmetic import check_arithmetic, find_counters, find_parent_figures, name_by_difference
+from core2.bootstrap.arithmetic import (check_arithmetic, find_counters, find_parent_figures, gross_profit,
+                                       name_by_difference)
 from core2.bootstrap.calendar import CalendarFinding, find_calendars
 from core2.bootstrap.dates import AUDIT_WORDS, DateCandidate, close_call, find_date_roles
 from core2.bootstrap.history import MIN_QUERIES, links_in, read_query_log
 from core2.bootstrap.inventory import InvColumn, Inventory, InvTable
-from core2.bootstrap.joins import JoinFinding, bare, discover_joins, identifier_text
+from core2.bootstrap.joins import JoinFinding, bare, copies_of, discover_joins, identifier_text
 from core2.bootstrap.journal import Journal, Watched, attempt, journal_of
 from core2.bootstrap.labels import label
 from core2.bootstrap.ledger import ledger_measures
@@ -53,7 +54,8 @@ from core2.model.schema import (
     Versions,
 )
 from core2.warehouse.runner import Warehouse
-from core2.resolve.time import quarter_span
+from core2.model.overrides import set_aside
+from core2.resolve.time import fiscal_named_by, quarter_span
 
 
 @dataclass
@@ -248,12 +250,30 @@ def build_model(warehouse: Warehouse, inventory: Inventory, *, client_id: str = 
     if options.labeler is not None:
         journal.step("Naming tables, columns and measures with the AI")
         model.notes += label(model, options.labeler)
+    # A backup or a load's copy of a table answers nothing: set aside before any figure is named after it.
+    model.notes += set_copies_aside(model, inventory)
     # After the names: an amount less its discounts is revenue, an amount less its cost the gross profit.
     model.notes += name_by_difference(model)
+    model.notes += gross_profit(model)
     # A ledger's lines add up to nothing: its revenue, expenses and profit, from the debits and credits by account type.
     model.notes += ledger_measures(model)
     assign_slugs(model)
     return model
+
+
+def set_copies_aside(model: SemanticModel, inventory: Inventory) -> list[str]:
+    """A backup copy of a table (ORDERS_BAK_20240115) or a load's staging copy (stg.SalesOrderLine_Load) holds the
+    rows of another table again: set aside with its figures and fields, so no question is answered from it, and said,
+    so an admin can bring it back."""
+    notes = []
+    for copy, original in sorted(copies_of(inventory).items()):
+        table, kept = model.tables.get(copy), model.tables.get(original)
+        if table is None or kept is None or table.hidden or kept.hidden:
+            continue
+        set_aside(model, copy, True, f"a copy of {kept.name} ({kept.business_name}): set aside, so no answer is read "
+                                     "from it")
+        notes.append(f"{table.name} keeps the rows of {kept.name} again: it was set aside, and answers never read it.")
+    return notes
 
 
 def assign_slugs(model: SemanticModel) -> None:
@@ -367,20 +387,24 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             else:
                 name = names.readable(c.column)
             if c.via_calendar is None and not names.opaque(c.column) and "date" not in name.lower() \
-                    and c.granularity not in ("timestamp", "quarter") and name.lower() not in _PERIOD_NAMES:
+                    and c.granularity not in ("timestamp", "quarter") and not c.quarter_column \
+                    and name.lower() not in _PERIOD_NAMES:
                 name = f"{name} date"
             base = ids.slug(name)
             slug = ids.unique_slug(base if base not in date_slugs else ids.slug(f"{table_name} {name}"), date_slugs)
             key_c = ck[(key, c.column)]
             quarters = None
             if c.span is not None:
-                quarters = (c.span[0][0] * 10 + c.span[0][1], c.span[1][0] * 10 + c.span[1][1])
-                c.first, c.last = quarter_span(quarters, c.fiscal, model.settings.fiscal_year_start_month)
+                base = 10 if c.period_months == 3 else 100
+                quarters = (c.span[0][0] * base + c.span[0][1], c.span[1][0] * base + c.span[1][1])
+                fiscal = model.settings.fiscal_year_start_month
+                c.first, c.last = quarter_span(quarters, c.fiscal, fiscal, c.period_months,
+                                               fiscal_named_by(model, fiscal))
             unknown_year = bool(c.quarter_column and c.fiscal and not model.settings.fiscal_year_start_month)
             model.date_roles[key_c] = DateRole(
                 key=key_c, table=key, column=key_c, name=name, slug=slug,
                 quarter_column=ck[(key, c.quarter_column)] if c.quarter_column else None, fiscal=c.fiscal,
-                quarters=quarters,
+                quarters=quarters, period_months=c.period_months,  # type: ignore[arg-type]
                 calendar=c.via_calendar.to_table if c.via_calendar else None,
                 calendar_join=join_key_of.get((key, c.column)) if c.via_calendar else None,
                 granularity=c.granularity,  # type: ignore[arg-type]
@@ -394,8 +418,10 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             if unknown_year:
                 model.review.append(ReviewItem(
                     key=f"fiscal_year:{key_c}", object=key_c,
-                    question=f"{table_name} is kept by fiscal quarter: in which month does the fiscal year start?",
-                    choice_made="January (the calendar's quarters) until it is set",
+                    question=f"{table_name} is kept by fiscal {'quarter' if c.period_months == 3 else 'period'}: "
+                             "in which month does the fiscal year start?",
+                    choice_made=f"January (the calendar's {'quarters' if c.period_months == 3 else 'months'}) until "
+                                "it is set",
                     alternatives=["Set the fiscal year on the Dates page"], evidence=c.evidence))
         runner = close_call(roles)
         default = next((c for c in roles if c.is_default), None)
@@ -491,6 +517,12 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             if m.times:
                 product = exp.Mul(this=product, expression=col(ck[(m.table, m.times)]))
             expr = SqlExpr(sql=exp.Sum(this=product).sql(), columns=parts)
+        elif m.scale != 1.0:
+            # A percentage kept as a share of one, averaged in points: AVG(DiscPct * 100), as an admin's formula.
+            key_m = f"m:{m.table}.{m.column.casefold()}"
+            share = exp.column(exp.to_identifier(ck[(m.table, m.column)], quoted=True))
+            expr = SqlExpr(sql=exp.Avg(this=exp.Mul(this=share, expression=exp.Literal.number(m.scale))).sql(),
+                           columns=[ck[(m.table, m.column)]])
         elif m.agg == "count_distinct":
             key_m = f"m:{m.table}.{m.column.casefold()}.distinct"
             expr = AggExpr(agg="count_distinct", column=ck[(m.table, m.column)])
@@ -582,7 +614,7 @@ def assemble(f: Findings, *, flags: list, client_id: str, db_id: int | None, db_
             asked = f"{owner.business_name}: {fl.message}" if owner is not None and fl.data.get("lookup") else fl.message
             model.review.append(ReviewItem(
                 key=f"default_filter:{fl.object}", object=fl.object, question=asked,
-                choice_made=f"left out: {', '.join(map(str, shown))}" if leave_out else "all rows are counted",
+                choice_made=f"left out: {', '.join(map(str, shown or leave_out))}" if leave_out else "all rows are counted",
                 alternatives=(["count all rows"] if leave_out else []) + [f"leave out {v}" for v in others]))
     for j in f.joins:
         if any(e.kind == "ai_opinion" for e in j.evidence) and not j.also:

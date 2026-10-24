@@ -200,7 +200,7 @@ _EN = r"(?:an?\s+|the\s+|our\s+|my\s+|your\s+|their\s+|its\s+)?"
 _FR = r"(?:une?\s+|le\s+|la\s+|les\s+|l['’]|notre\s+|nos\s+|votre\s+|vos\s+|mon\s+|ma\s+|mes\s+)?"
 _MEANING = re.compile(
     rf"^\s*(?:what\s+(?:does|do)\s+{_EN}(?P<a>.+?)\s+(?:mean|stand\s+for)|"
-    rf"what\s+(?:is|are)\s+{_EN}(?P<b>.+?)|define\s+{_EN}(?P<c>.+?)|"
+    rf"what(?:\s+(?:is|are)|['’]s|s)\s+{_EN}(?P<b>.+?)|define\s+{_EN}(?P<c>.+?)|"
     rf"(?:the\s+)?(?:meaning|definition)\s+of\s+{_EN}(?P<d>.+?)|"
     rf"qu['’]est-ce\s+qu(?:e|['’])\s*{_FR}(?P<e>.+?)|"
     rf"que\s+(?:signifie|veut\s+dire)\s+{_FR}(?P<f>.+?))\s*[?.!]*\s*$", re.IGNORECASE)
@@ -209,6 +209,44 @@ _MEANING = re.compile(
 _THE_DATA = re.compile(r"\b(?:data|dataset|database|db|données|tables?|fields?|columns?|champs?|colonnes?|metrics?|"
                        r"measures?|kpis?|indicateurs?|available|disponibles?|covered|cover|here|there|ask|demander|"
                        r"avez|have|this|that|it|ça|cela|ceci)\b", re.IGNORECASE)
+
+
+# A period of the business named ("aov ytd", "dso last month", "nrr q3"): a figure asked of the data, never a
+# definition from general knowledge.
+_A_PERIOD = re.compile(
+    r"\b(?:19|20)\d{2}\b|\bq[1-4]\b|\bh[12]\b|\bfy\s?'?\d{2,4}\b|\b(?:ytd|mtd|qtd|wtd|fytd|ttm|ltm|l12m|lw|lm)\b|"
+    r"\b(?:this|last|next|previous|past|current|prior)\s+(?:\d+\s+)?(?:day|week|month|quarter|year|fy|fiscal\s+year)s?\b|"
+    r"\b(?:today|yesterday)\b|\bsince\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|(?:19|20)\d{2})\w*|"
+    r"\b(?:in|for|during|of|through|thru|over)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|"
+    r"\ben\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\b|"
+    r"\bcette\s+(?:ann[ée]e|semaine)\b|\bce\s+(?:mois|trimestre)\b|\b(?:le\s+)?mois\s+dernier\b",
+    re.IGNORECASE)
+
+
+# "What does YTD mean?", "define MTD", "what is a prior year adjustment?", "explain EBITDA": what a word means. "Explain
+# the drop in sales in q3" asks why, of the data.
+_DEFINE = re.compile(r"\b(?:mean|means|meaning|stand\s+for|stands\s+for|define|definition|defined)\b|"
+                     r"^\s*what(?:'s|\s+is)\s+(?:a|an)\s|"
+                     r"^\s*explain\s+(?:what\s+)?(?:an?\s+|the\s+term\s+|the\s+difference\s+between\s+)?[\w%$'&/-]+"
+                     r"(?:\s+(?:vs\.?|versus|and|or)\s+[\w%$'&/-]+)?(?:\s+(?:is|are|means?))?\s*[?.!]*\s*$",
+                     re.IGNORECASE)
+# The words around the names in a definition question: "the difference between YTD and MTD" names YTD and MTD alone.
+_JOINING = re.compile(r"\b(?:the|a|an|difference|differences|between|vs\.?|versus|and|or|of)\b", re.IGNORECASE)
+
+
+def asks_meaning(question: str) -> bool:
+    """A definition, whatever it names: "what does YTD mean?", "define MTD", "what is ytd?". "What is dso last month?"
+    asks for a figure over a period, never what DSO means."""
+    if _DEFINE.search(question or ""):
+        return True
+    thing = meaning_asked(question)
+    return bool(thing) and not (names_a_period(thing) and _JOINING.sub(" ", _A_PERIOD.sub(" ", thing)).strip(" ?.!,"))
+
+
+def names_a_period(question: str) -> bool:
+    """The question names a period of the business: it asks for a figure over it, whatever words it uses."""
+    return bool(_A_PERIOD.search(question or ""))
 
 
 def meaning_asked(question: str) -> str:

@@ -1422,16 +1422,18 @@ def _first_last(role: DateRole) -> tuple[dt.date | None, dt.date | None]:
 
 def _cut_quarters(ranges: list[Range], role: DateRole, fiscal_start: int | None) -> list[str]:
     """The quarters a period starts or ends inside, for rows kept by quarter ("Q3 2026", "FY2026 Q1"): each
-    counts in full."""
+    counts in full. For rows kept by month (a year and a period number), the months it cuts ("September 2026")."""
     start_month = (fiscal_start or 1) if role.fiscal else 1
-    grain = "fiscal_quarter" if role.fiscal and start_month != 1 else "quarter"
+    months = role.period_months
+    unit = "quarter" if months == 3 else "month"
+    grain = "fiscal_quarter" if months == 3 and role.fiscal and start_month != 1 else unit
     cut: list[str] = []
     for rng in ranges:
         for day in (rng.start, rng.end):
-            if day is None or (day.day == 1 and (day.month - start_month) % 3 == 0):
+            if day is None or (day.day == 1 and (day.month - start_month) % months == 0):
                 continue
             inside = day if day == rng.start else day - dt.timedelta(days=1)
-            name = period_label(unit_start(inside, "quarter", fiscal_start=start_month), grain, fiscal_start=start_month)
+            name = period_label(unit_start(inside, unit, fiscal_start=start_month), grain, fiscal_start=start_month)
             if name not in cut:
                 cut.append(name)
     return cut
@@ -1887,13 +1889,16 @@ def resolve_plain(plan: Plan, model: SemanticModel, ctx: Context) -> Logical:
     for table, role in {(b.part.table, role.slug): (b.part.table, role) for b, role in builders
                         if role is not None and role.quarter_column}.values():
         said: list[str] = []
+        unit = "quarter" if role.period_months == 3 else "month"
         if role.fiscal and not fiscal_start and uses_time:
-            said.append(f"{plural(model.tables[table].business_name)} are kept by fiscal quarter, and this "
-                        "workspace's fiscal year is not set: their quarters are read as the calendar's (Q1 from "
-                        "January). An admin sets the fiscal year on the Dates page.")
+            said.append(f"{plural(model.tables[table].business_name)} are kept by fiscal "
+                        f"{'quarter' if unit == 'quarter' else 'period'}, and this workspace's fiscal year is not "
+                        f"set: their {'quarters' if unit == 'quarter' else 'periods'} are read as the calendar's "
+                        f"({'Q1' if unit == 'quarter' else 'period 1'} from January). An admin sets the fiscal year "
+                        "on the Dates page.")
         cut = _cut_quarters([window, *([compare] if compare else [])], role, fiscal_start)
         if cut:
-            said.append(f"{plural(model.tables[table].business_name)} are kept by quarter: {' and '.join(cut)} "
+            said.append(f"{plural(model.tables[table].business_name)} are kept by {unit}: {' and '.join(cut)} "
                         f"{'counts' if len(cut) == 1 else 'count'} in full, though the period covers only part of "
                         f"{'it' if len(cut) == 1 else 'them'}.")
         cautions.extend(c for c in said if c not in cautions)

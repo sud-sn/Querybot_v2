@@ -11,7 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from core2.model.schema import AggExpr, DateRole, Join, Measure, RefExpr, SavedSegment, SemanticModel, SqlExpr
+from core2.model.schema import (AggExpr, DateRole, Evidence, Join, Measure, RefExpr, SavedSegment, SemanticModel,
+                                 SqlExpr)
 
 # What an admin may change, per kind of object. Everything else is the data's call.
 ALLOWED = {
@@ -36,6 +37,32 @@ ALLOWED = {
 # not find is added whole ("define"), then decided on like any other object.
 DEFINABLE: dict[str, type[Measure] | type[Join] | type[DateRole] | type[SavedSegment]] = {
     "measure": Measure, "join": Join, "date_role": DateRole, "segment": SavedSegment}
+
+
+def set_aside(model: SemanticModel, table_key: str, aside: bool, why: str = "") -> None:
+    """A table set aside answers nothing: its figures and fields go with it, and come back with it, those it hid
+    alone (a field kept from readers for its own reason stays kept)."""
+    table = model.tables[table_key]
+    if aside and not table.hidden:
+        columns = [c.key for c in model.columns.values() if c.table == table_key and not c.hidden]
+        measures = [m.key for m in model.measures.values() if m.table == table_key and not m.hidden]
+        for k in columns:
+            model.columns[k].hidden = True
+        for k in measures:
+            model.measures[k].hidden = True
+        table.evidence.append(Evidence(kind="set_aside", weight=1, detail=why or "set aside by an admin",
+                                       data={"columns": columns, "measures": measures}))
+    elif not aside and table.hidden:
+        for e in table.evidence:
+            if e.kind == "set_aside":
+                for k in e.data.get("columns") or []:
+                    if k in model.columns:
+                        model.columns[k].hidden = False
+                for k in e.data.get("measures") or []:
+                    if k in model.measures:
+                        model.measures[k].hidden = False
+        table.evidence = [e for e in table.evidence if e.kind != "set_aside"]
+    table.hidden = aside
 
 
 def target(kind: str, key: str) -> str:
@@ -82,7 +109,8 @@ def _define(model: SemanticModel, object_key: str, value: Any, notes: list[str])
             and (obj.quarter_column is None or (obj.quarter_column in model.columns
                                                 and model.columns[obj.quarter_column].table == obj.table))
         if obj.quarter_column:
-            obj.granularity = "quarter"     # a year and a quarter number date the quarter, nothing finer
+            # A year and a quarter number date the quarter, nothing finer; a year and a period number, the month.
+            obj.granularity = "quarter" if obj.period_months == 3 else "month"
         obj.is_default = False      # a default is its own decision
         from core2 import ids
 
@@ -207,6 +235,8 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
         elif kind == "table" and field == "default_date":
             if value in model.date_roles and model.date_roles[value].table == key:
                 _default_date(model, key, value, pinned)
+        elif kind == "table" and field == "hidden":
+            set_aside(model, key, bool(value))
         else:
             # Validated through the object's own type, so a bad value is refused
             # and nested values (filters) become the model's objects.
@@ -240,12 +270,14 @@ def apply_overrides(model: SemanticModel, overrides: list[dict[str, Any]]) -> li
         if kind == "join" and field == "trust":
             obj.trust = value  # type: ignore[attr-defined]
     model.notes = [n for n in model.notes if not n.startswith("A decision")] + notes
-    from core2.resolve.time import quarter_span
+    from core2.resolve.time import fiscal_named_by, quarter_span
 
+    fiscal = model.settings.fiscal_year_start_month
     for role in model.date_roles.values():
         if role.quarter_column and role.quarters:
             # Kept by fiscal quarter: its first and last days by the fiscal year as set now, not at Learn.
-            role.first, role.last = quarter_span(role.quarters, role.fiscal, model.settings.fiscal_year_start_month)
+            role.first, role.last = quarter_span(role.quarters, role.fiscal, fiscal, role.period_months,
+                                                 fiscal_named_by(model, fiscal))
     return notes
 
 

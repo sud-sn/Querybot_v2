@@ -43,6 +43,24 @@ CLEAR_CANCEL = {"cancel", "cancelled", "canceled", "cancellation", "cnl", "cxl",
 # Rows that may or may not count, depending on the business: only asked about.
 _ASK_CANCEL = {"returned", "rejected", "refunded", "deleted", "credit", "credited", "abandoned", "declined"}
 _NEGATION = {"not", "non", "no", "un", "never", "without"}
+# A flag an application sets on rows it deletes or voids but keeps (names.deletion_flag): the rows marked are left out.
+_YES = {"1", "true", "t", "y", "yes", "x"}
+
+
+def _deleted_rows(column, p) -> tuple[object, int] | None:
+    """The value a deletion flag marks deleted rows with, and how many rows hold it: one "yes" (1, true, Y, X) beside a
+    "no" or nothing (NULL), or a 0/1 kept as a decimal (Oracle's NUMBER(1)), read from its zeros."""
+    if p.top:
+        yes = [t for t in p.top if t.value is not None and str(t.value).strip().lower() in _YES]
+        others = [t for t in p.top if t not in yes and t.value is not None]
+        if len(yes) != 1 or len(others) > 1 or not others and p.non_null >= p.rows:
+            return None
+        value: object = True if column.data_type == "boolean" else \
+            1 if column.data_type in ("integer", "decimal") else yes[0].value
+        return value, yes[0].count
+    if p.min_num == 0 and p.max_num == 1 and p.integer_share == 1 and p.zeros is not None and p.distinct == 2:
+        return 1, p.non_null - p.zeros
+    return None
 # Words a status says ("Open - Requested", "Done - Invoiced"): a short lookup whose names mostly hold them is a status,
 # whatever it is called. A product called "Void Fill" is not.
 _STATE_WORDS = CLEAR_CANCEL | _ASK_CANCEL | {
@@ -122,6 +140,16 @@ def find_quality(warehouse: Warehouse, inventory: Inventory, profiles: dict[str,
             continue
         for column in table.columns:
             p = profiles[key].columns[column.name]
+            marked = _deleted_rows(column, p) if names.deletion_flag(column.name) and (key, column.name) not in linked \
+                else None
+            # Marked on few rows, a deletion: those rows are left out by default. Marked on most, it is no deletion.
+            if marked and 0 < marked[1] <= (p.rows or 1) / 2:
+                value, count = marked
+                flags.append(_flag(col_key[(key, column.name)], "status_column",
+                                   f"{names.readable(column.name)} marks {count:,} rows: they are left out of totals, "
+                                   "as rows the application deleted", values=[t.value for t in p.top or []] or [0, 1],
+                                   cancel_like=[], leave_out=[value], leave_out_shown=[]))
+                continue
             if column.data_type not in ("text", "integer") or not p.top or not 2 <= p.distinct <= 12:
                 continue
             if (key, column.name) in linked or (key, column.name) in dated:

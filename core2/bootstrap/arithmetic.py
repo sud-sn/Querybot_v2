@@ -21,7 +21,7 @@ from core2.bootstrap.inventory import Inventory
 from core2.bootstrap.journal import attempt
 from core2.bootstrap.measures import _CODE, _MONEY, _QUANTITY, _RATE, _UNIT_PRICE, MeasureFinding, _parts
 from core2.bootstrap.profiler import TableProfile
-from core2.model.schema import Evidence
+from core2.model.schema import AggExpr, Evidence, Measure, OpExpr, RefExpr
 from core2.warehouse import dialect as D
 from core2.warehouse.runner import Warehouse
 
@@ -753,4 +753,119 @@ def name_by_difference(model) -> list[str]:
             notes += give(m, _MARGIN_WORDS, f"It is {of.business_name.lower()} less {less.business_name.lower()}.")
             # What the cost is taken from is what was sold, when nothing else is called so.
             notes += give(of, _SALES_WORDS, "")
+    return notes
+
+# What a row sold for, and what it cost: the words naming each, and the words that make an amount something else
+# (its tax, its freight, a budget for it), so neither is ever taken for what was sold.
+_SOLD_AMOUNT = {"amount", "amt", "sales", "sls", "revenue", "rev", "value", "val", "price", "prc"}
+_NOT_SOLD = {"tax", "freight", "frt", "shipping", "discount", "disc", "dsc", "credit", "cr", "refund", "return",
+             "budget", "bdgt", "target", "plan", "forecast", "paid", "fee", "commission", "list"}
+_SAME_EITHER_WAY = {"net", "nt", "gross", "total", "tot", "line"}
+# The net one of several amounts sold (NetAmount beside GrossAmount) is what was sold, after its discounts.
+_AFTER = {"after", "aft", "less", "net", "nt"}
+# An amount after its discount (AmtAfterDiscount, SalesLessDisc, NetOfDisc) is what was sold, the discount taken off
+# already. A net discount (NetDiscAmt) is a discount.
+_AFTER_DISCOUNT = {"after", "aft", "less"}
+# A profit or margin the table keeps itself (GP_AMT, MarginAmt, GrossProfit): it is the gross profit.
+_KEPT_PROFIT = {"gp", "profit", "margin", "mgn", "gm"}
+# A margin is said as a share more often than in money: the margin words are the gross margin %'s, never the profit's.
+_GROSS_PROFIT_WORDS = {"en": ["GP", "GP $", "Profit"], "fr": ["Marge brute"]}
+_MARGIN_PCT_WORDS = {"en": ["GP %", "GM %", "Margin %", "Gross margin percentage"], "fr": ["Taux de marge"]}
+
+
+def _one(model, found: list):
+    """The one of several amounts sold (or costs) that is meant: the only one, the one already called sales, or the
+    net one beside a gross or a total (a line's net amount, after its discount); None when that cannot be told."""
+    if len(found) == 1:
+        return found[0]
+    called = [m for m in found if any(w.casefold() in ("sales", "net sales", "revenue")
+                                      for ws in m.synonyms.values() for w in ws)]
+    if len(called) == 1:
+        return called[0]
+    net = [m for m in found if set(names.tokens(model.columns[m.expr.column].name)) & _AFTER]
+    return net[0] if len(net) == 1 else None
+
+
+def _mostly_negative(model, m) -> bool:
+    """A cost kept as a negative amount (Business Central's cost amount): less it, the profit would add it."""
+    p = model.columns[m.expr.column].profile if m.expr.column in model.columns else None
+    return bool(p and p.negatives and p.non_null and p.negatives > p.non_null / 2)
+
+
+def gross_profit(model) -> list[str]:
+    """Where a fact's rows hold what each sold for and what it cost, named alike (ExtAmtBase and ExtCostBase,
+    NetAmount and CostAmount), its gross profit is the one less the other and its gross margin the profit as a share
+    of the sales: learned as two metrics, unless one is already called so (a margin column of the table's own)."""
+    def said(word: str) -> bool:
+        plain = word.casefold()
+        return any(not m.hidden and (m.business_name.casefold() == plain or any(
+            w.casefold() == plain for ws in m.synonyms.values() for w in ws)) for m in model.measures.values())
+
+    if said("gross profit"):
+        return []
+    pairs = []
+    for table in sorted(model.tables.values(), key=lambda t: (-(t.row_count or 0), t.key)):
+        if table.hidden or table.kind != "fact":
+            continue
+        sold: dict[tuple, list] = {}
+        cost: dict[tuple, list] = {}
+        for m in model.measures.values():
+            expr = m.expr
+            if m.table != table.key or m.hidden or m.format != "currency" or not isinstance(expr, AggExpr) \
+                    or expr.agg != "sum" or not expr.column or expr.filters or expr.column not in model.columns:
+                continue
+            words = names.tokens(model.columns[expr.column].name)
+            after = (set(words) & _AFTER_DISCOUNT or "net" in words and "of" in words) \
+                and set(words) & _NOT_SOLD <= _TAKEN_FOR_SALES
+            rest = tuple(w for w in words if w not in _SOLD_AMOUNT | _TAKEN_FOR_MARGIN | _SAME_EITHER_WAY
+                         | (_AFTER | _TAKEN_FOR_SALES if after else set()))
+            if set(words) & _KEPT_PROFIT:
+                sold, cost = {}, {}
+                break       # the table keeps its own profit: it is the gross profit, never worked out again
+            if set(words) & _NOT_SOLD and not after:
+                continue
+            if set(words) & _TAKEN_FOR_MARGIN:
+                cost.setdefault(rest, []).append(m)
+            elif set(words) & _SOLD_AMOUNT:
+                sold.setdefault(rest, []).append(m)
+        for rest in sorted(set(sold) & set(cost), key=lambda r: (len(r), r)):
+            a, c = _one(model, sold[rest]), _one(model, cost[rest])
+            if a is not None and c is not None and (a.unit, a.unit_column) == (c.unit, c.unit_column) \
+                    and a.default_date == c.default_date and not _mostly_negative(model, c):
+                pairs.append((a, c))
+                break
+        if pairs:
+            break
+    notes = []
+    for a, c in pairs[:1]:
+        why = f"{a.business_name} less {c.business_name}, on the same rows."
+        gp = Measure(key=f"m:{a.table}.gross_profit", slug="gross_profit", business_name="Gross profit",
+                     description=f"What was sold less what it cost: {why}", synonyms=dict(_GROSS_PROFIT_WORDS),
+                     table=a.table, expr=OpExpr(op="subtract", args=[RefExpr(measure=a.key), RefExpr(measure=c.key)]),
+                     additivity="additive", format="currency", unit=a.unit, unit_column=a.unit_column,
+                     default_date=a.default_date, kind="model", provenance="profile", status="verified",
+                     confidence=0.8, evidence=[Evidence(kind="difference", weight=1, detail=why)])
+        pct = Measure(key=f"m:{a.table}.gross_margin_pct", slug="gross_margin_pct", business_name="Gross margin %",
+                      description=f"Gross profit as a share of {a.business_name.lower()}.",
+                      synonyms=dict(_MARGIN_PCT_WORDS), table=a.table,
+                      expr=OpExpr(op="ratio", args=[RefExpr(measure=gp.key), RefExpr(measure=a.key)], scale=100.0),
+                      additivity="non_additive", format="percent", default_date=a.default_date, kind="model",
+                      provenance="profile", status="verified", confidence=0.8,
+                      evidence=[Evidence(kind="ratio", weight=1, detail=f"Gross profit over {a.business_name}.")])
+        if gp.key in model.measures or pct.key in model.measures:
+            continue        # a measure of the data's own is called so already (a GROSS_PROFIT column, renamed)
+        model.measures[gp.key] = gp
+        notes.append(f"Gross profit is {why[:-1].lower()}.")
+        # A margin the table keeps as a share already (a line's margin percent) is the one a reader means.
+        kept = any(not m.hidden and m.table == a.table and m.format == "percent" and (
+            set(names.tokens(m.business_name)) | set(names.tokens(model.columns[m.expr.column].name)
+                                                     if getattr(m.expr, "column", None) in model.columns else []))
+            & _KEPT_PROFIT for m in model.measures.values())
+        if not kept:
+            model.measures[pct.key] = pct
+            notes.append(f"Gross margin % is gross profit as a share of {a.business_name.lower()}.")
+        # What the cost is taken from is what was sold, when nothing else is called so.
+        if not said("sales") and not said("revenue"):
+            have = list(a.synonyms.get("en") or [])
+            a.synonyms["en"] = have + [w for w in _SALES_WORDS["en"] if w not in have]
     return notes

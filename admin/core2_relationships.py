@@ -321,6 +321,11 @@ async def relationships_save_table(request: Request, account_id: str):
         if role is None or role.table != key:
             return _refused("Choose one of this table's own dates.")
         store.set_core2_override(account_id, db_id, object_key, "default_date", default_date)
+    hidden = data.get("hidden")
+    if isinstance(hidden, bool) and hidden != table.hidden:
+        # Set aside, a table answers nothing (a backup or a load's copy); brought back, it answers again.
+        store.set_core2_override(account_id, db_id, object_key, "hidden", hidden)
+        return JSONResponse({"ok": True})
     may_include = data.get("readers_may_include")
     if isinstance(may_include, bool) and may_include != table.readers_may_include:
         store.set_core2_override(account_id, db_id, object_key, "readers_may_include", may_include)

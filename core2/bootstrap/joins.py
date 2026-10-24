@@ -132,6 +132,16 @@ _KIND_WORDS = {"type", "typ", "kind", "status", "sts", "state", "category", "cat
 # A copy of a table, kept beside it: DEVICES_BAK, ORDERS_OLD, CUSTOMERS_20240101.
 _COPY_WORDS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp", "archive", "archived", "arch",
                "prev", "previous", "save", "saved"}
+# A load's staging copy of a table: STG_ORDERS, stg.SalesOrderLine_Load, ETL_CUSTOMER_LANDING. The first say so
+# alone; the second only on a table staged so (a truck's load, an imported product are the business's own).
+_STAGING_WORDS = {"stg", "staging", "landing", "etl", "wrk"}
+_LOAD_WORDS = {"load", "loaded", "loading", "import", "imported", "extract", "raw", "delta", "incr", "incremental"}
+# First in a name, the words that still say a copy: a landing page, a saved search, an old price are the business's.
+_COPY_LEADS = {"bak", "backup", "bkp", "bck", "tmp", "cpy", "stg", "staging", "etl", "wrk"}
+# Last in a name, the words that say the rows are kept again. An archive, the previous addresses or the saved carts
+# hold rows of their own, never set aside.
+_COPY_TAILS = {"bak", "backup", "bkp", "bck", "old", "copy", "cpy", "tmp"}
+SAME_COLUMNS = 0.8         # share of the original's columns a copy keeps under the same names
 SMALL_TARGET = 30          # members: below this, values alone must use most of them
 RUN = 0.9                  # share of a stretch's whole numbers a column holds for it to be a run of numbers
 
@@ -931,11 +941,12 @@ def _most_per_key(warehouse: Warehouse, table: InvTable, columns: list[str],
 
 
 def _copies(inventory: Inventory) -> set[str]:
-    """Tables kept as a copy of another: named as it is, with a word or a date saying it is a copy."""
+    """Tables never pointed at: named as another is, with a word or a date anywhere in the name saying it may be a
+    copy, or kept as one (copies_of)."""
     by_name: dict[tuple[str, ...], str] = {}
     for key, table in inventory.tables.items():
         by_name.setdefault(tuple(names.singular(t) for t in names.tokens(table.name)), key)
-    out = set()
+    out = set(copies_of(inventory))
     for key, table in inventory.tables.items():
         words = [names.singular(t) for t in names.tokens(table.name)]
         marks = [t for t in words if t in _COPY_WORDS or t.isdigit()]
@@ -943,6 +954,53 @@ def _copies(inventory: Inventory) -> set[str]:
         if marks and rest and by_name.get(rest, key) != key:
             out.add(key)
     return out
+
+
+def copies_of(inventory: Inventory) -> dict[str, str]:
+    """Each table kept as a copy of another, and the table it copies: its name with a copy's word or a day's stamp at
+    the end (ORDERS_BAK_20240115, CUSTOMERS_OLD, ORDERS_20240101) or a staging word first (STG_ORDERS), or a table of
+    a staging schema (SalesOrderLine_Load in stg), holding the other's columns under the same names. A word that also
+    names the business's own things (LandingPages, SavedSearches, TruckLoads_2024, Orders_Archive), a year or a
+    month alone (Sales_2023, Sales_202312) is no copy; nor is a load's word on more rows than the table it names."""
+    def staged_schema(table) -> bool:
+        return bool(set(names.tokens(table.schema or "")) & _STAGING_WORDS)
+
+    by_name: dict[tuple[str, ...], str] = {}
+    for key, table in sorted(inventory.tables.items(), key=lambda kv: staged_schema(kv[1])):
+        by_name.setdefault(tuple(names.singular(t) for t in names.tokens(table.name)), key)
+    out: dict[str, str] = {}
+    for key, table in inventory.tables.items():
+        words = [names.singular(t) for t in names.tokens(table.name)]
+        lead = []
+        while words and words[0] in _COPY_LEADS:
+            lead.append(words.pop(0))
+        tail = []
+        while words and (words[-1] in _COPY_TAILS or words[-1] in _STAGING_WORDS or words[-1].isdigit()):
+            tail.insert(0, words.pop())
+        staged = staged_schema(table) or bool(set(lead + tail) & _STAGING_WORDS)
+        loaded = False
+        while staged and words and words[-1] in _LOAD_WORDS and by_name.get(tuple(words), key) == key:
+            words.pop()             # SalesOrderLine_Load in stg: the lines, as a load left them
+            loaded = True
+        said = bool(lead) or any(not t.isdigit() for t in tail)
+        stamped = any(t.isdigit() and len(t) == 8 for t in tail)
+        if not (said or stamped or staged) or not words:
+            continue
+        original = by_name.get(tuple(words), key)
+        if original == key or not _keeps_columns_of(table, inventory.tables[original]):
+            continue
+        rows, theirs = table.row_count, inventory.tables[original].row_count
+        if loaded and rows is not None and theirs is not None and rows > theirs:
+            continue                # the loads of each truck are more than the trucks: their own rows
+        out[key] = original
+    return out
+
+
+def _keeps_columns_of(copy: InvTable, original: InvTable) -> bool:
+    """Most of the original's columns are the copy's too, under the same names."""
+    theirs = {names_norm(c.name) for c in original.columns}
+    mine = {names_norm(c.name) for c in copy.columns}
+    return bool(theirs) and len(theirs & mine) >= SAME_COLUMNS * len(theirs)
 
 
 def _named(table: InvTable, name: str) -> str | None:

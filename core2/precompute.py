@@ -369,7 +369,8 @@ def _period(writer: Any, use: DateUse, grain: str, dialect: str) -> tuple[exp.Ex
     """The copy's date column: each row's date as the question's query reads it, or its month."""
     named = use.role.name or "its date"
     if use.mode == "year_quarter":
-        raise CopyError(f"{named} is kept as a year and a quarter: a copy cannot keep it")
+        raise CopyError(f"{named} is kept as a year and a {'quarter' if use.role.period_months == 3 else 'period'}: "
+                        "a copy cannot keep it")
     if use.mode in ("month_calendar", "yyyymm"):
         if grain == "day":
             raise CopyError(f"{named} is kept by month: keep the copy by month")
@@ -680,7 +681,7 @@ def write(path: Path, defn: Definition, rows: list[tuple]) -> int:
         names = [name for name, _ in defn.columns]
         cast = ", ".join(f"CAST({name} AS {_DUCK_TYPES.get(dtype, 'VARCHAR')})" for name, dtype in defn.columns)
         for start in range(0, len(rows), 100_000):
-            batch = pd.DataFrame([[_text(_plain(v, dtype)) for v, (_, dtype) in zip(row, defn.columns)]
+            batch = pd.DataFrame([[_text(_plain(v, dtype), dtype) for v, (_, dtype) in zip(row, defn.columns)]
                                   for row in rows[start:start + 100_000]], columns=names, dtype=object)
             con.register("incoming", batch)
             con.execute(f"INSERT INTO {TABLE} SELECT {cast} FROM incoming")
@@ -692,20 +693,30 @@ def write(path: Path, defn: Definition, rows: list[tuple]) -> int:
     return path.stat().st_size
 
 
-def _text(value: Any) -> str | None:
-    """A value as text DuckDB reads back exactly: a decimal in plain digits (never 1E+3), a float to the last bit."""
+def _text(value: Any, dtype: str = "") -> str | None:
+    """A value as text DuckDB reads back as the database meant it: a decimal in plain digits (never 1E+3), a float to
+    the last bit, a time with an offset as its instant (in UTC: 11:00+05:00 is before 10:00Z), a yes or no as the
+    column of the copy holds it (1 and 0 in a number), bytes as the text they hold."""
     if value is None:
         return None
-    if isinstance(value, bool):
+    if type(value).__module__ == "numpy" and hasattr(value, "item"):
+        value = value.item()           # a driver's numpy scalar: its own Python value (np.float64(0.1) is 0.1)
+    if dtype == "boolean" and isinstance(value, (bool, int, float, decimal.Decimal)):
         return "true" if value else "false"
+    if isinstance(value, bool):
+        return "1" if value else "0"
     if isinstance(value, decimal.Decimal):
         return format(value, "f")
     if isinstance(value, float):
         return repr(value)
     if isinstance(value, dt.datetime):
+        if value.utcoffset() is not None:
+            value = value.astimezone(dt.timezone.utc).replace(tzinfo=None)
         return value.isoformat(sep=" ")
     if isinstance(value, dt.date):
         return value.isoformat()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", "replace")
     return str(value)
 
 

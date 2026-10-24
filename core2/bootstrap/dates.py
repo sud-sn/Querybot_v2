@@ -93,10 +93,12 @@ class DateCandidate:
     is_default: bool = False
     evidence: list[Evidence] = field(default_factory=list)
     # A quarter kept as two numbers: ``column`` is the year's, this the quarter's; ``span`` the first and last
-    # (year, quarter) the rows hold, dated once the workspace's fiscal year is known.
+    # (year, quarter) the rows hold, dated once the workspace's fiscal year is known. A month kept as a year and a
+    # period number (1 to 12) is the same with ``period_months`` 1.
     quarter_column: str | None = None
     fiscal: bool = False
     span: tuple[tuple[int, int], tuple[int, int]] | None = None
+    period_months: int = 3
 
     def add(self, kind: str, weight: float, detail: str, **data: object) -> None:
         self.score += weight
@@ -346,7 +348,8 @@ def find_date_roles(warehouse: Warehouse, inventory: Inventory, profiles: dict[s
 
 _YEAR_WORDS = {"year", "yr", "yyyy", "fy"}
 _QUARTER_WORDS = {"quarter", "qtr", "qr", "qt", "fq"}
-_FISCAL_WORDS = {"fiscal", "fisc", "fscl", "fy", "fq"}
+_PERIOD_WORDS = {"period", "prd", "month", "mth", "fp", "fm"}
+_FISCAL_WORDS = {"fiscal", "fisc", "fscl", "fy", "fq", "fp", "fm"}
 
 
 def _year_and_quarter(warehouse: Warehouse, inventory: Inventory, key: str, profile: TableProfile
@@ -354,7 +357,8 @@ def _year_and_quarter(warehouse: Warehouse, inventory: Inventory, key: str, prof
     """A quarter kept as two numbers on the same rows, a year (2024) and a quarter (1 to 4): a store's target per
     quarter (TGT_YR, TGT_QTR), a branch's budget per fiscal quarter (FiscalYear, FiscalQuarter). With no other date,
     the table could not be told apart by period. The quarter's first day is the date its rows count on; "fiscal"
-    in either name reads them as the fiscal year's."""
+    in either name reads them as the fiscal year's. A year and a period or month number (1 to 12) are its month,
+    the finer of the two when a table keeps both (an ERP's budget per fiscal period: FiscalYear, FiscalPeriod)."""
     t = inventory.tables[key]
 
     def numbers(words: set[str], low: float, high: float) -> list[str]:
@@ -369,42 +373,61 @@ def _year_and_quarter(warehouse: Warehouse, inventory: Inventory, key: str, prof
                 found.append(column.name)
         return found
 
-    years, quarters = numbers(_YEAR_WORDS, 1990, 2100), numbers(_QUARTER_WORDS, 1, 4)
-    if not years or not quarters:
+    years = numbers(_YEAR_WORDS, 1990, 2100)
+    if not years:
         return []
 
     def rest(column: str) -> set[str]:
-        return set(names.tokens(column)) - _YEAR_WORDS - _QUARTER_WORDS - _FISCAL_WORDS
+        return set(names.tokens(column)) - _YEAR_WORDS - _QUARTER_WORDS - _PERIOD_WORDS - _FISCAL_WORDS
 
-    # The same other words (TGT_YR with TGT_QTR), or none on one side (FiscalYear with FiscalQuarter, YEAR with
-    # TARGET_QUARTER); never an order's year with a shipment's quarter.
-    pairs = [(y, q) for y in years for q in quarters if rest(y) == rest(q)] or \
-        [(y, q) for y in years for q in quarters if not rest(y) or not rest(q)]
     d = warehouse.dialect
     source = D.table_sql(t.database, t.schema, t.name, d)
-    out = []
-    for year, quarter in pairs[:1]:
-        cy, cq = t.read(year, d), t.read(quarter, d)
-        packed = exp.Add(this=exp.Mul(this=cy, expression=exp.Literal.number(10)), expression=cq)
-        query = exp.select(exp.Min(this=packed.copy()), exp.Max(this=packed.copy()), exp.Count(this=cq.copy())) \
-            .from_(exp.to_table("__SRC__")).where(exp.Between(this=cq.copy(), low=exp.Literal.number(1),
-                                                              high=exp.Literal.number(4)))
-        low, high, held = warehouse.query(query.sql(dialect=d).replace("__SRC__", source)).rows[0]
-        if low is None or high is None:
-            continue
-        rows = profile.rows or 1
-        said = set(names.tokens(year)) | set(names.tokens(quarter))
-        c = DateCandidate(table=key, column=year, via_calendar=None, granularity="quarter",
-                          quarter_column=quarter, fiscal=bool(said & _FISCAL_WORDS),
-                          span=((int(low) // 10, int(low) % 10), (int(high) // 10, int(high) % 10)))
-        c.coverage = float(held or 0) / rows
-        c.add("base", 0.5, "a date of this table")
-        c.add("year_and_quarter", -0.2, f"{names.readable(year)} and {names.readable(quarter)} are the year and "
-              "quarter each row is for: its quarter's first day is the date it counts on")
-        if c.coverage < 0.999:
-            c.add("coverage", -0.4 * (1 - c.coverage), f"{c.coverage:.0%} of rows have a year and a quarter")
-        out.append(c)
-    return out
+    # A ledger's periods may run 0 (opening) to 13 or more (closing adjustments): those rows have no month. A
+    # calendar of 13 four-week periods (1 to 13, each as full as the others) is no month at all.
+    periods = [c for c in numbers(_PERIOD_WORDS, 0, 16) if c not in years]
+    many_years = any((profile.columns[y].max_num or 0) > (profile.columns[y].min_num or 0) for y in years)
+    # Periods numbered 1 to 4 year after year are the year's quarters (a quarterly budget's fiscal period).
+    quarters = [c for c in periods if many_years and (profile.columns[c].max_num or 0) <= 4]
+    units = [(1, 12, "month", [c for c in periods if c not in quarters]),
+             (3, 4, "quarter", [c for c in numbers(_QUARTER_WORDS, 1, 4) if c not in years] + quarters)]
+    # The same other words (TGT_YR with TGT_QTR, FiscalYear with FiscalPeriod), for either unit, before none on
+    # one side (YEAR with TARGET_QUARTER); a month only where neither names anything else (FiscalYear with PERIOD,
+    # never a model year or a loan's vintage year with a month). Never an order's year with a shipment's quarter.
+    exact = [(m, top, unit, [(y, q) for y in years for q in periods if rest(y) == rest(q)])
+             for m, top, unit, periods in units]
+    loose = [(m, top, unit, [(y, q) for y in years for q in periods
+                             if ((not rest(q) or not rest(y)) if m == 3 else not rest(q) and not rest(y))])
+             for m, top, unit, periods in units]
+    for months, top, unit, pairs in [e for e in exact if e[3]] + [lo for lo in loose if lo[3]]:
+        out = []
+        for year, quarter in pairs[:1]:
+            cy, cq = t.read(year, d), t.read(quarter, d)
+            base = 10 if months == 3 else 100
+            packed = exp.Add(this=exp.Mul(this=cy, expression=exp.Literal.number(base)), expression=cq)
+            query = exp.select(exp.Min(this=packed.copy()), exp.Max(this=packed.copy()), exp.Count(this=cq.copy())) \
+                .from_(exp.to_table("__SRC__")).where(exp.Between(this=cq.copy(), low=exp.Literal.number(1),
+                                                                  high=exp.Literal.number(top)))
+            low, high, held = warehouse.query(query.sql(dialect=d).replace("__SRC__", source)).rows[0]
+            if low is None or high is None:
+                continue
+            rows = profile.rows or 1
+            p = profile.columns[quarter]
+            if months == 1 and (p.max_num or 0) > 12 and p.min_num != 0 and float(held or 0) / rows < 0.95:
+                continue    # periods 1 to 13 throughout: a calendar of 13 four-week periods, never months
+            said = set(names.tokens(year)) | set(names.tokens(quarter))
+            c = DateCandidate(table=key, column=year, via_calendar=None, granularity=unit,
+                              quarter_column=quarter, fiscal=bool(said & _FISCAL_WORDS), period_months=months,
+                              span=((int(low) // base, int(low) % base), (int(high) // base, int(high) % base)))
+            c.coverage = float(held or 0) / rows
+            c.add("base", 0.5, "a date of this table")
+            c.add("year_and_quarter", -0.2, f"{names.readable(year)} and {names.readable(quarter)} are the year and "
+                  f"{unit} each row is for: its {unit}'s first day is the date it counts on")
+            if c.coverage < 0.999:
+                c.add("coverage", -0.4 * (1 - c.coverage), f"{c.coverage:.0%} of rows have a year and a {unit}")
+            out.append(c)
+        if out:
+            return out
+    return []
 
 
 def _said(column: str, vocabulary: set[str]) -> bool:

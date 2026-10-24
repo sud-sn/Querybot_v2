@@ -130,6 +130,8 @@ def _read_edges(model: SemanticModel, unconfirmed: bool, skip: frozenset[str],
             continue
         if model.tables.get(j.to_table) is not None and model.tables[j.to_table].kind == "calendar":
             continue
+        if any(t is not None and t.hidden for t in (model.tables.get(j.from_table), model.tables.get(j.to_table))):
+            continue        # a table set aside (a backup or a load's copy) is never walked through
         out.setdefault(j.from_table, []).append(j)
     return out
 

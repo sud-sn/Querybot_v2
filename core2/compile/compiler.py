@@ -42,7 +42,7 @@ from core2.model import formula
 from core2.model.schema import AggExpr, Join, MeasureExpr, OpExpr, RefExpr, SemanticModel, SqlExpr, value_names
 from core2.resolve.resolver import (Combined, DateUse, DaysBetween, DaysPred, Group, Joined, Logical, MemberAbsent,
                                     Part, PartGroup, Semi)
-from core2.resolve.time import Range, add_units
+from core2.resolve.time import Range, add_units, fiscal_named_by
 from core2.warehouse import dialect as D
 
 _LOW = dt.date(1901, 1, 1)       # dates before this are placeholders
@@ -236,21 +236,28 @@ class _Compiler:
     def stored_date(self, use: DateUse) -> exp.Expression:
         """The stored date (a DATE, a timestamp, or an order-preserving date number). A year and a quarter kept as
         two numbers are their quarter's first day as a yyyymmdd number, in plain arithmetic every warehouse writes
-        alike: a fiscal year named by the year it ends starts in the workspace's fiscal month of the year before."""
+        alike: a fiscal year named by the year it ends starts in the workspace's fiscal month of the year before (one
+        named by the year it starts, in that year's).
+        A year and a period number (1 to 12) are their month's first day the same way."""
         if use.mode != "year_quarter":
             return self.col(use.alias, use.column)
         year, quarter = self.col(use.alias, use.column), self.col(use.alias, use.quarter or "")
         # The workspace's fiscal year, also for a question worked out without one (a list of members).
         start = (self.q.fiscal_start or self.model.settings.fiscal_year_start_month or 1) if use.role.fiscal else 1
         # Months from January of the year it starts in: a quarter starting past December is in the next year.
-        offset = D.add(_num(start - 1), exp.Mul(this=_num(3), expression=exp.Paren(this=D.sub(quarter, _num(1)))))
+        offset = D.add(_num(start - 1), exp.Mul(this=_num(use.role.period_months),
+                                                 expression=exp.Paren(this=D.sub(quarter, _num(1)))))
         later = exp.Case(ifs=[exp.If(this=exp.GTE(this=offset.copy(), expression=_num(12)), true=_num(1))],
                          default=_num(0))
-        first_year = D.sub(year, _num(1)) if start != 1 else year
+        # FY2027 named by the year it ends starts in 2026; named by the year it starts, in 2027.
+        first_year = D.sub(year, _num(1)) if start != 1 and fiscal_named_by(self.model, start) != "start" else year
         calendar_year = D.add(first_year, later)
         month = D.sub(D.add(offset.copy(), _num(1)), exp.Mul(this=_num(12), expression=later.copy()))
-        return D.add(D.add(exp.Mul(this=exp.Paren(this=calendar_year), expression=_num(10000)),
-                           exp.Mul(this=exp.Paren(this=month), expression=_num(100))), _num(1))
+        day = D.add(D.add(exp.Mul(this=exp.Paren(this=calendar_year), expression=_num(10000)),
+                          exp.Mul(this=exp.Paren(this=month), expression=_num(100))), _num(1))
+        # A ledger's opening period 0 and closing period 13 are no month of the year: no date.
+        return exp.Case(ifs=[exp.If(this=exp.Between(this=quarter.copy(), low=_num(1),
+                                                     high=_num(12 // use.role.period_months)), true=day)])
 
     def date_value(self, use: DateUse) -> exp.Expression:
         """The date a row is counted on, as a DATE or timestamp."""
@@ -264,13 +271,14 @@ class _Compiler:
         c = self.stored_date(use)
         lo, hi = rng.start or _LOW, rng.end or _HIGH
         if use.mode == "year_quarter":
-            # Each quarter the period touches, in full (the resolver says so when the period cuts one): its first
-            # day before the period's end, its last after the period's start.
-            touched = add_units(lo, "month", -3) if lo != _LOW else lo
+            # Each quarter (or month) the period touches, in full (the resolver says so when the period cuts one):
+            # its first day before the period's end, its last after the period's start.
+            months = use.role.period_months
+            touched = add_units(lo, "month", -months) if lo != _LOW else lo
             return exp.and_(
                 exp.GT(this=c.copy(), expression=_num(touched.year * 10000 + touched.month * 100 + touched.day)),
                 exp.LT(this=c.copy(), expression=_num(hi.year * 10000 + hi.month * 100 + hi.day)),
-                exp.Between(this=self.col(use.alias, use.quarter or ""), low=_num(1), high=_num(4)))
+                exp.Between(this=self.col(use.alias, use.quarter or ""), low=_num(1), high=_num(12 // months)))
         if use.mode in ("month_calendar", "yyyymm"):
             last = hi - dt.timedelta(days=1)
             return exp.and_(
@@ -288,7 +296,7 @@ class _Compiler:
         """Days from ``start`` to ``end`` on each row; NULL where either is missing or a placeholder."""
         for use in (start, end):
             if use.mode in ("month_calendar", "yyyymm", "year_quarter"):
-                kept = "quarter" if use.mode == "year_quarter" else "month"
+                kept = "quarter" if use.mode == "year_quarter" and use.role.period_months == 3 else "month"
                 raise CompileError(f"{use.role.name or 'this date'} is kept by {kept}: it has no days")
         real = exp.and_(self.range_condition(start, Range(None, None)), self.range_condition(end, Range(None, None)))
         return exp.Case(ifs=[exp.If(this=real, true=D.days_between(self.date_value(start), self.date_value(end),
@@ -301,7 +309,10 @@ class _Compiler:
         monthly = use.mode in ("month_calendar", "yyyymm")
         if monthly and grain in ("day", "week"):
             raise CompileError(f"{use.role.name or 'this date'} is monthly: it has no {grain}s")
-        if use.mode == "year_quarter" and grain in ("day", "week", "month", "fiscal_month"):
+        if use.mode == "year_quarter" and use.role.period_months == 1 and grain in ("day", "week"):
+            raise CompileError(f"{use.role.name or 'this date'} is kept by month: it has no {grain}s")
+        if use.mode == "year_quarter" and use.role.period_months == 3 and grain in ("day", "week", "month",
+                                                                                     "fiscal_month"):
             raise CompileError(f"{use.role.name or 'this date'} is kept by quarter: it has no "
                                f"{grain.replace('fiscal_', '')}s")
         value = self.date_value(use)
@@ -318,8 +329,10 @@ class _Compiler:
     def time_attribute(self, use: DateUse, name: str) -> exp.Expression:
         """Computed from the date itself, so it means the same on every warehouse and calendar."""
         value = self.date_value(use)
-        if use.mode == "year_quarter" and name not in ("quarter_of_year",):
-            raise CompileError(f"{use.role.name or 'this date'} is kept by quarter: it has no "
+        if use.mode == "year_quarter" and name not in ("quarter_of_year",) + (
+                ("month_of_year",) if use.role.period_months == 1 else ()):
+            kept = "quarter" if use.role.period_months == 3 else "month"
+            raise CompileError(f"{use.role.name or 'this date'} is kept by {kept}: it has no "
                                f"{name.replace('_', ' ')}")
         if name == "day_of_week":
             if use.mode in ("month_calendar", "yyyymm"):
